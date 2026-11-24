@@ -1,0 +1,53 @@
+{
+  "apiVersion": 2,
+  "id": "upside-down",
+  "name": "Upside Down",
+  "version": "1.0.0",
+  "description": "A small eighties town by day that turns upside down by night.",
+  "contributes": {
+    "frontend": "frontend.js",
+    "theme": {
+      "id": "upside-down",
+      "label": "Upside Down",
+      "description": "The lights are flickering~",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "gary": "gary.png",
+      "sheila": "sheila.png",
+      "scene": "scene.bundle.js",
+      "favicon": "data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2064%2064'%3E%3Ccircle%20cx%3D'32'%20cy%3D'32'%20r%3D'30'%20fill%3D'%2305080f'%2F%3E%3Ccircle%20cx%3D'32'%20cy%3D'32'%20r%3D'28.5'%20fill%3D'none'%20stroke%3D'%23ff2d3f'%20stroke-width%3D'3'%2F%3E%3Cpath%20d%3D'M9%2020q23%209%2046%200'%20fill%3D'none'%20stroke%3D'%233c4a44'%20stroke-width%3D'1.5'%2F%3E%3Cellipse%20cx%3D'16'%20cy%3D'25'%20rx%3D'2.6'%20ry%3D'3.6'%20fill%3D'%23ff3b4a'%2F%3E%3Cellipse%20cx%3D'27'%20cy%3D'28'%20rx%3D'2.6'%20ry%3D'3.6'%20fill%3D'%23ffc857'%2F%3E%3Cellipse%20cx%3D'38'%20cy%3D'28'%20rx%3D'2.6'%20ry%3D'3.6'%20fill%3D'%234fd08a'%2F%3E%3Cellipse%20cx%3D'49'%20cy%3D'25'%20rx%3D'2.6'%20ry%3D'3.6'%20fill%3D'%235aa9ff'%2F%3E%3Ccircle%20cx%3D'32'%20cy%3D'41'%20r%3D'13'%20fill%3D'%2383c851'%20stroke%3D'%23182f10'%20stroke-width%3D'2'%2F%3E%3Ccircle%20cx%3D'27'%20cy%3D'39'%20r%3D'2'%20fill%3D'%23182f10'%2F%3E%3Ccircle%20cx%3D'37'%20cy%3D'39'%20r%3D'2'%20fill%3D'%23182f10'%2F%3E%3Cpath%20d%3D'M27%2048l1.5-4.5%201.5%204.5zM34%2048l1.5-4.5%201.5%204.5z'%20fill%3D'%23fff8ec'%20stroke%3D'%23182f10'%20stroke-width%3D'1'%2F%3E%3C%2Fsvg%3E",
+      "announce": {
+        "on": "Upside Down mode on. The lights are flickering~",
+        "off": "Upside Down mode off"
+      },
+      "radio": {
+        "style": "Slow eighties analog synth ambient for a small town after dark",
+        "leads": [
+          "pulsing analog synth arpeggios",
+          "warm detuned synth pads",
+          "soft Juno-style strings",
+          "glassy FM electric piano",
+          "a low Moog bass drone",
+          "dreamy chorus guitar"
+        ],
+        "scenes": [
+          "kids cycling home down an empty street at dusk",
+          "a string of lights flickering in a living room",
+          "a basement game night running late",
+          "flashlights sweeping through the woods at night",
+          "a quiet arcade after closing"
+        ],
+        "textures": [
+          "tape hiss and a faint walkie-talkie crackle",
+          "a slow gated drum machine",
+          "distant thunder and wind in bare trees",
+          "a soft heartbeat kick",
+          "wide dark reverb"
+        ]
+      }
+    }
+  },
+  "build": {
+    "scene": "scene.js"
+  }
+}

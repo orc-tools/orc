@@ -1,0 +1,892 @@
+/* Ocean mode: frontend.js sets data-ocean on <html> and this file takes Orc
+   under water. By day it is a sunlit reef: pale sand, turquoise water and
+   coral for whatever needs you. By night it is the deep: near-black water lit
+   only by what lives in it, and an anglerfish's lure for whatever needs you.
+   It re-points the shell's own tokens, so every surface that reads var(--bg),
+   var(--accent) and friends follows without its own rule, then redraws the
+   chrome: runs as cards with a bubble for a lamp, the transcript as one sheet
+   with open water either side, and the seabed under the Settled shelf.
+
+   The window is a water column. Light comes down from the surface at its top,
+   and the scenery lies in #ocean-deep, below every part of the page, so a
+   fish passes behind a card or the transcript and never over text.
+
+   The gate pages load this file too, inlined through string.Template, so keep
+   it free of the dollar sign.
+
+   Every block below out-specifies the swamp block it replaces. The day block
+   matches at night too, so both night blocks declare again everything it sets
+   per mode, and the rules below read those values instead of repeating
+   themselves per mode. tests/test_ocean_mode.py holds the palettes to the
+   swamp's contrast floors.
+
+   --accent stays blue-green so danger never reads as the accent; the coral
+   and the lure that mark what needs you are --ocean-lure. */
+:root[data-ocean] {
+  color-scheme: light;
+  --bg: #e3f3f2; --panel: #f8fcfb; --border: #7fbcc4;
+  --text: #17404e; --heading: #072b38; --muted: #4d7785; --accent: #00698c;
+  --accent-soft: #cde8ec; --chip: #d8edef; --code: #dbeeee;
+  --green: #08795a; --yellow: #8a6100; --red: #c4301c;
+  --purple: #7a3cb8; --cyan: #006a6c; --orange: #c2410c;
+  --focus: #c96a1b;
+  --ready-text: #06664a;
+  --blue-text: #005f85;
+  --ocean-on-accent: #ffffff;
+  --ocean-lure: #e5613a;
+  --ocean-zone: "Sunlight zone";
+  --ocean-font: "Seravek", "Gill Sans Nova", "Gill Sans", ui-rounded, "Segoe UI", system-ui, sans-serif;
+  --orc-font-sans: var(--ocean-font);
+  /* Seravek draws its capitals over half a pixel above a control's middle. */
+  --orc-font-sans-nudge: .05em;
+  --ocean-radius: 14px; --orc-radius-sm: 9px; --orc-radius-md: 14px;
+  /* The open sidebar's width, which is where the open water starts and the
+     scenery stands. A phone's sidebar is a drawer, so its water starts at 0. */
+  --ocean-rail: 300px;
+  /* The water column: bright under the surface, where the run's header and
+     project home's heading print straight onto it, and deeper below. */
+  --ocean-water: linear-gradient(180deg, #ecf9f8 0, #d3f0f1 150px, #a4dfe5 55%, #63c4d4 100%);
+  --ocean-veil: rgb(248 252 251 / .6);
+  --ocean-rule: rgb(7 43 56 / .16);
+  /* Shafts of light fanning down from a sun above the window's top edge. */
+  --ocean-beam: rgb(255 255 255 / .5); --ocean-beam-soft: rgb(255 255 255 / .26);
+  --ocean-rays: conic-gradient(from 150deg at 32% -30%,
+    transparent 0deg, var(--ocean-beam) 3deg, transparent 7deg,
+    transparent 12deg, var(--ocean-beam-soft) 15deg, transparent 20deg,
+    transparent 24deg, var(--ocean-beam) 27deg, transparent 30deg,
+    transparent 37deg, var(--ocean-beam-soft) 42deg, transparent 48deg,
+    transparent 52deg, var(--ocean-beam) 55deg, transparent 58deg, transparent 360deg);
+  /* What drifts in the water: flecks of light rising by day, marine snow
+     sinking by night. */
+  --ocean-mote: #ffffff; --ocean-mote-alpha: .7; --ocean-drift-way: reverse;
+  --ocean-by-day: block; --ocean-by-night: none;
+  --ocean-surface: .9;
+  --ocean-kelp-tint: linear-gradient(to top, #178a76, #62cba0);
+  --ocean-kelp-alpha: .8;
+  --ocean-reef-art: var(--ocean-reef-day);
+  --ocean-jelly-tint: linear-gradient(to bottom, rgb(255 255 255 / .95), rgb(255 190 214 / .6));
+  --ocean-halo: none;
+  --ocean-crab: #e2573c;
+  --ocean-floor-tint: linear-gradient(180deg, #f8efd4, #e9dcb6);
+  --ocean-bubble-edge: rgb(255 255 255 / .95); --ocean-glint: #ffffff;
+  /* A card floats on a soft shadow by day and is lit from within by night. */
+  --ocean-edge: #b4dbe0;
+  --ocean-lift: 0 1px 0 rgb(7 60 80 / .08), 0 6px 14px -10px rgb(7 60 80 / .5);
+  --ocean-active-border: #3aa7bd; --ocean-active-bg: #ffffff;
+  --ocean-active-shadow: 0 0 0 1px rgb(0 105 140 / .16), 0 8px 18px -10px rgb(0 105 140 / .55);
+  --ocean-lamp-on: 0 0 0 0 transparent;
+  --ocean-lamp-alert: 0 0 0 2.5px color-mix(in srgb, currentColor 22%, transparent);
+  --ocean-well: #eef8f7;
+  /* The seabed under the Settled shelf: sand by day, silt by night. Its stops
+     are in pixels because the open drawer wears it too, and that is as tall
+     as the list. */
+  --ocean-sand:
+    var(--ocean-shore-day) left top / 300px 44px no-repeat,
+    linear-gradient(180deg, #fdf6e1 0, #f4e8c6 44px, #f1e3bd 100%);
+  --ocean-ground: #f4e8c6; --ocean-ground-rule: rgb(120 92 30 / .18);
+  --ocean-crest: #e3d19f; --ocean-crest-glow: 0 -10px 18px -14px rgb(7 60 80 / .5);
+  --ocean-grass-tint: linear-gradient(to top, #178a76, #6fd3a4);
+  --ocean-heat-sea: #3aa7bd; --ocean-heat-foam: #12b89a;
+  /* The pictures are the same by day and by night. docs/ocean-art/pictures.mjs
+     draws them and rewrites them here with --write. */
+  --ocean-fish: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='40' viewBox='0 0 64 40'%3E%3Cpath fill-opacity='.82' fill-rule='evenodd' d='M62 20C60 13 52 7 42 6.2L38 1.6C34 .4 28 2 25 8.2 21 9.6 17.5 12.4 14.6 16L3 6.4C1.4 5.2 0 6.3.7 8.2L5.6 20 .7 31.8C0 33.7 1.4 34.8 3 33.6L14.6 24C17.5 27.6 21 30.4 25 31.8 27 36.6 30 39.2 33.4 38.8 35.6 38.5 36.4 36.6 35.6 33.9L42 33.8C52 33 60 27 62 20ZM53.5 15.2a2.3 2.3 0 1 0 .01 0Z'/%3E%3Cpath d='M45.5 7.4C42.4 15 42.4 25 45.5 32.6L42 33.8C38.6 25 38.6 15 42 6.2ZM31 6.6C27.6 15 27.6 25 31 33.4L27.6 32.6C24.6 24 24.6 16 27.6 7.6Z'/%3E%3C/svg%3E");
+  --ocean-angel: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='64' viewBox='0 0 60 64'%3E%3Cpath fill-opacity='.8' fill-rule='evenodd' d='M57 32C55 25 49 19 42 17.5 36 9 26 3 13 1.5 17 9 19.5 17 21.5 25.5L9 22C7.6 21.6 6.8 22.6 7.4 24L11 32 7.4 40C6.8 41.4 7.6 42.4 9 42L21.5 38.5C19.5 47 17 55 13 62.5 26 61 36 55 42 46.5 49 45 55 39 57 32ZM49.5 27.6a2.2 2.2 0 1 0 .01 0Z'/%3E%3Cpath d='M44.5 18.4C41 26 41 38 44.5 45.6L41 46.8C37.4 38 37.4 26 41 17.2ZM33 10.6C28.6 22 28.6 42 33 53.4L29.4 55.6C24.4 42 24.4 22 29.4 8.4Z'/%3E%3C/svg%3E");
+  --ocean-minnow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='25' height='10' viewBox='0 0 25 10'%3E%3Cpath d='M24 5C21 1.6 15 0 9.5 1.6L7.6 3 1.2 0 2.8 5 1.2 10 7.6 7 9.5 8.4C15 10 21 8.4 24 5Z'/%3E%3C/svg%3E");
+  --ocean-turtle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='70' viewBox='0 0 110 70'%3E%3Cpath fill-opacity='.72' d='M66 20C62 10 54 3 45 1 42.6.5 42 2 43.6 3.8 49 9 52 14 54 21ZM26 25C20 21 14 19.6 8 20.6 6 21 6 22.6 7.8 23.4 13 25.6 17 28.4 21 31Z'/%3E%3Cpath fill-opacity='.86' d='M78 30C84 28.4 88 26 94.5 25.6 101 25.2 106.4 29 106 34 105.6 38.6 100.4 41 94.5 41 89 41 84 40 78 38.4ZM68 47C66 58 56 66 41 69 38 69.6 37 68 39 66 47 59 52 53 55 46ZM27 42C22 48 16 51 9 51 7 51 6.6 49.6 8.2 48.6 13 45.6 17 42 20 38ZM24 33 13 34.6 24 36Z'/%3E%3Cpath d='M22 34C22 22 37 14 54 15 70 16 82 24 82 34 82 44 70 53 54 53 37 54 22 46 22 34Z'/%3E%3C/svg%3E");
+  --ocean-jelly: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='96' viewBox='0 0 60 96'%3E%3Cg fill='none' stroke='%23000' stroke-linecap='round'%3E%3Cpath stroke-width='1.6' stroke-opacity='.75' d='M12 35C7 46 16 54 11 65 8 72 13 80 10 90M48 35C53 46 44 54 49 65 52 72 47 80 50 90'/%3E%3Cpath stroke-width='1.6' stroke-opacity='.6' d='M20 36C17 48 24 58 19 70 17 76 20 82 18 87M40 36C43 48 36 58 41 70 43 76 40 82 42 87'/%3E%3Cpath stroke-width='4.5' stroke-opacity='.5' d='M27 36C24 46 30 54 27 64 25 70 28 75 27 79M34 36C37 46 31 54 34 62 36 68 33 72 34 75'/%3E%3C/g%3E%3Cpath fill-opacity='.9' d='M4 30C4 13 15 2 30 2 45 2 56 13 56 30 56 34 53 36 50 34 47 32 44 32 42 34.5 39.5 37 36.5 37 34 34.5 31.5 32 28.5 32 26 34.5 23.5 37 20.5 37 18 34.5 16 32 13 32 10 34 7 36 4 34 4 30Z'/%3E%3C/svg%3E");
+  --ocean-angler: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='72' viewBox='0 0 96 72'%3E%3Cpath fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' d='M52 20C53 9 65 2 80 6'/%3E%3Cpath d='M33 21 32 10 38.5 16.5 41 7 46 16 50.5 11 53 20Z'/%3E%3Cpath fill-opacity='.88' fill-rule='evenodd' d='M70 34C66 24 56 18 44 18 30 18 19 27 16.5 39L6 31C4.4 29.8 3 30.8 3.6 32.6L7.6 43 3.6 53.4C3 55.2 4.4 56.2 6 55L16.5 47C19 59 30 68 44 68 55 68 64.6 62.6 69 54L64 52.5 67 49 61.5 47.6 65 44 58 42.4 64 40 61 36.6ZM56 26.6a3.2 3.2 0 1 0 .01 0Z'/%3E%3Cpath d='M41 47C35 51 31 57 31 63 37 61 43 56 46 50Z'/%3E%3C/svg%3E");
+  --ocean-whale: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='110' viewBox='0 0 300 110'%3E%3Cpath fill-rule='evenodd' d='M296 56C294 44 280 34 258 30 232 25 196 26 160 32 128 37 96 46 64 52 52 54 42 52 34 46 28 40 18 30 6 28 3 27.5 1.6 29 3 31.6 8 40 12 48 12 56 12 62 8 70 4 78 2.6 80.6 4 82 7 81.4 19 79 28 70 36 64 44 60 54 60 66 62 90 68 112 76 140 80 150 96 164 104 178 106 181 106.4 182 104.6 180.4 102.4 174 94 170 88 168 82 200 84 236 82 262 76 282 71 296 66 296 56ZM271 50.4a2 2 0 1 0 .01 0Z'/%3E%3C/svg%3E");
+  --ocean-kelp: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='360' viewBox='0 0 80 360'%3E%3Cpath fill='none' stroke='%23000' stroke-width='5' stroke-linecap='round' d='M40 360C28 320 54 290 42 250 30 212 54 180 42 140 32 104 50 72 44 40 42 26 44 14 46 6'/%3E%3Cg fill-opacity='.9'%3E%3Cpath transform='translate(44 300) scale(1.1 1.1) rotate(8)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(46 232) scale(1.15 1.15) rotate(2)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(47 170) scale(1.05 1.05) rotate(6)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(45 112) scale(0.95 0.95) rotate(0)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(46 58) scale(0.8 0.8) rotate(4)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(36 330) scale(-1 1) rotate(6)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(38 268) scale(-1.2 1.2) rotate(0)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(38 200) scale(-1.1 1.1) rotate(8)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(38 140) scale(-1 1) rotate(2)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(40 86) scale(-0.9 0.9) rotate(6)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3Cpath transform='translate(43 34) scale(-0.7 0.7) rotate(0)' d='M0 0C10-6 24-22 26-40 16-32 4-18 0 0Z'/%3E%3C/g%3E%3C/svg%3E");
+  --ocean-grass: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='40' viewBox='0 0 64 40'%3E%3Cpath d='M8 40C6 28 8 16 2 4 11 14 13.6 28 12.6 40ZM18 40C18 26 22 12 30 0 27 14 25 28 24 40ZM30 40C31 30 36 20 44 14 39 22 37 31 36 40ZM42 40C43 28 50 16 60 8 53 18 49 30 48 40ZM50 40C52 34 56 28 62 24 58 30 56 35 55 40Z'/%3E%3C/svg%3E");
+  --ocean-crab-shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='30' viewBox='0 0 48 30'%3E%3Cg fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M14 20 6 24M14 23 7 29M34 20 42 24M34 23 41 29M15 17 5 18M33 17 43 18M19 11V5M29 11V5'/%3E%3C/g%3E%3Cpath d='M12 18C12 12 17 9 24 9 31 9 36 12 36 18 36 23 31 26 24 26 17 26 12 23 12 18ZM10 13C5 13 2 9 3 5 4 2 7 1 8 3 6 4 6 6 8 7 9 5 12 5 13 8 14 11 12 13 10 13ZM38 13C43 13 46 9 45 5 44 2 41 1 40 3 42 4 42 6 40 7 39 5 36 5 35 8 34 11 36 13 38 13Z'/%3E%3Ccircle cx='19' cy='4.6' r='1.8'/%3E%3Ccircle cx='29' cy='4.6' r='1.8'/%3E%3C/svg%3E");
+  --ocean-fluke: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='44' viewBox='0 0 64 44'%3E%3Cpath d='M25 44C26.4 36 28.6 28 29.4 21 22 22.4 10 18.4 2 7.4 1 5.8 2 4.6 3.8 5.2 14 8.8 24 9.8 32 13.4 40 9.8 50 8.8 60.2 5.2 62 4.6 63 5.8 62 7.4 54 18.4 42 22.4 34.6 21 35.4 28 37.6 36 39 44Z'/%3E%3C/svg%3E");
+  --ocean-hello: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='132' height='60' viewBox='0 0 132 60'%3E%3Cg transform='translate(58 14)'%3E%3Cpath fill-rule='evenodd' d='M62 20C60 13 52 7 42 6.2L38 1.6C34 .4 28 2 25 8.2 21 9.6 17.5 12.4 14.6 16L3 6.4C1.4 5.2 0 6.3.7 8.2L5.6 20 .7 31.8C0 33.7 1.4 34.8 3 33.6L14.6 24C17.5 27.6 21 30.4 25 31.8 27 36.6 30 39.2 33.4 38.8 35.6 38.5 36.4 36.6 35.6 33.9L42 33.8C52 33 60 27 62 20ZM53.5 15.2a2.3 2.3 0 1 0 .01 0Z'/%3E%3C/g%3E%3Cg fill='none' stroke='%23000' stroke-width='2'%3E%3Ccircle cx='40' cy='24' r='6'/%3E%3Ccircle cx='24' cy='12' r='4'/%3E%3Ccircle cx='12' cy='27' r='2.6'/%3E%3C/g%3E%3C/svg%3E");
+  --ocean-specks: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'%3E%3Ccircle cx='115' cy='133' r='0.7' fill-opacity='0.40'/%3E%3Ccircle cx='343' cy='406' r='0.7' fill-opacity='0.82'/%3E%3Ccircle cx='50' cy='103' r='1' fill-opacity='0.53'/%3E%3Ccircle cx='172' cy='170' r='1' fill-opacity='0.77'/%3E%3Ccircle cx='188' cy='230' r='1' fill-opacity='0.61'/%3E%3Ccircle cx='61' cy='352' r='1' fill-opacity='0.37'/%3E%3Ccircle cx='146' cy='60' r='1' fill-opacity='0.38'/%3E%3Ccircle cx='174' cy='444' r='1' fill-opacity='0.82'/%3E%3Ccircle cx='464' cy='23' r='0.7' fill-opacity='0.85'/%3E%3Ccircle cx='15' cy='103' r='1' fill-opacity='0.46'/%3E%3Ccircle cx='136' cy='418' r='1' fill-opacity='0.96'/%3E%3Ccircle cx='348' cy='74' r='0.7' fill-opacity='0.74'/%3E%3Ccircle cx='274' cy='198' r='0.7' fill-opacity='0.75'/%3E%3Ccircle cx='219' cy='23' r='1' fill-opacity='0.44'/%3E%3Ccircle cx='17' cy='332' r='0.7' fill-opacity='0.73'/%3E%3Ccircle cx='134' cy='478' r='0.7' fill-opacity='0.46'/%3E%3Ccircle cx='19' cy='248' r='0.7' fill-opacity='0.56'/%3E%3Ccircle cx='351' cy='246' r='0.7' fill-opacity='0.70'/%3E%3Ccircle cx='94' cy='297' r='0.7' fill-opacity='0.45'/%3E%3Ccircle cx='33' cy='335' r='1.5' fill-opacity='0.37'/%3E%3Ccircle cx='123' cy='177' r='1' fill-opacity='0.57'/%3E%3Ccircle cx='153' cy='468' r='1' fill-opacity='0.81'/%3E%3Ccircle cx='405' cy='16' r='1' fill-opacity='0.60'/%3E%3Ccircle cx='78' cy='185' r='1.5' fill-opacity='0.67'/%3E%3Ccircle cx='460' cy='295' r='1.5' fill-opacity='0.50'/%3E%3Ccircle cx='291' cy='218' r='0.7' fill-opacity='0.79'/%3E%3Ccircle cx='158' cy='113' r='1' fill-opacity='0.78'/%3E%3Ccircle cx='230' cy='294' r='1.5' fill-opacity='0.76'/%3E%3Ccircle cx='265' cy='47' r='1' fill-opacity='0.81'/%3E%3Ccircle cx='353' cy='86' r='0.7' fill-opacity='0.58'/%3E%3Ccircle cx='33' cy='0' r='0.7' fill-opacity='0.41'/%3E%3Ccircle cx='279' cy='442' r='0.7' fill-opacity='0.60'/%3E%3Ccircle cx='445' cy='201' r='1.5' fill-opacity='0.85'/%3E%3Ccircle cx='192' cy='72' r='1' fill-opacity='0.67'/%3E%3Ccircle cx='180' cy='69' r='0.7' fill-opacity='0.69'/%3E%3Ccircle cx='241' cy='198' r='1' fill-opacity='0.74'/%3E%3Ccircle cx='126' cy='238' r='0.7' fill-opacity='0.76'/%3E%3Ccircle cx='323' cy='340' r='1' fill-opacity='0.84'/%3E%3Ccircle cx='121' cy='41' r='1' fill-opacity='0.76'/%3E%3Ccircle cx='265' cy='148' r='1' fill-opacity='0.40'/%3E%3Ccircle cx='407' cy='67' r='1' fill-opacity='0.98'/%3E%3Ccircle cx='388' cy='46' r='1.5' fill-opacity='0.90'/%3E%3Ccircle cx='108' cy='195' r='0.7' fill-opacity='0.99'/%3E%3Ccircle cx='65' cy='243' r='0.7' fill-opacity='0.77'/%3E%3Ccircle cx='428' cy='287' r='0.7' fill-opacity='0.86'/%3E%3Ccircle cx='27' cy='4' r='1.5' fill-opacity='0.70'/%3E%3C/svg%3E");
+  --ocean-dust: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='340' viewBox='0 0 340 340'%3E%3Ccircle cx='84' cy='309' r='1' fill-opacity='0.83'/%3E%3Ccircle cx='242' cy='104' r='1' fill-opacity='0.49'/%3E%3Ccircle cx='89' cy='84' r='1.5' fill-opacity='0.74'/%3E%3Ccircle cx='321' cy='166' r='1' fill-opacity='0.37'/%3E%3Ccircle cx='51' cy='256' r='0.7' fill-opacity='0.58'/%3E%3Ccircle cx='193' cy='294' r='1' fill-opacity='0.56'/%3E%3Ccircle cx='142' cy='27' r='0.7' fill-opacity='0.91'/%3E%3Ccircle cx='319' cy='12' r='0.7' fill-opacity='0.69'/%3E%3Ccircle cx='104' cy='327' r='1' fill-opacity='0.60'/%3E%3Ccircle cx='153' cy='4' r='0.7' fill-opacity='0.88'/%3E%3Ccircle cx='159' cy='301' r='1' fill-opacity='0.97'/%3E%3Ccircle cx='203' cy='47' r='1' fill-opacity='0.97'/%3E%3Ccircle cx='317' cy='267' r='1' fill-opacity='0.41'/%3E%3Ccircle cx='124' cy='40' r='0.7' fill-opacity='0.70'/%3E%3Ccircle cx='139' cy='290' r='1.5' fill-opacity='0.48'/%3E%3Ccircle cx='315' cy='17' r='0.7' fill-opacity='0.97'/%3E%3Ccircle cx='300' cy='124' r='0.7' fill-opacity='0.64'/%3E%3Ccircle cx='223' cy='199' r='0.7' fill-opacity='0.88'/%3E%3Ccircle cx='183' cy='202' r='0.7' fill-opacity='0.57'/%3E%3Ccircle cx='150' cy='31' r='0.7' fill-opacity='0.95'/%3E%3Ccircle cx='331' cy='269' r='0.7' fill-opacity='0.78'/%3E%3Ccircle cx='114' cy='312' r='0.7' fill-opacity='0.98'/%3E%3Ccircle cx='260' cy='68' r='1.5' fill-opacity='0.46'/%3E%3Ccircle cx='163' cy='240' r='1.5' fill-opacity='0.69'/%3E%3Ccircle cx='100' cy='59' r='0.7' fill-opacity='0.83'/%3E%3Ccircle cx='131' cy='260' r='1' fill-opacity='0.92'/%3E%3Ccircle cx='316' cy='107' r='0.7' fill-opacity='0.40'/%3E%3Ccircle cx='170' cy='177' r='1' fill-opacity='0.51'/%3E%3Ccircle cx='172' cy='240' r='1' fill-opacity='0.39'/%3E%3Ccircle cx='27' cy='2' r='0.7' fill-opacity='0.74'/%3E%3Ccircle cx='38' cy='64' r='1' fill-opacity='0.72'/%3E%3Ccircle cx='139' cy='145' r='0.7' fill-opacity='0.38'/%3E%3Ccircle cx='62' cy='243' r='0.7' fill-opacity='0.96'/%3E%3Ccircle cx='97' cy='271' r='1.5' fill-opacity='0.89'/%3E%3C/svg%3E");
+  --ocean-swell: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='24' viewBox='0 0 160 24'%3E%3Cpath d='M0 0H160V9q-20 9-40 0t-40 0-40 0-40 0Z'/%3E%3C/svg%3E");
+  --ocean-ripple: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='6' viewBox='0 0 16 6'%3E%3Cpath fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' d='M-8 3q4-3.4 8 0t8 0 8 0 8 0'/%3E%3C/svg%3E");
+  --ocean-dunes: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='24' viewBox='0 0 480 24'%3E%3Cpath d='M0 24V12C24 12 52 5 92 6 136 7 150 15 196 15 240 15 262 7 300 8 344 9 356 16 398 15 432 14 452 12 480 12V24Z'/%3E%3C/svg%3E");
+  --ocean-reef-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='124' viewBox='0 0 280 124'%3E%3Cpath fill='%233aa3b5' d='M0 124C6 100 26 90 48 90 66 78 92 76 112 86 134 80 160 86 172 100 190 102 204 110 212 124Z'/%3E%3Cg transform='translate(196 96)'%3E%3Cpath fill='%23d05fa0' fill-opacity='.55' d='M0 0C-22-12-28-40-14-58 2-66 22-58 30-40 36-22 24-6 0 0Z'/%3E%3Cpath fill='none' stroke='%23b23d86' stroke-width='1.4' stroke-linecap='round' d='M0 0C-4-18-8-36-12-54M0 0C2-20 6-38 10-56M0 0C10-14 20-28 28-40M0 0C-10-12-18-24-24-38M-5-24-17-30M5-28 19-34M-8-40-18-44M8-44 20-48'/%3E%3C/g%3E%3Cg fill='none' stroke='%23f0734f' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath stroke-width='7' d='M74 96V66'/%3E%3Cpath stroke-width='6' d='M74 78 58 56M74 72 92 52'/%3E%3Cpath stroke-width='4.6' d='M58 56 50 38M58 56 64 36M92 52 88 32M92 52 104 38M74 66 76 44'/%3E%3C/g%3E%3Cg fill='%23ffd9c2'%3E%3Ccircle cx='50' cy='37' r='3'/%3E%3Ccircle cx='64' cy='35' r='3'/%3E%3Ccircle cx='88' cy='31' r='3'/%3E%3Ccircle cx='104' cy='37' r='3'/%3E%3Ccircle cx='76' cy='43' r='3'/%3E%3C/g%3E%3Cpath fill='%23f6a8a0' d='M104 100C104 82 115 72 130 72 145 72 156 82 156 100Z'/%3E%3Cpath fill='none' stroke='%23d9706c' stroke-width='1.6' stroke-linecap='round' d='M112 92C116 86 122 90 124 84 126 78 134 80 136 86 138 92 146 88 148 94M118 98C122 94 128 98 132 94 136 90 140 96 144 98M120 80C124 76 130 76 134 78'/%3E%3Cg fill='%23f5c04a'%3E%3Cpath d='M226 110V84a6 6 0 0 1 12 0V110ZM240 112V94a5 5 0 0 1 10 0V112ZM214 112V98a5 5 0 0 1 10 0V112Z'/%3E%3C/g%3E%3Cg fill='%23b9821a'%3E%3Cellipse cx='232' cy='84' rx='3.4' ry='1.8'/%3E%3Cellipse cx='245' cy='94' rx='2.8' ry='1.5'/%3E%3Cellipse cx='219' cy='98' rx='2.8' ry='1.5'/%3E%3C/g%3E%3Cpath fill='%23e9dcb6' d='M0 124C8 110 28 104 48 106 70 96 100 96 124 104 150 98 182 102 204 110 230 106 262 112 280 124Z'/%3E%3Cpath fill='%23f8efd4' d='M30 110C44 104 62 104 76 108 62 106 44 107 30 110ZM150 106C166 102 184 104 198 109 182 106 166 105 150 106Z'/%3E%3Cg fill='%232f9c7b'%3E%3Cpath d='M22 112C21 100 22 92 17 82 24 90 26 102 26 112ZM30 112C30 100 34 90 40 82 36 94 35 104 34 112ZM262 116C261 106 262 98 258 90 264 98 266 108 266 116ZM268 116C268 106 271 98 276 92 273 102 272 110 272 116Z'/%3E%3C/g%3E%3C/svg%3E");
+  --ocean-reef-night: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='124' viewBox='0 0 280 124'%3E%3Cpath fill='%2306202c' d='M0 124C6 100 26 90 48 90 66 78 92 76 112 86 134 80 160 86 172 100 190 102 204 110 212 124Z'/%3E%3Cg transform='translate(196 96)'%3E%3Cpath fill='%2317566a' fill-opacity='.6' d='M0 0C-22-12-28-40-14-58 2-66 22-58 30-40 36-22 24-6 0 0Z'/%3E%3Cpath fill='none' stroke='%2345e0c8' stroke-width='1.4' stroke-linecap='round' d='M0 0C-4-18-8-36-12-54M0 0C2-20 6-38 10-56M0 0C10-14 20-28 28-40M0 0C-10-12-18-24-24-38M-5-24-17-30M5-28 19-34M-8-40-18-44M8-44 20-48'/%3E%3C/g%3E%3Cg fill='none' stroke='%230f4252' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath stroke-width='7' d='M74 96V66'/%3E%3Cpath stroke-width='6' d='M74 78 58 56M74 72 92 52'/%3E%3Cpath stroke-width='4.6' d='M58 56 50 38M58 56 64 36M92 52 88 32M92 52 104 38M74 66 76 44'/%3E%3C/g%3E%3Cg fill='%23ffcf70'%3E%3Ccircle cx='50' cy='37' r='3'/%3E%3Ccircle cx='64' cy='35' r='3'/%3E%3Ccircle cx='88' cy='31' r='3'/%3E%3Ccircle cx='104' cy='37' r='3'/%3E%3Ccircle cx='76' cy='43' r='3'/%3E%3C/g%3E%3Cpath fill='%230c3442' d='M104 100C104 82 115 72 130 72 145 72 156 82 156 100Z'/%3E%3Cpath fill='none' stroke='%233bbfc0' stroke-width='1.6' stroke-linecap='round' d='M112 92C116 86 122 90 124 84 126 78 134 80 136 86 138 92 146 88 148 94M118 98C122 94 128 98 132 94 136 90 140 96 144 98M120 80C124 76 130 76 134 78'/%3E%3Cg fill='%23103e4e'%3E%3Cpath d='M226 110V84a6 6 0 0 1 12 0V110ZM240 112V94a5 5 0 0 1 10 0V112ZM214 112V98a5 5 0 0 1 10 0V112Z'/%3E%3C/g%3E%3Cg fill='%237fd6ff'%3E%3Cellipse cx='232' cy='84' rx='3.4' ry='1.8'/%3E%3Cellipse cx='245' cy='94' rx='2.8' ry='1.5'/%3E%3Cellipse cx='219' cy='98' rx='2.8' ry='1.5'/%3E%3C/g%3E%3Cpath fill='%2304161f' d='M0 124C8 110 28 104 48 106 70 96 100 96 124 104 150 98 182 102 204 110 230 106 262 112 280 124Z'/%3E%3Cpath fill='%230b2a38' d='M30 110C44 104 62 104 76 108 62 106 44 107 30 110ZM150 106C166 102 184 104 198 109 182 106 166 105 150 106Z'/%3E%3Cg fill='%230d3b45'%3E%3Cpath d='M22 112C21 100 22 92 17 82 24 90 26 102 26 112ZM30 112C30 100 34 90 40 82 36 94 35 104 34 112ZM262 116C261 106 262 98 258 90 264 98 266 108 266 116ZM268 116C268 106 271 98 276 92 273 102 272 110 272 116Z'/%3E%3C/g%3E%3C/svg%3E");
+  --ocean-shore-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='44' viewBox='0 0 300 44'%3E%3Cg transform='translate(46 29) rotate(-14)'%3E%3Cpath fill='%23f0734f' stroke='%23c9502f' stroke-width='1' stroke-linejoin='round' d='M0-9 2.4-3 8.6-2.8 3.8 1.2 5.3 7.3 0 3.9-5.3 7.3-3.8 1.2-8.6-2.8-2.4-3Z'/%3E%3Ccircle r='1.1' fill='%23ffd9c2'/%3E%3Cg fill='%23ffd9c2'%3E%3Ccircle cy='-5' r='.7'/%3E%3Ccircle cx='4.6' cy='-1.6' r='.7'/%3E%3Ccircle cx='2.8' cy='3.9' r='.7'/%3E%3Ccircle cx='-2.8' cy='3.9' r='.7'/%3E%3Ccircle cx='-4.6' cy='-1.6' r='.7'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(252 31)'%3E%3Cpath fill='%23fff8e6' stroke='%23c9a45e' stroke-width='1' stroke-linejoin='round' d='M-9 4C-11-4-5-10 0-10 5-10 11-4 9 4 6 6-6 6-9 4Z'/%3E%3Cpath fill='none' stroke='%23c9a45e' stroke-width='.9' stroke-linecap='round' d='M0 5V-9M-4 5-5.6-7.4M4 5 5.6-7.4M-7 4.4-8.6-3.4M7 4.4 8.6-3.4'/%3E%3C/g%3E%3Cg fill='%23d9c690'%3E%3Cellipse cx='98' cy='38' rx='3.4' ry='1.8'/%3E%3Cellipse cx='206' cy='36' rx='2.6' ry='1.4'/%3E%3Cellipse cx='20' cy='40' rx='2.2' ry='1.2'/%3E%3Cellipse cx='284' cy='40' rx='2.8' ry='1.4'/%3E%3C/g%3E%3C/svg%3E");
+  --ocean-shore-night: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='44' viewBox='0 0 300 44'%3E%3Cg transform='translate(46 29) rotate(-14)'%3E%3Cpath fill='%230f4252' stroke='%232b8c9a' stroke-width='1' stroke-linejoin='round' d='M0-9 2.4-3 8.6-2.8 3.8 1.2 5.3 7.3 0 3.9-5.3 7.3-3.8 1.2-8.6-2.8-2.4-3Z'/%3E%3Ccircle r='1.1' fill='%2345e0c8'/%3E%3Cg fill='%2345e0c8'%3E%3Ccircle cy='-5' r='.7'/%3E%3Ccircle cx='4.6' cy='-1.6' r='.7'/%3E%3Ccircle cx='2.8' cy='3.9' r='.7'/%3E%3Ccircle cx='-2.8' cy='3.9' r='.7'/%3E%3Ccircle cx='-4.6' cy='-1.6' r='.7'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(252 31)'%3E%3Cpath fill='%230c3442' stroke='%232b8c9a' stroke-width='1' stroke-linejoin='round' d='M-9 4C-11-4-5-10 0-10 5-10 11-4 9 4 6 6-6 6-9 4Z'/%3E%3Cpath fill='none' stroke='%232b8c9a' stroke-width='.9' stroke-linecap='round' d='M0 5V-9M-4 5-5.6-7.4M4 5 5.6-7.4M-7 4.4-8.6-3.4M7 4.4 8.6-3.4'/%3E%3C/g%3E%3Cg fill='%230b2c39'%3E%3Cellipse cx='98' cy='38' rx='3.4' ry='1.8'/%3E%3Cellipse cx='206' cy='36' rx='2.6' ry='1.4'/%3E%3Cellipse cx='20' cy='40' rx='2.2' ry='1.2'/%3E%3Cellipse cx='284' cy='40' rx='2.8' ry='1.4'/%3E%3C/g%3E%3C/svg%3E");
+  accent-color: var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-ocean]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #03121b; --panel: #08212e; --border: #1e5062;
+    --text: #bfdde6; --heading: #ecfbff; --muted: #6b97a6; --accent: #45e0c8;
+    --accent-soft: #0c3140; --chip: #0c3140; --code: #072634;
+    --green: #6df29b; --yellow: #ffd27a; --red: #ff7b72;
+    --purple: #c6a2ff; --cyan: #7cc8ff; --orange: #ffa071;
+    --focus: #ffcf70;
+    --ready-text: var(--green);
+    --blue-text: var(--accent);
+    --ocean-on-accent: var(--bg);
+    --ocean-lure: #ffcf70;
+    --ocean-zone: "Midnight zone";
+    --ocean-water: linear-gradient(180deg, #0b2c3c 0, #06202d 150px, #03131c 55%, #010a11 100%);
+    --ocean-veil: rgb(3 18 27 / .55);
+    --ocean-rule: rgb(124 200 255 / .16);
+    --ocean-beam: rgb(124 220 255 / .09); --ocean-beam-soft: rgb(124 220 255 / .05);
+    --ocean-mote: #9ff3ea; --ocean-mote-alpha: .55; --ocean-drift-way: normal;
+    --ocean-by-day: none; --ocean-by-night: block;
+    --ocean-surface: 0;
+    --ocean-kelp-tint: linear-gradient(to top, #04202b, #11495a);
+    --ocean-kelp-alpha: .95;
+    --ocean-reef-art: var(--ocean-reef-night);
+    --ocean-jelly-tint: linear-gradient(to bottom, rgb(159 243 234 / .9), rgb(124 200 255 / .35));
+    --ocean-halo: drop-shadow(0 0 6px rgb(69 224 200 / .6));
+    --ocean-crab: #12495a;
+    --ocean-floor-tint: linear-gradient(180deg, #0b2a38, #04161f);
+    --ocean-bubble-edge: rgb(159 243 234 / .7); --ocean-glint: rgb(236 251 255 / .9);
+    --ocean-edge: #1e5062;
+    --ocean-lift: 0 0 0 0 transparent;
+    --ocean-active-border: #2f9fa8; --ocean-active-bg: #0c2c3b;
+    --ocean-active-shadow: 0 0 0 1px rgb(69 224 200 / .14), 0 0 20px -6px rgb(69 224 200 / .7);
+    --ocean-lamp-on: 0 0 7px currentColor;
+    --ocean-lamp-alert: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent), 0 0 7px currentColor;
+    --ocean-well: #0b2a39;
+    --ocean-sand:
+      var(--ocean-shore-night) left top / 300px 44px no-repeat,
+      linear-gradient(180deg, #0c303e 0, #061e29 44px, #04161f 100%);
+    --ocean-ground: #061e29; --ocean-ground-rule: rgb(124 200 255 / .12);
+    --ocean-crest: #2b8c9a;
+    --ocean-crest-glow: inset 0 9px 12px -9px rgb(69 224 200 / .4), 0 -8px 20px -8px rgb(69 224 200 / .45);
+    --ocean-grass-tint: linear-gradient(to top, #0d3b45 10%, #45e0c8);
+    --ocean-heat-sea: var(--accent); --ocean-heat-foam: var(--green);
+  }
+}
+:root[data-ocean][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #03121b; --panel: #08212e; --border: #1e5062;
+  --text: #bfdde6; --heading: #ecfbff; --muted: #6b97a6; --accent: #45e0c8;
+  --accent-soft: #0c3140; --chip: #0c3140; --code: #072634;
+  --green: #6df29b; --yellow: #ffd27a; --red: #ff7b72;
+  --purple: #c6a2ff; --cyan: #7cc8ff; --orange: #ffa071;
+  --focus: #ffcf70;
+  --ready-text: var(--green);
+  --blue-text: var(--accent);
+  --ocean-on-accent: var(--bg);
+  --ocean-lure: #ffcf70;
+  --ocean-zone: "Midnight zone";
+  --ocean-water: linear-gradient(180deg, #0b2c3c 0, #06202d 150px, #03131c 55%, #010a11 100%);
+  --ocean-veil: rgb(3 18 27 / .55);
+  --ocean-rule: rgb(124 200 255 / .16);
+  --ocean-beam: rgb(124 220 255 / .09); --ocean-beam-soft: rgb(124 220 255 / .05);
+  --ocean-mote: #9ff3ea; --ocean-mote-alpha: .55; --ocean-drift-way: normal;
+  --ocean-by-day: none; --ocean-by-night: block;
+  --ocean-surface: 0;
+  --ocean-kelp-tint: linear-gradient(to top, #04202b, #11495a);
+  --ocean-kelp-alpha: .95;
+  --ocean-reef-art: var(--ocean-reef-night);
+  --ocean-jelly-tint: linear-gradient(to bottom, rgb(159 243 234 / .9), rgb(124 200 255 / .35));
+  --ocean-halo: drop-shadow(0 0 6px rgb(69 224 200 / .6));
+  --ocean-crab: #12495a;
+  --ocean-floor-tint: linear-gradient(180deg, #0b2a38, #04161f);
+  --ocean-bubble-edge: rgb(159 243 234 / .7); --ocean-glint: rgb(236 251 255 / .9);
+  --ocean-edge: #1e5062;
+  --ocean-lift: 0 0 0 0 transparent;
+  --ocean-active-border: #2f9fa8; --ocean-active-bg: #0c2c3b;
+  --ocean-active-shadow: 0 0 0 1px rgb(69 224 200 / .14), 0 0 20px -6px rgb(69 224 200 / .7);
+  --ocean-lamp-on: 0 0 7px currentColor;
+  --ocean-lamp-alert: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent), 0 0 7px currentColor;
+  --ocean-well: #0b2a39;
+  --ocean-sand:
+    var(--ocean-shore-night) left top / 300px 44px no-repeat,
+    linear-gradient(180deg, #0c303e 0, #061e29 44px, #04161f 100%);
+  --ocean-ground: #061e29; --ocean-ground-rule: rgb(124 200 255 / .12);
+  --ocean-crest: #2b8c9a;
+  --ocean-crest-glow: inset 0 9px 12px -9px rgb(69 224 200 / .4), 0 -8px 20px -8px rgb(69 224 200 / .45);
+  --ocean-grass-tint: linear-gradient(to top, #0d3b45 10%, #45e0c8);
+  --ocean-heat-sea: var(--accent); --ocean-heat-foam: var(--green);
+}
+
+:root[data-ocean] body { font-family: var(--ocean-font); }
+/* Only the shell has water behind it: a plan or a PR body reads on plain
+   --bg. The sidebar is a pane of sea glass over the same water. */
+:root[data-ocean] body:has(> #run-sidebar) { background-image: var(--ocean-water); }
+@media (min-width: 701px) {
+  :root[data-ocean] { --sidebar-bg: var(--ocean-veil); --sidebar-border-color: var(--ocean-rule); }
+  /* Collapsed, the sidebar is a 44px strip, and the scenery stands at its edge. */
+  :root[data-ocean][data-sidebar-collapsed] { --ocean-rail: 44px; }
+}
+@media (max-width: 700px) {
+  :root[data-ocean] { --ocean-rail: 0px; }
+}
+/* Only a run's page, project home and the empty state stand in open water.
+   Any other view in the main column, whichever package adds it, reads on
+   plain --bg, so nothing swims behind a page that was not laid out for it.
+   Under a run's header the same goes for everything but the Chat. */
+:root[data-ocean] main { background-color: var(--bg); }
+:root[data-ocean] main:has(> :is(#head, #new-view, #empty):not([hidden])) { background-color: transparent; }
+:root[data-ocean] main > :has(> #content) { background: var(--bg); }
+/* Form controls take the UA's font rather than inheriting it. Zero
+   specificity so any author font-family wins, which keeps code, diffs and
+   terminals monospace. */
+:where(:root[data-ocean]) :where(button, input, textarea, select) {
+  font-family: var(--ocean-font);
+}
+:root[data-ocean] :is(h1, h2, h3) { font-family: var(--ocean-font); letter-spacing: .005em; }
+:root[data-ocean] ::selection {
+  background: color-mix(in srgb, var(--accent) 30%, var(--panel));
+  color: var(--heading);
+}
+:root[data-ocean] :is(:hover, :focus-within) { scrollbar-color: var(--border) transparent; }
+:root[data-ocean] :is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: var(--border); }
+
+/* Two bubbles rise from behind the 26px Gary at the logo's left edge. They
+   paint under the picture, so neither one crosses his face or ear. Under the
+   word, the depth gauge names the zone. */
+:root[data-ocean] #logo { isolation: isolate; gap: 9px; }
+:root[data-ocean] #logo::before,
+:root[data-ocean] #logo::after {
+  content: ""; position: absolute; z-index: -1; border-radius: 50%; pointer-events: none;
+  border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+:root[data-ocean] #logo::before { top: -5px; left: 19px; width: 7px; height: 7px; animation: ocean-logo-bubble 2.8s ease-in infinite; }
+:root[data-ocean] #logo::after { top: -12px; left: 13px; width: 5px; height: 5px; animation: ocean-logo-bubble 2.8s ease-in -1.4s infinite; }
+:root[data-ocean] .logo-word { font: 700 13.5px/1.1 var(--ocean-font); letter-spacing: .02em; white-space: nowrap; }
+:root[data-ocean] .logo-slash { color: var(--ocean-lure); }
+:root[data-ocean] .logo-word::after {
+  content: var(--ocean-zone); content: var(--ocean-zone) / "";
+  display: block; margin-top: 3px; white-space: nowrap;
+  font: 500 9.5px/1 var(--ocean-font); letter-spacing: .09em; text-transform: uppercase; color: var(--muted-strong);
+}
+@media (min-width: 701px) {
+  :root[data-ocean] .link-switch { max-width: 5.5rem; }
+}
+
+/* Each run is a card afloat in the sidebar's water. */
+:root[data-ocean] #list .run:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--ocean-edge)); }
+/* The open run catches the light: a brighter card with a sheen in its corner. */
+:root[data-ocean] #list .run.active {
+  background:
+    radial-gradient(130% 100% at 0 0, color-mix(in srgb, var(--accent) 15%, transparent), transparent 62%),
+    var(--ocean-active-bg);
+  box-shadow: var(--ocean-active-shadow);
+}
+/* The branch lines of nested runs cross the gap the cards now leave. */
+:root[data-ocean] #list .run.fork-child { margin-left: 30px; }
+:root[data-ocean] #list .run.fork-child::before { top: -7px; left: -14px; }
+:root[data-ocean] #list .run.fork-child:not(.fork-last)::after { top: -7px; bottom: -7px; left: -14px; }
+:root[data-ocean] .run-project { font-weight: 600; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+:root[data-ocean] .run .name { font-weight: 600; }
+/* The lamp is a bubble inside the title's own line, because nested runs
+   already draw their branch on the card's two pseudo-elements. */
+:root[data-ocean] .run .name::before {
+  content: ""; display: inline-block; box-sizing: border-box; width: 10px; height: 10px; margin: 0 8px -1px 3px;
+  border: 1.5px solid currentColor; border-radius: 50%; color: var(--muted);
+  background: radial-gradient(circle at 34% 30%, var(--ocean-glint) 0 15%, color-mix(in srgb, currentColor 46%, transparent) 17% 100%);
+}
+:root[data-ocean] .run:has(.state-working) .name::before { color: var(--accent); box-shadow: var(--ocean-lamp-on); }
+:root[data-ocean] .run:has(.state-reviewing, .state-done) .name::before { color: var(--purple); box-shadow: var(--ocean-lamp-on); }
+:root[data-ocean] .run:has(.state-ready) .name::before { color: var(--green); box-shadow: var(--ocean-lamp-on); }
+:root[data-ocean] .run:has(.state-started, .state-waiting) .name::before { color: var(--orange); box-shadow: var(--ocean-lamp-on); }
+:root[data-ocean] .run:has(.state-cancelled) .name::before { color: var(--red); box-shadow: var(--ocean-lamp-on); }
+:root[data-ocean] .run:has(.state-blocked) .name::before { color: var(--ocean-lure); box-shadow: var(--ocean-lamp-alert); }
+:root[data-ocean] .run[data-unread] .name::before { color: var(--ocean-lure); box-shadow: var(--ocean-lamp-alert); }
+:root[data-ocean] #list .run[data-unread]:not(.active) { border-color: var(--ocean-lure); }
+/* The bubble says a session is live by bobbing, so the row's own dot goes. */
+:root[data-ocean] .run .session-status.running { display: none; }
+:root[data-ocean] .run:has(.session-status.running) .name::before { animation: ocean-lamp 2.2s ease-in-out infinite; }
+
+/* The Settled shelf is the seabed, closed and open: finished runs sink to it,
+   and the usage meters, the radio and the footer stand on it. The shell's
+   --settled-shelf-* tokens raise it into one low dune, higher on the left,
+   and by night light its crest. */
+:root[data-ocean] {
+  --settled-shelf-radius: 58% 42% 0 0 / 22px 14px 0 0;
+  --settled-shelf-border-width: 1.5px 0 0;
+  --settled-shelf-border-color: var(--ocean-crest);
+  --settled-shelf-bg: var(--ocean-sand);
+  --settled-shelf-shadow: var(--ocean-crest-glow);
+  --settled-head-justify: center;
+}
+/* The label sits under the dune's crest, clear of the starfish and the shell. */
+:root[data-ocean] #list > .settled-heading { padding-top: 14px; }
+:root[data-ocean] .settled-drawer .settled-heading { padding-top: 14px; border-bottom-color: var(--ocean-ground-rule); }
+/* Seagrass grows on the face of the dune at either end and leans with the
+   swell. Each tuft keeps inside the shelf's own box, which the run list ends
+   above, so no blade crosses a run. */
+:root[data-ocean] .settled-heading::before,
+:root[data-ocean] .settled-heading::after {
+  content: ""; position: absolute; top: 4px; pointer-events: none;
+  background: var(--ocean-grass-tint);
+  -webkit-mask: var(--ocean-grass) center bottom / contain no-repeat;
+  mask: var(--ocean-grass) center bottom / contain no-repeat;
+  transform-origin: 50% 100%;
+  animation: ocean-lean 5.2s ease-in-out infinite alternate;
+}
+:root[data-ocean] .settled-heading::before { left: 3px; width: 34px; height: 21px; }
+:root[data-ocean] .settled-heading::after { right: 4px; width: 28px; height: 18px; scale: -1 1; animation-delay: -2.1s; }
+:root[data-ocean] :is(#sidebar-usage, #radio-now, #sidebar-footer) {
+  background: var(--ocean-ground);
+  border-top-color: var(--ocean-ground-rule);
+}
+
+/* The run's header and tab bar print straight onto the water under the
+   surface. The open tab rides a ripple instead of a pill. */
+:root[data-ocean] #tabbar { border-bottom-color: var(--ocean-rule); }
+:root[data-ocean] #head h2 { font-weight: 700; }
+:root[data-ocean] #tabs button { padding: 9px 12px 12px; font-weight: 500; }
+:root[data-ocean] #tabs button.active { color: var(--heading); font-weight: 600; }
+:root[data-ocean] #tabs .tab-indicator {
+  top: auto; bottom: 2px; height: 6px;
+  border: 0; border-radius: 0; background: var(--accent);
+  -webkit-mask: var(--ocean-ripple) left center / 16px 6px repeat-x;
+  mask: var(--ocean-ripple) left center / 16px 6px repeat-x;
+}
+
+/* The transcript and its composer share one opaque sheet, with open water in
+   the margins either side. 982px is the 832px lane plus the room the shell
+   keeps for message times, so the lane stays centred in the sheet. The sheet
+   is drawn on the transcript and the composer themselves, each one end of it:
+   a layer behind them would need .chat to be a stacking context, and that
+   would trap the composer under a click's bubbles. */
+:root[data-ocean] main > :has(> #content > .chat) { background: none; }
+:root[data-ocean] #content:has(> .chat) { background: none; }
+:root[data-ocean] .chat { background: none; }
+@media not all and (max-width: 700px) {
+  :root[data-ocean] .chat { --chat-pane: min(100cqw - 30px, 982px); }
+  :root[data-ocean] .chat > :is(.chat-body, .chat-reviews, .chat-composer) {
+    border-inline: 1px solid var(--ocean-edge);
+    background: var(--panel);
+  }
+  :root[data-ocean] .chat > .chat-body {
+    margin-top: 12px;
+    border-top: 1px solid var(--ocean-edge);
+    border-radius: var(--ocean-radius) var(--ocean-radius) 0 0;
+  }
+  :root[data-ocean] .chat > .chat-composer {
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--ocean-edge);
+    border-radius: 0 0 var(--ocean-radius) var(--ocean-radius);
+  }
+}
+@media (max-width: 700px) {
+  :root[data-ocean] .chat { background: var(--panel); }
+}
+/* What you said is a bubble, with its tail towards you. */
+:root[data-ocean] .chat-bubble {
+  border: 1px solid var(--ocean-edge);
+  border-radius: var(--ocean-radius) var(--ocean-radius) 4px var(--ocean-radius);
+}
+:root[data-ocean] .chat-md :not(pre) > code { border: 1px solid var(--ocean-edge); border-radius: 6px; color: var(--heading); }
+:root[data-ocean] .chat-md th { background: var(--chip); }
+/* The composer is a shade off the sheet it sits in, and the beam's cover is
+   painted to match. */
+:root[data-ocean] .chat .newconv-prompt { background: var(--ocean-well); }
+:root[data-ocean] .chat .nc-beam::after { background: linear-gradient(var(--ocean-well) 0 0) padding-box; }
+
+/* Controls whose own cursor already says drag, busy or unavailable keep it,
+   and text entry keeps the native I-beam. The arrow is a fin; the pointing
+   hand wears a diver's glove with a coral cuff, its hotspot the fingertip. */
+:root[data-ocean], :root[data-ocean] body {
+  --orc-cursor-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cg transform='translate(0 .5)'%3E%3Cg fill='none' stroke='%23fff' stroke-opacity='.9' stroke-width='3.6' stroke-linejoin='round'%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5'/%3E%3C/g%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z' fill='%234fd8e8' stroke='%2305263a' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M14.5 13.5v3M19 14.25v2.75M23.5 15.25v2.5' fill='none' stroke='%2305263a' stroke-width='1.1' stroke-linecap='round' stroke-opacity='.55'/%3E%3Ccircle cx='12' cy='6' r='1.1' fill='%23fff'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5' fill='%23ff7a59' stroke='%2305263a' stroke-width='1.5'/%3E%3Cpath d='M14 27c1.2-1 2.4-1 3.6 0s2.4 1 3.6 0' fill='none' stroke='%23fff' stroke-width='1.2' stroke-linecap='round'/%3E%3C/g%3E%3C/svg%3E") 12 2, pointer;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M4 3v19l5-5 4 9 4-2-4-9h7z' fill='%234fd8e8' stroke='%2305263a' stroke-width='1.6' stroke-linejoin='round'/%3E%3Ccircle cx='9' cy='11' r='1.4' fill='%23fff'/%3E%3C/svg%3E") 4 3, auto;
+}
+:root[data-ocean] :where(a[href], button, summary, label, select, [role="button"], [role="tab"], [role="option"], [role="menuitem"], orc-button, orc-icon-button, orc-theme-toggle):not(:disabled, [disabled], [aria-disabled="true"], [aria-busy="true"], .is-busy, [draggable="true"]) {
+  cursor: var(--orc-cursor-pointer);
+}
+:root[data-ocean] :where(input:not([type="checkbox"], [type="radio"], [type="range"]), textarea, [contenteditable="true"], orc-input):not(:disabled, [disabled]) {
+  cursor: text;
+}
+
+/* Design-system primary buttons fill with --orc-green; inside ocean mode they
+   take the water's own colour instead. Scoped to the button host so status
+   chips keep their green. */
+:root[data-ocean] orc-button:is(:not([variant]), [variant="primary"]) {
+  --orc-green: var(--accent);
+  --orc-button-text: var(--ocean-on-accent);
+}
+
+/* The gate pages pin these copy buttons to the swamp's day blue by hex rather
+   than by token, so they are named here. A finished #copy-answers keeps its
+   green. */
+:root[data-ocean] body :is(#orc-copy, #copy-answers:not(.done)) {
+  background: var(--accent);
+  color: var(--ocean-on-accent);
+}
+:root[data-ocean] body :is(#orc-copy, #copy-answers:not(.done)):not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--heading));
+}
+
+/* With no run open, a card afloat with one fish and the bubbles it left. */
+:root[data-ocean] #empty {
+  padding: 22px 30px; border: 1px solid var(--ocean-edge); border-radius: var(--ocean-radius);
+  background: var(--panel); box-shadow: var(--ocean-lift); text-align: center;
+}
+:root[data-ocean] #empty::before {
+  content: ""; display: block; width: 132px; height: 60px; margin: 0 auto 12px;
+  background: linear-gradient(120deg, var(--cyan), var(--accent));
+  -webkit-mask: var(--ocean-hello) center / contain no-repeat;
+  mask: var(--ocean-hello) center / contain no-repeat;
+}
+/* Decorative text below uses the `content: "…" / ""` alternative so screen
+   readers skip it; the first declaration is the fallback for engines that
+   drop the second. */
+:root[data-ocean] #cmdk-layout::before {
+  content: "🐠  Ocean · dive log  🫧"; content: "🐠  Ocean · dive log  🫧" / "";
+  padding: 0 14px;
+  font: 600 12px var(--ocean-font); letter-spacing: .12em; text-transform: uppercase; color: var(--heading);
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(90deg, var(--accent-soft), color-mix(in srgb, var(--cyan) 18%, var(--panel)), var(--accent-soft));
+}
+:root[data-ocean] #cmdk-footer::after { content: " · blub blub 🫧"; content: " · blub blub 🫧" / ""; }
+
+/* The scenery lies below zero, so it is behind every panel on the page: the
+   water shows only where the chrome lets it, round the cards, either side of
+   the transcript and across project home. A click's bubbles are feedback for
+   the click, so they rise over the page from #ocean-sea. */
+#ocean-deep, #ocean-sea {
+  position: fixed; inset: 0; overflow: hidden; pointer-events: none;
+}
+#ocean-deep { z-index: -1; }
+#ocean-sea { z-index: 0; }
+.ocean-piece { position: absolute; }
+.ocean-day { display: var(--ocean-by-day); }
+.ocean-night { display: var(--ocean-by-night); }
+/* The rays turn a degree or two about the sun they come from, and thin out
+   with depth. They are soft, so each fan is drawn at a third of its size and
+   scaled up about the sun: a full-size layer would cost nine times the
+   memory. Scaled, it spans the window's width and a little more, and its top
+   seven eighths. */
+.ocean-ray {
+  left: 12.16%; top: -17.6%; width: 44%; height: 29.33%;
+  background: var(--ocean-rays);
+  -webkit-mask: linear-gradient(to bottom, #000 0, rgb(0 0 0 / .55) 45%, transparent 100%);
+  mask: linear-gradient(to bottom, #000 0, rgb(0 0 0 / .55) 45%, transparent 100%);
+  transform-origin: 32% -30%; scale: 3;
+  animation: ocean-ray var(--dur) ease-in-out var(--delay) infinite alternate;
+}
+/* One tile taller than the window, and moved by one tile, so the drift loops
+   without a seam. Drawn at half size and scaled up, for a quarter of the
+   memory. */
+.ocean-motes {
+  left: 0; top: calc(-1 * var(--tile)); width: 50%; height: calc((100% + var(--tile)) / 2);
+  background: var(--ocean-mote); opacity: var(--ocean-mote-alpha);
+  transform-origin: 0 0; scale: 2;
+  animation: ocean-drift var(--dur) linear infinite var(--ocean-drift-way);
+}
+.ocean-specks { -webkit-mask: var(--ocean-specks) 0 0 / calc(var(--tile) / 2) calc(var(--tile) / 2); mask: var(--ocean-specks) 0 0 / calc(var(--tile) / 2) calc(var(--tile) / 2); }
+.ocean-dust { -webkit-mask: var(--ocean-dust) 0 0 / calc(var(--tile) / 2) calc(var(--tile) / 2); mask: var(--ocean-dust) 0 0 / calc(var(--tile) / 2) calc(var(--tile) / 2); }
+/* Seen from below, the surface is a bright edge rolling along the top of the
+   window. One extra tile lets each strip loop without showing its end. */
+.ocean-surface {
+  top: 0; left: -160px; right: 0; height: var(--h);
+  background: #ffffff; opacity: calc(var(--ocean-surface) * var(--alpha));
+  -webkit-mask: var(--ocean-swell) 0 0 / 160px 100% repeat-x;
+  mask: var(--ocean-swell) 0 0 / 160px 100% repeat-x;
+  animation: ocean-roll var(--dur) linear infinite var(--way, normal);
+}
+/* Kelp roots along the bottom edge either side of the page and sways from
+   the root. */
+.ocean-kelp {
+  left: var(--x); bottom: -8px; width: var(--w); height: calc(var(--w) * 4.5);
+  background: var(--ocean-kelp-tint); opacity: var(--ocean-kelp-alpha);
+  -webkit-mask: var(--ocean-kelp) center bottom / contain no-repeat;
+  mask: var(--ocean-kelp) center bottom / contain no-repeat;
+  transform-origin: 50% 100%;
+  animation: ocean-lean var(--dur) ease-in-out var(--delay) infinite alternate;
+}
+.ocean-reef {
+  left: var(--x); bottom: -4px; width: 280px; height: 124px; scale: var(--dir, 1) 1;
+  background: var(--ocean-reef-art) center bottom / contain no-repeat;
+}
+/* Every swimmer is drawn facing right, so one heading left (--dir: -1) is
+   mirrored. Without motion each rests at its own --x. */
+.ocean-swimmer {
+  left: 0; top: calc(190px + (100vh - 320px) * var(--lane)); width: var(--w); height: var(--h);
+  translate: var(--x) 0; scale: var(--dir) 1; filter: var(--ocean-halo);
+  animation: ocean-cross var(--dur) linear var(--delay) infinite,
+    ocean-bob 3.6s ease-in-out var(--delay) infinite alternate;
+}
+.ocean-swimmer::before {
+  content: ""; position: absolute; inset: 0; background: var(--ocean-tint);
+  -webkit-mask: var(--ocean-shape) center / contain no-repeat;
+  mask: var(--ocean-shape) center / contain no-repeat;
+}
+.ocean-fish { --ocean-shape: var(--ocean-fish); }
+.ocean-angel { --ocean-shape: var(--ocean-angel); }
+.ocean-turtle { --ocean-shape: var(--ocean-turtle); }
+.ocean-angler { --ocean-shape: var(--ocean-angler); }
+.ocean-whale { --ocean-shape: var(--ocean-whale); filter: none; }
+/* A school is its fish, each laid on the school's box by frontend.js, so the
+   pointer parts them one at a time. */
+.ocean-school::before { display: none; }
+.ocean-minnow {
+  position: absolute; left: var(--x); top: var(--y); width: var(--w); height: var(--h);
+  background: var(--ocean-tint);
+  -webkit-mask: var(--ocean-minnow) center / contain no-repeat;
+  mask: var(--ocean-minnow) center / contain no-repeat;
+}
+.ocean-coral { --ocean-tint: linear-gradient(160deg, #ff9a62, #e8546a); }
+.ocean-sunny { --ocean-tint: linear-gradient(160deg, #ffd45e, #f59b2f); }
+.ocean-lagoon { --ocean-tint: linear-gradient(160deg, #2f8fd0, #1b5fa8); }
+.ocean-shell { --ocean-tint: linear-gradient(160deg, #3f9a84, #1d6e63); }
+.ocean-violet { --ocean-tint: linear-gradient(160deg, #a184e6, #6444b8); }
+.ocean-shade { --ocean-tint: linear-gradient(160deg, #1b7286, #0e4658); }
+.ocean-lantern { --ocean-tint: linear-gradient(160deg, #b7fff3, #45e0c8); }
+.ocean-far { --ocean-tint: linear-gradient(180deg, #0c3442, #072431); }
+/* The lure hangs off the end of the anglerfish's rod. */
+.ocean-angler::after {
+  content: ""; position: absolute; left: 81%; top: 4%; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ocean-lure);
+  box-shadow: 0 0 9px 3px color-mix(in srgb, var(--ocean-lure) 70%, transparent), 0 0 26px 9px color-mix(in srgb, var(--ocean-lure) 30%, transparent);
+  animation: ocean-glow 2.6s ease-in-out infinite alternate;
+}
+/* A jellyfish rises through the open water and is gone before the header. */
+.ocean-jelly {
+  left: var(--x); top: 0; width: var(--w); height: calc(var(--w) * 1.6); filter: var(--ocean-halo);
+  translate: 0 var(--y);
+  animation: ocean-rise var(--dur) linear var(--delay) infinite,
+    ocean-pulse 3.8s ease-in-out var(--delay) infinite;
+}
+.ocean-jelly::before {
+  content: ""; position: absolute; inset: 0; background: var(--ocean-jelly-tint);
+  -webkit-mask: var(--ocean-jelly) center / contain no-repeat;
+  mask: var(--ocean-jelly) center / contain no-repeat;
+}
+/* Bubbles climb from a vent on the seabed. */
+.ocean-fizz {
+  left: var(--x); top: 0; box-sizing: border-box; width: var(--size); height: var(--size); border-radius: 50%;
+  border: 1px solid var(--ocean-bubble-edge);
+  background: radial-gradient(circle, transparent 46%, color-mix(in srgb, var(--ocean-bubble-edge) 50%, transparent) 100%);
+  translate: 0 var(--y);
+  animation: ocean-fizz var(--dur) linear var(--delay) infinite,
+    ocean-sway 3.1s ease-in-out var(--delay) infinite alternate;
+}
+/* A low bed of sand runs under everything, so the transcript's sheet stands
+   on the seabed instead of hanging over it. */
+.ocean-floor {
+  left: 0; right: 0; bottom: 0; height: 24px; background: var(--ocean-floor-tint);
+  -webkit-mask: var(--ocean-dunes) left bottom / 480px 24px repeat-x;
+  mask: var(--ocean-dunes) left bottom / 480px 24px repeat-x;
+}
+.ocean-crab {
+  left: var(--x); bottom: 6px; width: 34px; height: 21px;
+  animation: ocean-scuttle 24s ease-in-out -7s infinite alternate,
+    ocean-wobble .5s ease-in-out infinite alternate;
+}
+.ocean-crab::before {
+  content: ""; position: absolute; inset: 0; background: var(--ocean-crab);
+  -webkit-mask: var(--ocean-crab-shape) center / contain no-repeat;
+  mask: var(--ocean-crab-shape) center / contain no-repeat;
+}
+/* A creature gives way to the pointer for as long as it is pushed, and
+   drifts back when it is let go. frontend.js works out how far on every
+   frame. A creature's box already carries its swim, so the push moves the
+   drawing inside it. The anglerfish's lure is a second drawing and goes
+   along. */
+.ocean-swimmer::before, .ocean-angler::after, .ocean-minnow, .ocean-jelly::before, .ocean-crab::before {
+  translate: var(--push-x, 0px) var(--push-y, 0px); rotate: var(--push-turn, 0deg);
+}
+/* A jellyfish is soft: it leans from its bell, stretches as it springs off
+   and lights up the further it is pushed. When the pointer first finds it,
+   it is booped, and a ring spreads from where it was. */
+.ocean-jelly::before {
+  transform-origin: 50% 20%;
+  scale: calc(1 - var(--push-stretch, 0) * .8) calc(1 + var(--push-stretch, 0));
+  filter: brightness(calc(1 + var(--push-glow, 0) * .35)) saturate(calc(1 + var(--push-glow, 0) * .6));
+}
+.ocean-jelly.ocean-booped::after {
+  content: ""; position: absolute; left: 0; top: -12.5%; box-sizing: border-box; width: 100%; aspect-ratio: 1;
+  border-radius: 50%; border: 1.5px solid var(--ocean-bubble-edge);
+  animation: ocean-ring .9s ease-out both;
+}
+
+/* A click's bubbles. animation-fill-mode both, because --delay is a small
+   positive stagger and a bubble would otherwise flash at full size before it
+   starts. */
+.ocean-bubble {
+  position: fixed; left: var(--px); top: var(--py); box-sizing: border-box;
+  width: var(--size, 12px); height: var(--size, 12px); border-radius: 50%;
+  border: 1.5px solid var(--ocean-bubble-edge);
+  background:
+    radial-gradient(circle at 30% 26%, var(--ocean-glint) 0 9%, transparent 22%),
+    radial-gradient(circle, color-mix(in srgb, var(--accent) 10%, transparent) 46%, color-mix(in srgb, var(--accent) 38%, transparent) 100%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  translate: -50% -50%;
+  animation: ocean-pop 1.05s ease-out var(--delay, 0s) both;
+}
+/* A held press's trail: smaller and shorter-lived, so a long drag stays
+   under frontend.js's cap. */
+.ocean-bubble.ocean-trail { width: 7px; height: 7px; animation-duration: .6s; }
+
+/* The composers rise over a click's bubbles, so nothing shows under what you
+   type. Project home's composer sits inside its view's own layer, so the
+   whole view rises there. Composer textareas stay out: the pickers in the
+   composer's footer open over them. */
+:root[data-ocean] :is(#new-view, .newconv-prompt) { z-index: 1; }
+:root[data-ocean] textarea:not(.newconv-prompt textarea) { position: relative; z-index: 1; }
+/* The side panel rises too, so no bubble crosses a PR body. On a phone the
+   panel is already a sheet over everything. */
+@media not all and (max-width: 900px) {
+  :root[data-ocean] #run-diff { z-index: 1; }
+}
+/* Project home's fireflies are plankton here, and its mist is gone. */
+:root[data-ocean] {
+  --nc-firefly-gold: var(--ocean-mote); --nc-firefly-lime: var(--ocean-mote);
+  --nc-firefly-halo-gold: none; --nc-firefly-halo-lime: none;
+  --nc-mist-alpha-low: 0; --nc-mist-alpha-high: 0;
+}
+
+@keyframes ocean-logo-bubble {
+  0% { translate: 0 10px; opacity: 0; }
+  25% { opacity: 1; }
+  100% { translate: 3px -10px; opacity: 0; }
+}
+@keyframes ocean-lamp {
+  50% { translate: 0 -1.5px; opacity: .55; }
+}
+@keyframes ocean-lean {
+  from { transform: rotate(-3deg) skewX(3deg); }
+  to { transform: rotate(3deg) skewX(-3deg); }
+}
+@keyframes ocean-ray {
+  from { transform: rotate(-1.6deg); opacity: .62; }
+  to { transform: rotate(1.6deg); opacity: 1; }
+}
+@keyframes ocean-drift {
+  to { translate: 0 var(--tile); }
+}
+@keyframes ocean-roll {
+  to { translate: 160px 0; }
+}
+@keyframes ocean-cross {
+  from { translate: calc(50vw - var(--w) / 2 - var(--dir) * (50vw + var(--w) / 2 + 12px)) 0; }
+  to { translate: calc(50vw - var(--w) / 2 + var(--dir) * (50vw + var(--w) / 2 + 12px)) 0; }
+}
+@keyframes ocean-bob {
+  from { transform: translateY(calc(var(--bob, 8px) * -1)); }
+  to { transform: translateY(var(--bob, 8px)); }
+}
+@keyframes ocean-rise {
+  0% { translate: 0 104vh; opacity: 0; }
+  10%, 76% { opacity: 1; }
+  100% { translate: 0 170px; opacity: 0; }
+}
+@keyframes ocean-pulse {
+  0%, 100% { transform: scale(1, 1); }
+  45% { transform: scale(1.08, .9); }
+}
+@keyframes ocean-fizz {
+  0% { translate: 0 101vh; opacity: 0; }
+  8% { opacity: .9; }
+  80% { opacity: .75; }
+  100% { translate: 0 180px; scale: 1.5; opacity: 0; }
+}
+@keyframes ocean-sway {
+  from { transform: translateX(calc(var(--sway, 9px) * -1)); }
+  to { transform: translateX(var(--sway, 9px)); }
+}
+@keyframes ocean-scuttle {
+  from { translate: 0 0; }
+  to { translate: var(--walk, 80px) 0; }
+}
+@keyframes ocean-wobble {
+  from { transform: rotate(-6deg); }
+  to { transform: rotate(6deg); }
+}
+@keyframes ocean-glow {
+  from { opacity: .55; scale: .85; }
+  to { opacity: 1; scale: 1.1; }
+}
+@keyframes ocean-ring {
+  from { scale: .5; opacity: .8; }
+  to { scale: 2.2; opacity: 0; }
+}
+@keyframes ocean-pop {
+  0% { transform: translate(0, 0) scale(.5); opacity: 0; }
+  12% { opacity: .95; }
+  35% { transform: translate(calc(var(--dx, 0px) * -.4), calc(var(--dy, -80px) * .35)) scale(.85); }
+  65% { transform: translate(calc(var(--dx, 0px) * .8), calc(var(--dy, -80px) * .7)) scale(1.05); opacity: .9; }
+  85% { transform: translate(var(--dx, 0px), calc(var(--dy, -80px) * .92)) scale(1.25); opacity: .85; }
+  100% { transform: translate(var(--dx, 0px), var(--dy, -80px)) scale(1.7); opacity: 0; }
+}
+@media (max-width: 640px) {
+  .ocean-swimmer:nth-of-type(2n), .ocean-kelp:nth-of-type(2n), .ocean-crab, .ocean-reef { display: none; }
+}
+@media (forced-colors: active), print {
+  #ocean-deep, #ocean-sea { display: none; }
+  :root[data-ocean] body:has(> #run-sidebar) { background-image: none; }
+  :root[data-ocean] .settled-heading::before, :root[data-ocean] .settled-heading::after { display: none; }
+}
+
+/* Typing effects, drawn by frontend.js's oceanTyping into the shell's typing
+   layer. Each piece runs one animation and leaves when it ends. Motion moves
+   the translate property, so the static transform that shapes a piece turns
+   it in place rather than turning its path. */
+.ocean-typed-drop {
+  width: 7px; height: 7px; border-radius: 50% 0 50% 50%; transform: rotate(-45deg);
+  background: radial-gradient(circle at 60% 40%, color-mix(in srgb, var(--panel) 85%, transparent) 0 18%, transparent 30%), var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--panel) 60%, transparent);
+  animation: ocean-typed-leap .72s linear var(--delay, 0s) both;
+}
+.ocean-typed-ripple {
+  width: 12px; height: 5px; border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  animation: ocean-typed-ripple .75s ease-out both;
+}
+.ocean-typed-bubble {
+  width: var(--size, 10px); height: var(--size, 10px); border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  background: radial-gradient(circle at 32% 30%, var(--panel) 0 16%, color-mix(in srgb, var(--cyan) 18%, transparent) 42%, transparent 70%);
+  animation: ocean-typed-rise 1.4s ease-out both;
+}
+.ocean-typed-pop {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 1.5px dashed var(--accent);
+  animation: ocean-typed-pop .45s ease-out both;
+}
+.ocean-typed-plip {
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted);
+  animation: ocean-typed-float .85s ease-out both;
+}
+/* A paste sends a fish along the top of the composer. */
+.ocean-typed-fish {
+  width: 30px; height: 19px; background: linear-gradient(160deg, var(--ocean-lure), var(--accent));
+  -webkit-mask: var(--ocean-fish) center / contain no-repeat;
+  mask: var(--ocean-fish) center / contain no-repeat;
+  animation: ocean-typed-swim 1.7s ease-in-out both;
+}
+/* Every twentieth edit a whale sounds: its tail comes up and goes under. */
+.ocean-typed-whale {
+  width: 38px; height: 26px; background: linear-gradient(180deg, var(--accent), var(--cyan));
+  -webkit-mask: var(--ocean-fluke) center / contain no-repeat;
+  mask: var(--ocean-fluke) center / contain no-repeat;
+  animation: ocean-typed-breach 1.9s ease-in-out both;
+}
+@keyframes ocean-typed-leap {
+  0% { translate: -50% -50%; scale: .5; opacity: 0; animation-timing-function: cubic-bezier(.25, .7, .45, 1); }
+  12% { scale: 1; opacity: 1; }
+  45% { translate: calc(-50% + var(--dx) * .55) calc(-50% + var(--up)); animation-timing-function: cubic-bezier(.55, 0, .85, .4); }
+  85% { opacity: 1; }
+  100% { translate: calc(-50% + var(--dx)) calc(-50% + 14px); scale: .7; opacity: 0; }
+}
+@keyframes ocean-typed-ripple {
+  from { translate: -50% -50%; scale: .3; opacity: .95; }
+  to { translate: -50% -50%; scale: 3.6; opacity: 0; }
+}
+@keyframes ocean-typed-rise {
+  0% { translate: -50% -50%; scale: .3; opacity: 0; }
+  15% { scale: 1; opacity: 1; }
+  35% { translate: calc(-50% + var(--sway)) calc(-50% - 22px); }
+  65% { translate: calc(-50% - var(--sway)) calc(-50% - 44px); }
+  88% { translate: calc(-50% + var(--sway)) calc(-50% - 62px); scale: 1.05; opacity: 1; }
+  100% { translate: calc(-50% + var(--sway)) calc(-50% - 68px); scale: 1.9; opacity: 0; }
+}
+@keyframes ocean-typed-pop {
+  from { translate: -50% -50%; scale: .5; opacity: 1; }
+  to { translate: -50% -50%; scale: 2.3; opacity: 0; }
+}
+@keyframes ocean-typed-float {
+  0% { translate: -50% -100%; scale: .6; opacity: 0; }
+  20% { scale: 1; opacity: 1; }
+  100% { translate: -50% calc(-100% - 24px); opacity: 0; }
+}
+@keyframes ocean-typed-swim {
+  0% { translate: -100% -100%; opacity: 0; }
+  12% { opacity: 1; }
+  30% { translate: calc(var(--w) * .3 - 50%) calc(-100% - 7px); }
+  55% { translate: calc(var(--w) * .55 - 50%) calc(-100% + 3px); }
+  80% { translate: calc(var(--w) * .8 - 50%) calc(-100% - 6px); }
+  90% { opacity: 1; }
+  100% { translate: calc(var(--w) - 50%) -100%; opacity: 0; }
+}
+@keyframes ocean-typed-breach {
+  0% { translate: -50% -10%; scale: .6; opacity: 0; }
+  22% { translate: -50% -105%; scale: 1; opacity: 1; }
+  30% { translate: -50% -95%; }
+  70% { translate: -50% -100%; opacity: 1; }
+  100% { translate: -50% -10%; scale: .7; opacity: 0; }
+}
+
+/* Typing heat (see index.html's --typing-heat): a sea glow that foams at the
+   rim, and on a fast run rolls from side to side like a swell. */
+:root[data-ocean] .newconv-prompt[data-typing-hot] { animation: typing-pulse 3s ease-in-out infinite; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :root[data-ocean] .newconv-prompt {
+    --ocean-heat-swell: calc((var(--typing-pulse) - .5) * 2 * clamp(0, (var(--typing-heat) - .5) * 2, 1));
+  }
+  :root[data-ocean] .newconv-prompt,
+  :root[data-ocean] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    border-color: color-mix(in srgb,
+      color-mix(in oklab, var(--ocean-heat-sea), var(--ocean-heat-foam) clamp(0%, (var(--typing-heat) - .5) * 200%, 100%))
+        clamp(0%, var(--typing-heat) * 200%, 100%),
+      var(--typing-heat-rest));
+    --typing-glow:
+      0 0 calc(var(--typing-heat) * 4px) calc(var(--typing-heat) * 1px) color-mix(in srgb, var(--ocean-heat-foam) calc(var(--typing-heat) * 45%), transparent),
+      calc(var(--ocean-heat-swell) * 5px) calc(var(--typing-heat) * 1px) calc(var(--typing-heat) * 12px) calc(var(--typing-heat) * 1px) color-mix(in srgb, var(--ocean-heat-sea) calc(var(--typing-heat) * 24%), transparent),
+      calc(var(--ocean-heat-swell) * -5px) calc(var(--typing-heat) * 2px) calc(var(--typing-heat) * 10px) 0 color-mix(in srgb, var(--ocean-heat-foam) calc(var(--typing-heat) * 14%), transparent);
+  }
+}
+
+/* The maximised terminal stage: a porthole of glass with a tide line under
+   its bar. terminal.js rolls the tide in. */
+:root[data-ocean] #run-terminal.terminal-staged {
+  --stage-radius: 22px;
+  border: 2px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 14%, transparent), 0 0 40px color-mix(in srgb, var(--accent) 28%, transparent), 0 30px 90px rgb(0 30 50 / .45);
+}
+:root[data-ocean] .terminal-staged #run-terminal-bar {
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--accent) 16%, var(--panel)), var(--panel));
+  border-bottom: 0;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+:root[data-ocean] {
+  --answer-mode-done: "🐚"; --answer-mode-now: "🤿"; --answer-mode-next: "○";
+  --answer-mode-heading-font: var(--ocean-font);
+  --answer-mode-trim: linear-gradient(90deg, var(--accent), var(--ocean-lure));
+  --answer-mode-trim-height: 3px;
+  --answer-mode-on-accent: var(--ocean-on-accent);
+  --answer-mode-radius: 18px;
+  --run-row-padding: 8px 11px 9px;
+  --run-row-inset: 10px; --run-row-gap: 6px;
+  --run-row-border-width: 1px;
+  --run-row-border-color: var(--ocean-edge);
+  --run-row-radius: var(--ocean-radius);
+  --run-row-bg: var(--panel);
+  --run-row-shadow: var(--ocean-lift);
+  --run-row-hover-bg: var(--chip);
+  --run-row-active-bg: var(--ocean-active-bg);
+  --run-row-active-border-color: var(--ocean-active-border);
+  --tab-indicator-height: 6px;
+  --tab-indicator-color: var(--accent);
+  --composer-radius: var(--ocean-radius);
+  --chat-bubble-radius: var(--ocean-radius);
+  --card-radius: var(--ocean-radius);
+  --dialog-radius: 18px;
+}
+
+:root[data-ocean] [data-part="command-palette"],
+:root[data-ocean] orc-dialog::part(dialog) {
+  border-radius: var(--dialog-radius);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+}
+
+/* Sticky notes: a slate of sea glass, washed in the project's colour and lit
+   from the surface, with bubbles rising off its top edge. */
+:root[data-ocean] .nc-note {
+  --note-paper:
+    radial-gradient(90% 60% at 22% 0, color-mix(in srgb, var(--ocean-glint) 34%, transparent), transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--note-tint) 30%, var(--panel)), color-mix(in srgb, var(--note-tint) 11%, var(--panel)) 64%);
+  --note-edge: color-mix(in srgb, var(--note-tint) 38%, var(--ocean-edge));
+  --note-trim: inset 0 1px 0 1px color-mix(in srgb, var(--ocean-glint) 30%, transparent);
+  --note-radius: var(--ocean-radius);
+  --note-shadow: drop-shadow(0 1px 0 rgb(7 60 80 / .1)) drop-shadow(0 9px 12px rgb(4 40 56 / .26));
+  --note-shadow-raised: drop-shadow(0 1px 0 rgb(7 60 80 / .1)) drop-shadow(0 18px 20px rgb(4 40 56 / .34));
+  --note-rule: color-mix(in srgb, var(--note-tint) 14%, var(--ocean-rule));
+  --note-lean: .7;
+  --note-fold: 0px;
+  --note-tape:
+    radial-gradient(circle at 9px 15px, transparent 5px, var(--ocean-bubble-edge) 5.6px 7px, transparent 7.6px),
+    radial-gradient(circle at 7px 13px, var(--ocean-glint) 1.4px, transparent 2px),
+    radial-gradient(circle at 23px 7px, transparent 2.6px, var(--ocean-bubble-edge) 3.1px 4.2px, transparent 4.8px),
+    radial-gradient(circle at 32px 16px, transparent 1.6px, var(--ocean-bubble-edge) 2.1px 3px, transparent 3.6px);
+}
+:root[data-ocean] .nc-note-tape { top: -17px; width: 40px; height: 24px; rotate: none; clip-path: none; }

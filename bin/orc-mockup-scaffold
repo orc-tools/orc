@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Scaffold a self-contained Orc HTML mockup with real theme tokens and fonts.
+
+    orc-mockup-scaffold --run-dir <run-dir> --label <label>
+                        [--theme swamp] [--mode dark|light]
+                        [--width <px>] [--title "<title>"] [--force]
+
+Creates `<run-dir>/planning/mockups/<label>.html` with Orc's Swamp palette,
+`--orc-*` aliases, and local Inter + JetBrains Mono woff2 fonts copied into
+`<run-dir>/planning/mockups/fonts/`. No scripts or external requests.
+"""
+
+import argparse
+import contextlib
+import html
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+OWN_ROOT = Path(__file__).resolve().parents[1]
+LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$")
+THEME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+FONTS = (
+    ("Inter", "inter-latin-wght-normal.woff2", "100 900"),
+    ("JetBrains Mono", "jetbrains-mono-latin-wght-normal.woff2", "100 800"),
+)
+
+
+def repo_root():
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode == 0:
+        candidate = Path(result.stdout.strip())
+        if (candidate / "app-plugins" / "swamp" / "theme.css").is_file() and (
+            candidate / "ui" / "orc-aliases.css"
+        ).is_file():
+            return candidate
+    return OWN_ROOT
+
+
+def write_atomic(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".mockup.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def build_css(root, theme):
+    parts = []
+    for family, filename, weight in FONTS:
+        parts.append(
+            f'@font-face {{ font-family: "{family}"; '
+            f'src: url("fonts/{filename}") format("woff2"); '
+            f'font-weight: {weight}; font-style: normal; font-display: block; }}'
+        )
+    swamp_css = root / "app-plugins" / "swamp" / "theme.css"
+    parts.append(swamp_css.read_text(encoding="utf-8").strip())
+    if theme != "swamp":
+        extra_css = root / "app-plugins" / theme / "theme.css"
+        if not extra_css.is_file():
+            raise ValueError(f"unknown theme: {theme}")
+        parts.append(extra_css.read_text(encoding="utf-8").strip())
+    aliases_css = root / "ui" / "orc-aliases.css"
+    parts.append(aliases_css.read_text(encoding="utf-8").strip())
+    return "\n\n".join(parts)
+
+
+def render_html(title, theme, mode, width, token_css):
+    theme_attr = f" data-{theme}" if theme == "swamp" else f' data-swamp data-{theme}'
+    stage_width = f"width: {width}px;" if width else "max-width: 832px;"
+    safe_title = html.escape(title)
+    return f"""<!doctype html>
+<html lang="en" data-theme="{mode}"{theme_attr}>
+<head>
+<meta charset="utf-8">
+<title>{safe_title}</title>
+<style>
+{token_css}
+
+*, *::before, *::after {{ box-sizing: border-box; }}
+html, body {{
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 14px/1.55 var(--orc-font-sans);
+  -webkit-font-smoothing: antialiased;
+}}
+.mockup-stage {{
+  {stage_width}
+  padding: 16px;
+}}
+/* Add component CSS here using var(--bg), var(--panel), var(--border),
+   var(--text), var(--heading), var(--muted-strong), var(--accent), etc. */
+</style>
+</head>
+<body>
+<main class="mockup-stage">
+  <!-- Replace with the real flowing HTML of the changed component region. -->
+</main>
+</body>
+</html>
+"""
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-mockup-scaffold")
+    parser.add_argument("--run-dir", required=True, help="Orc run directory")
+    parser.add_argument("--label", required=True, help="mockup basename (no .html)")
+    parser.add_argument("--theme", default="swamp", help="Orc theme id (default: swamp)")
+    parser.add_argument("--mode", choices=("dark", "light"), default="dark")
+    parser.add_argument("--width", type=int, default=None, help="fixed stage width in px")
+    parser.add_argument("--title", default=None, help="HTML document title")
+    parser.add_argument("--force", action="store_true", help="overwrite an existing mockup")
+    args = parser.parse_args(argv)
+
+    label = args.label[:-5] if args.label.endswith(".html") else args.label
+    if not LABEL_RE.fullmatch(label):
+        print("orc-mockup-scaffold: invalid label: %s" % args.label, file=sys.stderr)
+        return 2
+    if not THEME_RE.fullmatch(args.theme):
+        print("orc-mockup-scaffold: invalid theme: %s" % args.theme, file=sys.stderr)
+        return 2
+    if args.width is not None and not (160 <= args.width <= 4096):
+        print("orc-mockup-scaffold: width must be between 160 and 4096", file=sys.stderr)
+        return 2
+
+    run_dir = Path(args.run_dir).expanduser().resolve()
+    if not run_dir.is_dir():
+        print("orc-mockup-scaffold: run dir does not exist: %s" % run_dir, file=sys.stderr)
+        return 2
+
+    mockups_dir = (run_dir / "planning" / "mockups").resolve()
+    if not mockups_dir.is_relative_to(run_dir):
+        print("orc-mockup-scaffold: mockups directory escapes run dir", file=sys.stderr)
+        return 2
+    target = (mockups_dir / f"{label}.html").resolve()
+    if not target.is_relative_to(mockups_dir):
+        print("orc-mockup-scaffold: mockup path escapes mockups dir", file=sys.stderr)
+        return 2
+    if target.exists() and not args.force:
+        print("orc-mockup-scaffold: %s already exists (use --force to overwrite)" % target, file=sys.stderr)
+        return 1
+
+    root = repo_root()
+    try:
+        token_css = build_css(root, args.theme)
+    except (OSError, ValueError) as exc:
+        print("orc-mockup-scaffold: %s" % exc, file=sys.stderr)
+        return 2
+
+    fonts_dir = mockups_dir / "fonts"
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+    copied_fonts = []
+    for _family, filename, _weight in FONTS:
+        src = root / "ui" / "fonts" / filename
+        if not src.is_file():
+            print("orc-mockup-scaffold: missing font asset: %s" % src, file=sys.stderr)
+            return 2
+        dst = fonts_dir / filename
+        if not dst.exists() or dst.stat().st_size != src.stat().st_size:
+            shutil.copy2(src, dst)
+        copied_fonts.append(str(dst))
+
+    title = args.title or f"Mockup: {label}"
+    write_atomic(target, render_html(title, args.theme, args.mode, args.width, token_css))
+    print(json.dumps({
+        "ok": True,
+        "html": str(target),
+        "fonts": copied_fonts,
+        "theme": args.theme,
+        "mode": args.mode,
+    }))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

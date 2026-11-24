@@ -1,0 +1,188 @@
+/* Run Control's waterfall: a run's turns and steps on one axis of working
+   time. Every colour is a theme token. A bar's hue says what kind of work it
+   was, never how it went, so green, yellow and red stay out of it; orange
+   keeps its one meaning, time spent waiting on the reader.
+
+   The theme's blue, teal and purple sit too close to tell apart, most of all
+   for a colour-blind reader, so the four kinds also differ in lightness:
+   thinking faint, reading mid, editing the theme's strongest ink, running
+   purple. These mixes are the ones that keep every pair apart in Swamp's day
+   and night palettes; a subagent is hatched, so it never leans on hue.
+
+   Who did the work is told by shape and words, never by hue: a filled dot
+   for the run's own agent, a ring for a subagent, a square for a worker. */
+.wf {
+  --wf-think: color-mix(in srgb, var(--muted-strong) 32%, var(--panel));
+  --wf-explore: color-mix(in srgb, var(--cyan) 70%, var(--panel));
+  --wf-edit: color-mix(in srgb, var(--accent) 35%, var(--heading));
+  --wf-run: var(--purple);
+  --wf-agent: repeating-linear-gradient(135deg, var(--heading) 0 1.5px, transparent 1.5px 5px);
+  --wf-ask: var(--orange);
+  --wf-line: color-mix(in srgb, var(--border) 42%, transparent);
+  --wf-wait: color-mix(in srgb, var(--border) 24%, transparent);
+  container: wf / inline-size;
+  min-width: 0;
+}
+.wf-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 22px; }
+.wf-sub { margin: 0; color: var(--muted-strong); font-size: 12.5px; line-height: 1.45; text-wrap: pretty; }
+.wf [data-wf-status]:empty { display: none; }
+
+.wf-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0; padding: 0; list-style: none; }
+.control-center .wf-legend-item {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 3px 9px; border-color: transparent; border-radius: 999px;
+  background: none; color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.control-center .wf-legend-item:not(:disabled):hover { border-color: var(--border); background: var(--button-hover); color: var(--heading); }
+.control-center .wf-legend-item[aria-pressed="true"] { border-color: var(--control-border); background: var(--chip); color: var(--heading); }
+.wf-legend-share { color: var(--muted-strong); }
+.wf-key { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--wf-think); }
+.wf [data-a="think"] { background: var(--wf-think); }
+.wf [data-a="explore"] { background: var(--wf-explore); }
+.wf [data-a="edit"] { background: var(--wf-edit); }
+.wf [data-a="run"] { background: var(--wf-run); }
+.wf [data-a="agent"] { background: var(--wf-agent); }
+.wf [data-a="ask"] { background: var(--wf-ask); }
+
+.wf-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 4px; }
+.wf-kpis .kpi { border: 1px solid color-mix(in srgb, var(--cp-edge, var(--border)) 75%, transparent); border-radius: var(--orc-radius-sm, 8px); padding: 10px 13px 9px; background: var(--cp-well, var(--bg)); }
+.wf-kpis .kpi-label { color: var(--muted-strong); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.wf-kpis .kpi-value { margin-top: 3px; color: var(--heading); font-size: 21px; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.wf-kpis .kpi-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; color: var(--muted-strong); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+.wf-crew { margin-top: 14px; font-size: 12.5px; }
+.wf-crew-row { min-height: 42px; color: var(--text); transition: background-color .16s ease; }
+.wf-crew-row[data-wf-crew] { cursor: var(--orc-cursor-pointer, pointer); }
+.wf-crew-row[data-wf-crew]:hover { background: color-mix(in srgb, var(--heading) 6%, transparent); }
+.wf-crew-row:has([aria-pressed="true"]) { background: color-mix(in srgb, var(--heading) 10%, transparent); }
+.wf-crew-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; text-align: left; }
+.control-center button.wf-crew-who { flex: 1; min-height: 0; padding: 0; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; cursor: inherit; }
+.control-center button.wf-crew-who:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.wf-crew-name, .wf-crew-model { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-crew-name { color: var(--heading); font-weight: 600; }
+.wf-crew-model { color: var(--muted-strong); font-size: 11.5px; }
+.wf-crew-mark { flex: none; width: 9px; height: 9px; border: 2px solid var(--heading); border-radius: 50%; }
+.wf-crew-mark[data-kind="main"] { background: var(--heading); }
+.wf-crew-mark[data-kind="worker"] { border-radius: 2px; }
+.wf-crew-share { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.wf-header .wf-crew-share { display: block; }
+.wf-meter { flex: 1; height: 6px; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, var(--border) 46%, transparent); }
+.wf-meter span { display: block; min-width: 2px; height: 100%; border-radius: 3px; background: color-mix(in srgb, var(--heading) 62%, var(--panel)); }
+.wf-crew-percent { flex: none; min-width: 34px; color: var(--muted-strong); text-align: right; font-variant-numeric: tabular-nums; }
+.wf-crew-row .wf-num { color: var(--heading); }
+
+.wf-chart { position: relative; margin-top: 14px; font-size: 12.5px; }
+.wf-row { --wf-columns: minmax(190px, 30%) minmax(0, 1fr) 76px 68px 78px; display: grid; grid-template-columns: var(--wf-columns); align-items: center; column-gap: 12px; min-height: 30px; padding: 0 8px; border-radius: 6px; }
+.wf-header { min-height: 26px; color: var(--muted-strong); font-size: 11px; font-weight: 600; border-bottom: 1px solid var(--wf-line); border-radius: 0; }
+.wf-axis { position: relative; align-self: stretch; }
+.wf-tick { position: absolute; top: 50%; transform: translateY(-50%); padding-left: 5px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wf-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wf-rows { padding-top: 4px; }
+
+.wf-row[data-key] { cursor: var(--orc-cursor-pointer, pointer); color: var(--text); transition: opacity .16s ease, background-color .16s ease; }
+.wf-row[data-key]:hover, .wf-row[data-on] { background: color-mix(in srgb, var(--heading) 6%, transparent); }
+.wf-row[data-pinned] { background: color-mix(in srgb, var(--heading) 10%, transparent); }
+.wf-row[data-key]:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.wf-row[data-key]:focus:not(:focus-visible) { outline: none; }
+/* Pointing at one row sets it apart: the rest step back. */
+.wf-chart[data-active] .wf-row[data-key]:not([data-on]), .wf-chart[data-active] .wf-idle { opacity: .42; }
+/* Picking one of the crew keeps its rows and steps the others back, and
+   pointing at a row does not bring them forward again. */
+.wf-chart .wf-row[data-key][data-out]:not([data-on]) { opacity: .3; }
+
+.wf-label { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.wf-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-turn { margin-top: 2px; }
+.wf-turn .wf-text { color: var(--heading); font-weight: 600; }
+.wf-turn .wf-num { color: var(--heading); font-weight: 600; }
+.wf-step .wf-label, .wf-agent .wf-label { padding-left: 39px; }
+.wf-step .wf-num, .wf-agent .wf-num { color: var(--muted-strong); }
+.wf-chevron { display: inline-flex; flex: none; width: 12px; color: var(--muted-strong); transition: transform .16s ease; }
+.wf-turn[aria-expanded="true"] .wf-chevron { transform: rotate(90deg); }
+.wf-index {
+  flex: none; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--control-border); border-radius: 999px;
+  color: var(--heading); font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.wf-model { flex: none; margin-left: auto; padding: 0 6px; border: 1px solid var(--wf-line); border-radius: 999px; color: var(--muted-strong); font-size: 10.5px; font-weight: 500; line-height: 16px; white-space: nowrap; }
+.wf-open { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 5px; color: var(--muted-strong); }
+.wf-open:hover { background: var(--button-hover); color: var(--heading); }
+.wf-open:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.wf-failed { flex: none; padding: 0 7px; border: 1px solid color-mix(in srgb, var(--red) 40%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red-text); font-size: 11px; font-weight: 600; white-space: nowrap; }
+
+.wf-track { position: relative; align-self: stretch; min-height: 30px; background: var(--wf-track); }
+/* The picked row's span, drawn down every track so it reads off the axis. */
+.wf-chart[data-active] .wf-track::before {
+  content: ''; position: absolute; top: 0; bottom: 0; left: var(--wf-from); width: var(--wf-span); min-width: 1px;
+  background: color-mix(in srgb, var(--heading) 7%, transparent);
+  border-inline: 1px solid color-mix(in srgb, var(--heading) 34%, transparent);
+}
+.wf-bar { position: absolute; top: 50%; height: 12px; min-width: 3px; margin-top: -6px; overflow: hidden; border-radius: 3px; background: var(--wf-think); }
+.wf-turn .wf-bar { height: 18px; margin-top: -9px; border-radius: 4px; }
+.wf-seg { position: absolute; top: 0; bottom: 0; min-width: 1px; transition: opacity .16s ease; }
+.wf-bar-agent { border: 1.5px solid var(--heading); background: var(--wf-agent); }
+.wf-chart[data-activity="think"] .wf-seg:not([data-a="think"]),
+.wf-chart[data-activity="explore"] .wf-seg:not([data-a="explore"]),
+.wf-chart[data-activity="edit"] .wf-seg:not([data-a="edit"]),
+.wf-chart[data-activity="run"] .wf-seg:not([data-a="run"]),
+.wf-chart[data-activity="agent"] .wf-seg:not([data-a="agent"]),
+.wf-chart[data-activity="ask"] .wf-seg:not([data-a="ask"]) { opacity: .1; }
+.wf-chart[data-activity] .wf-bar:not(.wf-bar-agent) { background: color-mix(in srgb, var(--wf-think) 18%, transparent); }
+.wf-chart[data-activity="think"] .wf-bar:not(.wf-bar-agent) { background: var(--wf-think); }
+
+/* A working run's newest bar breathes; state, not decoration. */
+.wf-row[data-live] .wf-bar { animation: wf-live 1.6s ease-in-out infinite; }
+@keyframes wf-live { 50% { opacity: .55; } }
+/* Bars draw in from the axis, top row first, when the chart first appears. */
+.wf-chart[data-enter] .wf-bar { transform-origin: left center; animation: wf-grow .52s cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(var(--i) * 26ms); }
+.wf-chart[data-enter] .wf-row[data-live] .wf-bar { animation: wf-grow .52s cubic-bezier(.22, 1, .36, 1) both, wf-live 1.6s ease-in-out .6s infinite; animation-delay: calc(var(--i) * 26ms), .6s; }
+@keyframes wf-grow { from { transform: scaleX(0); opacity: 0; } }
+
+.wf-idle { display: flex; align-items: center; gap: 10px; margin: 5px 8px 1px; color: var(--muted-strong); font-size: 11px; transition: opacity .16s ease; }
+.wf-idle::before, .wf-idle::after { content: ''; flex: 1; border-top: 1px dashed var(--wf-line); }
+
+.wf-card {
+  position: absolute; z-index: var(--z-tooltip); width: min(380px, 100%); padding: 12px 14px; pointer-events: none;
+  border: 1px solid var(--control-border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 12px; line-height: 1.5;
+}
+.wf-card-kicker { color: var(--muted-strong); font-size: 11px; font-weight: 600; }
+.wf-card-title { margin-top: 1px; color: var(--heading); font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.wf-figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--wf-line); }
+.wf-figure-label { color: var(--muted-strong); font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+.wf-figure-value { color: var(--heading); font-size: 19px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.wf-figure-foot { color: var(--muted-strong); font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.wf-split { margin-top: 11px; }
+.wf-split-bar { display: flex; gap: 1px; height: 8px; overflow: hidden; border-radius: 3px; }
+.wf-split-bar span { min-width: 2px; flex-basis: 0; }
+.wf-split-list { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 6px 0 0; padding: 0; list-style: none; color: var(--muted-strong); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.wf-split-list li { display: inline-flex; align-items: center; gap: 5px; }
+.wf-split-list .wf-key { width: 8px; height: 8px; border-radius: 2px; }
+.wf-card-failed { margin-top: 8px; color: var(--red-text); font-weight: 600; }
+.wf-highlights { margin: 9px 0 0; padding: 9px 0 0; border-top: 1px solid var(--wf-line); list-style: none; }
+.wf-highlights li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-highlights li::before { content: '·'; margin-right: 7px; color: var(--muted-strong); }
+.wf-card-cache { margin-top: 7px; color: var(--muted-strong); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.wf-card-model { margin-top: 8px; color: var(--muted-strong); font-size: 11.5px; }
+
+/* Sized by the room the chart has, not the window: the side panel can take
+   half of a wide screen. */
+@container wf (max-width: 880px) {
+  .wf-row { --wf-columns: minmax(170px, 32%) minmax(0, 1fr) 72px 74px; }
+  .wf-col-tokens { display: none; }
+}
+@container wf (max-width: 700px) {
+  .wf-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container wf (max-width: 600px) {
+  /* Four full tiles would push the chart off a phone's first screen. */
+  .wf-kpis { gap: 8px; }
+  .wf-kpis .kpi { padding: 8px 11px 7px; }
+  .wf-kpis .kpi-value { margin-top: 1px; font-size: 17px; }
+  .wf-kpis .kpi-foot { display: none; }
+  /* The bar takes its own line under the label, so both keep their width. */
+  .wf-row { grid-template-columns: minmax(0, 1fr) auto auto; padding: 4px 6px; }
+  .wf-row[data-key] { min-height: 44px; }
+  .wf-track, .wf-header .wf-axis, .wf-crew-row .wf-crew-share { grid-column: 1 / -1; grid-row: 2; min-height: 18px; }
+  /* Out of sight, still a column header: each row keeps its share cell. */
+  .wf-header .wf-crew-share { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .wf-step .wf-label, .wf-agent .wf-label { padding-left: 18px; }
+  .wf-card { width: 100%; }
+}

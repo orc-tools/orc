@@ -1,0 +1,429 @@
+:root[data-grand-theft-orc] {
+  color-scheme: light;
+  --bg: #f7ede0; --panel: #fff9ef; --border: #c1b0ab;
+  --text: #3c343e; --heading: #302738; --muted: #73666f; --accent: #006961;
+  --accent-soft: #d5e5db; --chip: #eee3d5; --code: #f0e4d7;
+  --green: #416a42; --yellow: #7e5f22; --red: #a33e4b;
+  --purple: #7a4b79; --cyan: #216e77; --orange: #8d4c22;
+  --grand-theft-orc-motel: url("./motel-day.webp");
+  --grand-theft-orc-map: url("./causeway-day.webp");
+  --grand-theft-orc-by-day: block; --grand-theft-orc-by-night: none;
+}
+
+:root[data-grand-theft-orc][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #221c2d; --panel: #292333; --border: #564959;
+  --text: #ede3ea; --heading: #fff1e5; --muted: #ab9aaf; --accent: #79ded8;
+  --accent-soft: #294245; --chip: #39303e; --code: #211c29;
+  --green: #a6d391; --yellow: #ebc37e; --red: #ff8f9b;
+  --purple: #d5acd9; --cyan: #9adedd; --orange: #ffb277;
+  --grand-theft-orc-motel: url("./motel-night.webp");
+  --grand-theft-orc-map: url("./causeway-night.webp");
+  --grand-theft-orc-by-day: none; --grand-theft-orc-by-night: block;
+}
+
+:root[data-grand-theft-orc] [data-part="factory-stage"] { container-type: inline-size; }
+:root[data-grand-theft-orc] .factory-label:not(.is-main, .is-selected, .is-hot) { max-width: min(188px, 18.6cqw); }
+@container (max-width: 620px) {
+  :root[data-grand-theft-orc] .factory-label:not(.is-main) { padding-inline: 4px; }
+  :root[data-grand-theft-orc] .factory-label:not(.is-main) .factory-label-effort { display: none; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-grand-theft-orc]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #221c2d; --panel: #292333; --border: #564959;
+    --text: #ede3ea; --heading: #fff1e5; --muted: #ab9aaf; --accent: #79ded8;
+    --accent-soft: #294245; --chip: #39303e; --code: #211c29;
+    --green: #a6d391; --yellow: #ebc37e; --red: #ff8f9b;
+    --purple: #d5acd9; --cyan: #9adedd; --orange: #ffb277;
+    --grand-theft-orc-motel: url("./motel-night.webp");
+    --grand-theft-orc-map: url("./causeway-night.webp");
+    --grand-theft-orc-by-day: none; --grand-theft-orc-by-night: block;
+  }
+}
+
+:root[data-grand-theft-orc] {
+  --grand-theft-orc-sign: light-dark(#f2cdb8, #3d273b);
+  --grand-theft-orc-lettering: light-dark(#48273a, #ffd9c8);
+  --grand-theft-orc-coral: light-dark(#ab5366, #f19bb1);
+  --grand-theft-orc-header: light-dark(#f8f0e3, #1f1c28);
+  --grand-theft-orc-rule: light-dark(#ded2c8, #39333f);
+  /* The neon palm that signs each run card's status: one shape, so the
+     state colours it. */
+  --grand-theft-orc-palm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-3 -3 26 26'%3E%3Cfilter id='g' x='-.5' y='-.5' width='2' height='2'%3E%3CfeGaussianBlur stdDeviation='1.1'/%3E%3C/filter%3E%3Cpath d='M9.3 19.5C9.6 14.5 10 11.5 10.9 8.2l1.3.4C11.4 11.8 11.3 14.8 11.5 19.5ZM11.3 8.4Q6 4.6 1.6 9.4 6.4 7.4 11.3 8.4ZM11.3 8.4Q7.4 2 2.6 2.6 7.6 4 11.3 8.4ZM11.3 8.4Q10.6 3 14.2.6 13.2 4.6 11.3 8.4ZM11.3 8.4Q15.4 3.6 19.4 5.6 15 6 11.3 8.4ZM11.3 8.4Q16.6 7.4 18.8 12.6 15.4 9.4 11.3 8.4Z' filter='url(%23g)' opacity='.75'/%3E%3Cpath d='M9.3 19.5C9.6 14.5 10 11.5 10.9 8.2l1.3.4C11.4 11.8 11.3 14.8 11.5 19.5ZM11.3 8.4Q6 4.6 1.6 9.4 6.4 7.4 11.3 8.4ZM11.3 8.4Q7.4 2 2.6 2.6 7.6 4 11.3 8.4ZM11.3 8.4Q10.6 3 14.2.6 13.2 4.6 11.3 8.4ZM11.3 8.4Q15.4 3.6 19.4 5.6 15 6 11.3 8.4ZM11.3 8.4Q16.6 7.4 18.8 12.6 15.4 9.4 11.3 8.4Z'/%3E%3C/svg%3E");
+  --sidebar-bg: light-dark(#fcf6ec, #1b1923);
+  --sidebar-border-color: var(--grand-theft-orc-rule);
+  /* Rows are rounded cards. Hover takes the motel sign's colour, and the
+     selected run keeps its teal fill with a faint teal edge. */
+  --run-row-inset: 10px; --run-row-gap: 2px; --run-row-padding: 9px 10px;
+  --run-row-radius: 10px; --run-row-border-width: 1px;
+  --run-row-hover-bg: color-mix(in srgb, var(--grand-theft-orc-sign) 62%, transparent);
+  --run-row-active-bg: var(--accent-soft);
+  --run-row-active-border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  --tab-bar-bg: var(--grand-theft-orc-header); --tab-bar-border-color: var(--grand-theft-orc-rule);
+  --tab-active-bg: var(--accent-soft); --tab-indicator-color: var(--accent-soft);
+  --composer-bg: var(--panel); --composer-radius: 17px;
+  --composer-border-color: var(--accent);
+  --chat-bubble-bg: var(--panel); --chat-bubble-user-bg: var(--accent-soft);
+  --card-bg: var(--panel); --dialog-bg: var(--panel);
+  --blue-text: var(--accent); --ready-text: var(--green);
+  --muted-strong: light-dark(#665b65, #c8b9ca);
+  --focus: light-dark(#006d70, #91eee5);
+  --nc-firefly-gold: transparent; --nc-firefly-lime: transparent;
+  --nc-firefly-alpha: 0; --nc-mist-alpha-low: 0; --nc-mist-alpha-high: 0;
+}
+
+:root[data-grand-theft-orc] #sidebar-head {
+  --grand-theft-orc-map-start: 148px;
+  display: grid; grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+  align-items: center; gap: 0; padding: 0;
+  background: var(--grand-theft-orc-header);
+}
+/* The logo and every button share the top row, so a laptop badge or switch never pushes Hide sidebar below the banner. */
+:root[data-grand-theft-orc] #sidebar-head > :is(h1, button, orc-menu) { grid-row: 1; }
+:root[data-grand-theft-orc] #sidebar-head > h1 { min-height: 35px; margin-inline: 14px 4px; }
+:root[data-grand-theft-orc] #sidebar-head :is(#sidebar-close, #sidebar-collapse) { margin-inline-end: 8px; }
+:root[data-grand-theft-orc] #logo-icon { width: 22px; height: 22px; }
+:root[data-grand-theft-orc] .logo-slash { color: var(--accent); }
+
+:root[data-grand-theft-orc] #sidebar-head::before,
+:root[data-grand-theft-orc] #sidebar-head::after {
+  grid-area: 2 / 1 / 3 / -1; height: 62px; box-sizing: border-box;
+  border-block: 1px solid var(--grand-theft-orc-rule); pointer-events: none;
+}
+:root[data-grand-theft-orc] #sidebar-head::before {
+  content: "Grand Theft Orc"; display: flex; align-items: center;
+  padding-inline: 14px max(8px, calc(100% - var(--grand-theft-orc-map-start)));
+  color: var(--grand-theft-orc-lettering); background: var(--grand-theft-orc-sign);
+  font-size: 21px; font-style: italic; font-weight: 830; line-height: 1;
+  letter-spacing: -1.45px; text-transform: uppercase;
+}
+:root[data-grand-theft-orc] #sidebar-head::after {
+  content: ""; margin-inline-start: var(--grand-theft-orc-map-start);
+  background: var(--grand-theft-orc-map) 53% 48% / auto 132% no-repeat var(--grand-theft-orc-sign);
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%);
+}
+:root[data-grand-theft-orc] #search-wrap { padding: 9px 10px 8px 14px; }
+
+@media (min-width: 701px) {
+  :root[data-grand-theft-orc][data-sidebar-collapsed] #sidebar-head { display: flex; }
+  :root[data-grand-theft-orc][data-sidebar-collapsed] #sidebar-collapse { margin: 0; }
+  :root[data-grand-theft-orc][data-sidebar-collapsed] #sidebar-head::before,
+  :root[data-grand-theft-orc][data-sidebar-collapsed] #sidebar-head::after { display: none; }
+}
+
+/* A card leads with its project, as every other theme's does: the project's
+   logo and name on a small quiet line, the title under it in two bold lines,
+   then the status with the time at the line's end. A card with no project
+   starts at its title. */
+:root[data-grand-theft-orc] .run .name {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  padding: 0; overflow: hidden; overflow-wrap: anywhere; white-space: normal; text-wrap: balance;
+  font-size: 14px; font-weight: 640; line-height: 18.5px; letter-spacing: -.29px;
+}
+:root[data-grand-theft-orc] .run[data-unread] .name { font-weight: 730; }
+:root[data-grand-theft-orc] .run .run-project { gap: 4px; height: 15px; font-size: 10.5px; line-height: 15px; }
+:root[data-grand-theft-orc] [data-part="run-project"] > :is(img, svg) { width: 14px; height: 14px; }
+/* With no project line, Settle shows over the title's top-right corner and
+   the title's first line fades out under it, so the title keeps its width and
+   the row its height. The fade is a mask, not paint, so it works on any row
+   background. With a project, Settle sits on the project line instead. */
+:root[data-grand-theft-orc] .run > a {
+  --grand-theft-orc-under-action: 58px;
+  --grand-theft-orc-title-fade: linear-gradient(to left, transparent var(--grand-theft-orc-under-action), #000 calc(var(--grand-theft-orc-under-action) + 18px)) 0 0 / 100% 19px no-repeat,
+    linear-gradient(#000 0 0) 0 19px / 100% 100% no-repeat;
+}
+:root[data-grand-theft-orc] .run:not(:has(> .run-project)):has(> [data-part="run-actions"] button):is(:hover, :has(:focus-visible)) > a {
+  -webkit-mask: var(--grand-theft-orc-title-fade); mask: var(--grand-theft-orc-title-fade);
+}
+@media (hover: none) {
+  :root[data-grand-theft-orc] .run:not(:has(> .run-project)):has(> [data-part="run-actions"] button) > a {
+    -webkit-mask: var(--grand-theft-orc-title-fade); mask: var(--grand-theft-orc-title-fade);
+  }
+}
+:root[data-grand-theft-orc] .run [data-part="run-meta"] { gap: 6px; margin-top: 4px; }
+:root[data-grand-theft-orc] .run [data-part="run-meta"] > :first-child { column-gap: 5px; }
+:root[data-grand-theft-orc] .run [data-part="run-meta"] > :last-child { font-variant-numeric: tabular-nums; }
+:root[data-grand-theft-orc] .run :is(.state-tag, .run-age) { font-size: 10.5px; line-height: 15px; }
+/* The status starts the line, whatever tags come with it. */
+:root[data-grand-theft-orc] .run .state-tag { order: -1; display: inline-flex; align-items: center; gap: 5px; }
+/* The tags and age share one 15px line, and Unread fits on it. A PR badge or
+   fork button is a taller target, so its row keeps the taller line. */
+:root[data-grand-theft-orc] .run [data-part="run-meta"]:not(:has(a, button)) > :is(:first-child, :last-child) {
+  min-height: 15px; height: auto;
+}
+/* The status's sign is a neon palm off the motel's lot, lit in the state's
+   colour, as Stranger Things hangs a bulb on each card. The glow is drawn
+   into the mask itself, as a blurred copy of the palm under the sharp one,
+   because a drop shadow on the palm would be masked away with the rest. */
+:root[data-grand-theft-orc] .run .state-tag[data-state]::before {
+  content: ""; flex: none; width: 16px; height: 16px; margin: -2px -3px -2px -2px;
+  background: var(--grand-theft-orc-palm-lit, currentColor);
+  -webkit-mask: var(--grand-theft-orc-palm) center / contain no-repeat; mask: var(--grand-theft-orc-palm) center / contain no-repeat;
+}
+:root[data-grand-theft-orc] .run .state-blocked { --grand-theft-orc-palm-lit: var(--grand-theft-orc-coral); }
+/* The palm says the agent is at work, so the plain dot beside Working goes,
+   and the palm hums while the session runs. */
+:root[data-grand-theft-orc] .run .session-status.running { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-grand-theft-orc] .run:has(.session-status.running) .state-tag::before {
+    animation: grand-theft-orc-palm-hum 2.4s ease-in-out infinite;
+  }
+}
+@keyframes grand-theft-orc-palm-hum { 50% { opacity: .55; } }
+:root[data-grand-theft-orc] .run .unread-tag {
+  gap: 4px; height: 15px; padding: 0 6px; font-size: 10.5px; line-height: 15px;
+}
+:root[data-grand-theft-orc] .run .unread-tag .dot { width: 5px; height: 5px; }
+:root[data-grand-theft-orc] .run:has(.evals-candidate-tag) { padding-bottom: 26px; }
+:root[data-grand-theft-orc] .run .evals-candidate-tag {
+  position: absolute; inset: auto 10px 7px;
+  color: var(--muted-strong); font-weight: 500; line-height: 15px;
+}
+:root[data-grand-theft-orc] .run.fork-child .name { font-size: 13px; line-height: 17.5px; font-weight: 560; }
+/* The tree lines start above the row's edge and the gap before it, so the trunk runs unbroken between the cards. */
+:root[data-grand-theft-orc] .run.fork-child::before { top: -3px; bottom: auto; height: 20px; border-width: 0 0 1px 1px; }
+:root[data-grand-theft-orc] .run.fork-child:not(.fork-last)::after { top: -3px; border-left-width: 1px; }
+
+:root[data-grand-theft-orc] #new-view {
+  position: relative; isolation: isolate;
+  background: linear-gradient(to bottom, var(--bg) 24%, light-dark(#f6e7d8, #2f2234) 64%, light-dark(#e9cdbd, #533b50));
+}
+@media (min-width: 701px) and (forced-colors: none) {
+  :root[data-grand-theft-orc] #new-view:not([data-evals])::before {
+    content: ""; position: absolute; z-index: -1; inset: auto 0 0;
+    aspect-ratio: 3 / 1; min-width: 100%; max-height: 52%; pointer-events: none;
+    background: var(--grand-theft-orc-motel) center bottom / cover no-repeat;
+    -webkit-mask-image: linear-gradient(transparent, black 39%); mask-image: linear-gradient(transparent, black 39%);
+  }
+}
+
+/* The same scene, moving. frontend.js stands these pieces in the new-run
+   screen, where the painting is laid again with its lights over it, so the
+   still painting above steps aside while they are there. Each light is a layer
+   the painting's size that already holds the lit painting's colour
+   (docs/grand-theft-orc-art/layers.mjs), so it is shown by its opacity alone, with no
+   blend mode or filter. Every piece rests where reduced motion leaves it. */
+:root[data-grand-theft-orc] #grand-theft-orc-scene { display: none; }
+@media (min-width: 701px) and (forced-colors: none) {
+  :root[data-grand-theft-orc] #new-view:not([data-evals]) > #grand-theft-orc-scene {
+    display: block; position: absolute; z-index: -1; inset: 0; overflow: hidden; pointer-events: none;
+  }
+  :root[data-grand-theft-orc] #new-view:not([data-evals]):has(> #grand-theft-orc-scene)::before { display: none; }
+}
+#grand-theft-orc-scene :is(span, i) { position: absolute; }
+.grand-theft-orc-night {
+  display: var(--grand-theft-orc-by-night);
+  --grand-theft-orc-sky-mask: url("./motel-night-sky.webp");
+  --grand-theft-orc-cloud-bank: url("./motel-night-clouds.webp");
+  --grand-theft-orc-drift-time: 84s;
+}
+.grand-theft-orc-day {
+  display: var(--grand-theft-orc-by-day);
+  --grand-theft-orc-sky-mask: url("./motel-day-sky.webp");
+  --grand-theft-orc-cloud-bank: url("./motel-day-clouds.webp");
+  --grand-theft-orc-drift-time: 108s;
+}
+.grand-theft-orc-night, .grand-theft-orc-day, .grand-theft-orc-sky, .grand-theft-orc-light, .grand-theft-orc-glow, .grand-theft-orc-plane { inset: 0; }
+.grand-theft-orc-motel {
+  inset: auto 0 0; aspect-ratio: 3 / 1; min-width: 100%; max-height: 52%; overflow: hidden;
+  -webkit-mask-image: linear-gradient(transparent, black 39%); mask-image: linear-gradient(transparent, black 39%);
+}
+/* A box of the painting's own shape along the foot, so a pane too shallow
+   for it loses the top of the sky, as the still painting does. */
+.grand-theft-orc-art { inset: auto 0 0; aspect-ratio: 3 / 1; background: var(--grand-theft-orc-motel) center / 100% 100% no-repeat; }
+/* Each crown carries the sky between its fronds. The soft crop bends about
+   the trunk and meets the still painting below, even at the end of a gust. */
+.grand-theft-orc-art::before, .grand-theft-orc-art::after {
+  content: ""; position: absolute; z-index: 1; top: 0;
+  width: calc(100% * var(--grand-theft-orc-crop-w)); height: calc(100% * var(--grand-theft-orc-crop-h));
+  background: var(--grand-theft-orc-motel) var(--grand-theft-orc-edge) top / calc(100% / var(--grand-theft-orc-crop-w)) calc(100% / var(--grand-theft-orc-crop-h)) no-repeat;
+  --grand-theft-orc-crown-mask: linear-gradient(to var(--grand-theft-orc-inward), black 84%, transparent), linear-gradient(black 68%, transparent);
+  -webkit-mask-image: var(--grand-theft-orc-crown-mask); mask-image: var(--grand-theft-orc-crown-mask);
+  -webkit-mask-composite: source-in; mask-composite: intersect;
+  transform-origin: center bottom;
+}
+.grand-theft-orc-art::before { left: 0; --grand-theft-orc-edge: left; --grand-theft-orc-inward: right; --grand-theft-orc-crop-w: .265; --grand-theft-orc-crop-h: .68; }
+.grand-theft-orc-art::after { right: 0; --grand-theft-orc-edge: right; --grand-theft-orc-inward: left; --grand-theft-orc-crop-w: .164; --grand-theft-orc-crop-h: .36; }
+.grand-theft-orc-light { background: center / 100% 100% no-repeat; }
+.grand-theft-orc-skyline-a { background-image: url("./motel-night-skyline-a.webp"); opacity: .95; }
+.grand-theft-orc-skyline-b { background-image: url("./motel-night-skyline-b.webp"); opacity: .25; }
+.grand-theft-orc-windows { background-image: url("./motel-night-windows.webp"); opacity: .4; }
+.grand-theft-orc-window-out { background-image: url("./motel-night-window-out.webp"); opacity: 0; }
+.grand-theft-orc-pink { background-image: url("./motel-night-pink.webp"); opacity: .8; }
+.grand-theft-orc-cyan { background-image: url("./motel-night-cyan.webp"); opacity: .8; }
+.grand-theft-orc-tube-out { background-image: url("./motel-night-tube-out.webp"); opacity: 0; }
+.grand-theft-orc-wet { background-image: url("./motel-night-wet.webp"); opacity: .55; transform-origin: 50% 100%; }
+
+/* Only open sky shows what is laid in it: the palms, the motel and its tower
+   stand in front. */
+.grand-theft-orc-sky {
+  overflow: hidden;
+  -webkit-mask: var(--grand-theft-orc-sky-mask) center / 100% 100% no-repeat;
+  mask: var(--grand-theft-orc-sky-mask) center / 100% 100% no-repeat;
+}
+.grand-theft-orc-clouds {
+  --grand-theft-orc-cloud-mask: var(--grand-theft-orc-sky-mask), linear-gradient(90deg, transparent, black 18% 39%, transparent 48%);
+  -webkit-mask-image: var(--grand-theft-orc-cloud-mask); mask-image: var(--grand-theft-orc-cloud-mask);
+  -webkit-mask-composite: source-in; mask-composite: intersect;
+}
+.grand-theft-orc-bank {
+  inset: 0 auto 0 0; width: 200%; transform: translateX(-12.5%);
+  background: var(--grand-theft-orc-cloud-bank) left top / calc(100% / 6) 65.625% repeat-x;
+}
+.grand-theft-orc-glow { background: radial-gradient(ellipse 30% 26% at 27% 72%, rgb(255 150 130 / .5), transparent 70%); opacity: .45; }
+.grand-theft-orc-plane { transform: translate(31%, -27%); }
+.grand-theft-orc-plane-white { left: 0; top: 60%; width: 2px; height: 2px; border-radius: 50%; background: #fff; box-shadow: 0 0 3px #fff; }
+.grand-theft-orc-plane-red {
+  left: -4px; top: calc(60% + 1px); width: 3px; height: 3px; border-radius: 50%;
+  background: #ff4b5c; box-shadow: 0 0 6px 1px #ff4b5c;
+}
+.grand-theft-orc-open-sky { inset: 0; }
+.grand-theft-orc-star, .grand-theft-orc-spark {
+  left: var(--x); top: var(--y); width: var(--size); height: var(--size); margin: calc(var(--size) / -2);
+  border-radius: 50%; opacity: var(--rest);
+}
+.grand-theft-orc-star { background: #fff3f6; box-shadow: 0 0 4px 1px rgb(255 200 230 / .55); }
+.grand-theft-orc-spark { --grand-theft-orc-dim: 0; background: #fff; box-shadow: 0 0 5px 2px rgb(255 255 240 / .8); }
+
+.grand-theft-orc-shower { inset: 0; z-index: 2; overflow: hidden; opacity: 0; }
+.grand-theft-orc-rain { inset: 0 -12%; transform: skewX(-13deg); }
+.grand-theft-orc-rain::before, .grand-theft-orc-rain::after {
+  content: ""; position: absolute; inset: calc(-1 * var(--grand-theft-orc-fall)) 0 0;
+  background: url("./motel-drizzle.webp") var(--grand-theft-orc-offset) 0 / var(--grand-theft-orc-span) var(--grand-theft-orc-fall) repeat;
+}
+.grand-theft-orc-rain::before { --grand-theft-orc-span: 188px; --grand-theft-orc-fall: 123px; --grand-theft-orc-offset: 47px; opacity: .40; }
+.grand-theft-orc-rain::after { --grand-theft-orc-span: 282px; --grand-theft-orc-fall: 185px; --grand-theft-orc-offset: 0px; }
+.grand-theft-orc-ripple {
+  left: var(--x); top: var(--y); width: 1.65%; height: .85%;
+  border: 1px solid var(--grand-theft-orc-tint); border-radius: 50%; opacity: 0;
+}
+/* The 360 by 80 crop starting at (1152, 360) in layers.mjs. */
+.grand-theft-orc-coupe {
+  left: 75%; top: 70.3125%; width: 23.4375%; height: 15.625%; overflow: hidden;
+  -webkit-mask: url("./motel-coupe-finish.webp") center / 100% 100% no-repeat;
+  mask: url("./motel-coupe-finish.webp") center / 100% 100% no-repeat;
+}
+.grand-theft-orc-coupe::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 27%; opacity: 0;
+  background: linear-gradient(115deg, transparent 14%, light-dark(#ffd9a830, #ff83b936) 36%,
+    light-dark(#fff5cdbb, #caf6f2a6) 52%, light-dark(#fff1c538, #80e8ef44) 62%, transparent 82%);
+}
+/* A four-pointed flare with a soft core. */
+.grand-theft-orc-glint {
+  left: var(--x); top: var(--y); width: 0; height: 0; transform: scale(var(--s));
+  box-shadow: 0 0 4px 2px rgb(255 252 232 / .48);
+}
+.grand-theft-orc-glint::before, .grand-theft-orc-glint::after {
+  content: ""; position: absolute; left: -12px; top: -.75px; width: 24px; height: 1.5px;
+  background: radial-gradient(closest-side, rgb(255 252 238 / .68), transparent);
+}
+.grand-theft-orc-glint::after { rotate: 90deg; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .grand-theft-orc-bank { animation: grand-theft-orc-drift var(--grand-theft-orc-drift-time) linear calc(var(--grand-theft-orc-drift-time) * -.25) infinite; }
+  .grand-theft-orc-art::before { animation: grand-theft-orc-sway 6.8s ease-in-out -1.4s infinite; }
+  .grand-theft-orc-art::after { animation: grand-theft-orc-sway 8.1s ease-in-out -3.8s infinite; }
+  .grand-theft-orc-shower { animation: grand-theft-orc-shower 18s ease-in-out -3s infinite; }
+  .grand-theft-orc-rain::before { animation: grand-theft-orc-fall 1.05s linear -.64s infinite; }
+  .grand-theft-orc-rain::after { animation: grand-theft-orc-fall .78s linear -.23s infinite; }
+  .grand-theft-orc-ripple { animation: grand-theft-orc-ripple var(--dur) ease-out var(--delay) infinite; }
+  .grand-theft-orc-coupe::before { animation: grand-theft-orc-sheen 13s ease-in-out -2.6s infinite; }
+  .grand-theft-orc-glow { animation: grand-theft-orc-breathe 16s ease-in-out infinite alternate; }
+  .grand-theft-orc-plane { animation: grand-theft-orc-fly 70s linear infinite; }
+  .grand-theft-orc-plane-red { animation: grand-theft-orc-blink 1.5s steps(1) infinite; }
+  .grand-theft-orc-star, .grand-theft-orc-spark { animation: grand-theft-orc-twinkle var(--dur) ease-in-out var(--delay) infinite alternate; }
+  .grand-theft-orc-skyline-a { animation: grand-theft-orc-twinkle 3.1s ease-in-out infinite alternate; }
+  .grand-theft-orc-skyline-b { animation: grand-theft-orc-twinkle 4.3s ease-in-out -2s infinite alternate-reverse; }
+  .grand-theft-orc-windows { animation: grand-theft-orc-lamp 9s ease-in-out infinite alternate; }
+  .grand-theft-orc-window-out { animation: grand-theft-orc-lights-out 34s steps(1) infinite; }
+  .grand-theft-orc-pink { animation: grand-theft-orc-twinkle 6.5s ease-in-out infinite alternate; }
+  .grand-theft-orc-cyan { animation: grand-theft-orc-twinkle 4.6s ease-in-out -1.5s infinite alternate; }
+  .grand-theft-orc-tube-out { animation: grand-theft-orc-stutter 13s linear infinite; }
+  .grand-theft-orc-wet { animation: grand-theft-orc-shimmer 3.4s ease-in-out infinite alternate; }
+  .grand-theft-orc-glint { animation: grand-theft-orc-glint var(--dur) ease-in-out var(--delay) infinite; }
+}
+@keyframes grand-theft-orc-drift { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes grand-theft-orc-sway {
+  0%, 100% { transform: skewX(-.65deg); }
+  34% { transform: skewX(1.15deg); }
+  54% { transform: skewX(.28deg); }
+  70% { transform: skewX(.62deg); }
+}
+@keyframes grand-theft-orc-shower { 0%, 100% { opacity: .14; } 28%, 55% { opacity: .84; } 74% { opacity: .40; } }
+@keyframes grand-theft-orc-fall { from { transform: translateY(0); } to { transform: translateY(var(--grand-theft-orc-fall)); } }
+@keyframes grand-theft-orc-ripple {
+  0% { transform: translate(-50%, -50%) scale(.12); opacity: 0; }
+  9% { opacity: .88; }
+  57%, 100% { transform: translate(-50%, -50%) scale(1.18); opacity: 0; }
+}
+@keyframes grand-theft-orc-sheen {
+  0%, 14% { transform: translateX(-100%); opacity: 0; }
+  24%, 48% { opacity: .42; }
+  62%, 100% { transform: translateX(385%); opacity: 0; }
+}
+@keyframes grand-theft-orc-breathe { from { opacity: .15; } to { opacity: .6; } }
+@keyframes grand-theft-orc-twinkle { from { opacity: var(--grand-theft-orc-dim, .12); } to { opacity: 1; } }
+@keyframes grand-theft-orc-lamp { from { opacity: .12; } 60% { opacity: .5; } to { opacity: .3; } }
+/* The upstairs light is out for about seven seconds in every 34. */
+@keyframes grand-theft-orc-lights-out { 0%, 82%, 100% { opacity: 0; } 62%, 81% { opacity: .92; } }
+@keyframes grand-theft-orc-stutter {
+  0%, 78%, 91%, 100% { opacity: 0; }
+  79%, 82% { opacity: .96; }
+  84% { opacity: .18; }
+  86% { opacity: .68; }
+}
+@keyframes grand-theft-orc-shimmer {
+  from { opacity: .15; transform: scaleY(.96) translateX(-1px); }
+  to { opacity: .75; transform: scaleY(1.04) translateX(1px); }
+}
+@keyframes grand-theft-orc-fly { from { transform: translate(-2%, 4%); } to { transform: translate(60%, -52%); } }
+@keyframes grand-theft-orc-blink { 0%, 100% { opacity: 1; } 22% { opacity: 0; } }
+@keyframes grand-theft-orc-glint {
+  0%, 78%, 100% { transform: scale(0); }
+  88% { transform: scale(var(--s)) rotate(30deg); }
+}
+
+/* The gallery's miniature has its composer directly inside the new-run screen. */
+:root[data-grand-theft-orc] #new-view.newconv {
+  align-self: stretch; width: 100%; margin: 0; padding: 50px 20px 0;
+}
+:root[data-grand-theft-orc] .nc-beam { display: none; }
+:root[data-grand-theft-orc] orc-effort-slider { --green: var(--accent); }
+:root[data-grand-theft-orc] .newconv-prompt orc-effort-slider::part(control) {
+  background: url("./gary.png") left center / 32px 32px no-repeat;
+}
+:root[data-grand-theft-orc] .newconv-prompt orc-effort-slider::part(face) { visibility: hidden; }
+:root[data-grand-theft-orc] :is(#nc-send, #chat-send) { --orc-green: var(--accent); }
+@media (forced-colors: none) {
+  :root[data-grand-theft-orc] .newconv-prompt { border-color: var(--accent); }
+  :root[data-grand-theft-orc] .newconv-prompt::before {
+    inset: -4px; border: 1px solid transparent; border-radius: calc(var(--composer-radius) + 3px);
+    background: linear-gradient(95deg, var(--accent), var(--grand-theft-orc-coral) 88%) border-box;
+    mask: linear-gradient(black 0 0) padding-box, linear-gradient(black 0 0);
+    mask-composite: exclude; box-shadow: none;
+  }
+  :root[data-grand-theft-orc] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 2px;
+  }
+}
+:root[data-grand-theft-orc] .nc-note {
+  --note-paper: light-dark(#f1e1b9, #4d4034);
+  --note-edge: color-mix(in srgb, var(--note-tint) 45%, var(--border));
+  --note-ink: var(--heading);
+  --note-rule: color-mix(in srgb, var(--note-ink) 12%, transparent);
+  --grand-theft-orc-tape: light-dark(#bf9569, #ad8f7c);
+  --note-tape: repeating-linear-gradient(132deg, color-mix(in srgb, var(--grand-theft-orc-tape) 79%, var(--note-paper)) 0 6px,
+    color-mix(in srgb, var(--grand-theft-orc-tape) 60%, var(--note-paper)) 6px 10px);
+}
+
+:root[data-grand-theft-orc] .nc-note[data-tint="purple"] { --note-paper: light-dark(#eddbeb, #493749); }
+:root[data-grand-theft-orc] .nc-note[data-tint="green"] { --note-paper: light-dark(#cce2d6, #254545); }
+:root[data-grand-theft-orc] .nc-note[data-tint="orange"] { --note-paper: light-dark(#f2d8c7, #51383c); }
+:root[data-grand-theft-orc] .nc-note[data-tint="cyan"] { --note-paper: light-dark(#cce3e4, #2d414d); }
+
+@media (forced-colors: active) {
+  :root[data-grand-theft-orc] #sidebar-head::after { display: none; }
+  :root[data-grand-theft-orc] .run.active { border-color: Highlight; }
+}

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Shared hooks must never promote a linked worktree into the default runtime.
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
+primary="$(cd "$(dirname "$common_dir")" && pwd -P)" || exit 0
+if [ "$(cd "$root" && pwd -P)" != "$primary" ]; then
+  echo "orc: install-relevant worktree changes detected — default runtime unchanged"
+  echo "orc: preview with: orc-ui preview \"$root\""
+  exit 0
+fi
+# install.sh refuses this too, but only after a failed attempt is recorded.
+if [ -n "${ORC_TEST_REAL_HOME:-}" ] && [ "$HOME" = "$ORC_TEST_REAL_HOME" ] && [ -z "${ORC_HOME:-}" ]; then exit 0; fi
+# A sync holding the merge lock installs once it lets go.
+[ -n "${ORC_DEFER_RUNTIME_CHECK:-}" ] && exit 0
+exec python3 "$root/ui/runtime_updates.py" check --repo "$root" --old "${1:-}"

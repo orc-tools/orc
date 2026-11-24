@@ -1,0 +1,98 @@
+/* A model of Orc's window for Settings → Themes (ui/js/theme-gallery.js). It
+   carries the shell's own ids and classes on a 720 by 450 page and loads the
+   real theme files after this one, so each theme restyles it as it does Orc.
+   The sidebar is a child of <body> beside <main>, because themes scope what
+   paints the window to that shape. */
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: block;
+}
+:root { color-scheme: light dark; }
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
+* { box-sizing: border-box; }
+/* A page of these holds still; the one under the pointer moves. */
+:root:not([data-live]) *, :root:not([data-live]) *::before, :root:not([data-live]) *::after {
+  animation: none !important; transition: none !important;
+}
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body {
+  display: flex; background: var(--bg); color: var(--text);
+  font: 13px/1.45 var(--orc-font-sans, "Inter", -apple-system, BlinkMacSystemFont, sans-serif);
+  -webkit-font-smoothing: antialiased; cursor: default; user-select: none;
+}
+
+#run-sidebar {
+  position: relative; display: flex; flex: none; flex-direction: column; gap: 10px;
+  width: 226px; padding: 14px 10px 0; overflow: hidden;
+  background: var(--sidebar-bg, var(--panel));
+  border-right: var(--sidebar-border-width, 1px) solid var(--sidebar-border-color, var(--border));
+}
+#sidebar-head h1 { display: flex; align-items: center; margin: 0 4px; font-size: 13px; }
+/* Themes seat a hat, plates or bubbles on Gary from #logo's own corner, as in the shell. */
+#logo { position: relative; display: flex; align-items: center; gap: 6px; }
+#logo-icon { flex: none; width: 26px; height: 26px; }
+.logo-word { font-size: 13px; font-weight: 600; line-height: 1; letter-spacing: -0.01em; color: var(--heading); }
+.logo-slash { color: var(--green-text, var(--green)); }
+#search-box {
+  padding: 6px 12px; border: 1px solid var(--control-border, var(--border)); border-radius: 999px;
+  background: var(--bg); color: var(--muted-strong); font-size: 12px; font-weight: 500;
+}
+#list { display: flex; flex-direction: column; gap: var(--run-row-gap, 2px); min-height: 0; }
+.run {
+  position: relative; padding: var(--run-row-padding, 8px 9px);
+  border: var(--run-row-border-width, 0px) solid var(--run-row-border-color, transparent);
+  border-radius: var(--run-row-radius, 8px); background: var(--run-row-bg, transparent);
+  box-shadow: var(--run-row-shadow, none);
+}
+.run.active {
+  background: var(--run-row-active-bg, var(--accent-soft));
+  border-color: var(--run-row-active-border-color, var(--run-row-border-color, transparent));
+}
+.run-project {
+  display: flex; align-items: center; gap: 6px; color: var(--muted-strong); font-size: 11.5px; font-weight: 500;
+}
+.run-project-icon {
+  display: inline-grid; flex: none; place-items: center; width: 14px; height: 14px; border-radius: 4px;
+  background: var(--accent); color: var(--panel); font-size: 8.5px; font-weight: 700;
+}
+.run .name {
+  margin-top: 4px; overflow: hidden; color: var(--heading); font-size: 12.5px; font-weight: 600;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.run .sub {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 3px;
+  color: var(--muted-strong); font-size: 11px;
+}
+.state-tag { font-size: 11px; font-weight: 600; }
+.state-working { color: var(--blue-text); }
+.state-blocked { color: var(--gate); }
+.state-ready { color: var(--ready-text); }
+.state-done { color: var(--purple-text); }
+.state-working::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 5px;
+  border-radius: 50%; background: currentColor;
+}
+
+main { position: relative; display: flex; flex: 1; min-width: 0; }
+#new-view { display: flex; flex-direction: column; gap: 12px; width: 372px; margin: auto; }
+.nc-title { margin: 0; color: var(--heading); font-size: 18px; font-weight: 700; letter-spacing: -0.01em; text-align: center; }
+.nc-project-switch { color: var(--accent-text); border-bottom: 1px dashed currentColor; }
+.newconv-prompt {
+  position: relative;
+  border: var(--composer-border-width, 1px) solid var(--composer-border-color, var(--control-border, var(--border)));
+  border-radius: var(--composer-radius, 14px); background: var(--composer-bg, var(--panel));
+  box-shadow: var(--composer-shadow, none);
+}
+.tp-prompt { min-height: 74px; padding: 13px 14px 4px; color: var(--heading); font-size: 13px; }
+.newconv-prompt footer { display: flex; align-items: center; gap: 8px; padding: 8px 10px 10px; }
+.tp-pick {
+  padding: 4px 9px; border-radius: 8px; background: var(--chip); color: var(--text);
+  font-size: 11.5px; font-weight: 500; white-space: nowrap;
+}
+#nc-send {
+  margin-left: auto; padding: 6px 15px; border: 0; border-radius: 9px;
+  background: var(--orc-green, var(--green)); color: var(--orc-button-text, var(--panel)); font: inherit; font-size: 12.5px; font-weight: 650;
+}
+.nc-tray { display: flex; justify-content: center; color: var(--muted-strong); font-size: 11px; }

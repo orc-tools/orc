@@ -1,0 +1,196 @@
+/* Run Control: the gear page of one run. It is a synthetic tab, not an
+   artifact, and is drawn as the same console as Settings. The tokens, the
+   header, the rail's keys and the module come from ui/settings.css, which is
+   linked before this file; only what differs for a run is stated here.
+
+   The beacon and the header's signal line take the run's own state colour,
+   the one its row in the sidebar shows. A module's lamp is lit only while the
+   thing it names is on. */
+.control-center {
+  /* The run's state colour arrives inline as --cp-state. Positioned, so a
+     control's out-of-flow parts stay inside the page: left to the shell
+     around it, they made that scroll as well and took the rail off screen.
+     One step up, as Settings is, so a theme's drifting decorations show in
+     the gaps between modules and never across a module's words. */
+  position: relative; z-index: 1; container: control / inline-size;
+  width: min(1320px, 100%); margin: 0 auto; padding: 0 0 48px;
+}
+.control-head { max-width: none; margin-bottom: 8px; }
+/* The header and the notice under it sit over the rail's cover (below). */
+.control-head, .control-readonly { position: relative; z-index: calc(var(--z-sticky) + 1); }
+@media (prefers-reduced-motion: no-preference) {
+  .control-center[data-run-state="working"] .control-head::after {
+    background: linear-gradient(90deg, transparent, var(--cp-state), transparent) 0 0 / 40% 100% no-repeat;
+    animation: cp-sweep 1.1s linear infinite;
+  }
+  .control-center[data-run-state="working"] .cp-beacon { animation: cp-pulse .7s ease-in-out infinite alternate; }
+  /* The lamps come on in turn when the page opens, and stay as they are when
+     a poll redraws it. */
+  .control-center[data-fresh] legend.settings-label::before {
+    animation: cp-lamp-on .55s ease-out both; animation-delay: calc(var(--cp-order, 0) * 50ms + 80ms);
+  }
+  #control-group-runtime { --cp-order: 1; }
+  #control-group-lifecycle { --cp-order: 2; }
+  #control-group-danger { --cp-order: 3; }
+  #control-group-details { --cp-order: 4; }
+  #control-group-delegation { --cp-order: 5; }
+  #control-group-provenance { --cp-order: 6; }
+  #control-group-decisions { --cp-order: 7; }
+}
+/* The state is said in the colour its sidebar tag has (.state-<key>). */
+.control-readout-value { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.control-readout-value:not(.control-readout-state) { color: var(--heading); }
+.control-readonly {
+  margin: 0 0 8px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--yellow) 55%, var(--cp-edge));
+  border-radius: var(--orc-radius-sm, 8px); background: var(--cp-well); color: var(--yellow-text); font-size: 13px; text-wrap: pretty;
+}
+/* The rail stays at the top of the page while its sections scroll under it.
+   The strip is the page's colour, so nothing shows through beside the keys.
+   It sticks below the page's own top padding, so a cover the same colour
+   reaches up over that gap. */
+.control-index {
+  position: sticky; top: 0; z-index: var(--z-sticky); margin: 0 0 8px; padding: 8px 0; background: var(--bg);
+}
+.control-index::before { content: ""; position: absolute; inset: -20px 0 100%; background: var(--bg); }
+.control-index .cp-key { touch-action: manipulation; }
+/* The groups are packed into columns so a short one leaves no hole beside a
+   tall one: what you operate, what the run is, and what it handed on and
+   recorded. The columns are fixed, not balanced by CSS columns as Settings'
+   cards are. A balanced page would move a group to another column when its
+   prompt, cost or tasks load, and WebKit reports a group's position wrongly
+   inside CSS columns, which the lit key is read from. Lifecycle sits under
+   Run Details so the first two columns end near the same height. */
+.control-groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 16px; align-items: start; min-width: 0; }
+.control-column { min-width: 0; }
+/* One column stacks the groups in the rail's order: Lifecycle comes back up
+   between Runtime and Danger Zone. */
+@container control (max-width: 699.98px) {
+  .control-column { display: contents; }
+  #control-group-runtime, #control-group-lifecycle { order: -1; }
+}
+/* The top margin a jump leaves is the page's padding plus the rail's height,
+   so a section's heading stops below the rail and not under it. */
+.control-group { margin: 0; padding: 0 0 20px; scroll-margin-top: 92px; }
+.control-group > h4 { margin: 0 0 6px; color: var(--heading); font-size: 15px; text-wrap: balance; }
+.control-modules { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+/* Two columns have no room for the third, so its two groups share a row
+   under them. The decisions are a table that needs the page's width, so they
+   close the page across every column as the waterfall opens it. */
+@container control (min-width: 700px) {
+  .control-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-column-pair, .control-span { grid-column: 1 / -1; }
+  .control-column-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; align-items: start; }
+}
+@container control (min-width: 1040px) {
+  .control-groups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .control-column-pair { grid-column: auto; display: block; }
+}
+/* A module here is the Settings module: a fieldset whose legend sits on its
+   top edge. A fieldset is as wide as its longest word unless told otherwise. */
+.control-section { min-width: 0; }
+.control-center .wf { padding-inline: 18px; }
+.control-section > legend :is(h4, h5) { display: inline; margin: 0; font: inherit; letter-spacing: inherit; color: inherit; }
+.control-section[data-lamp="on"] { --cp-lamp: var(--cp-on); --cp-lamp-glow: color-mix(in srgb, var(--cp-on) 75%, transparent); }
+.control-section[data-lamp="off"] { --cp-lamp: var(--cp-idle); }
+.control-section[data-lamp="warn"] { --cp-lamp: var(--yellow); }
+.control-section[data-lamp="error"] { --cp-lamp: var(--red); }
+.control-state { margin: 0; color: var(--heading); font-size: 12.5px; font-weight: 600; }
+.control-advanced::part(summary) { color: var(--heading); font-size: 13px; font-weight: 600; }
+.control-advanced::part(panel) { display: grid; gap: 10px; padding-top: 10px; }
+#control-decisions-result .md { min-height: 0; padding: 0; border: 0; }
+.control-rescue { display: grid; gap: 10px; }
+.control-rescue label, .control-rescue-field { display: grid; gap: 5px; min-width: 0; color: var(--heading); font-size: 12px; font-weight: 600; }
+.control-rescue-field orc-select { width: 100%; min-width: 0; }
+.control-rescue-field orc-select::part(trigger) { min-height: 44px; padding: 8px 14px 8px 10px; background: var(--bg); }
+.control-rescue input, .control-rescue textarea { width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--control-border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+.control-rescue textarea { resize: vertical; }
+.control-rescue orc-accordion::part(panel) { display: grid; gap: 10px; padding-top: 10px; }
+.control-rescue button { justify-self: start; min-height: 44px; }
+[data-control-tasks] .control-model-list li { align-items: start; }
+[data-control-tasks] .control-model-list button { align-self: start; }
+/* A rail key keeps the inset ring it has in Settings: an outer one would
+   reach its neighbour and the rail's clipped edge. */
+.control-center button:focus-visible, .control-center a:not(.cp-key):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.control-center button, .control-action-link {
+  position: relative; min-height: 30px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 12px; font-weight: 400; cursor: var(--orc-cursor-pointer, pointer);
+  text-decoration: none; touch-action: manipulation;
+}
+.control-center button::before, .control-action-link::before {
+  content: ''; position: absolute; z-index: 1; inset: -7px 0;
+}
+.control-center button:not(:disabled):hover, .control-action-link:hover { border-color: var(--accent); background: var(--button-hover); color: var(--heading); }
+.control-center button:disabled { opacity: .5; cursor: not-allowed; }
+.control-center button.danger { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); color: var(--red-text); }
+.control-help { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.45; text-wrap: pretty; }
+/* The ticket line sits among the section's own links, so it reads like them
+   rather than like a default browser anchor. */
+#control-ticket-line a { color: var(--heading); }
+.control-error { color: var(--red-text); }
+.control-ok { color: var(--green-text); }
+/* An outcome is read like the Settings status bar: one line of mono. An empty
+   line is a live region waiting for words, so it stays in the page and gives
+   back the gap the module left for it. */
+.control-status-line {
+  margin: 0; color: var(--muted-strong); overflow-wrap: anywhere;
+  font: 11.5px/1.5 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.control-status-line.control-error { color: var(--red-text); }
+.control-status-line.control-ok { color: var(--green-text); }
+.control-status-line:empty { height: 0; margin-top: -10px; }
+.control-copy-list { display: grid; gap: 6px; margin: 0; }
+.control-copy-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px;
+  padding: 7px 8px 7px 12px; border: 1px solid color-mix(in srgb, var(--cp-edge) 75%, transparent);
+  border-radius: var(--orc-radius-sm, 8px); background: var(--cp-well);
+}
+.control-copy-row dt {
+  grid-column: 1; color: var(--muted-strong); font-size: 10px; font-weight: 600; line-height: 1.2;
+  letter-spacing: .1em; text-transform: uppercase;
+}
+.control-copy-row dd { grid-column: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; word-break: normal; color: var(--heading); font: 12px/1.5 "JetBrains Mono", monospace; }
+.control-copy-row orc-copy-button { min-width: 58px; grid-row: 1 / span 2; grid-column: 2; }
+.control-model-groups { display: grid; gap: 12px; }
+.control-model-group h6 { margin: 0 0 6px; color: var(--muted-strong); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.control-model-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.control-model-list li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, .7fr); gap: 10px; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.control-model-list strong { color: var(--heading); }
+.control-model-list span { color: var(--muted-strong); }
+.control-actions, .control-danger { display: flex; align-items: center; flex-wrap: wrap; gap: 14px 8px; }
+.control-script-icon { flex: none; margin-inline-end: 6px; vertical-align: -2px; }
+.control-status-options {
+  display: flex; flex-wrap: wrap; gap: 8px; padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--cp-edge) 75%, transparent); border-radius: var(--orc-radius-sm, 8px); background: var(--cp-well);
+}
+.control-status-options label {
+  flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 4px 12px;
+  border: 1px solid transparent; border-radius: 6px; color: var(--muted-strong); font-size: 12.5px; font-weight: 500;
+  cursor: var(--orc-cursor-pointer, pointer); transition: color .15s ease, background-color .15s ease, border-color .15s ease;
+}
+.control-status-options label:hover { color: var(--heading); }
+.control-status-options label:has(input:checked) { border-color: var(--cp-edge); background: var(--cp-plate); color: var(--heading); font-weight: 600; }
+.control-status-options label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
+.control-status:disabled .control-status-options label { cursor: not-allowed; opacity: .6; }
+.control-status-options input { accent-color: var(--cp-signal); margin: 0; }
+@media (pointer: coarse) { .control-status-options label { min-height: 44px; } }
+.control-link-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.control-link-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 0;
+  border-top: 1px solid var(--border); font-size: 12px;
+}
+.control-link-row:first-child { border-top: 0; }
+.control-link-type { flex: 0 0 auto; color: var(--muted-strong); font-weight: 600; }
+.control-link-row a { color: var(--heading); min-width: 0; overflow-wrap: anywhere; }
+.control-link-row button { margin-left: auto; flex: 0 0 auto; }
+.control-link-missing { color: var(--muted-strong); cursor: default; }
+.control-section > a { width: fit-content; color: var(--accent-text); font-size: 13px; }
+@media (max-width: 700px) {
+  .control-center { padding-bottom: 56px; }
+  /* The strip runs to the screen's edges, so the keys scroll out under them. */
+  .control-index { margin: 0 -16px 8px; padding: 7px 16px; border-bottom: 1px solid var(--border); }
+  .control-center .wf { padding-inline: 12px; }
+  .control-model-list li { grid-template-columns: 1fr; gap: 2px; }
+}
+@media (forced-colors: active) {
+  .control-status-options label:has(input:checked) { border-color: Highlight; }
+}

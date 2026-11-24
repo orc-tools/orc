@@ -1,0 +1,53 @@
+{
+  "apiVersion": 2,
+  "id": "hotel",
+  "name": "Hotel",
+  "version": "1.0.0",
+  "description": "A pixel hotel: the lobby by day, the rooftop dance floor by night.",
+  "contributes": {
+    "frontend": "frontend.js",
+    "theme": {
+      "id": "hotel",
+      "label": "Hotel",
+      "description": "Your room is ready~",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "gary": "gary.png",
+      "sheila": "sheila.png",
+      "scene": "scene.bundle.js",
+      "favicon": "data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2064%2064'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'2'%20y%3D'2'%20width%3D'60'%20height%3D'60'%20rx%3D'10'%20fill%3D'%231f78ad'%20stroke%3D'%2310202b'%20stroke-width%3D'4'%20shape-rendering%3D'auto'%2F%3E%3Crect%20x%3D'20'%20y%3D'8'%20width%3D'24'%20height%3D'4'%20fill%3D'%2310202b'%2F%3E%3Crect%20x%3D'16'%20y%3D'12'%20width%3D'32'%20height%3D'8'%20fill%3D'%23c8283c'%2F%3E%3Crect%20x%3D'16'%20y%3D'20'%20width%3D'32'%20height%3D'4'%20fill%3D'%23ffcc33'%2F%3E%3Crect%20x%3D'12'%20y%3D'24'%20width%3D'40'%20height%3D'28'%20fill%3D'%2383c851'%2F%3E%3Crect%20x%3D'8'%20y%3D'28'%20width%3D'4'%20height%3D'8'%20fill%3D'%234f8a2b'%2F%3E%3Crect%20x%3D'52'%20y%3D'28'%20width%3D'4'%20height%3D'8'%20fill%3D'%234f8a2b'%2F%3E%3Crect%20x%3D'20'%20y%3D'32'%20width%3D'8'%20height%3D'8'%20fill%3D'%23182f10'%2F%3E%3Crect%20x%3D'36'%20y%3D'32'%20width%3D'8'%20height%3D'8'%20fill%3D'%23182f10'%2F%3E%3Crect%20x%3D'20'%20y%3D'44'%20width%3D'4'%20height%3D'8'%20fill%3D'%23fff8ec'%2F%3E%3Crect%20x%3D'40'%20y%3D'44'%20width%3D'4'%20height%3D'8'%20fill%3D'%23fff8ec'%2F%3E%3Crect%20x%3D'24'%20y%3D'48'%20width%3D'16'%20height%3D'4'%20fill%3D'%233d6f22'%2F%3E%3C%2Fsvg%3E",
+      "announce": {
+        "on": "Hotel mode on. Your room is ready~",
+        "off": "Hotel mode off"
+      },
+      "radio": {
+        "style": "Breezy pixel-lounge bossa nova with chiptune sparkle for an afternoon in a hotel lobby",
+        "leads": [
+          "bright square-wave melodies",
+          "soft FM electric piano",
+          "nylon guitar bossa chords",
+          "mellow vibraphone",
+          "rounded synth bass",
+          "muted trumpet"
+        ],
+        "scenes": [
+          "a hotel lobby with a checked floor and potted palms",
+          "a rooftop pool at sunset",
+          "guests dancing on a lit floor after dark",
+          "a quiet corridor of numbered doors",
+          "a lift ride up to the penthouse"
+        ],
+        "textures": [
+          "light bossa drums and shakers",
+          "a front-desk bell and distant chatter",
+          "soft bit-crushed hi-hats",
+          "lift chimes and a revolving door",
+          "warm tape hiss"
+        ]
+      }
+    }
+  },
+  "build": {
+    "scene": "scene.js"
+  }
+}

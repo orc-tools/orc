@@ -1,0 +1,333 @@
+/* Orchestrate: the route board and preset tabs in its settings. Colours are the host's tokens; each job takes
+   the token its workers already have in the sidebar's branch lines. */
+
+/* A theme's scenery is a fixed layer at z-index 0, which paints over plain
+   blocks. The board is a readable panel, so it sits above that layer. */
+.orch { position: relative; z-index: 1; container-type: inline-size; gap: 14px; }
+.orch-top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 20px; }
+.orch-actions { display: flex; flex: none; gap: 8px; }
+/* How to use the board, and what a trace is saying, take turns in one cell,
+   so starting a trace moves nothing below it. */
+.orch-guide { display: grid; flex: 1 1 380px; min-width: 0; align-items: start; }
+.orch-guide > * { grid-area: 1 / 1; max-width: 92ch; margin: 0; }
+.orch-how-narrow { display: none; }
+.orch-trace-line { position: relative; visibility: hidden; padding-left: 16px; color: var(--heading); font-size: 13px; line-height: 1.5; }
+.orch-trace-line::before {
+  content: ''; position: absolute; top: .5em; left: 1px; width: 8px; height: 8px; border-radius: 50%; background: var(--job);
+}
+.orch.is-tracing .orch-how { visibility: hidden; }
+.orch.is-tracing .orch-trace-line { visibility: visible; }
+.orch-foot { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.orch-foot:has([data-orch-status]:empty) { position: absolute; min-height: 0; }
+.orch-foot .settings-note { margin: 0; }
+
+.orch-stage {
+  position: relative; display: grid; align-items: start;
+  grid-template-columns: minmax(0, 1.45fr) clamp(88px, 13%, 190px) minmax(0, 1fr);
+  padding: 2px 0;
+}
+.orch-jobs { position: relative; z-index: 1; display: grid; grid-column: 1; gap: 10px; }
+.orch-models { position: relative; z-index: 1; display: grid; grid-column: 3; gap: 14px; }
+/* Cables hang behind the cards and show only in the gutter; the one in hand is in front. */
+.orch-cables { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.orch-cables-held { z-index: 2; }
+
+.orch-job {
+  position: relative; display: grid; gap: 8px; padding: 10px 30px 11px 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+  transition: border-color .16s ease-out, background-color .16s ease-out;
+}
+.orch-job.is-held, .orch-job.is-traced { border-color: var(--job); background: color-mix(in srgb, var(--job) 7%, var(--bg)); }
+.orch-job-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.orch-dot {
+  flex: none; align-self: center; width: 9px; height: 9px; border: 2px solid var(--job); border-radius: 50%;
+  transition: background-color .16s ease-out;
+}
+.orch-job.is-routed .orch-dot { background: var(--job); }
+.orch-job-name { flex: none; margin: 0; color: var(--heading); font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+.orch-job-does {
+  flex: 1; min-width: 0; margin: 0; overflow: hidden; color: var(--muted-strong); font-size: 12px; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Fixed columns, so the lists and sliders line up from card to card. */
+.orch-job-route { display: grid; align-items: center; gap: 6px 16px; grid-template-columns: 190px minmax(0, 1fr) auto; }
+/* An unrouted job keeps Fast's column, so the sliders line up from card to card. */
+.orch-fast.is-off { visibility: hidden; }
+.orch-job-note { margin: 0; color: var(--yellow-text, var(--yellow)); font-size: 12px; }
+.orch-job-note[hidden] { display: none; }
+
+.orch-pick { position: relative; display: block; min-width: 0; }
+.orch-pick::after {
+  content: ''; position: absolute; top: 50%; right: 12px; width: 6px; height: 6px;
+  border-right: 1.6px solid var(--muted-strong); border-bottom: 1.6px solid var(--muted-strong);
+  transform: translateY(-70%) rotate(45deg); pointer-events: none;
+}
+.orch-pick select {
+  appearance: none; width: 100%; min-height: 32px; padding: 5px 30px 5px 10px;
+  border: 1px solid var(--control-border, var(--border)); border-radius: 8px;
+  background: var(--panel); color: var(--text); font: inherit; font-size: 13px; text-overflow: ellipsis;
+  cursor: var(--orc-cursor-pointer, pointer);
+}
+.orch-pick select:focus { border-color: var(--focus); outline: none; }
+.orch-pick select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.orch-job.is-broken .orch-pick select { border-color: var(--yellow); }
+
+/* Two range inputs share one rail. board.js moves them from presses on the
+   rail, so neither covers the other's thumb; the keyboard still works each. */
+/* board.js measures --orch-words in the theme's own typeface. */
+.orch-effort { --from: 0%; --to: 100%; display: grid; grid-template-columns: minmax(96px, 1fr) var(--orch-words, 12.4em); align-items: center; gap: 14px; min-width: 0; }
+.orch-effort-probe { position: absolute; visibility: hidden; }
+.orch-effort-track { position: relative; height: 32px; margin: 0 9px; cursor: var(--orc-cursor-pointer, pointer); touch-action: pan-y; }
+/* Reaches the outer half of a thumb at either end, and 44px of height. */
+.orch-effort-track::before { content: ''; position: absolute; inset: -6px -9px; }
+.orch-effort-track.is-sliding { cursor: grabbing; }
+.orch-effort.is-fixed .orch-effort-track { cursor: default; }
+.orch-effort-rail, .orch-effort-fill, .orch-effort-stops {
+  position: absolute; top: 13px; right: 0; left: 0; height: 6px; border-radius: 6px; pointer-events: none;
+}
+.orch-effort-rail { background: color-mix(in srgb, var(--border) 75%, var(--bg)); }
+.orch-effort-fill { right: calc(100% - var(--to)); left: var(--from); background: var(--job); }
+.orch-effort-stops { display: flex; align-items: center; justify-content: space-between; }
+.orch-effort-stops i { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); outline: 2px solid var(--bg); }
+.orch-effort-stops i.is-lit { background: var(--job); }
+.orch-effort-stops i:first-child { transform: translateX(-3px); }
+.orch-effort-stops i:last-child { transform: translateX(3px); }
+.orch-effort input {
+  appearance: none; position: absolute; top: -6px; left: -9px; width: calc(100% + 18px); height: 44px; margin: 0;
+  background: transparent; pointer-events: none;
+}
+.orch-effort input::-webkit-slider-thumb {
+  appearance: none; width: 18px; height: 18px; border: 2px solid var(--bg); border-radius: 50%;
+  background: var(--job); outline: 1px solid var(--job);
+  transition: transform .12s ease-out;
+}
+.orch-effort input::-moz-range-thumb {
+  box-sizing: border-box; width: 18px; height: 18px; border: 2px solid var(--bg); border-radius: 50%;
+  background: var(--job); outline: 1px solid var(--job);
+  transition: transform .12s ease-out;
+}
+.orch-effort input::-moz-range-track { background: transparent; }
+.orch-effort:not(.is-fixed) .orch-effort-track:hover input::-webkit-slider-thumb { transform: scale(1.12); }
+.orch-effort:not(.is-fixed) .orch-effort-track:hover input::-moz-range-thumb { transform: scale(1.12); }
+.orch-effort input:focus-visible { outline: none; }
+.orch-effort input:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--focus); outline-offset: 2px; }
+.orch-effort input:focus-visible::-moz-range-thumb { outline: 2px solid var(--focus); outline-offset: 2px; }
+.orch-effort.is-off { grid-template-columns: minmax(0, 1fr); }
+.orch-effort.is-off .orch-effort-track { display: none; }
+.orch-effort-words { color: var(--heading); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.orch-effort.is-off .orch-effort-words { color: var(--muted-strong); font-weight: 400; }
+
+/* A jack sits half outside its card, so a cable meets it in the gutter. */
+.orch-jack {
+  position: absolute; top: 50%; width: 18px; height: 18px; padding: 0;
+  border: 2px solid var(--control-border, var(--border)); border-radius: 50%; background: var(--bg);
+  transform: translateY(-50%); transition: transform .14s ease-out, border-color .14s ease-out;
+}
+.orch-jack::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; }
+.orch-jack-out { right: -10px; border-color: var(--job); cursor: grab; touch-action: none; }
+/* The pointer target is 44px, whatever size the jack is drawn at. */
+.orch-jack-out::before { content: ''; position: absolute; inset: -15px; border-radius: 50%; }
+.orch-jack-out:hover { transform: translateY(-50%) scale(1.18); }
+.orch-jack-out:active { cursor: grabbing; }
+.orch-jack-out:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.orch-job.is-routed .orch-jack-out::after { background: var(--job); }
+.orch-job.is-held .orch-jack-out { outline: 3px solid color-mix(in srgb, var(--job) 32%, transparent); outline-offset: 2px; }
+.orch-jack-in { left: -10px; pointer-events: none; }
+/* A plug can be pulled out of its model, until a cable is in hand and the
+   whole row is where it lands. */
+.orch-stage:not([data-holding]) .orch-model.is-used .orch-jack-in { pointer-events: auto; cursor: grab; touch-action: none; }
+.orch-stage:not([data-holding]) .orch-model.is-used .orch-jack-in::before { content: ''; position: absolute; inset: -15px; border-radius: 50%; }
+.orch-stage:not([data-holding]) .orch-model.is-used .orch-jack-in:hover { transform: translateY(-50%) scale(1.18); }
+/* An empty board asks to be plugged in: a ring runs down the jobs' jacks, three
+   times. A span, since an animated outline would hide the jack's focus ring. */
+.orch-jack-ring { position: absolute; inset: -4px; border: 2px solid var(--job); border-radius: 50%; opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .orch:not(.is-tracing) .orch-stage[data-empty]:not([data-holding]) .orch-jack-ring {
+    animation: orch-invite 3.2s cubic-bezier(.16, 1, .3, 1) calc(var(--nth) * 110ms + 500ms) 3;
+  }
+}
+@keyframes orch-invite {
+  from { opacity: .8; transform: scale(1); }
+  34%, to { opacity: 0; transform: scale(2.4); }
+}
+/* A model's jack is filled with the colour of each job plugged into it. */
+.orch-model.is-used .orch-jack-in { border-color: var(--muted-strong); }
+.orch-model.is-used .orch-jack-in::after { background: var(--plugs, var(--muted-strong)); }
+
+.orch-rack-name { display: flex; align-items: center; gap: 7px; margin: 0 0 6px; color: var(--heading); font-size: 12.5px; font-weight: 600; line-height: 1.3; }
+.orch-rack-mark { display: inline-grid; flex: none; width: 14px; height: 14px; }
+.orch-rack-mark svg { width: 100%; height: 100%; }
+.orch-rack-models { margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); list-style: none; }
+.orch-rack-models li + li { border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+.orch-model {
+  position: relative; display: grid; align-items: baseline; gap: 10px; width: 100%; min-height: 38px;
+  grid-template-columns: auto minmax(0, 1fr); padding: 8px 12px 8px 22px;
+  border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: default;
+  transition: background-color .14s ease-out;
+}
+.orch-rack-models li:first-child .orch-model { border-radius: 6px 6px 0 0; }
+.orch-rack-models li:last-child .orch-model { border-radius: 0 0 6px 6px; }
+.orch-rack-models li:only-child .orch-model { border-radius: 6px; }
+.orch-model:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.orch-model-name { color: var(--heading); font-weight: 500; white-space: nowrap; }
+.orch-model-note { overflow: hidden; color: var(--muted-strong); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* With a cable in hand, every model is somewhere to plug it in. */
+.orch-stage[data-holding] .orch-model { cursor: copy; }
+.orch-stage[data-holding] .orch-model:hover, .orch-model.is-target { background: color-mix(in srgb, var(--held, var(--accent)) 12%, var(--bg)); }
+.orch-model.is-target .orch-jack-in { border-color: var(--held, var(--accent)); transform: translateY(-50%) scale(1.3); }
+.orch-model.is-seated .orch-jack-in { animation: orch-seat .56s cubic-bezier(.16, 1, .3, 1); }
+@keyframes orch-seat {
+  from { outline: 2px solid var(--seat, var(--accent)); outline-offset: 0; }
+  to { outline: 2px solid transparent; outline-offset: 12px; }
+}
+
+.orch-cable { transition: opacity .16s ease-out; }
+.orch-cable-halo { fill: none; stroke: var(--job); stroke-width: 11; stroke-linecap: round; opacity: .13; }
+.orch-cable-core { fill: none; stroke: var(--job); stroke-width: 3; stroke-linecap: round; transition: stroke-width .16s ease-out; }
+.orch-cable-plug { fill: var(--job); stroke: var(--bg); stroke-width: 2; }
+.orch-stage[data-lit] .orch-cable:not(.is-lit, .is-held) { opacity: .34; }
+.orch-cable.is-lit .orch-cable-core, .orch-cable.is-held .orch-cable-core { stroke-width: 3.6; }
+.orch-cable.is-held .orch-cable-halo { opacity: .2; }
+.orch-pulse { fill: var(--heading); stroke: var(--job); stroke-width: 3; }
+
+@container (max-width: 1000px) {
+  /* The list takes its own row; effort and Fast share the one under it. */
+  .orch-job-route { grid-template-columns: minmax(0, 1fr) auto; }
+  .orch-pick { grid-column: 1 / -1; }
+}
+/* Too narrow for two columns: each job's list is the whole route. */
+@container (max-width: 760px) {
+  .orch-stage { grid-template-columns: minmax(0, 1fr); }
+  .orch-models, .orch-cables, .orch-jack-out, .orch-how-wide, .orch-effort.is-off, .orch-fast.is-off { display: none; }
+  .orch-how-narrow { display: block; }
+  .orch-job { padding-right: 12px; }
+  /* What the job does takes its own row under the name. */
+  .orch-job-head { flex-wrap: wrap; row-gap: 3px; }
+  .orch-job-does { flex: 1 1 100%; order: 1; padding-left: 17px; white-space: normal; }
+}
+@media (pointer: coarse) {
+  .orch-pick select { min-height: 44px; }
+  .orch-model { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  .orch-cable-core, .orch-cable-halo { stroke: CanvasText; }
+  .orch-effort-fill, .orch-effort-stops i.is-lit { background: Highlight; }
+  .orch-effort input::-webkit-slider-thumb { background: ButtonText; outline: none; }
+  .orch-effort input::-moz-range-thumb { background: ButtonText; outline: none; }
+}
+
+.orch-preset-number {
+  display: inline-grid; flex: none; place-items: center; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 50%;
+  color: var(--muted-strong); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1;
+}
+.orch-preset[aria-pressed="true"] .orch-preset-number, .orch-preset.is-renaming .orch-preset-number {
+  border-color: var(--yellow); background: var(--yellow); color: var(--bg);
+}
+
+/* The preset tabs above the board in settings: one row, with what can be
+   done to the preset shown at its far end. */
+.orch-presets { position: relative; z-index: 1; display: grid; gap: 8px; margin-bottom: 14px; }
+.orch-presets-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 34px; }
+.orch-presets-list { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.orch-preset, .orch-presets-add {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; height: 34px; padding: 0 14px 0 8px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--bg);
+  color: var(--muted-strong); font: inherit; font-size: 13px; cursor: var(--orc-cursor-pointer, pointer);
+  transition: background-color .15s ease-out, border-color .15s ease-out, color .15s ease-out;
+}
+.orch-preset:hover, .orch-presets-add:not(:disabled):hover { border-color: var(--control-border, var(--border)); color: var(--heading); }
+:is(.orch-preset, .orch-presets-add, .orch-presets-act):focus-visible { outline: var(--orc-focus-ring, 2px solid var(--focus, var(--green))); outline-offset: 2px; }
+.orch-preset[aria-pressed="true"], .orch-preset.is-renaming {
+  border-color: color-mix(in srgb, var(--yellow) 60%, transparent); background: color-mix(in srgb, var(--yellow) 12%, var(--bg));
+  color: var(--heading); font-weight: 600;
+}
+.orch-preset.is-renaming { padding-right: 8px; cursor: text; }
+/* A tab is dragged to a new place. A sideways touch drags it; an upward one
+   still scrolls the page. */
+.orch-preset[data-reorder] { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.orch-presets-list.reordering, .orch-presets-list.reordering .orch-preset { cursor: grabbing; }
+.orch-preset.dragging {
+  position: relative; z-index: 1; border-color: color-mix(in srgb, var(--yellow) 60%, transparent);
+  box-shadow: 0 10px 24px rgb(0 0 0 / .3); transition: none;
+}
+.orch-preset-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orch-preset input {
+  min-width: 0; max-width: 100%; padding: 0; border: 0; outline: 0; background: none; color: inherit; font: inherit; font-weight: 600;
+}
+.orch-preset.is-renaming:focus-within { outline: var(--orc-focus-ring, 2px solid var(--focus, var(--green))); outline-offset: 2px; }
+.orch-presets-add { gap: 5px; padding: 0 13px 0 9px; border-style: dashed; background: none; }
+.orch-presets-add svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.orch-presets-add:disabled { opacity: .5; cursor: not-allowed; }
+.orch-presets-side { display: flex; align-items: center; gap: 4px; margin-left: auto; min-width: 0; }
+.orch-presets-side .settings-note { margin: 0 6px 0 0; }
+.orch-presets-side .settings-note:empty { display: none; }
+.orch-presets-act {
+  height: 28px; padding: 0 9px; border: 0; border-radius: 6px; background: none;
+  color: var(--muted-strong); font: inherit; font-size: 12.5px; cursor: var(--orc-cursor-pointer, pointer);
+}
+.orch-presets-act:hover { background: var(--chip); color: var(--heading); }
+.orch-presets-act[hidden] { display: none; }
+.orch-presets-side .settings-note.is-quiet {
+  position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+/* Export's word and its tick share one cell, so the button keeps its width. */
+[data-orch-presets-export] { display: inline-grid; place-items: center; }
+[data-orch-presets-export] > * { grid-area: 1 / 1; transition: opacity .15s ease-out; }
+.orch-presets-tick {
+  width: 15px; height: 15px; fill: none; stroke: var(--green); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  opacity: 0; stroke-dasharray: 14; stroke-dashoffset: 14;
+}
+[data-orch-presets-export].is-copied > span { opacity: 0; }
+[data-orch-presets-export].is-copied .orch-presets-tick { opacity: 1; animation: orch-presets-tick .28s ease-out .05s forwards; }
+@keyframes orch-presets-tick { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  [data-orch-presets-export].is-copied .orch-presets-tick { animation: none; stroke-dashoffset: 0; }
+}
+.orch-presets-hint { max-width: 92ch; margin: 0; }
+/* Export's text to copy, or a box to paste into for Import, where the page
+   cannot use the clipboard. */
+.orch-presets-share { display: grid; gap: 6px; max-width: 92ch; }
+.orch-presets-share[hidden] { display: none; }
+.orch-presets-share-label { color: var(--muted-strong); font-size: 12.5px; }
+.orch-presets-share textarea {
+  box-sizing: border-box; width: 100%; min-height: 64px; padding: 8px 10px; resize: vertical;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--heading);
+  font: 12px/1.45 var(--orc-font-mono, ui-monospace, monospace); word-break: break-all;
+}
+.orch-presets-share textarea:focus-visible { outline: var(--orc-focus-ring, 2px solid var(--focus, var(--green))); outline-offset: 2px; }
+.orch-presets-share-actions { display: flex; gap: 4px; }
+@media (pointer: coarse), (max-width: 700px) {
+  .orch-preset, .orch-presets-add, .orch-presets-act { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  .orch-preset[aria-pressed="true"], .orch-preset.is-renaming { border-color: Highlight; }
+  .orch-preset[aria-pressed="true"] .orch-preset-number { border-color: Highlight; background: Highlight; color: HighlightText; }
+  .orch-preset-icon:has(input:checked) { border-color: Highlight; }
+}
+
+/* A preset's icon: on its tab in place of its number, and the choices for the
+   preset shown below the tabs. */
+.orch-preset-badge, .orch-preset-icon-picture { display: inline-grid; flex: none; place-items: center; width: 18px; height: 18px; }
+.orch-preset-badge .mark, .orch-preset-icon-picture .mark { display: inline-grid; width: 100%; height: 100%; color: var(--heading); }
+.orch-preset-badge svg, .orch-preset-icon-picture svg { width: 100%; height: 100%; }
+.orch-preset-image { display: block; width: 100%; height: 100%; border-radius: 4px; object-fit: cover; }
+.orch-preset-tree { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.orch-preset-icons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.orch-preset-icons-legend { float: left; margin-right: 4px; padding: 0; color: var(--muted-strong); font-size: 12.5px; }
+.orch-preset-icons-list { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.orch-preset-icon {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 34px; height: 34px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--bg);
+  color: var(--muted-strong); font-size: 12.5px; cursor: var(--orc-cursor-pointer, pointer);
+  transition: background-color .15s ease-out, border-color .15s ease-out, color .15s ease-out;
+}
+.orch-preset-icon.has-text { padding: 0 12px 0 8px; }
+.orch-preset-icon input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
+.orch-preset-icon:hover { border-color: var(--control-border, var(--border)); color: var(--heading); }
+.orch-preset-icon:has(input:checked) {
+  border-color: color-mix(in srgb, var(--yellow) 60%, transparent); background: color-mix(in srgb, var(--yellow) 12%, var(--bg)); color: var(--heading);
+}
+.orch-preset-icon:has(input:focus-visible) { outline: var(--orc-focus-ring, 2px solid var(--focus, var(--green))); outline-offset: 2px; }
+.orch-preset-upload { padding: 0 12px; border-style: dashed; background: none; }
+@media (pointer: coarse), (max-width: 700px) {
+  .orch-preset-icon { min-width: 44px; height: 44px; }
+}

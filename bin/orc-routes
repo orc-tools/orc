@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Show and change Orchestrate's routes: which agent and model does each job
+when a run delegates (`orchestrate` in ~/.orc/config.json, which stays on this
+computer). Settings → Orchestrate edits the same routes on a board.
+
+  orc-routes show [--json]     The saved routes.
+  orc-routes set <job> <provider> <model> [--effort <level>[:<level>]] [--fast | --ultrafast]
+  orc-routes unset <job>
+
+Each command takes --preset <name, number or id> when more than one preset
+is saved; without it a command works on the first, which is the one a launch
+gets when it picks none. Settings adds, names and removes presets.
+
+Jobs: lead (the run's own agent, which plans and integrates), implementation,
+research, review, design, test, general. A provider is claude, codex,
+gemini or an installed harness plugin's id, and the model is that agent's own
+id for it. --effort takes one level or a lowest:highest range from low,
+medium, high, xhigh, max, ultra. --fast runs the job in its agent's Fast
+mode, where that agent has one. --ultrafast selects Ultrafast for Codex
+Sol 6.2. The lead route is the model a launch on that preset runs on. A job
+with no route is left to the coordinator. Writes go through orc-ui when it is running; otherwise
+config.json is written directly under its lock.
+"""
+import argparse
+import contextlib
+import fcntl
+import json
+import os
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import orchestrate_rules as rules  # noqa: E402
+
+DEFAULT_DIR = Path("~/.orc").expanduser()
+CONFIG_DIR = Path(os.environ.get("ORC_HOME", "~/.orc")).expanduser()
+ENDPOINT = "/api/orchestrate/rules"
+
+
+class ServerDown(Exception):
+    pass
+
+
+def _server(method, payload=None):
+    port = int(os.environ.get("ORC_UI_PORT") or 4173)
+    data = json.dumps(payload).encode() if payload is not None else None
+    request = urllib.request.Request("http://127.0.0.1:%d%s" % (port, ENDPOINT), data=data, method=method,
+                                     headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        # 404 is an orc-ui from before Orchestrate was part of Orc, with its
+        # plugin off: the file is still the rules.
+        if error.code == 404:
+            raise ServerDown("this orc-ui does not serve Orchestrate's rules") from error
+        with contextlib.suppress(ValueError, AttributeError):
+            raise SystemExit("orc-routes: " + json.loads(error.read()).get("error", "orc-ui refused the write"))
+        raise SystemExit("orc-routes: orc-ui refused the write (HTTP %d)" % error.code)
+    except (urllib.error.URLError, OSError) as error:
+        raise ServerDown(str(error)) from error
+
+
+def read_config():
+    try:
+        config = json.loads((CONFIG_DIR / "config.json").read_text())
+    except FileNotFoundError:
+        return {}
+    except ValueError:
+        raise SystemExit("orc-routes: config.json is not valid JSON; fix it and try again")
+    if not isinstance(config, dict):
+        raise SystemExit("orc-routes: config.json does not hold a JSON object")
+    return config
+
+
+def _write_directly(transform):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    # The lock orc-ui's config writes take.
+    with open(CONFIG_DIR / ".config.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        config = read_config()
+        result = transform(config)
+        if result == config:
+            return False
+        descriptor, temporary = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".config.", suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w") as handle:
+                json.dump(result, handle, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, CONFIG_DIR / "config.json")
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+        return True
+
+
+def current():
+    """The rules, from orc-ui when it answers for this home."""
+    if CONFIG_DIR.resolve() == DEFAULT_DIR.resolve():
+        with contextlib.suppress(ServerDown):
+            return rules.clean(_server("GET"))
+    return rules.read(read_config())
+
+
+def chosen(found, wanted):
+    """The preset --preset names, or the first without it."""
+    if wanted is None:
+        return found["presets"][0]
+    entry = rules.find(found, wanted)
+    if entry is None:
+        raise SystemExit("orc-routes: no preset %r. Saved presets: %s" % (
+            wanted, ", ".join(entry["name"] for entry in found["presets"])))
+    return entry
+
+
+def change(job, value, wanted=None):
+    """Sets or removes job's route. (wrote, how): how is "orc-ui" or "file"."""
+    def transform(config):
+        preset = chosen(rules.read(config), wanted)
+        return rules.with_route(config, job, value, preset["id"])
+    if CONFIG_DIR.resolve() == DEFAULT_DIR.resolve():
+        with contextlib.suppress(ServerDown):
+            before = _server("GET")
+            preset = chosen(rules.clean(before), wanted)
+            after = rules.with_route({rules.CONFIG_KEY: before}, job, value, preset_id=preset["id"])
+            routes = rules.select(rules.read(after), preset["id"])["routes"]
+            if routes == preset["routes"]:
+                return False, "orc-ui"
+            _server("POST", {"routes": routes, "preset": preset["id"]})
+            return True, "orc-ui"
+    return _write_directly(transform), "file"
+
+
+def describe(found, wanted=None):
+    preset = chosen(found, wanted)
+    named = len(found["presets"]) > 1
+    if not preset["routes"]:
+        return "No routes are saved%s: the coordinator picks each task's model itself." % (
+            " in " + preset["name"] if named else "")
+    out = ["From config.json %s%s:" % (rules.CONFIG_KEY, ", preset " + preset["name"] if named else ""),
+           *("  " + line for line in rules.lines(preset))]
+    if named and wanted is None:
+        out.append("Presets: " + ", ".join(
+            "%d %s" % (place, entry["name"]) for place, entry in enumerate(found["presets"], 1)))
+    return "\n".join(out)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    show = commands.add_parser("show")
+    show.add_argument("--json", action="store_true")
+    put = commands.add_parser("set")
+    put.add_argument("job", choices=rules.JOBS)
+    put.add_argument("provider")
+    put.add_argument("model")
+    put.add_argument("--effort")
+    speed = put.add_mutually_exclusive_group()
+    speed.add_argument("--fast", dest="fast", action="store_const", const=True, help="run this job in Fast mode")
+    speed.add_argument("--ultrafast", dest="fast", action="store_const", const="ultrafast",
+                       help="run this job in Ultrafast mode on Codex Sol 6.2")
+    unset = commands.add_parser("unset")
+    unset.add_argument("job", choices=rules.JOBS)
+    for command in (show, put, unset):
+        command.add_argument("--preset", help="a preset's name, number or id; the first without it")
+    args = parser.parse_args()
+
+    if args.command == "show":
+        found = current()
+        if args.json:
+            # `routes` stays the routes asked about, as it was before presets.
+            print(json.dumps({**found, "routes": chosen(found, args.preset)["routes"]}, indent=2))
+        else:
+            print(describe(found, args.preset))
+        return 0
+    value = None
+    if args.command == "set":
+        value = {"provider": args.provider, "model": args.model}
+        if args.effort is not None:
+            levels = args.effort.split(":")
+            value["effort"] = levels[0] if len(levels) == 1 else levels
+        if args.fast:
+            value["fast"] = args.fast
+    try:
+        rules.with_route({}, args.job, value)
+        wrote, how = change(args.job, value, args.preset)
+    except ValueError as error:
+        print("orc-routes: %s" % error, file=sys.stderr)
+        return 2
+    if not wrote:
+        print("Nothing to change.")
+    elif how == "orc-ui":
+        print("Saved.")
+    else:
+        print("Saved to config.json. orc-ui was not reachable, so it syncs on orc-ui's next sync.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

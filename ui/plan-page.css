@@ -1,0 +1,483 @@
+/* The plan page (ui/js/plan-page.js): the plan document down the left, and
+   beside it the plan's steps with each step's run or its Start. The steps
+   stay in view while the document scrolls. Below 900px of room the steps sit
+   under the destination in one column. */
+
+#content:has(> .plan-page) { padding-bottom: 20px; }
+/* The chat box's strip is the page's foot, so nothing scrolls under it. */
+#content:has(> .plan-page > .plan-chat:not([hidden])) { padding-bottom: 0; }
+
+/* The plan's columns, shared by the layout and the chat box at its foot. */
+.plan-page {
+  container: plan-page / inline-size; color: var(--text);
+  --plan-columns: minmax(0, 46rem) minmax(17rem, 21rem);
+  --plan-column-gap: clamp(28px, 4cqi, 56px);
+}
+.plan-layout {
+  display: grid; align-items: start; justify-content: center;
+  grid-template-columns: var(--plan-columns);
+  grid-template-rows: auto 1fr;
+  grid-template-areas: "head work" "doc work";
+  column-gap: var(--plan-column-gap);
+  padding: 14px 0 44px;
+}
+.plan-head { grid-area: head; min-width: 0; }
+.plan-doc { grid-area: doc; min-width: 0; }
+.plan-work {
+  grid-area: work; min-width: 0;
+  position: sticky; top: 20px;
+  max-height: calc(var(--plan-view-h, 100vh) - 40px); overflow-y: auto;
+}
+
+/* The shell frames a markdown tab as a bordered page; here the page is the
+   whole tab, so the document keeps the type and drops the frame. */
+.plan-page .md {
+  width: auto; min-height: 0; padding: 0; border: 0; border-radius: 0; background: none;
+}
+
+.plan-title {
+  margin: 0 0 12px; color: var(--heading);
+  font-size: 24px; font-weight: 700; line-height: 1.3; text-wrap: balance;
+}
+.plan-lede { max-width: 68ch; color: var(--heading); font-size: 16px; line-height: 1.6; }
+.plan-page .plan-lede > :last-child { margin-bottom: 0; }
+.plan-loading { margin: 0 0 12px; color: var(--muted-strong); }
+
+/* ---- the document ---- */
+.plan-section { margin-top: 40px; scroll-margin-top: 20px; }
+/* The shell's own markdown rules come later in the page, so anything that
+   answers one of them names the plan page first. */
+.plan-page .plan-section:first-child { margin-top: 32px; }
+.plan-page .plan-section > h2 {
+  margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  font-size: 16px; font-weight: 600; line-height: 1.3; color: var(--heading);
+}
+.plan-section > h2:focus { outline: none; }
+.plan-section > h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+.plan-page .plan-section > :last-child { margin-bottom: 0; }
+.plan-page .md h3 { margin: 22px 0 8px; }
+.plan-page .md h2 + h3 { margin-top: 0; }
+.plan-page .md a { text-underline-offset: 2px; }
+.plan-page .md .plan-mockup-link {
+  display: inline-flex; align-items: center; gap: 4px; font-weight: 500; text-decoration: none;
+}
+.plan-page .md .plan-mockup-link:hover { text-decoration: underline; }
+
+.plan-page .plan-doc-steps {
+  display: grid; gap: 16px; margin: 0 0 14px; padding: 0;
+  list-style: none; counter-reset: plan-step;
+}
+.plan-page .plan-doc-steps > li {
+  position: relative; margin: 0; padding-left: 36px;
+  counter-increment: plan-step; scroll-margin-top: 24px; border-radius: 6px;
+}
+.plan-doc-steps > li::before {
+  content: counter(plan-step);
+  position: absolute; left: 0; top: 0;
+  display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px;
+  border: 1px solid var(--control-border); background: var(--chip); color: var(--muted-strong);
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.plan-doc-steps > li:focus { outline: none; }
+.plan-doc-steps > li:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.plan-doc-steps > li > :last-child { margin-bottom: 0; }
+
+/* An answer is filed under its question number, so a round scans as a list. */
+.plan-page .md li.plan-answer {
+  position: relative; margin-left: -22px; padding-left: 66px; list-style: none;
+}
+.plan-ref {
+  position: absolute; left: 0; top: 0; width: 58px;
+  color: var(--muted-strong); font-size: 12px; font-weight: 600; line-height: 22.4px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+.plan-arrived { animation: plan-arrive 1100ms cubic-bezier(.16, 1, .3, 1); }
+@keyframes plan-arrive {
+  from { background-color: color-mix(in srgb, var(--accent) 18%, transparent); }
+  to { background-color: transparent; }
+}
+
+/* ---- the steps ---- */
+.plan-work {
+  display: grid; gap: 14px; padding: 16px 16px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  font-size: 13px; line-height: 1.45;
+}
+.plan-work-steps { display: grid; gap: 12px; min-width: 0; }
+.plan-work-title { margin: 0; color: var(--heading); font-size: 14px; font-weight: 600; line-height: 1.35; }
+/* Focus lands here when a Start gives way to Starting…; the heading needs no ring. */
+.plan-work-title:focus { outline: none; }
+.plan-start-all { justify-self: start; }
+
+.plan-steps { display: grid; margin: 0; padding: 0; list-style: none; }
+.plan-step {
+  position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 10px;
+  padding-bottom: 16px;
+}
+.plan-step:last-child { padding-bottom: 0; }
+/* The line from one step's mark to the next, as on the Ship page's spine. */
+.plan-step:not(:last-child)::after {
+  content: ""; position: absolute; left: 11.5px; top: 28px; bottom: 4px; width: 1px;
+  background: var(--control-border);
+}
+.plan-step-mark {
+  display: grid; place-items: center; width: 24px; height: 24px; border-radius: 999px;
+  border: 1px solid var(--control-border); background: var(--chip); color: var(--muted-strong);
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.plan-step:is([data-state="next"], [data-state="failed"]) .plan-step-mark {
+  border-color: color-mix(in srgb, var(--heading) 42%, var(--control-border)); color: var(--heading);
+}
+.plan-step:is([data-state="active"], [data-state="starting"]) .plan-step-mark {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-text);
+}
+.plan-step[data-state="done"] .plan-step-mark {
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+  background: color-mix(in srgb, var(--green) 13%, transparent); color: var(--green-text);
+}
+/* A plan that one run builds has no sequence to draw. */
+.plan-steps[data-count="1"] .plan-step { grid-template-columns: minmax(0, 1fr); }
+.plan-steps[data-count="1"] .plan-step-mark { display: none; }
+
+.plan-step-body { display: grid; gap: 6px; justify-items: start; min-width: 0; padding-top: 2px; }
+.plan-step-head { display: flex; align-items: flex-start; gap: 10px; width: 100%; min-width: 0; }
+.plan-step-name {
+  flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 4px; background: none;
+  color: var(--heading); font: inherit; font-size: 13.5px; font-weight: 600; line-height: 1.4;
+  text-align: left; overflow-wrap: anywhere; cursor: var(--orc-cursor-pointer, pointer);
+}
+.plan-step-name:hover { color: var(--accent-text); }
+.plan-step-name:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.plan-step[data-state="todo"] .plan-step-name { color: var(--text); font-weight: 500; }
+.plan-step[data-state="done"] .plan-step-name { color: var(--muted-strong); font-weight: 500; }
+.plan-step:is([data-state="todo"], [data-state="done"]) .plan-step-name:hover { color: var(--accent-text); }
+/* A later step's Start sits on its name's line, lifted to share its baseline. */
+.plan-step-head > orc-button { flex: none; margin-top: -4px; }
+
+.plan-step-run {
+  display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  color: var(--muted-strong); font-size: 12px; text-decoration: none; border-radius: 4px;
+}
+.plan-step-run-state { flex: none; color: var(--text); font-weight: 600; }
+.plan-step-run-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-step-run:hover .plan-step-run-title {
+  color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px;
+}
+.plan-step-run:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.plan-step-here { margin: 0; color: var(--muted-strong); font-size: 12px; }
+/* A plan that opened one run per repository: each step names its repository
+   on its name's line, a waiting step says what it waits on, and the latest
+   note between the runs sits under the step's run. */
+.plan-step-repo {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  color: var(--muted-strong); font-size: 12px; line-height: 1.6;
+}
+.plan-step-repo .project-icon { width: 16px; height: 16px; font-size: 10px; }
+.plan-step-waiting .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
+.plan-step-waiting .plan-step-run-state { color: var(--orange-text); }
+.plan-step-talk {
+  margin: 0; max-width: 100%; color: var(--muted-strong); font-size: 12px; line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.plan-step-talk q { color: var(--text); }
+.plan-step-talk-state { color: var(--accent-text); }
+/* Start work's button while its run launches: a turning ring before the label. */
+.plan-start-ring {
+  display: inline-block; flex: none; width: 9px; height: 9px; margin-right: 7px; vertical-align: -1px;
+  border-radius: 999px; border: 1.5px solid currentColor; border-right-color: transparent;
+  animation: plan-wait 900ms linear infinite;
+}
+@keyframes plan-wait { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .plan-start-ring { animation: none; } }
+/* Dimmed like any disabled button, but busy rather than refused. */
+orc-button[data-plan-starting]::part(button) { cursor: progress; }
+.plan-step-here { color: var(--accent-text); font-weight: 600; }
+.plan-step-error { margin: 0; color: var(--red-text, var(--red)); font-size: 12px; overflow-wrap: anywhere; }
+.plan-step-body > orc-button { margin-top: 4px; }
+/* A plan one run builds has no name to sit under. */
+.plan-steps[data-count="1"] .plan-step-body > orc-button:first-child { margin-top: 0; }
+
+.plan-start-note { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+/* The build paired with the plan, where Start work was: its state and model,
+   then what the plan was made with, and where notes go now. */
+.plan-building { display: grid; gap: 8px; justify-items: start; min-width: 0; }
+.plan-building-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; color: var(--text); }
+.plan-building-label { color: var(--accent-text); font-weight: 600; }
+.plan-building-note { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+/* A build ready to merge reads green, one waiting on you in the gate colour,
+   and its call to Chat is the box's one primary button. */
+.plan-building[data-tone="ready"] .plan-building-label { color: var(--ready-text, var(--green-text)); }
+.plan-building[data-tone="ask"] .plan-building-label { color: var(--orange-text, var(--gate)); }
+.plan-building-call { margin: 2px 0 0; color: var(--text); font-size: 13px; line-height: 1.5; }
+orc-button.plan-chat-call[data-tone="ask"] { --orc-green: var(--orange); }
+.plan-chat-arrow { margin-left: 6px; font-weight: 500; }
+.plan-building-hint {
+  justify-self: stretch; margin: 4px 0 0; padding-top: 10px; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: 12px; line-height: 1.5;
+}
+/* What Start work builds on: the composer's launch choices in one row. */
+.plan-builds { display: grid; gap: 6px; min-width: 0; }
+.plan-builds[hidden] { display: none; }
+.plan-builds-label { margin: 0; color: var(--muted-strong); font-size: 12px; font-weight: 500; }
+.plan-builds-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.plan-builds-model { min-width: 0; max-width: 100%; }
+.plan-builds-effort { flex: none; width: auto; min-width: 0; }
+.plan-builds-flags { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.plan-builds-flags > [hidden] { display: none; }
+.plan-builds-note { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.45; }
+.plan-builds-note.is-error { color: var(--red-text, var(--red)); }
+/* ---- notes on the plan (ui/js/plan-notes.js) ----
+   A chat box along the foot of the plan, as the run chat has, with the notes
+   waiting to go, Orc's answers and the revising card in a tray on top of it.
+   It takes the plan layout's columns so the box lines up under the plan text,
+   never under the side column. It stays in view while the plan scrolls, on a
+   solid strip so neither the plan nor a theme's scenery shows through. */
+.plan-chat {
+  position: sticky; bottom: 0; z-index: 3; padding: 14px 0 16px;
+  display: grid; justify-content: center;
+  grid-template-columns: var(--plan-columns);
+  column-gap: var(--plan-column-gap);
+  background: linear-gradient(to bottom, transparent, var(--bg) 14px);
+  /* The scroller's fractional top can leave a pixel row of the plan below
+     the strip; a solid shadow covers it. */
+  box-shadow: 0 8px 0 var(--bg);
+}
+.plan-chat[hidden], .plan-chat .newconv-prompt[hidden] { display: none; }
+.plan-chat-lane { display: grid; grid-column: 1; min-width: 0; }
+.plan-chat-model {
+  display: inline-flex; align-items: center; min-width: 0; max-width: 100%; padding: 3px 7px;
+  color: var(--muted); font-size: 12px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.plan-chat-model[hidden] { display: none; }
+.plan-notes {
+  display: grid; gap: 8px; min-width: 0; max-height: min(40vh, 340px); overflow-y: auto; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  font-size: 13px; line-height: 1.45;
+}
+/* Above the box, the tray sits on its top edge, inset a little, so the two
+   read as one. Without the box (a plan whose build has begun) it stands alone. */
+.plan-chat-lane:has(> .newconv-prompt:not([hidden])) > .plan-notes {
+  margin: 0 12px; border-bottom: 0; border-radius: 10px 10px 0 0;
+}
+.plan-notes[hidden] { display: none; }
+.plan-notes-subtitle { margin: 0; color: var(--muted-strong); font-size: 12px; font-weight: 600; }
+.plan-notes-fold-meta { color: var(--muted-strong); font-size: 12px; }
+/* Orc's answers' heading row folds them wherever it is clicked, as the chat's
+   step and check cards do: the arrow points down while they show, up once they
+   are one line. Only the pointer changes over it. Open in Chat sits at its far end. */
+.plan-notes-answers-head { display: flex; align-items: center; gap: 12px; min-width: 0; cursor: var(--orc-cursor-pointer, pointer); }
+.plan-notes-fold {
+  display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding: 0; border: 0;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: var(--orc-cursor-pointer, pointer);
+}
+.plan-notes-fold > :not(.plan-notes-fold-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-notes-fold-icon {
+  display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 5px;
+  background: color-mix(in srgb, var(--muted-strong) 14%, transparent); color: var(--muted-strong);
+}
+.plan-notes-fold[aria-expanded="false"] .plan-notes-fold-icon svg { transform: rotate(180deg); }
+/* While the answers fold (ui/js/plan-notes.js animateAnswersFold), the tray and
+   the answers moving in it clip what has not yet fitted. */
+.plan-notes[data-folding], .plan-notes[data-folding] > .plan-notes-answers { overflow: hidden; }
+.plan-notes-chat {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; margin-left: auto;
+  color: var(--accent-text); font-size: 12px; font-weight: 500; text-decoration: none;
+}
+.plan-notes-chat:hover { text-decoration: underline; }
+.plan-notes-fold:focus-visible, .plan-notes-chat:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.plan-notes-hint, .plan-notes-status { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+.plan-notes-status.is-error { color: var(--red-text, var(--red)); overflow-wrap: anywhere; }
+.plan-notes-list, .plan-notes-answers { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.plan-notes-list > li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 8px; }
+.plan-notes-item { display: grid; gap: 2px; min-width: 0; }
+.plan-notes-quote {
+  padding: 0; border: 0; background: none; color: var(--muted-strong); font: inherit; font-size: 12px;
+  line-height: 1.4; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+button.plan-notes-quote { cursor: var(--orc-cursor-pointer, pointer); }
+p.plan-notes-quote { margin: 0; }
+button.plan-notes-quote:hover { color: var(--accent-text); }
+.plan-notes-quote:focus-visible, .plan-notes-delete:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.plan-notes-body, .plan-notes-reply, .plan-notes-asked { margin: 0; overflow-wrap: anywhere; }
+.plan-notes-body { color: var(--heading); }
+.plan-notes-asked { color: var(--muted-strong); font-size: 12px; }
+/* A note's pictures: the first as a thumbnail, and how many. */
+.plan-notes-images {
+  display: inline-flex; align-items: center; gap: 8px; justify-self: start; margin-top: 2px; padding: 0;
+  border: 0; background: none; color: var(--muted-strong); font: inherit; font-size: 12px;
+  cursor: zoom-in;
+}
+.plan-notes-images img {
+  width: 32px; height: 20px; object-fit: cover; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg);
+}
+.plan-notes-images:hover { color: var(--accent-text); }
+.plan-notes-images:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.plan-notes-reply { color: var(--text); }
+.plan-notes-answers > li { display: grid; gap: 2px; padding-left: 10px; border-left: 2px solid var(--border); }
+.plan-notes-state { color: var(--accent-text); font-size: 12px; font-weight: 600; }
+.plan-notes-state:is([data-state="declined"], [data-state="needs-input"]) { color: var(--yellow-text, var(--heading)); }
+.plan-notes-state:is([data-state="failed"], [data-state="stale-anchor"]) { color: var(--red-text, var(--red)); }
+.plan-notes-delete {
+  display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px;
+  background: none; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+}
+.plan-notes-delete:hover { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red-text, var(--red)); }
+.plan-note-number, .plan-note-mark, .plan-note-pin {
+  display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-contrast, var(--bg)); font-size: 11px; font-weight: 700;
+  font-variant-numeric: tabular-nums; line-height: 1;
+}
+/* A part of the plan that takes a note says so under the pointer. */
+.plan-page[data-plan-notes] :is(.plan-lede, .plan-doc) :is(p, li, blockquote, pre, td, th, h2, h3, h4) {
+  border-radius: 4px; cursor: var(--orc-cursor-pointer, pointer);
+}
+.plan-page[data-plan-notes] :is(.plan-lede, .plan-doc) :is(p, li, blockquote, pre, td, th, h2, h3, h4):hover:not(:has(:is(p, li, blockquote, pre, .plan-note-form):hover)) {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.plan-page :is(.plan-lede, .plan-doc) img { cursor: zoom-in; }
+.plan-page .plan-noted { position: relative; }
+.plan-noted {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 4px;
+}
+/* Drawn from an attribute, so a number never reads as part of the plan. */
+:is(.plan-note-mark, .plan-note-pin)::before { content: attr(data-n); }
+/* On the part's top-right corner, inside the plan's column, so no margin cuts it off. */
+.plan-note-mark { position: absolute; top: -9px; right: 0; }
+.plan-note-shot { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.plan-note-shot > img { display: block; }
+.plan-note-pin {
+  position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
+  border: 2px solid var(--bg); box-shadow: 0 1px 4px rgb(0 0 0 / .45); font-size: 12px;
+}
+.plan-note-form {
+  display: grid; gap: 8px; margin: 10px 0 14px; padding: 10px; cursor: auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 10px; background: var(--panel);
+}
+.plan-note-form textarea {
+  width: 100%; min-height: 58px; padding: 8px 10px; resize: vertical; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text);
+  font: inherit; font-size: 14px; line-height: 1.5;
+}
+.plan-note-form textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.plan-note-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.plan-note-form-hint { margin-left: auto; color: var(--muted-strong); font-size: 12px; }
+/* While Orc revises the plan from sent notes: a status card with a spinner,
+   the time it has been going and a bar along its foot, a ring round each
+   note's pin and a line across the top of the plan. Only a follow-up still
+   waiting for Orc carries a line of its own. Everything that moves stands still under reduced motion. */
+.plan-notes-revising {
+  position: relative; display: grid; padding: 10px 11px 0; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel, transparent));
+}
+/* Its Open in Chat link covers the whole box, so a click anywhere on it opens
+   Chat at the turn working on the notes. */
+.plan-notes-revising .plan-notes-chat::after { content: ""; position: absolute; inset: 0; }
+.plan-notes-revising:has(.plan-notes-chat:hover) {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel, transparent));
+}
+/* Title and count share one row; in a narrow pane the count wraps under the
+   title's text rather than being cut off. The row's left padding is that
+   indent, and the title pulls back over it by the spinner plus its gap. */
+.plan-notes-revising-row {
+  display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 2px;
+  margin: 0 0 8px; padding-left: 18px;
+}
+.plan-notes-revising-title {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 0 -18px;
+  color: var(--heading); font-size: 13px; font-weight: 600;
+}
+.plan-notes-spinner {
+  flex: none; width: 10px; height: 10px; border-radius: 999px;
+  border: 2px solid var(--control-border, var(--border)); border-top-color: var(--accent);
+}
+.plan-notes-revising-meta {
+  margin: 0; color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.plan-notes-revising-bar {
+  display: block; height: 2px; margin: 0 -11px;
+  background: linear-gradient(90deg, transparent 10%, var(--accent) 35%, var(--accent) 60%, transparent 85%);
+  background-size: 200% 100%; background-position: 50% 0;
+}
+.plan-notes-list.is-working > li { grid-template-columns: auto minmax(0, 1fr); }
+.plan-notes-queued {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 2px;
+  color: var(--muted-strong); font-size: 12px;
+}
+.plan-notes-queued::before {
+  content: ""; box-sizing: border-box; width: 6px; height: 6px; border-radius: 999px;
+  border: 1.5px solid var(--accent);
+}
+:is(.plan-note-pin, .plan-note-mark).is-working::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 999px; pointer-events: none;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent);
+}
+.plan-note-pin.is-working { overflow: visible; }
+.plan-page[data-plan-revising] { position: relative; }
+/* Start waits for the revised plan, greyed out rather than only dimmed. */
+.plan-page[data-plan-revising] orc-button[data-plan-start][disabled] { filter: grayscale(1); }
+/* The line runs along the tab bar's bottom edge, across the whole pane: its
+   margins and its sticky top undo the scroller's padding (#content in
+   index.html; sticky measures from inside that padding), so it starts stuck
+   and never moves. */
+.plan-page { --plan-edge-top: 20px; --plan-edge-inline: 22px; }
+@media (max-width: 700px) {
+  .plan-page { --plan-edge-top: 16px; --plan-edge-inline: 16px; }
+}
+.plan-page[data-plan-revising]::before {
+  content: ""; position: sticky; top: calc(-1 * var(--plan-edge-top)); z-index: 2; display: block; height: 2px;
+  margin: calc(-1 * var(--plan-edge-top)) calc(-1 * var(--plan-edge-inline)) calc(var(--plan-edge-top) - 2px);
+  background: linear-gradient(90deg, transparent 0, transparent 30%, var(--accent) 45%, var(--accent) 55%, transparent 70%);
+  background-size: 200% 100%; background-position: 50% 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .plan-notes-spinner, :is(.plan-note-pin, .plan-note-mark).is-working::after { animation: plan-wait 900ms linear infinite; }
+  .plan-notes-revising-bar, .plan-page[data-plan-revising]::before { animation: plan-sweep 1.6s ease-in-out infinite; }
+}
+@keyframes plan-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.plan-loose { display: grid; gap: 6px; justify-items: start; min-width: 0; }
+.plan-loose h3 { margin: 0; color: var(--muted-strong); font-size: 12px; font-weight: 600; }
+
+.plan-nav { padding-top: 12px; border-top: 1px solid var(--border); }
+.plan-nav ul { display: grid; gap: 1px; margin: 0 -8px; padding: 0; list-style: none; }
+.plan-nav button {
+  display: block; width: 100%; padding: 4px 8px; border: 0; border-radius: 6px; background: none;
+  color: var(--muted-strong); font: inherit; font-size: 12.5px; text-align: left;
+  cursor: var(--orc-cursor-pointer, pointer);
+}
+.plan-nav button:hover { color: var(--heading); }
+.plan-nav button[aria-current="true"] {
+  background: color-mix(in srgb, var(--heading) 8%, transparent); color: var(--heading); font-weight: 600;
+}
+.plan-nav button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+.plan-tools {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+  margin: 0 -8px; padding-top: 8px; border-top: 1px solid var(--border);
+}
+.plan-tool-link { color: var(--accent-text); font-size: 12px; text-decoration: none; }
+.plan-tool-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+/* ---- one column ---- */
+@container plan-page (max-width: 899px) {
+  .plan-layout, .plan-chat { --plan-columns: minmax(0, 46rem); }
+  .plan-layout {
+    grid-template-rows: auto;
+    grid-template-areas: "head" "work" "doc";
+    padding-top: 6px;
+  }
+  .plan-work { position: static; max-height: none; margin-top: 20px; overflow: visible; }
+  /* The document follows straight on, so its own headings do the finding. */
+  .plan-nav { display: none; }
+  .plan-tools { border-top: 1px solid var(--border); }
+}
+@container plan-page (max-width: 520px) {
+  .plan-lede { font-size: 15px; }
+}

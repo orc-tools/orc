@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Merge a repository's default branch into a live Build worktree, regenerate
+configured generated files, and reset `buildBaseCommit` to the merged `main` tip.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+import collision_radar  # noqa: E402
+
+
+def resolve_run_dir(run_dir: Path | None, run_id: str | None) -> Path:
+    if run_dir is not None:
+        return run_dir.expanduser().resolve()
+    env_id = run_id or os.environ.get("ORC_RUN_ID")
+    if not env_id:
+        raise SystemExit("orc-sync-main: pass --run-dir <path> or <run-id>")
+    runs_root = Path(os.environ.get("ORC_RUNS_DIR", "~/.orc/runs")).expanduser().resolve()
+    return (runs_root / env_id).resolve()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("run_id", nargs="?", help="run ID under ~/.orc/runs")
+    parser.add_argument("--run-dir", type=Path, help="explicit path to run directory")
+    parser.add_argument("--abort-on-conflict", action="store_true",
+                        help="abort rather than leaving conflict markers in the worktree")
+    parser.add_argument("--json", action="store_true", dest="json_output",
+                        help="emit machine-readable JSON only")
+    args = parser.parse_args(argv)
+
+    target_dir = resolve_run_dir(args.run_dir, args.run_id)
+    config_dir = os.environ.get("ORC_CONFIG_DIR")
+    result = collision_radar.sync_worktree_with_main(
+        target_dir,
+        leave_conflicts=not args.abort_on_conflict,
+        config_dir=config_dir,
+    )
+    state = result.get("state")
+    if args.json_output:
+        print(json.dumps(result, sort_keys=True))
+    else:
+        if state in ("synced", "reset-base"):
+            regen = result.get("regeneratedFiles") or []
+            regen_note = f" (regenerated: {', '.join(regen)})" if regen else ""
+            print(
+                f"orc-sync-main: synced {result.get('targetBranch', 'main')} "
+                f"({str(result.get('newBase', ''))[:7]}) and reset buildBaseCommit{regen_note}"
+            )
+        elif state == "up-to-date":
+            print(f"orc-sync-main: already at {str(result.get('base', ''))[:7]}")
+        elif state in ("conflicted", "conflict-in-progress"):
+            files = ", ".join(result.get("files") or [])
+            regen = result.get("regenerableFiles") or []
+            extra = (
+                f"; generated files ({', '.join(regen)}) will regenerate automatically "
+                "when you re-run orc-sync-main after staging resolved code files"
+                if regen else ""
+            )
+            print(
+                f"orc-sync-main: conflict merging {result.get('targetBranch', 'main')} "
+                f"({str(result.get('targetHead', ''))[:7]}) in {files}{extra}",
+                file=sys.stderr,
+            )
+        elif state == "dirty-overlap":
+            files = ", ".join(result.get("files") or [])
+            print(
+                f"orc-sync-main: uncommitted changes overlap {result.get('targetBranch', 'main')} "
+                f"in {files}; commit or stash them, then re-run orc-sync-main",
+                file=sys.stderr,
+            )
+        elif state == "error":
+            print(f"orc-sync-main: {result.get('error')}", file=sys.stderr)
+        else:
+            print(f"orc-sync-main: {state} ({result.get('reason') or 'no action needed'})")
+
+    return 1 if state in ("conflicted", "conflict-in-progress", "dirty-overlap", "error") else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

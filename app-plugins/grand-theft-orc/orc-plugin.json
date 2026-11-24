@@ -1,0 +1,24 @@
+{
+  "apiVersion": 2,
+  "id": "grand-theft-orc",
+  "name": "Grand Theft Orc",
+  "version": "1.0.0",
+  "description": "A coral coupe outside a Vice City motel, in the Florida sun and after the neon comes on.",
+  "contributes": {
+    "frontend": "frontend.js",
+    "theme": {
+      "id": "grand-theft-orc",
+      "label": "Grand Theft Orc",
+      "description": "A motel off the causeway",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "favicon": "gary.png",
+      "gary": "gary.png",
+      "sheila": "sheila.png",
+      "scene": "scene.bundle.js"
+    }
+  },
+  "build": {
+    "scene": "scene.js"
+  }
+}

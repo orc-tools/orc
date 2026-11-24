@@ -1,0 +1,39 @@
+<main data-placeholder="Add a goal or next step…"><div class="sheet">
+  <header class="atlas-head">
+    <div class="cover"><p class="kicker"><span class="compass" aria-hidden="true"></span> Field planner</p>
+      <h1>{{name}}</h1><p>Goals, next steps and the work that backs them up.</p></div>
+    <div class="plate" role="img" aria-label="An engraved contour map of a forested river valley"></div>
+  </header>
+  <div class="folio">
+    <section aria-labelledby="goals-title"><h2 class="rule" id="goals-title">Your goals</h2>
+      <div class="destination" id="goals"><div><h3>Set your first goal</h3><p>Give it an outcome and a next step.</p></div>
+        <button class="action primary" type="button" data-draft="Add a goal: ">+ Add a goal</button></div>
+      <details class="example-goal"><summary>Try an example goal</summary>
+        <div><h3>Publish a release guide</h3><p>Start with a draft. A merged documentation change or an approved brief could support this goal.</p>
+          <button type="button" class="action" data-ask="Add a goal to publish a release guide. My next step is to draft the guide.">Use this goal</button></div>
+      </details>
+      <section class="ledger" id="evidence"><h3 class="kicker">Evidence log</h3><p>Source links appear under the goal they support.</p></section>
+    </section>
+    <section aria-labelledby="sources-title"><h2 class="rule" id="sources-title">Evidence sources</h2>
+      <article class="source" id="github-source"><div class="source-row">
+        <h3>GitHub</h3><span class="source-state">Unchecked</span>
+        <button type="button" class="action" data-ask="Find GitHub evidence for my saved goals." aria-label="Find evidence on GitHub">Find evidence</button></div>
+        <details><summary>GitHub CLI setup</summary>
+          <div class="setup"><p>On the Mac running Orc, install the CLI and sign in.</p>
+            <code>brew install gh</code><code>gh auth login</code>
+            <p>Check with <b>gh auth status</b>, then try Find evidence again.</p><a href="https://cli.github.com/">GitHub CLI downloads ↗</a></div>
+        </details>
+      </article>
+      <article class="source" id="notion-source"><div class="source-row">
+        <h3>Notion</h3><span class="source-state">Unchecked</span>
+        <button type="button" class="action" data-ask="Find Notion evidence for my saved goals." aria-label="Find evidence in Notion">Find evidence</button></div>
+        <details><summary>Notion MCP setup</summary>
+          <div class="setup"><p>Use the Claude Code login selected in this vault’s Settings. Add Notion for that user.</p>
+            <code>claude mcp add --scope user --transport http notion https://mcp.notion.com/mcp</code>
+            <p>Open Claude Code, use <b>/mcp</b> to sign in to Notion, then try Find evidence again.</p>
+            <a href="https://developers.notion.com/guides/mcp/get-started-with-mcp">Notion connection guide ↗</a></div>
+        </details>
+      </article>
+    </section>
+  </div>
+</div></main>

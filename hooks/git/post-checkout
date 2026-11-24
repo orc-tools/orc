@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# $1=old HEAD, $2=new HEAD, $3=1 for branch checkout (0 = file checkout)
+"$(dirname "$0")/run-previous-hook" post-checkout "$@"
+[ "${3:-0}" = "1" ] || exit 0
+[ "$1" = "$2" ] && exit 0
+exec "$(dirname "$0")/orc-reinstall-check" "$1" "$2"

@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Send notes to the other runs of your group, and answer the ones sent to you.
+
+A plan can open one run per repository; those runs (and a run with the
+siblings it opened) are a group.
+`orc-note list` prints the group's runs and this run's notes with their answers.
+`orc-note ask --to RUN|REPO|"step N" "question" [--wait SECONDS]` asks another
+run and waits for the answer (default 90 seconds, inside an agent's command
+timeout; 0 does not wait). If it does
+not come in time it arrives later as a message in this run's chat.
+`orc-note tell --to RUN|REPO|"step N" "text"` sends a note that needs no answer.
+`orc-note answer NOTE-ID "text"` answers a note sent to this run.
+Pass --run-dir (or --run-id, or set ORC_RUN_ID) to name your own run.
+Orc's server, not this command, delivers notes and answers into the receiving
+run's session.
+"""
+import argparse
+import os
+import signal
+import sys
+import time
+from datetime import timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import run_dir_args  # noqa: E402
+import run_notes  # noqa: E402
+
+TOOL = "orc-note"
+
+
+def fail(message):
+    print("%s: %s" % (TOOL, message), file=sys.stderr)
+    raise SystemExit(1)
+
+
+def config_dir():
+    return os.path.expanduser(os.environ.get("ORC_CONFIG_DIR") or os.environ.get("ORC_HOME")
+                              or os.path.join("~", ".orc"))
+
+
+def caller(args):
+    run_dir, _status = run_dir_args.resolve(args, TOOL)
+    run_id = Path(run_dir).name
+
+    def meta(other):
+        return run_notes._meta_reader(config_dir())(other) or \
+            run_notes._meta_reader(str(Path(run_dir).parent.parent))(other)
+    return run_id, meta
+
+
+def label_for(config, run_id, meta):
+    for member in run_notes.group_members(config, run_id, meta)["members"]:
+        if member["runId"] == run_id:
+            return member["repo"] or member["title"] or run_id
+    return run_id
+
+
+def show(args):
+    config = config_dir()
+    run_id, meta = caller(args)
+    group = run_notes.group_members(config, run_id, meta)
+    if group["root"] is None:
+        fail("this run is not in a group of runs, so it has nobody to send notes to")
+    print("Group:")
+    for member in group["members"]:
+        step = "step %s" % member["step"] if member["step"] is not None else "root  "
+        state = member["state"] if not member["runId"] or member["state"] != "launched" else "running"
+        mark = " (you)" if member["runId"] == run_id else ""
+        print("  %s  %-14s %-8s %s  %s%s" % (step, member["repo"] or "-", state,
+                                             member["runId"] or "waiting", member["title"] or "", mark))
+    notes = run_notes.for_run(config, run_id)
+    print("Notes:" if notes else "No notes yet.")
+    names = {m["runId"]: m["repo"] or m["title"] or m["runId"] for m in group["members"] if m["runId"]}
+    for note in notes:
+        out = note["fromRunId"] == run_id
+        peer = names.get(note["toRunId"] if out else note["fromRunId"],
+                         note["toRunId"] if out else note["fromRunId"])
+        print("  %s %s %s %s: %s" % (note["id"], note["kind"], "to" if out else "from", peer, note["text"]))
+        reply = note.get("answer")
+        if reply:
+            print("    answer: %s" % reply["text"])
+        elif note["kind"] == "ask":
+            print("    (no answer yet)")
+
+
+def send(args, kind):
+    config = config_dir()
+    run_id, meta = caller(args)
+    try:
+        peer = run_notes.resolve_peer(config, run_id, args.to, meta)
+        note = run_notes.add(config, run_id, peer, kind, args.text)
+    except (ValueError, run_notes.RunNotesError) as error:
+        fail(str(error))
+    print("Sent %s %s to %s." % (kind, note["id"], args.to))
+    if kind != "ask" or args.wait <= 0:
+        if kind == "ask":
+            print("Not waiting; the answer will arrive as a message in this run's chat.")
+        return
+    until = time.time() + args.wait
+    run_notes.mark_waiting(config, note["id"], run_notes.iso(run_notes.utc_now()
+                           + timedelta(seconds=args.wait)))
+    poll = float(os.environ.get("ORC_NOTE_POLL_SECONDS") or 2)
+
+    def stopped(_signum, _frame):
+        # A command timeout kills the wait: the answer then comes as a message.
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, stopped)
+    try:
+        while True:
+            current = run_notes.get(config, note["id"])
+            if current and current.get("answer"):
+                run_notes.mark_read(config, note["id"])
+                print("%s answered: %s" % (label_for_peer(config, run_id, peer, meta),
+                                           current["answer"]["text"]))
+                return
+            if time.time() >= until:
+                break
+            time.sleep(min(poll, max(0.05, until - time.time())))
+    except KeyboardInterrupt:
+        run_notes.mark_waiting(config, note["id"], None)
+        raise SystemExit(130)
+    run_notes.mark_waiting(config, note["id"], None)
+    print("No answer within %ds. It will arrive later as a message in this run's chat; "
+          "carry on without it." % args.wait)
+
+
+def label_for_peer(config, run_id, peer, meta):
+    return label_for(config, peer, meta) if peer else peer
+
+
+def reply(args):
+    config = config_dir()
+    run_id, _meta = caller(args)
+    try:
+        note = run_notes.answer(config, args.note_id, run_id, args.text)
+    except (ValueError, run_notes.RunNotesError) as error:
+        fail(str(error))
+    print("Answered %s." % note["id"])
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("list", help="the group's runs and this run's notes").set_defaults(handler=show)
+    for name, helptext in (("ask", "ask another run and wait for the answer"),
+                           ("tell", "send a note that needs no answer")):
+        sub = commands.add_parser(name, help=helptext)
+        sub.add_argument("--to", required=True, help="run id, repository name or 'step N'")
+        sub.add_argument("text")
+        if name == "ask":
+            sub.add_argument("--wait", type=int, default=90,
+                             help="seconds to wait for the answer (default 90, 0 = do not wait)")
+        sub.set_defaults(handler=lambda args, kind=name: send(args, kind))
+    answer = commands.add_parser("answer", help="answer a note sent to this run")
+    answer.add_argument("note_id")
+    answer.add_argument("text")
+    answer.set_defaults(handler=reply)
+    for command in commands.choices.values():
+        run_dir_args.add_arguments(command)
+    args = parser.parse_args()
+    args.handler(args)
+
+
+if __name__ == "__main__":
+    main()

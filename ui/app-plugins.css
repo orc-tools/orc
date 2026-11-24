@@ -1,0 +1,220 @@
+.app-plugin-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.app-plugin-tools .app-plugin-search-box { position: relative; display: flex; flex: 1 1 220px; max-width: 420px; min-width: 0; }
+.app-plugin-search-icon {
+  position: absolute; top: 50%; left: 10px; width: 14px; height: 14px;
+  color: var(--muted-strong); transform: translateY(-50%); pointer-events: none;
+}
+/* Scoped to .app-plugin-hub so padding-left beats .app-plugin-search in index.html's later inline stylesheet. */
+.app-plugin-hub .app-plugin-search-box .app-plugin-search { flex: 1 1 auto; width: 100%; padding-left: 31px; }
+.app-plugin-count { margin: 0; }
+.app-plugin-count:empty { display: none; }
+.app-plugin-count-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.app-plugin-tabs-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+.app-plugin-tab {
+  background: transparent;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: var(--orc-cursor-pointer, pointer);
+}
+/* Scoped to .app-plugin-hub so tab sizing and Private active accents beat .cp-key in settings.css. */
+.app-plugin-hub .app-plugin-tab { padding: 5px 12px 7px 11px; }
+.app-plugin-hub .app-plugin-tab svg { width: 14px; height: 14px; }
+.app-plugin-tab:disabled { opacity: .6; cursor: default; }
+.app-plugin-tab-count {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.app-plugin-hub .app-plugin-tab-public[aria-selected="true"] .app-plugin-tab-count {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--heading);
+}
+.app-plugin-hub .app-plugin-tab-private[aria-selected="true"] {
+  border-color: color-mix(in srgb, var(--purple) 40%, var(--cp-edge));
+}
+.app-plugin-hub .app-plugin-tab-private[aria-selected="true"] svg {
+  color: var(--orc-purple-text, var(--purple));
+}
+.app-plugin-hub .app-plugin-tab-private[aria-selected="true"]::after {
+  background: var(--purple);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--purple) 70%, transparent);
+}
+.app-plugin-hub .app-plugin-tab-private[aria-selected="true"] .app-plugin-tab-count {
+  border-color: color-mix(in srgb, var(--purple) 40%, var(--border));
+  background: color-mix(in srgb, var(--purple) 14%, var(--panel));
+  color: var(--orc-purple-text, var(--heading));
+}
+@media (forced-colors: active) {
+  .app-plugin-hub .app-plugin-tab-private[aria-selected="true"] { border-color: Highlight; }
+}
+.app-plugin-tab-sub { margin: 0; font-size: 12px; }
+.app-plugin-panel[hidden] { display: none; }
+.app-plugin-sections { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.app-plugin-section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.app-plugin-section[hidden] { display: none; }
+.app-plugin-section:not([hidden]) ~ .app-plugin-section:not([hidden]) {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.app-plugin-section-head { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; min-width: 0; }
+.app-plugin-section-heading { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.app-plugin-section-icon {
+  display: inline-grid; place-items: center; flex: none;
+  width: 22px; height: 22px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--chip); color: var(--muted-strong);
+}
+.app-plugin-section-private .app-plugin-section-icon {
+  border-color: color-mix(in srgb, var(--purple) 40%, var(--border));
+  background: color-mix(in srgb, var(--purple) 14%, var(--panel));
+  color: var(--orc-purple-text, var(--heading));
+}
+.app-plugin-section-title { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.3; color: var(--heading); }
+.app-plugin-hub .app-plugin-section-sub { margin: 0; font-size: 12px; }
+.app-plugin-section-count {
+  flex: none; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--chip); color: var(--muted-strong);
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.app-plugin-section-private .app-plugin-section-count {
+  border-color: color-mix(in srgb, var(--purple) 36%, var(--border));
+  background: color-mix(in srgb, var(--purple) 12%, var(--panel));
+  color: var(--orc-purple-text, var(--heading));
+}
+.app-plugin-list { display: grid; gap: 0; border-top: 1px solid var(--border); }
+.app-plugin-hub .app-plugin-list {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 12px;
+  border-top: 0;
+}
+.app-plugin-hub .app-plugin-list[hidden] { display: none; }
+.app-plugin-hub .app-plugin-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 52%, var(--panel));
+  box-sizing: border-box;
+}
+.app-plugin-hub .app-plugin-row-private {
+  border-color: color-mix(in srgb, var(--purple) 28%, var(--border));
+  background: color-mix(in srgb, var(--purple) 4%, color-mix(in srgb, var(--bg) 52%, var(--panel)));
+}
+.app-plugin-hub .app-plugin-row[hidden] { display: none; }
+.app-plugin-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.app-plugin-icon { display: block; flex: none; width: 48px; height: 48px; border-radius: 11px; object-fit: cover; box-sizing: border-box; }
+.app-plugin-tile { display: grid; place-items: center; border: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--accent-text); }
+.app-plugin-tile svg { width: 22px; height: 22px; }
+.app-plugin-detail-head { display: flex; align-items: flex-start; gap: 12px; }
+.app-plugin-detail-head > div { min-width: 0; }
+.app-plugin-detail-head .app-plugin-icon { flex: none; width: 44px; height: 44px; }
+.app-plugin-detail-head .app-plugin-tile svg { width: 20px; height: 20px; }
+.app-plugin-detail-head [data-plugin-detail-description]:empty { display: none; }
+.app-plugin-main { display: flex; flex-direction: column; flex: 1; gap: 6px; min-width: 0; }
+.app-plugin-title { display: flex; flex: 1 1 0; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.app-plugin-title h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.3; color: var(--heading); overflow-wrap: break-word; }
+.app-plugin-trust { flex: none; font-size: 11px; white-space: nowrap; }
+.app-plugin-linked code { overflow-wrap: anywhere; }
+.app-plugin-row .settings-note { margin: 0; overflow-wrap: anywhere; }
+.app-plugin-row .settings-hint { margin: 0; }
+.app-plugin-desc { flex: 1; line-height: 1.45; }
+.app-plugin-meta { margin: 0; font-size: 12px; color: var(--muted-strong); }
+.app-plugin-state { color: var(--muted-strong); }
+.app-plugin-side { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; }
+/* Scoped to .app-plugin-hub so padding: 0 beats .settings-btn-inline in index.html's later inline stylesheet. */
+.app-plugin-hub .app-plugin-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 8px;
+  box-sizing: border-box;
+  color: var(--heading);
+  text-decoration: none;
+}
+.app-plugin-hub .app-plugin-icon-btn svg { flex: none; width: 16px; height: 16px; }
+.app-plugin-hub .app-plugin-icon-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* The switch sits before the cog (and Remove, for a package installed by hand), centred on the 36px buttons. */
+.app-plugin-switch { display: inline-flex; align-items: center; min-height: 36px; padding: 0 4px; }
+.app-plugin-hub .app-plugin-remove:not(:disabled):hover {
+  background: var(--panel);
+  border-color: var(--red);
+  color: var(--red-text);
+}
+.app-plugin-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+.app-plugin-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; padding: 12px 0; }
+.app-plugin-empty[hidden] { display: none; }
+.app-plugin-empty .settings-note { margin: 0; }
+/* The result of an action is written beside Refresh, so it takes no line of its own and nothing moves when it appears. */
+.app-plugin-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
+.app-plugin-foot .settings-btn-inline { flex: none; }
+.app-plugin-hub .app-plugin-refresh-btn { display: inline-flex; align-items: center; gap: 5px; }
+.app-plugin-hub .app-plugin-refresh-btn svg { flex: none; width: 14px; height: 14px; }
+.app-plugin-foot .settings-note { flex: 1; min-width: 0; margin: 0; line-height: 1.35; overflow-wrap: anywhere; }
+.app-plugin-hub .app-plugin-zip-hint { flex: none; margin: 0; }
+/* Dragging a zip over the hub covers its list with where to drop it. The
+   hub sets data-zip-drag on the card, which survives a re-render mid-drag. */
+.app-plugin-hub #app-plugin-list { position: relative; }
+.app-plugin-drop { display: none; position: absolute; inset: -6px; z-index: 2; place-items: center; padding: 16px; text-align: center;
+  border: 2px dashed var(--accent); border-radius: calc(var(--card-radius, 8px) + 2px);
+  background: color-mix(in srgb, var(--bg) 82%, transparent); pointer-events: none; }
+.app-plugin-hub[data-zip-drag] .app-plugin-drop { display: grid; }
+.app-plugin-drop strong { display: block; margin-bottom: 4px; color: var(--heading); font-size: 18px; }
+.app-plugin-drop span { color: var(--muted-strong); }
+/* Install a plugin: the confirm screen for a dropped zip. */
+.plugin-zip-dialog { --orc-dialog-max-width: 560px; }
+.plugin-zip-who { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.plugin-zip-icon { flex: none; width: 48px; height: 48px; border-radius: 10px; object-fit: cover; }
+.plugin-zip-letter { display: grid; place-items: center; background: var(--chip); color: var(--accent-text); font-size: 20px; font-weight: 700; }
+.plugin-zip-ident { min-width: 0; }
+.plugin-zip-ident p { margin: 0; overflow-wrap: anywhere; }
+.plugin-zip-name { color: var(--heading); font-size: 16px; font-weight: 600; }
+.plugin-zip-version, .plugin-zip-origin { color: var(--muted); font-size: 13px; font-weight: 400; }
+.plugin-zip p.plugin-zip-desc { margin: 0 0 12px; }
+.plugin-zip-heading { margin: 14px 0 6px; color: var(--heading); font-size: 14px; }
+.plugin-zip-list { margin: 0 0 12px; padding-left: 18px; }
+.plugin-zip-list li { margin: 2px 0; }
+.plugin-zip code { padding: 1px 5px; border-radius: 4px; background: var(--code); font: 12.5px var(--orc-font-mono); }
+.plugin-zip-on { color: var(--green-text); }
+.plugin-zip-off { color: var(--yellow-text); }
+.plugin-zip-warn, .plugin-zip-error { margin: 12px 0 4px; padding: 8px 12px; border-radius: 6px; font-size: 13.5px; }
+.plugin-zip-warn { background: color-mix(in srgb, var(--yellow) 12%, transparent); color: var(--yellow-text); }
+.plugin-zip-error { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red-text); }
+.plugin-zip-error[hidden] { display: none; }
+.plugin-zip-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.app-plugin-choice { display: flex; align-items: start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); cursor: var(--orc-cursor-pointer, pointer); }
+.app-plugin-choice input { margin-top: 4px; accent-color: var(--green); }
+.app-plugin-choice .settings-hint { display: block; margin-top: 3px; }
+.app-plugin-setup { box-sizing: border-box; width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); font: inherit; }
+.app-plugin-setup::backdrop { background: rgb(0 0 0 / .5); }
+.app-plugin-setup h2 { margin: 0; font-size: 20px; color: var(--heading); }
+.app-plugin-setup p { font-size: 13px; line-height: 1.55; }
+.app-plugin-setup orc-accordion, .app-plugin-hub orc-accordion { margin-top: 8px; font-size: 12px; }
+.app-plugin-setup pre, .app-plugin-hub pre { overflow-wrap: anywhere; white-space: pre-wrap; }
+.app-plugin-setup button, .app-plugin-setup orc-accordion::part(summary), .app-plugin-actions button { min-height: 36px; }
+@media (max-width: 700px), (pointer: coarse) {
+  .app-plugin-hub .app-plugin-icon-btn { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  .app-plugin-switch { min-width: 44px; min-height: 44px; box-sizing: border-box; justify-content: center; }
+  .app-plugin-setup button, .app-plugin-setup orc-accordion::part(summary), .app-plugin-actions button, .app-plugin-search, .app-plugin-foot .settings-btn-inline, .app-plugin-tab-jump { min-height: 44px; }
+}
+@media (max-width: 700px) {
+  .app-plugin-tools .app-plugin-search-box { max-width: none; flex-basis: 100%; }
+  .app-plugin-hub .app-plugin-list { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 520px) {
+  .app-plugin-head { flex-wrap: wrap; row-gap: 10px; }
+  .app-plugin-title { flex: 1 1 calc(100% - 60px); }
+  .app-plugin-side { width: 100%; justify-content: flex-end; }
+}

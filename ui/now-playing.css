@@ -1,0 +1,32 @@
+#radio-now { display: flex; align-items: center; gap: 10px; flex-shrink: 0; min-width: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
+#radio-now[hidden] { display: none; }
+.radio-now-art { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; overflow: hidden; padding: 0; border: 0; border-radius: 6px; background: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--heading) 12%, transparent); cursor: var(--orc-cursor-pointer, pointer); }
+.radio-now-art canvas { display: block; width: 100%; height: 100%; }
+.radio-now-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.radio-now-cover[hidden] { display: none; }
+.radio-now-icon { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: var(--muted-strong); background: color-mix(in srgb, var(--heading) 6%, transparent); }
+.radio-now-icon svg { width: 20px; height: 20px; }
+.radio-now-icon[hidden] { display: none; }
+.radio-now-art[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .radio-now-art { transition: transform .18s cubic-bezier(.22, 1, .36, 1), box-shadow .18s; }
+  .radio-now-art:hover { transform: scale(1.06); }
+}
+.radio-now-text { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
+#radio-now[data-idle-open] .radio-now-text { cursor: var(--orc-cursor-pointer, pointer); }
+.radio-now-title { overflow: hidden; color: var(--heading); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.radio-now-station { overflow: hidden; color: var(--muted-strong); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.radio-now-controls { display: flex; flex: none; align-items: center; gap: 2px; margin-right: -4px; }
+#radio-pause[data-paused] .radio-icon-pause, #radio-pause:not([data-paused]) .radio-icon-resume { display: none; }
+#radio-mute[data-muted] .radio-icon-sound, #radio-mute:not([data-muted]) .radio-icon-muted { display: none; }
+.radio-volume { position: relative; display: flex; }
+.radio-volume[hidden] { display: none; }
+.radio-volume-pop { position: absolute; bottom: 100%; left: 50%; z-index: var(--z-tooltip); translate: -50% 0; padding-bottom: 6px; visibility: hidden; }
+@media (hover: hover) { .radio-volume:not([data-dismissed]):hover .radio-volume-pop { visibility: visible; } }
+.radio-volume:is(:focus-within, [data-open]):not([data-dismissed]) .radio-volume-pop { visibility: visible; }
+.radio-volume-panel { display: flex; padding: 10px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 8px 24px rgb(0 0 0 / 0.3); }
+#radio-volume { writing-mode: vertical-lr; direction: rtl; width: 20px; height: 96px; margin: 0; accent-color: var(--accent); cursor: var(--orc-cursor-pointer, pointer); }
+@media (max-width: 700px) { #radio-now { padding-inline: 16px; } }
+/* A submenu can list every playlist someone has. */
+.radio-menu { max-width: min(320px, calc(100vw - 12px)); max-height: min(420px, calc(100vh - 12px)); overflow-y: auto; }
+.radio-menu .note-menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

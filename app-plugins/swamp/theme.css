@@ -1,0 +1,69 @@
+/* Palette source: tokens.json. Regenerate with bin/orc-theme --write. */
+:root {
+  --bg: #e3e5e4; --panel: #eceeec; --border: #a8b0aa;
+  --text: #38423c; --heading: #202722; --muted: #6e7971; --accent: #2d6983;
+  --accent-soft: #cbd1cc; --chip: #cbd1cc; --code: #d4d8d5;
+  --green: #53743a; --yellow: #8a6a2f; --red: #b83f50;
+  --purple: #76518f; --cyan: #256f72; --orange: #9a5a25;
+  --gate: color-mix(in srgb, var(--orange) 60%, var(--heading));
+  --muted-strong: color-mix(in srgb, var(--muted) 45%, var(--heading));
+  --accent-text: color-mix(in srgb, var(--accent) 70%, var(--heading));
+  --red-text: color-mix(in srgb, var(--red) 60%, var(--heading));
+  --yellow-text: color-mix(in srgb, var(--yellow) 70%, var(--heading));
+  --green-text: color-mix(in srgb, var(--green) 70%, var(--heading));
+  --ready-text: #1c7c2e; --blue-text: #1c5db0;
+  --orange-text: color-mix(in srgb, var(--orange) 60%, var(--heading));
+  --purple-text: color-mix(in srgb, var(--purple) 65%, var(--heading));
+  --accent-strong: var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1a1c20; --panel: #16181b; --border: #3b4540;
+    --text: #c7cfca; --heading: #e0e5e2; --muted: #707a73; --accent: #78a9c2;
+    --accent-soft: #29312c; --chip: #29312c; --code: #1f2422;
+    --green: #9dc76b; --yellow: #d5b05c; --red: #e87878;
+    --purple: #b497d6; --cyan: #77b8b1; --orange: #e69257;
+    --gate: var(--orange); --accent-text: var(--accent);
+    --red-text: var(--red); --yellow-text: var(--yellow); --green-text: var(--green);
+    --ready-text: var(--green); --blue-text: var(--accent);
+    --orange-text: var(--orange); --purple-text: var(--purple);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1a1c20; --panel: #16181b; --border: #3b4540;
+  --text: #c7cfca; --heading: #e0e5e2; --muted: #707a73; --accent: #78a9c2;
+  --accent-soft: #29312c; --chip: #29312c; --code: #1f2422;
+  --green: #9dc76b; --yellow: #d5b05c; --red: #e87878;
+  --purple: #b497d6; --cyan: #77b8b1; --orange: #e69257;
+  --gate: var(--orange); --accent-text: var(--accent);
+  --red-text: var(--red); --yellow-text: var(--yellow); --green-text: var(--green);
+  --ready-text: var(--green); --blue-text: var(--accent);
+  --orange-text: var(--orange); --purple-text: var(--purple);
+}
+/* Day mist and fireflies need stronger contrast on the pale Swamp canvas.
+   Explicit theme scope keeps these values out of optional packages. */
+:root[data-swamp][data-theme="light"] {
+  --nc-firefly-gold: #f4b020; --nc-firefly-lime: #93c72e;
+  --nc-firefly-size: 2.2; --nc-firefly-alpha: 1;
+  --nc-firefly-halo-gold: drop-shadow(0 0 1.5px #d98d0b) drop-shadow(0 0 7px color-mix(in srgb, #f5b52a 85%, transparent));
+  --nc-firefly-halo-lime: drop-shadow(0 0 1.5px #6c9c1c) drop-shadow(0 0 6px color-mix(in srgb, #9ccc3a 80%, transparent));
+  --nc-mist-moss: color-mix(in srgb, #6f9a45 80%, transparent);
+  --nc-mist-haze: color-mix(in srgb, #c7a64a 60%, transparent);
+  --nc-mist-alpha-low: .55; --nc-mist-alpha-high: .3;
+}
+
+:root[data-swamp] {
+  --answer-mode-done: "🪷"; --answer-mode-now: "🐸"; --answer-mode-next: "○";
+  --answer-mode-glow: color-mix(in srgb, var(--green) 14%, transparent);
+  --run-row-radius: 6px;
+  --tab-radius: 6px;
+  --composer-radius: 18px;
+  --chat-bubble-radius: 14px;
+  --card-radius: 8px;
+  --dialog-radius: 12px;
+}
+
+:root[data-swamp] [data-part="command-palette"],
+:root[data-swamp] orc-dialog::part(dialog) {
+  border-color: var(--border);
+}

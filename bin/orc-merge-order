@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Suggest the order to merge a batch of runs so they conflict least.
+
+orc-ui's merge planner starts this as a detached background process with a plan
+directory holding request.json (the runs it may order). It reads the facts from
+git -- the files each branch changes, whether it conflicts with the default
+branch, and which other branches it conflicts with (`git merge-tree`, which
+writes nothing to the repository) -- then asks a low-effort Sonnet to judge the
+order. The answer must name every run exactly once; anything else falls back
+to a deterministic order built from the same facts, so the planner always
+gets a usable result.
+
+Writes result.json into the plan directory. Exit 0 once written.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from itertools import combinations
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ui"))
+import collision_radar  # noqa: E402
+
+CLAUDE_TIMEOUT = 240
+MAX_FILES = 40
+
+
+def git(repo, *args):
+    try:
+        result = subprocess.run(["git", "-C", repo, *args], capture_output=True,
+                                text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result
+
+
+def default_branch(repo):
+    result = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if result is not None and result.returncode == 0 and "/" in result.stdout:
+        return result.stdout.strip().split("/", 1)[1]
+    for candidate in ("main", "master"):
+        result = git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/%s" % candidate)
+        if result is not None and result.returncode == 0:
+            return candidate
+    return None
+
+
+def conflicts(repo, ours, theirs):
+    """(conflicted, files): True/False, or None when git could not tell.
+
+    Generated files covered by a project regeneration rule are excluded from
+    blocking conflicts, since orc-merge-main regenerates them during merge."""
+    result = git(repo, "merge-tree", "--write-tree", "--name-only", "--no-messages",
+                 ours, theirs)
+    if result is None or result.returncode not in (0, 1):
+        return None, []
+    if result.returncode == 0:
+        return False, []
+    raw_files = [line for line in result.stdout.splitlines()[1:] if line]
+    rules = collision_radar.repo_generated_rules(repo, config_dir=os.environ.get("ORC_CONFIG_DIR"))
+    _regenerated, blocking, _matched = collision_radar.partition_generated_paths(raw_files, rules)
+    return bool(blocking), blocking
+
+
+def analyse(runs):
+    """Per-run facts, keyed by run id. Runs in different repositories never
+    interact, so pairs are only compared within one repository."""
+    facts = {}
+    by_repo = {}
+    for run in runs:
+        repo = os.path.expanduser(run.get("mainRepoPath") or "")
+        tip = run.get("head") or "refs/heads/%s" % run.get("branch")
+        base = default_branch(repo) if os.path.isdir(repo) else None
+        entry = {"runId": run["runId"], "title": run.get("title"),
+                 "repo": os.path.basename(repo.rstrip("/")), "branch": run.get("branch"),
+                 "files": [], "insertions": 0, "deletions": 0,
+                 "conflictsWithMain": None, "conflictsWith": [], "overlapsWith": {}}
+        if base:
+            names = git(repo, "diff", "--name-only", "%s...%s" % (base, tip))
+            if names is not None and names.returncode == 0:
+                entry["files"] = [line for line in names.stdout.splitlines() if line]
+            stat = git(repo, "diff", "--shortstat", "%s...%s" % (base, tip))
+            if stat is not None and stat.returncode == 0:
+                added = re.search(r"(\d+) insertion", stat.stdout)
+                removed = re.search(r"(\d+) deletion", stat.stdout)
+                entry["insertions"] = int(added.group(1)) if added else 0
+                entry["deletions"] = int(removed.group(1)) if removed else 0
+            entry["conflictsWithMain"], _files = conflicts(repo, "refs/heads/%s" % base, tip)
+        facts[run["runId"]] = entry
+        by_repo.setdefault(repo, []).append((run["runId"], tip))
+    for repo, members in by_repo.items():
+        for (a, tip_a), (b, tip_b) in combinations(members, 2):
+            shared = sorted(set(facts[a]["files"]) & set(facts[b]["files"]))
+            if shared:
+                facts[a]["overlapsWith"][b] = shared[:5]
+                facts[b]["overlapsWith"][a] = shared[:5]
+            conflicted, _files = conflicts(repo, tip_a, tip_b) if shared else (False, [])
+            if conflicted:
+                facts[a]["conflictsWith"].append(b)
+                facts[b]["conflictsWith"].append(a)
+    return facts
+
+
+def fallback_order(facts):
+    """Small, isolated changes first; the branch that collides with the most
+    others last, so it resolves once against everything that landed."""
+    def weight(run_id):
+        entry = facts[run_id]
+        return (entry["conflictsWithMain"] is True, len(entry["conflictsWith"]),
+                len(entry["overlapsWith"]), entry["insertions"] + entry["deletions"])
+    order = sorted(facts, key=weight)
+    reasons = {}
+    for run_id in order:
+        entry = facts[run_id]
+        if entry["conflictsWithMain"]:
+            reasons[run_id] = "Already conflicts with the default branch, so it goes late."
+        elif entry["conflictsWith"]:
+            reasons[run_id] = "Conflicts with %d other run%s." % (
+                len(entry["conflictsWith"]), "" if len(entry["conflictsWith"]) == 1 else "s")
+        elif entry["overlapsWith"]:
+            reasons[run_id] = "Shares files with another run but merges cleanly."
+        else:
+            reasons[run_id] = "Touches nothing the other runs change."
+    return order, reasons
+
+
+def prompt_for(facts):
+    runs = [{**{key: entry[key] for key in (
+                "runId", "title", "repo", "branch", "insertions", "deletions",
+                "conflictsWithMain", "conflictsWith", "overlapsWith")},
+             "files": entry["files"][:MAX_FILES],
+             "moreFiles": max(0, len(entry["files"]) - MAX_FILES)}
+            for entry in facts.values()]
+    return (
+        "You are ordering git branches that will merge into their repository's "
+        "default branch one after another. Each merge lands before the next "
+        "starts. When a later branch conflicts, an agent rebases it and resolves "
+        "the conflicts, so conflicts are survivable but slow and risky. Choose "
+        "the order that keeps conflicts and risk lowest.\n\n"
+        "Rules of thumb: land small, isolated changes first; when branches share "
+        "files, land the foundation the others build on first; put a branch that "
+        "conflicts with many others last, so it resolves once against everything; "
+        "branches in different repositories never interact.\n\n"
+        "conflictsWithMain and conflictsWith come from `git merge-tree` and are "
+        "facts, not guesses. overlapsWith lists shared files that still merge "
+        "cleanly. In reasons and the summary, name other runs by their title, "
+        "never by runId.\n\n"
+        "Runs:\n%s\n\n"
+        "Reply with only a JSON object, no prose and no code fence: "
+        '{"order": [every runId exactly once], "reasons": {"<runId>": "<one '
+        'short sentence, under 90 characters>"}, "summary": "<one sentence>"}'
+        % json.dumps(runs, indent=2))
+
+
+def ask_model(prompt):
+    """The model's JSON answer, or (None, why)."""
+    command = [os.environ.get("ORC_MERGE_ORDER_CLAUDE") or "claude", "-p",
+               "--model", "sonnet", "--effort", "low", "--tools", "",
+               "--setting-sources", "", "--no-session-persistence"]
+    try:
+        result = subprocess.run(command, input=prompt, capture_output=True, text=True,
+                                timeout=CLAUDE_TIMEOUT, cwd=tempfile.gettempdir(),
+                                env={**os.environ, "CLAUDE_CODE_ENTRYPOINT": "orc"})
+    except FileNotFoundError:
+        return None, "claude is not installed"
+    except subprocess.TimeoutExpired:
+        return None, "the model did not answer within %ds" % CLAUDE_TIMEOUT
+    if result.returncode != 0:
+        return None, (result.stderr.strip() or "claude exited %d" % result.returncode)[:300]
+    match = re.search(r"\{.*\}", result.stdout, re.S)
+    try:
+        answer = json.loads(match.group(0)) if match else None
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict):
+        return None, "the model's answer was not JSON"
+    return answer, None
+
+
+def validated(answer, ids):
+    order = answer.get("order")
+    if not isinstance(order, list) or sorted(map(str, order)) != sorted(ids):
+        return None
+    reasons = answer.get("reasons") if isinstance(answer.get("reasons"), dict) else {}
+    return order, {run_id: str(reasons[run_id])[:200] for run_id in ids
+                   if isinstance(reasons.get(run_id), str)}
+
+
+def write_result(plan_dir, data):
+    fd, temporary = tempfile.mkstemp(dir=plan_dir, prefix=".result.json", suffix=".tmp")
+    with os.fdopen(fd, "w") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+    os.replace(temporary, os.path.join(plan_dir, "result.json"))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("plan_dir")
+    parser.add_argument("--no-ai", action="store_true",
+                        help="skip the model and use the deterministic order")
+    args = parser.parse_args()
+    with open(os.path.join(args.plan_dir, "request.json")) as handle:
+        runs = [run for run in json.load(handle).get("runs") or []
+                if isinstance(run, dict) and isinstance(run.get("runId"), str)]
+    print("Orc merge order: %d runs" % len(runs), flush=True)
+    facts = analyse(runs)
+    for entry in facts.values():
+        notes = []
+        if entry["conflictsWithMain"]:
+            notes.append("conflicts with the default branch")
+        if entry["conflictsWith"]:
+            notes.append("conflicts with %s" % ", ".join(
+                facts[other]["title"] or other for other in entry["conflictsWith"]))
+        print("  %-48s %3d files  +%d -%d  %s" % (
+            (entry["title"] or entry["runId"])[:48], len(entry["files"]),
+            entry["insertions"], entry["deletions"], "; ".join(notes)), flush=True)
+    order, reasons = fallback_order(facts)
+    source, summary, error = "fallback", None, None
+    if not args.no_ai and len(runs) > 1:
+        print("Asking Sonnet (low effort) for the order...", flush=True)
+        answer, error = ask_model(prompt_for(facts))
+        checked = validated(answer, list(facts)) if answer else None
+        if checked:
+            order, reasons = checked
+            source = "ai"
+            summary = answer.get("summary") if isinstance(answer.get("summary"), str) else None
+        elif answer is not None:
+            error = "the model's order did not name every run exactly once"
+        if error:
+            print("Using the fallback order: %s" % error, flush=True)
+    if summary is None:
+        summary = ("Smallest, most isolated changes first; the runs that "
+                   "collide with others last.")
+    write_result(args.plan_dir, {
+        "schemaVersion": 1, "order": order, "reasons": reasons,
+        "summary": summary[:300], "source": source,
+        "model": "sonnet" if source == "ai" else None,
+        "fallbackReason": error if source == "fallback" else None,
+        "analysis": {run_id: {"files": len(entry["files"]),
+                              "insertions": entry["insertions"],
+                              "deletions": entry["deletions"],
+                              "conflictsWithMain": entry["conflictsWithMain"],
+                              "conflictsWith": entry["conflictsWith"]}
+                     for run_id, entry in facts.items()},
+        "finishedAt": datetime.now(timezone.utc).isoformat()})
+    print("\nSuggested order:", flush=True)
+    for position, run_id in enumerate(order, 1):
+        print("  %d. %s  %s" % (position, facts[run_id]["title"] or run_id,
+                                reasons.get(run_id, "")), flush=True)
+    print("\nBack in Orc, review the order in the merge planner.", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

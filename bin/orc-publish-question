@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Publish one informational Orc answer with external project ownership."""
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "ui"))
+import run_relationships  # noqa: E402
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="orc-publish-question")
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--answer-file",
+                        help="UTF-8 Markdown file, or - to read stdin")
+    parser.add_argument("--title", help="optional <=80 char title to record on publication")
+    parser.add_argument("--ui-file", help="optional structured answer JSON spec, validated with Node.js")
+    parser.add_argument("--repair", action="store_true",
+                        help="rewrite an already-answered run's metadata "
+                             "through the canonical filter, reusing its "
+                             "answer.md; use when a hand-written meta.json "
+                             "left the run stranded read-only")
+    parser.add_argument("--update", action="store_true",
+                        help="replace a completed question answer, preserving metadata")
+    parser.add_argument("--expected-sha256", help="current answer digest required by --update")
+    args = parser.parse_args()
+    if args.update and (args.repair or not args.answer_file or not args.expected_sha256):
+        parser.error("--update requires --answer-file and --expected-sha256, without --repair")
+    if args.expected_sha256 and not args.update:
+        parser.error("--expected-sha256 requires --update")
+    if bool(args.answer_file) == bool(args.repair):
+        parser.error("pass either --answer-file or --repair")
+    if args.ui_file and (args.repair or args.update):
+        parser.error("--ui-file is only supported for initial publication")
+    if args.title is not None and args.update:
+        parser.error("--title cannot be combined with --update")
+    run_dir = Path(args.run_dir).expanduser().resolve()
+    try:
+        ui_spec = None
+        if args.ui_file:
+            ui_path = Path(args.ui_file).expanduser()
+            if ui_path.is_symlink() or not ui_path.is_file() or ui_path.stat().st_size > 262144:
+                raise ValueError("answer view input must be a regular non-symlink file at most 256 KiB")
+            ui_spec = ui_path.read_bytes()
+        answer = None
+        if args.answer_file == "-":
+            answer = sys.stdin.buffer.read()
+        elif args.answer_file:
+            answer_path = Path(args.answer_file).expanduser()
+            if answer_path.is_symlink() or not answer_path.is_file():
+                raise ValueError("answer input must be a regular non-symlink file")
+            answer = answer_path.read_bytes()
+        if args.update:
+            result = run_relationships.update_question(
+                str(run_dir.parent.parent), str(run_dir), answer, args.expected_sha256)
+        else:
+            result = run_relationships.publish_question(
+                str(run_dir.parent.parent), str(run_dir), answer,
+                repair=args.repair, ui_spec=ui_spec, title=args.title)
+    except (OSError, ValueError, TypeError,
+            run_relationships.RelationshipStoreError) as exc:
+        print("ERROR %s" % exc, file=sys.stderr)
+        return 1
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

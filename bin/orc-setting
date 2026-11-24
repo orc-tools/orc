@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Change an everyday Orc setting because the user plainly asked in this Chat.
+
+`orc-setting list` names the settings a chat may change, their values and
+choices. `orc-setting set <setting> <value>` changes one for all of Orc,
+such as `orc-setting set factoryVisuals off`; Orc puts a line with Undo in
+the run's Chat. Only the settings `list` names can change or be offered.
+Never run it unless the user asked for that change in their own words.
+"""
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import run_dir_args  # noqa: E402
+
+TOOL = "orc-setting"
+
+
+def port():
+    return int(os.environ.get("ORC_UI_PORT") or 4173)
+
+
+def call(route, payload=None):
+    url = "http://127.0.0.1:%d%s" % (port(), route)
+    data = None if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data, method="GET" if data is None else "POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read()).get("error") or str(exc)
+        except (ValueError, AttributeError):
+            detail = str(exc)
+        raise SystemExit("%s: %s" % (TOOL, detail)) from exc
+    except urllib.error.URLError as exc:
+        raise SystemExit("%s: Orc could not be reached: %s" % (TOOL, exc.reason)) from exc
+
+
+def show(_args):
+    for row in call("/api/chat-settings")["settings"]:
+        print("%s (%s): %s. Now %s; choices: %s." % (
+            row["key"], row["label"], row["about"], row["valueText"], ", ".join(row["choices"])))
+
+
+def change(args):
+    run_dir, _status = run_dir_args.resolve(args, TOOL)
+    result = call("/api/chat-settings/change", {
+        "setting": args.setting, "value": args.value, "source": {"kind": "run", "runId": run_dir.name}})
+    if not result.get("changed"):
+        print("%s is already %s; nothing changed. Tell the user in one line." % (
+            result["label"], result["valueText"]))
+        return
+    entry = result["change"]
+    print("Changed %s from %s to %s for all of Orc. This run's Chat shows the change with an Undo; "
+          "tell the user in one line which setting changed and its new value." % (
+              entry["label"], entry["fromText"], entry["toText"]))
+
+
+def main():
+    parser = argparse.ArgumentParser(prog=TOOL, description=__doc__.splitlines()[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("list", help="the settings a chat may change").set_defaults(func=show)
+    setter = commands.add_parser("set", help="change one setting")
+    setter.add_argument("setting")
+    setter.add_argument("value")
+    run_dir_args.add_arguments(setter)
+    setter.set_defaults(func=change)
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

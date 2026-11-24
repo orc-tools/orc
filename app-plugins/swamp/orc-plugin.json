@@ -1,0 +1,49 @@
+{
+  "apiVersion": 2,
+  "id": "swamp",
+  "name": "Swamp",
+  "version": "1.0.0",
+  "description": "Orc's original day and night palette and animated cast.",
+  "required": true,
+  "contributes": {
+    "theme": {
+      "id": "swamp",
+      "label": "Swamp",
+      "description": "Orc's own green",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "gary": "gary.png",
+      "sheila": "sheila.png",
+      "tokens": "tokens.json",
+      "scene": "scene.bundle.js",
+      "radio": {
+        "style": "Murky bayou lo-fi chillhop from a misty green swamp",
+        "leads": [
+          "warm Rhodes electric piano",
+          "muted slide guitar",
+          "mellow upright bass",
+          "soft dobro",
+          "dusty jazz guitar chords",
+          "lazy harmonica"
+        ],
+        "scenes": [
+          "fireflies over still water at dusk",
+          "a slow boat drifting through cypress trees",
+          "a quiet cabin on stilts at night",
+          "morning mist over lily pads",
+          "a mossy swamp after warm rain"
+        ],
+        "textures": [
+          "dusty boom-bap drums and vinyl crackle",
+          "distant frogs and crickets",
+          "soft rain on leaves",
+          "tape hiss and lazy brushed snare",
+          "gentle water lapping"
+        ]
+      }
+    }
+  },
+  "build": {
+    "scene": "scene.js"
+  }
+}

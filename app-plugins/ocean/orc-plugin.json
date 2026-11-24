@@ -1,0 +1,53 @@
+{
+  "apiVersion": 2,
+  "id": "ocean",
+  "name": "Ocean",
+  "version": "1.0.0",
+  "description": "A dive: a sunlit reef by day, the glowing deep by night.",
+  "contributes": {
+    "frontend": "frontend.js",
+    "theme": {
+      "id": "ocean",
+      "label": "Ocean",
+      "description": "Fish and bubbles, blub~",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "gary": "gary.png",
+      "sheila": "sheila.png",
+      "scene": "scene.bundle.js",
+      "favicon": "data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2064%2064'%3E%3Ccircle%20cx%3D'32'%20cy%3D'32'%20r%3D'30'%20fill%3D'%23e3a94b'%20stroke%3D'%233a2710'%20stroke-width%3D'3'%2F%3E%3Ccircle%20cx%3D'32'%20cy%3D'32'%20r%3D'22'%20fill%3D'%230c4a5e'%20stroke%3D'%233a2710'%20stroke-width%3D'3'%2F%3E%3Cpath%20d%3D'M13.5%2026a19.5%2019.5%200%200%201%2037%200q-4.6%203-9.2%200t-9.3%200-9.2%200-9.3%200z'%20fill%3D'%233fc3d6'%2F%3E%3Ccircle%20cx%3D'32'%20cy%3D'37'%20r%3D'13'%20fill%3D'%2383c851'%20stroke%3D'%23182f10'%20stroke-width%3D'2'%2F%3E%3Ccircle%20cx%3D'27'%20cy%3D'35'%20r%3D'2'%20fill%3D'%23182f10'%2F%3E%3Ccircle%20cx%3D'37'%20cy%3D'35'%20r%3D'2'%20fill%3D'%23182f10'%2F%3E%3Cpath%20d%3D'M27%2044l1.5-4.5%201.5%204.5zM34%2044l1.5-4.5%201.5%204.5z'%20fill%3D'%23fff8ec'%20stroke%3D'%23182f10'%20stroke-width%3D'1'%2F%3E%3Ccircle%20cx%3D'45'%20cy%3D'21'%20r%3D'2.6'%20fill%3D'none'%20stroke%3D'%23dff8ff'%20stroke-width%3D'1.6'%2F%3E%3Ccircle%20cx%3D'39.5'%20cy%3D'15.5'%20r%3D'1.6'%20fill%3D'%23dff8ff'%2F%3E%3Cg%20fill%3D'%233a2710'%3E%3Ccircle%20cx%3D'32'%20cy%3D'5.6'%20r%3D'1.7'%2F%3E%3Ccircle%20cx%3D'32'%20cy%3D'58.4'%20r%3D'1.7'%2F%3E%3Ccircle%20cx%3D'5.6'%20cy%3D'32'%20r%3D'1.7'%2F%3E%3Ccircle%20cx%3D'58.4'%20cy%3D'32'%20r%3D'1.7'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E",
+      "announce": {
+        "on": "Ocean mode on. Blub blub~",
+        "off": "Ocean mode off"
+      },
+      "radio": {
+        "style": "Ambient chillwave from beneath a calm tropical sea",
+        "leads": [
+          "soft marimba",
+          "warm dub bass",
+          "shimmering underwater pads",
+          "steel pan",
+          "watery electric piano",
+          "gentle vibraphone"
+        ],
+        "scenes": [
+          "sunlight rippling through shallow water",
+          "a coral reef drifting with fish",
+          "a quiet beach at golden hour",
+          "a deep blue kelp forest",
+          "a lazy swell under a moonlit sky"
+        ],
+        "textures": [
+          "slow waves on the shore",
+          "rising bubbles",
+          "dubby echo and spring reverb",
+          "soft shaker and rim clicks",
+          "distant whale song"
+        ]
+      }
+    }
+  },
+  "build": {
+    "scene": "scene.js"
+  }
+}

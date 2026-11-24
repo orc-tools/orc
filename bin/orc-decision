@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Append one row to a run's decision record.
+
+Control is the only caller. The helper owns the row shape and the append, so
+the record stays a machine-readable `decisions.jsonl` and nothing hand-writes
+an audit trail. The row keeps Runlog's four fields, so older records and
+`runlog show --json` still read it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import fcntl
+import json
+import os
+import pathlib
+import sys
+
+
+LIMITS = {"phase": 240, "decision": 4096, "why": 4096}
+
+
+def text(value: str, name: str) -> str:
+    if "\x00" in value or len(value.encode("utf-8")) > LIMITS[name]:
+        raise RuntimeError(f"{name} is invalid or too large")
+    return value
+
+
+def add(run_dir: pathlib.Path, phase: str, decision: str, why: str) -> dict:
+    if not (run_dir / "meta.json").is_file():
+        raise RuntimeError(f"{run_dir} is not a run directory")
+    row = {
+        "recordedAt": datetime.datetime.now().astimezone().isoformat(),
+        "phase": text(phase, "phase"),
+        "decision": text(decision, "decision"),
+        "why": text(why, "why"),
+    }
+    path = run_dir / "decisions.jsonl"
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise RuntimeError(f"refusing to append to {path}: {exc.strerror}") from exc
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return row
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("run_dir")
+    parser.add_argument("--phase", required=True)
+    parser.add_argument("--decision", required=True)
+    parser.add_argument("--why", required=True)
+    args = parser.parse_args()
+    try:
+        row = add(
+            pathlib.Path(args.run_dir).expanduser().resolve(),
+            args.phase,
+            args.decision,
+            args.why,
+        )
+    except Exception as exc:
+        print(f"orc-decision: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(row, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

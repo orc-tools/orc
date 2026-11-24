@@ -1,0 +1,1003 @@
+#!/usr/bin/env python3
+"""Atomic, artifact-bound phase dispatch for Orc runs."""
+
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+import fcntl
+from hashlib import sha256
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import subprocess
+import sys
+import tempfile
+from typing import Iterator
+
+
+SCHEMA_VERSION = 1
+ACTIVE_STATES = {"claimed", "running"}
+TERMINAL_STATES = {"consumed", "failed", "expired"}
+# An unconsumed completion is failable too. Its validation re-digests the
+# pinned inputs, so control legitimately republishing one of them (the Ship
+# feedback path rewrites delivery-authority.json) leaves a completion that
+# can never be consumed; without this it could not be left either, and the
+# next generation could not claim.
+FAILABLE_STATES = ACTIVE_STATES | {"complete-unconsumed"}
+PHASE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+TOKEN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+SHA = re.compile(r"^[0-9a-f]{40,64}$")
+WORKER_STATUS = {
+    "DONE",
+    "DONE_WITH_CONCERNS",
+    "NEEDS_CONTEXT",
+    "BLOCKED",
+}
+LIFECYCLE_PHASES = {
+    3: {"plan", "build", "verify", "ship"},
+    4: {"plan", "build", "ship"},
+}
+CONTROL_OWNED_OUTPUTS = {
+    "meta.json",
+    "decisions.jsonl",
+    # a resumed pre-helper run still holds the markdown record, so a worker may
+    # not declare that one either
+    "decisions.md",
+    "diff.patch",
+    ".orc-phase-handoff.lock",
+}
+
+
+class HandoffError(ValueError):
+    pass
+
+
+def utc_now(raw: str | None) -> datetime:
+    if raw is None:
+        return datetime.now(timezone.utc)
+    if not isinstance(raw, str):
+        raise HandoffError("timestamp must be an ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HandoffError(f"invalid ISO-8601 time: {raw}") from exc
+    if parsed.tzinfo is None:
+        raise HandoffError("timestamp must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def iso(value: datetime) -> str:
+    return value.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def canonical_bytes(value: object) -> bytes:
+    return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
+
+
+def digest_bytes(value: bytes) -> str:
+    return sha256(value).hexdigest()
+
+
+def digest_file(path: Path) -> str:
+    digest = sha256()
+    try:
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise HandoffError(f"cannot read {path}: {exc}") from exc
+    return digest.hexdigest()
+
+
+def load_object(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HandoffError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise HandoffError(f"{path} must contain a JSON object")
+    return value
+
+
+def atomic_write(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw_tmp = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    tmp = Path(raw_tmp)
+    try:
+        with os.fdopen(descriptor, "wb") as target:
+            target.write(payload)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+@contextmanager
+def locked_meta(run_dir: Path) -> Iterator[tuple[Path, dict]]:
+    if not run_dir.is_dir():
+        raise HandoffError(f"run directory does not exist: {run_dir}")
+    lock_path = run_dir / ".orc-phase-handoff.lock"
+    try:
+        with lock_path.open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            meta_path = run_dir / "meta.json"
+            yield meta_path, load_object(meta_path)
+    except OSError as exc:
+        raise HandoffError(f"cannot lock {run_dir}: {exc}") from exc
+
+
+def dispatch_root(meta: dict, create: bool) -> dict:
+    dispatch = meta.get("phaseDispatch")
+    if dispatch is None:
+        if not create:
+            raise HandoffError("meta.phaseDispatch does not exist")
+        dispatch = {"schemaVersion": SCHEMA_VERSION, "phases": {}}
+        meta["phaseDispatch"] = dispatch
+    if not isinstance(dispatch, dict):
+        raise HandoffError("meta.phaseDispatch must be an object")
+    if dispatch.get("schemaVersion") != SCHEMA_VERSION:
+        raise HandoffError(
+            f"meta.phaseDispatch.schemaVersion must be {SCHEMA_VERSION}"
+        )
+    phases = dispatch.get("phases")
+    if not isinstance(phases, dict):
+        raise HandoffError("meta.phaseDispatch.phases must be an object")
+    return phases
+
+
+def validate_lifecycle_phase(meta: dict, phase: str) -> None:
+    lifecycle = meta.get("lifecycleVersion")
+    allowed = LIFECYCLE_PHASES.get(lifecycle)
+    if allowed is None:
+        raise HandoffError("phase dispatch requires lifecycleVersion 3 or 4; start a fresh run")
+    if phase in allowed:
+        return
+    names = ", ".join(sorted(allowed))
+    raise HandoffError(
+        f"lifecycleVersion {lifecycle} may dispatch only: {names}"
+    )
+
+
+def entry_for(meta: dict, phase: str) -> dict:
+    validate_lifecycle_phase(meta, phase)
+    entry = dispatch_root(meta, False).get(phase)
+    if not isinstance(entry, dict):
+        raise HandoffError(f"no phase dispatch exists for {phase}")
+    validate_entry_shape(entry, phase)
+    return entry
+
+
+def validate_entry_shape(entry: dict, phase: str) -> None:
+    if entry.get("phase") != phase:
+        raise HandoffError(f"phase dispatch for {phase} has a mismatched phase")
+    for key in ("generation", "attempt"):
+        value = entry.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise HandoffError(f"phase dispatch for {phase} has an invalid {key}")
+    if entry.get("state") not in {
+        "claimed",
+        "running",
+        "complete-unconsumed",
+        "consumed",
+        "failed",
+        "expired",
+    }:
+        raise HandoffError(f"phase dispatch for {phase} has an invalid state")
+    token = entry.get("claimToken")
+    if not isinstance(token, str) or not TOKEN.fullmatch(token):
+        raise HandoffError(f"phase dispatch for {phase} has an invalid claim token")
+    utc_now(entry.get("leaseExpiresAt"))
+    if not isinstance(entry.get("inputManifest"), dict):
+        raise HandoffError(f"phase dispatch for {phase} has no input manifest")
+    history = entry.get("history")
+    if not isinstance(history, list):
+        raise HandoffError(f"phase dispatch for {phase} has invalid history")
+
+
+def validate_identity(entry: dict, generation: int, claim_token: str) -> None:
+    if entry.get("generation") != generation:
+        raise HandoffError(
+            f"stale generation {generation}; current generation is "
+            f"{entry.get('generation')}"
+        )
+    if entry.get("claimToken") != claim_token:
+        raise HandoffError("claim token does not match")
+
+
+def relative_path(run_dir: Path, raw: str) -> tuple[str, Path]:
+    rel = Path(raw)
+    if rel.is_absolute() or not rel.parts or any(part in {"", ".", ".."} for part in rel.parts):
+        raise HandoffError(f"artifact path must be a safe run-relative path: {raw}")
+    path = (run_dir / rel).resolve()
+    try:
+        normalized = path.relative_to(run_dir.resolve()).as_posix()
+    except ValueError as exc:
+        raise HandoffError(f"artifact path escapes run directory: {raw}") from exc
+    return normalized, path
+
+
+def relative_file(run_dir: Path, raw: str) -> tuple[str, Path]:
+    normalized, path = relative_path(run_dir, raw)
+    if not path.is_file():
+        raise HandoffError(f"artifact is not a file: {normalized}")
+    return normalized, path
+
+
+def file_records(run_dir: Path, raw_paths: list[str]) -> list[dict]:
+    if not raw_paths:
+        raise HandoffError("at least one artifact path is required")
+    records: dict[str, dict] = {}
+    for raw in raw_paths:
+        rel, path = relative_file(run_dir, raw)
+        if rel in records:
+            raise HandoffError(f"artifact path is repeated: {rel}")
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise HandoffError(f"cannot stat {path}: {exc}") from exc
+        records[rel] = {"path": rel, "sha256": digest_file(path), "size": size}
+    return [records[key] for key in sorted(records)]
+
+
+def declared_paths(
+    run_dir: Path, raw_paths: list[str] | None, label: str
+) -> list[str]:
+    paths: set[str] = set()
+    for raw in raw_paths or []:
+        rel, _ = relative_path(run_dir, raw)
+        if rel in paths:
+            raise HandoffError(f"{label} path is repeated: {rel}")
+        if rel in CONTROL_OWNED_OUTPUTS or rel.startswith("phase-dispatch/"):
+            raise HandoffError(f"{label} cannot declare control-owned path: {rel}")
+        paths.add(rel)
+    return sorted(paths)
+
+
+def unique_values(raw_values: list[str] | None, label: str) -> list[str]:
+    values: set[str] = set()
+    for raw in raw_values or []:
+        value = raw.strip()
+        if not value:
+            raise HandoffError(f"{label} values must be non-empty")
+        if value in values:
+            raise HandoffError(f"{label} value is repeated: {value}")
+        values.add(value)
+    return sorted(values)
+
+
+def repository_request(raw_repo: str | None, expected_head: str | None) -> dict | None:
+    if raw_repo is None and expected_head is None:
+        return None
+    if raw_repo is None or expected_head is None:
+        raise HandoffError("--repo and --head must be supplied together")
+    if not SHA.fullmatch(expected_head):
+        raise HandoffError("--head must be a full 40-64 character Git SHA")
+    return {"path": str(Path(raw_repo).expanduser().resolve()), "head": expected_head}
+
+
+def verification_records(
+    raw_values: list[str], required: object
+) -> list[dict[str, str]]:
+    if not isinstance(required, list) or not required:
+        raise HandoffError("input manifest requiredVerification must be nonempty")
+    results: dict[str, str] = {}
+    for raw in raw_values:
+        requirement, separator, result = raw.partition("=")
+        requirement, result = requirement.strip(), result.strip()
+        if not separator or not requirement or not result:
+            raise HandoffError(
+                "--verification must use <requirement>=<non-empty result>"
+            )
+        if requirement in results:
+            raise HandoffError(
+                f"verification result is repeated: {requirement}"
+            )
+        results[requirement] = result
+    if set(results) != set(required):
+        raise HandoffError(
+            "verification results must exactly match requiredVerification"
+        )
+    return [
+        {"requirement": requirement, "result": results[requirement]}
+        for requirement in sorted(results)
+    ]
+
+
+def validate_declared_completion(
+    input_manifest: dict, outputs: list[dict], verification: list[dict]
+) -> None:
+    required = input_manifest.get("requiredOutputs")
+    optional = input_manifest.get("optionalOutputs")
+    if not isinstance(required, list) or not required:
+        raise HandoffError("input manifest requiredOutputs must be nonempty")
+    if not isinstance(optional, list):
+        raise HandoffError("input manifest optionalOutputs must be a list")
+    declared = set(required) | set(optional)
+    actual = {record.get("path") for record in outputs}
+    if not set(required).issubset(actual) or not actual.issubset(declared):
+        raise HandoffError(
+            "completion outputs must include every required output and no "
+            "undeclared output"
+        )
+    expected_requirements = input_manifest.get("requiredVerification")
+    actual_requirements = {
+        record.get("requirement") for record in verification
+        if isinstance(record, dict)
+    }
+    if (
+        not isinstance(expected_requirements, list)
+        or not expected_requirements
+        or actual_requirements != set(expected_requirements)
+        or any(
+            not isinstance(record, dict)
+            or not isinstance(record.get("result"), str)
+            or not record["result"].strip()
+            for record in verification
+        )
+    ):
+        raise HandoffError(
+            "completion verification must exactly satisfy requiredVerification"
+        )
+
+
+def validate_records(run_dir: Path, records: object, label: str) -> None:
+    if not isinstance(records, list) or not records:
+        raise HandoffError(f"{label} must be a nonempty list")
+    seen: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise HandoffError(f"{label} entries must be objects")
+        raw = record.get("path")
+        expected = record.get("sha256")
+        size = record.get("size")
+        if not isinstance(raw, str) or not isinstance(expected, str):
+            raise HandoffError(f"{label} entry is malformed")
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise HandoffError(f"{label} entry has an invalid size")
+        rel, path = relative_file(run_dir, raw)
+        if rel != raw or rel in seen:
+            raise HandoffError(f"{label} has an invalid or repeated path: {raw}")
+        seen.add(rel)
+        if digest_file(path) != expected or path.stat().st_size != size:
+            raise HandoffError(f"{label} artifact changed: {rel}")
+
+
+def git_head(repo: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", "HEAD"],
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HandoffError(f"cannot inspect repository {repo}: {exc}") from exc
+    head = result.stdout.strip()
+    if result.returncode != 0 or not SHA.fullmatch(head):
+        detail = result.stderr.strip() or "HEAD is unavailable"
+        raise HandoffError(f"cannot inspect repository {repo}: {detail}")
+    return head
+
+
+def validate_repository_record(record: object) -> tuple[Path, str] | None:
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        raise HandoffError("repository record is malformed")
+    raw_path, pinned = record.get("path"), record.get("head")
+    if (
+        not isinstance(raw_path, str)
+        or not raw_path
+        or not isinstance(pinned, str)
+        or not SHA.fullmatch(pinned)
+    ):
+        raise HandoffError("repository record is malformed")
+    return Path(raw_path), pinned
+
+
+def validate_repository(record: object, expected_head: str | None = None) -> str | None:
+    identity = validate_repository_record(record)
+    if identity is None:
+        if expected_head is not None:
+            raise HandoffError("--head cannot be used for an unpinned repository")
+        return None
+    repo, pinned = identity
+    current = git_head(repo)
+    expected = expected_head or pinned
+    if current != expected:
+        raise HandoffError(f"repository head is {current}, expected {expected}")
+    return current
+
+
+def manifest_path(run_dir: Path, entry: dict, kind: str) -> Path:
+    rel = (
+        f"phase-dispatch/{entry['phase']}/generation-{entry['generation']}/"
+        f"attempt-{entry['attempt']}/{kind}-manifest.json"
+    )
+    return run_dir / rel
+
+
+def manifest_ref(run_dir: Path, path: Path, payload: bytes | None = None) -> dict:
+    return {
+        "path": path.relative_to(run_dir).as_posix(),
+        "sha256": digest_bytes(payload) if payload is not None else digest_file(path),
+    }
+
+
+def validate_manifest_ref(run_dir: Path, raw: object, kind: str) -> tuple[Path, dict]:
+    if not isinstance(raw, dict):
+        raise HandoffError(f"{kind} manifest reference is missing")
+    rel, path = relative_file(run_dir, str(raw.get("path", "")))
+    if raw.get("path") != rel or digest_file(path) != raw.get("sha256"):
+        raise HandoffError(f"{kind} manifest digest does not match")
+    return path, load_object(path)
+
+
+def validate_input_manifest(run_dir: Path, entry: dict) -> dict:
+    _, manifest = validate_manifest_ref(
+        run_dir, entry.get("inputManifest"), "input"
+    )
+    expected = {
+        "schemaVersion": SCHEMA_VERSION,
+        "kind": "orc-phase-input",
+        "phase": entry.get("phase"),
+        "generation": entry.get("generation"),
+        "attempt": entry.get("attempt"),
+        "claimToken": entry.get("claimToken"),
+    }
+    for key, value in expected.items():
+        if manifest.get(key) != value:
+            raise HandoffError(f"input manifest {key} does not match dispatch")
+    validate_records(run_dir, manifest.get("inputs"), "input manifest inputs")
+    required_outputs = manifest.get("requiredOutputs")
+    optional_outputs = manifest.get("optionalOutputs")
+    required_verification = manifest.get("requiredVerification")
+    if not isinstance(required_outputs, list) or not required_outputs:
+        raise HandoffError("input manifest requiredOutputs must be nonempty")
+    if not isinstance(optional_outputs, list):
+        raise HandoffError("input manifest optionalOutputs must be a list")
+    if (
+        any(not isinstance(value, str) for value in required_outputs + optional_outputs)
+        or len(set(required_outputs + optional_outputs))
+        != len(required_outputs + optional_outputs)
+    ):
+        raise HandoffError("input manifest output declarations are malformed")
+    for raw in required_outputs + optional_outputs:
+        rel, _ = relative_path(run_dir, raw)
+        if (
+            rel != raw
+            or rel in CONTROL_OWNED_OUTPUTS
+            or rel.startswith("phase-dispatch/")
+        ):
+            raise HandoffError("input manifest output declaration is unsafe")
+    if (
+        not isinstance(required_verification, list)
+        or not required_verification
+        or any(
+            not isinstance(value, str) or not value.strip()
+            for value in required_verification
+        )
+        or len(set(required_verification)) != len(required_verification)
+    ):
+        raise HandoffError("input manifest requiredVerification is malformed")
+    if manifest.get("repository") != entry.get("repository"):
+        raise HandoffError("input manifest repository does not match dispatch")
+    return manifest
+
+
+def validate_completion_manifest(run_dir: Path, entry: dict) -> tuple[dict, dict]:
+    path = manifest_path(run_dir, entry, "completion")
+    if not path.is_file():
+        raise HandoffError("completion manifest does not exist")
+    manifest = load_object(path)
+    expected = {
+        "schemaVersion": SCHEMA_VERSION,
+        "kind": "orc-phase-completion",
+        "phase": entry.get("phase"),
+        "generation": entry.get("generation"),
+        "attempt": entry.get("attempt"),
+        "claimToken": entry.get("claimToken"),
+        "inputManifest": entry.get("inputManifest"),
+    }
+    for key, value in expected.items():
+        if manifest.get(key) != value:
+            raise HandoffError(f"completion manifest {key} does not match dispatch")
+    completed_at = utc_now(manifest.get("completedAt"))
+    lease_expires = utc_now(entry.get("leaseExpiresAt"))
+    if completed_at >= lease_expires:
+        raise HandoffError("completion was published after the lease expired")
+    input_manifest = validate_input_manifest(run_dir, entry)
+    validate_records(run_dir, manifest.get("outputs"), "completion manifest outputs")
+    verification = manifest.get("verification")
+    if not isinstance(verification, list):
+        raise HandoffError("completion manifest verification must be a list")
+    validate_declared_completion(
+        input_manifest, manifest["outputs"], verification
+    )
+    model = manifest.get("model")
+    if not isinstance(model, str) or not model.strip() or len(model) > 200:
+        raise HandoffError("completion manifest model is invalid")
+    if manifest.get("status") not in WORKER_STATUS:
+        raise HandoffError("completion manifest status is invalid")
+    repository = manifest.get("repository")
+    input_repository = entry.get("repository")
+    if input_repository is None:
+        if repository is not None:
+            raise HandoffError("completion added an unpinned repository")
+    elif (
+        not isinstance(repository, dict)
+        or repository.get("path") != input_repository.get("path")
+    ):
+        raise HandoffError("completion repository does not match pinned repository")
+    else:
+        validate_repository_record(repository)
+    reference = manifest_ref(run_dir, path)
+    return manifest, reference
+
+
+def persist(meta_path: Path, meta: dict) -> None:
+    atomic_write(meta_path, canonical_bytes(meta))
+
+
+def emit(entry: dict, replayed: bool = False) -> None:
+    value = {
+        "phase": entry["phase"],
+        "generation": entry["generation"],
+        "attempt": entry["attempt"],
+        "state": entry["state"],
+        "claimToken": entry["claimToken"],
+        "leaseExpiresAt": entry["leaseExpiresAt"],
+        "replayed": replayed,
+    }
+    if "inputManifest" in entry:
+        value["inputManifest"] = entry["inputManifest"]
+    if "completionManifest" in entry:
+        value["completionManifest"] = entry["completionManifest"]
+    print(json.dumps(value, sort_keys=True))
+
+
+def validate_common(args: argparse.Namespace) -> None:
+    if not PHASE.fullmatch(args.phase):
+        raise HandoffError("--phase must match [a-z][a-z0-9-]{0,63}")
+    if args.generation < 1:
+        raise HandoffError("--generation must be a positive integer")
+    if getattr(args, "claim_token", None) is not None and not TOKEN.fullmatch(
+        args.claim_token
+    ):
+        raise HandoffError("--claim-token must be 16-128 URL-safe characters")
+
+
+def command_claim(args: argparse.Namespace) -> None:
+    now = utc_now(None)
+    if args.lease_seconds < 1:
+        raise HandoffError("--lease-seconds must be positive")
+    inputs = file_records(args.run_dir, args.input)
+    required_outputs = declared_paths(args.run_dir, args.output, "--output")
+    optional_outputs = declared_paths(
+        args.run_dir, args.optional_output, "--optional-output"
+    )
+    if not required_outputs:
+        raise HandoffError("at least one --output is required")
+    if set(required_outputs) & set(optional_outputs):
+        raise HandoffError("required and optional output paths must be disjoint")
+    required_verification = unique_values(
+        args.require_verification, "--require-verification"
+    )
+    if not required_verification:
+        raise HandoffError("at least one --require-verification is required")
+    repository = repository_request(args.repo, args.head)
+    token = f"orc_{secrets.token_urlsafe(24)}"
+    with locked_meta(args.run_dir) as (meta_path, meta):
+        validate_lifecycle_phase(meta, args.phase)
+        phases = dispatch_root(meta, True)
+        current = phases.get(args.phase)
+        if current is not None:
+            if not isinstance(current, dict):
+                raise HandoffError(f"phase dispatch for {args.phase} is malformed")
+            validate_entry_shape(current, args.phase)
+            current_generation = current.get("generation")
+            if args.generation < current_generation:
+                raise HandoffError(
+                    f"stale generation {args.generation}; current generation is "
+                    f"{current_generation}"
+                )
+            if args.generation == current_generation:
+                manifest = validate_input_manifest(args.run_dir, current)
+                if (
+                    manifest.get("inputs") != inputs
+                    or manifest.get("repository") != repository
+                    or manifest.get("requiredOutputs") != required_outputs
+                    or manifest.get("optionalOutputs") != optional_outputs
+                    or manifest.get("requiredVerification")
+                    != required_verification
+                ):
+                    raise HandoffError(
+                        "generation was claimed with different inputs, outputs, "
+                        "verification, or repository identity"
+                    )
+                if current.get("state") in {
+                    "complete-unconsumed",
+                    "consumed",
+                }:
+                    emit(current, replayed=True)
+                    return
+        if current is not None:
+            if args.generation == current_generation:
+                if current.get("state") in ACTIVE_STATES:
+                    emit(current, replayed=True)
+                    return
+                if current.get("state") not in {"failed", "expired"}:
+                    raise HandoffError(f"cannot claim from state {current.get('state')}")
+                attempt = int(current.get("attempt", 0)) + 1
+            else:
+                if current.get("state") not in TERMINAL_STATES:
+                    raise HandoffError(
+                        f"generation {current_generation} is not terminal"
+                    )
+                attempt = 1
+            history = list(current.get("history", []))
+            archived = {key: value for key, value in current.items() if key != "history"}
+            history.append(archived)
+        else:
+            attempt = 1
+            history = []
+        validate_repository(repository)
+        entry = {
+            "phase": args.phase,
+            "generation": args.generation,
+            "attempt": attempt,
+            "state": "claimed",
+            "claimToken": token,
+            "claimedAt": iso(now),
+            "leaseExpiresAt": iso(now + timedelta(seconds=args.lease_seconds)),
+            "repository": repository,
+            "history": history,
+        }
+        manifest = {
+            "schemaVersion": SCHEMA_VERSION,
+            "kind": "orc-phase-input",
+            "phase": args.phase,
+            "generation": args.generation,
+            "attempt": attempt,
+            "claimToken": token,
+            "createdAt": iso(now),
+            "inputs": inputs,
+            "repository": repository,
+            "requiredOutputs": required_outputs,
+            "optionalOutputs": optional_outputs,
+            "requiredVerification": required_verification,
+        }
+        path = manifest_path(args.run_dir, entry, "input")
+        payload = canonical_bytes(manifest)
+        entry["inputManifest"] = manifest_ref(args.run_dir, path, payload)
+        atomic_write(path, payload)
+        phases[args.phase] = entry
+        persist(meta_path, meta)
+        emit(entry)
+
+
+def command_start(args: argparse.Namespace) -> None:
+    now = utc_now(None)
+    with locked_meta(args.run_dir) as (meta_path, meta):
+        entry = entry_for(meta, args.phase)
+        validate_identity(entry, args.generation, args.claim_token)
+        if entry.get("state") == "running":
+            validate_input_manifest(args.run_dir, entry)
+            emit(entry, replayed=True)
+            return
+        if entry.get("state") != "claimed":
+            raise HandoffError(f"cannot start from state {entry.get('state')}")
+        if now >= utc_now(entry.get("leaseExpiresAt")):
+            raise HandoffError("claim lease has expired; reconcile before retrying")
+        validate_input_manifest(args.run_dir, entry)
+        pinned_head = (
+            entry.get("repository", {}).get("head")
+            if isinstance(entry.get("repository"), dict)
+            else None
+        )
+        if args.head is not None and args.head != pinned_head:
+            raise HandoffError(f"start head is {args.head}, expected {pinned_head}")
+        validate_repository(entry.get("repository"))
+        entry["state"] = "running"
+        entry["startedAt"] = iso(now)
+        persist(meta_path, meta)
+        emit(entry)
+
+
+def promote_completion(
+    run_dir: Path, meta_path: Path, meta: dict, entry: dict
+) -> None:
+    _, reference = validate_completion_manifest(run_dir, entry)
+    entry["state"] = "complete-unconsumed"
+    entry["completionManifest"] = reference
+    entry["completedAt"] = load_object(run_dir / reference["path"])["completedAt"]
+    persist(meta_path, meta)
+
+
+def command_complete(args: argparse.Namespace) -> None:
+    now = utc_now(None)
+    outputs = file_records(args.run_dir, args.output)
+    with locked_meta(args.run_dir) as (meta_path, meta):
+        entry = entry_for(meta, args.phase)
+        validate_identity(entry, args.generation, args.claim_token)
+        input_manifest = validate_input_manifest(args.run_dir, entry)
+        verification = verification_records(
+            args.verification, input_manifest.get("requiredVerification")
+        )
+        validate_declared_completion(input_manifest, outputs, verification)
+        if args.phase == "ship":
+            shots_manifest = args.run_dir / "shots" / "manifest.json"
+            ship_mdx = args.run_dir / "ship" / "ship.mdx"
+            if shots_manifest.is_file():
+                ship_mdx_text = ship_mdx.read_text() if ship_mdx.is_file() else ""
+                if "](../shots/" not in ship_mdx_text:
+                    raise HandoffError(
+                        "shots were captured at "
+                        f"{shots_manifest} but ship/ship.mdx embeds none of them; "
+                        "embed each captured shot in ship.mdx with a "
+                        "](../shots/...) link before completing ship"
+                    )
+        model = args.model.strip()
+        if not model or len(model) > 200:
+            raise HandoffError("--model must be 1-200 characters")
+        if entry.get("state") in {"complete-unconsumed", "consumed"}:
+            manifest, _ = validate_completion_manifest(args.run_dir, entry)
+            if (
+                manifest.get("outputs") != outputs
+                or manifest.get("verification") != verification
+                or manifest.get("model") != model
+                or manifest.get("status") != args.status
+                or manifest.get("summary") != args.summary
+                or (
+                    args.head is not None
+                    and manifest.get("repository", {}).get("head") != args.head
+                )
+            ):
+                raise HandoffError(
+                    "completion replay does not match the published manifest"
+                )
+            emit(entry, replayed=True)
+            return
+        if entry.get("state") != "running":
+            raise HandoffError(f"cannot complete from state {entry.get('state')}")
+        if now >= utc_now(entry.get("leaseExpiresAt")):
+            raise HandoffError("worker lease has expired; reconcile before retrying")
+        input_repository = entry.get("repository")
+        if input_repository is None:
+            repository = None
+            if args.head is not None:
+                raise HandoffError("--head cannot be used for an unpinned repository")
+        else:
+            current_head = validate_repository(
+                {"path": input_repository["path"], "head": args.head or input_repository["head"]},
+                args.head,
+            )
+            repository = {"path": input_repository["path"], "head": current_head}
+        manifest = {
+            "schemaVersion": SCHEMA_VERSION,
+            "kind": "orc-phase-completion",
+            "phase": entry["phase"],
+            "generation": entry["generation"],
+            "attempt": entry["attempt"],
+            "claimToken": entry["claimToken"],
+            "completedAt": iso(now),
+            "inputManifest": entry["inputManifest"],
+            "outputs": outputs,
+            "repository": repository,
+            "verification": verification,
+            "model": model,
+            "status": args.status,
+        }
+        if args.summary is not None:
+            manifest["summary"] = args.summary
+        path = manifest_path(args.run_dir, entry, "completion")
+        payload = canonical_bytes(manifest)
+        atomic_write(path, payload)
+        if os.environ.get("ORC_PHASE_HANDOFF_TEST_FAIL_AFTER_MANIFEST") == "1":
+            raise HandoffError("injected failure after completion manifest")
+        entry["state"] = "complete-unconsumed"
+        entry["completedAt"] = iso(now)
+        entry["completionManifest"] = manifest_ref(args.run_dir, path, payload)
+        persist(meta_path, meta)
+        emit(entry)
+
+
+def validate_unconsumed_completion(run_dir: Path, entry: dict) -> tuple[dict, dict]:
+    """Validate a completion that is waiting to be consumed.
+
+    Its pinned inputs are re-digested, so an input control rewrote after the
+    worker finished makes the completion permanently unconsumable. Name the one
+    move that is left, because the raw digest error reads like corruption.
+    """
+    try:
+        return validate_completion_manifest(run_dir, entry)
+    except HandoffError as exc:
+        raise HandoffError(
+            f"{exc}; this completion can no longer be consumed — supersede it with "
+            "`orc-phase-handoff fail` before claiming the next generation"
+        ) from exc
+
+
+def command_consume(args: argparse.Namespace) -> None:
+    now = utc_now(None)
+    with locked_meta(args.run_dir) as (meta_path, meta):
+        entry = entry_for(meta, args.phase)
+        validate_identity(entry, args.generation, args.claim_token)
+        if entry.get("state") == "consumed":
+            if entry.get("completionManifest", {}).get("sha256") != args.manifest_sha256:
+                raise HandoffError("completion manifest CAS digest does not match")
+            emit(entry, replayed=True)
+            return
+        if entry.get("state") != "complete-unconsumed":
+            raise HandoffError(f"cannot consume from state {entry.get('state')}")
+        _, reference = validate_unconsumed_completion(args.run_dir, entry)
+        if reference["sha256"] != args.manifest_sha256:
+            raise HandoffError("completion manifest CAS digest does not match")
+        entry["state"] = "consumed"
+        entry["consumedAt"] = iso(now)
+        persist(meta_path, meta)
+        emit(entry)
+
+
+def command_fail(args: argparse.Namespace) -> None:
+    now = utc_now(None)
+    reason = args.reason.strip()
+    if not reason:
+        raise HandoffError("--reason must be non-empty")
+    with locked_meta(args.run_dir) as (meta_path, meta):
+        entry = entry_for(meta, args.phase)
+        validate_identity(entry, args.generation, args.claim_token)
+        if entry.get("state") == "failed":
+            if entry.get("failure", {}).get("reason") != reason:
+                raise HandoffError("failed replay reason does not match")
+            emit(entry, replayed=True)
+            return
+        if entry.get("state") not in FAILABLE_STATES:
+            raise HandoffError(f"cannot fail from state {entry.get('state')}")
+        entry["state"] = "failed"
+        entry["failure"] = {"reason": reason, "failedAt": iso(now)}
+        persist(meta_path, meta)
+        emit(entry)
+
+
+def command_reconcile(args: argparse.Namespace) -> None:
+    now = utc_now(None)
+    with locked_meta(args.run_dir) as (meta_path, meta):
+        entry = entry_for(meta, args.phase)
+        validate_identity(entry, args.generation, args.claim_token)
+        state = entry.get("state")
+        if state in ACTIVE_STATES:
+            completion_path = manifest_path(args.run_dir, entry, "completion")
+            if completion_path.exists():
+                try:
+                    promote_completion(args.run_dir, meta_path, meta, entry)
+                except HandoffError as exc:
+                    entry["state"] = "failed"
+                    entry["failure"] = {
+                        "reason": f"invalid completion manifest: {exc}",
+                        "failedAt": iso(now),
+                    }
+                    persist(meta_path, meta)
+                emit(entry)
+                return
+            if now >= utc_now(entry.get("leaseExpiresAt")):
+                entry["state"] = "expired"
+                entry["expiredAt"] = iso(now)
+                persist(meta_path, meta)
+                emit(entry)
+                return
+            validate_input_manifest(args.run_dir, entry)
+            if state == "claimed":
+                validate_repository(entry.get("repository"))
+            emit(entry, replayed=True)
+            return
+        if state == "complete-unconsumed":
+            validate_unconsumed_completion(args.run_dir, entry)
+        emit(entry, replayed=True)
+
+
+def add_identity(parser: argparse.ArgumentParser, token: bool = True) -> None:
+    parser.add_argument("--run-dir", required=True, type=Path)
+    parser.add_argument("--phase", required=True)
+    parser.add_argument("--generation", required=True, type=int)
+    if token:
+        parser.add_argument("--claim-token", required=True)
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(
+        prog="orc-phase-handoff",
+        description=(
+            "Atomically claim, run, publish, reconcile, and consume one isolated "
+            "Orc phase generation."
+        ),
+        epilog=(
+            "Schema: meta.phaseDispatch={schemaVersion:1,phases:{PHASE:ENTRY}}. "
+            "ENTRY moves claimed -> running -> complete-unconsumed -> consumed, "
+            "or to failed/expired. claim writes a versioned input manifest with "
+            "SHA-256 digests, declared outputs, required verification, and an "
+            "optional Git HEAD. complete validates that capability boundary and "
+            "binds verification, model, and outcome before changing meta.json. consume "
+            "requires the claim token and completion-manifest SHA-256 as a CAS. "
+            "All artifact paths are relative to RUN_DIR; generations are positive "
+            "monotonic integers. Commands print the resulting entry as JSON."
+        ),
+    )
+    commands = result.add_subparsers(dest="command", required=True)
+
+    claim = commands.add_parser(
+        "claim", help="pin inputs and lease a phase generation"
+    )
+    add_identity(claim, token=False)
+    claim.add_argument("--input", action="append", required=True)
+    claim.add_argument("--output", action="append", required=True)
+    claim.add_argument("--optional-output", action="append")
+    claim.add_argument("--require-verification", action="append", required=True)
+    claim.add_argument("--repo")
+    claim.add_argument("--head")
+    claim.add_argument("--lease-seconds", type=int, default=3600)
+    claim.set_defaults(handler=command_claim)
+
+    start = commands.add_parser(
+        "start", help="validate a claim and mark its worker running"
+    )
+    add_identity(start)
+    start.add_argument("--head")
+    start.set_defaults(handler=command_start)
+
+    complete = commands.add_parser(
+        "complete", help="validate outputs and publish the completion manifest last"
+    )
+    add_identity(complete)
+    complete.add_argument("--output", action="append", required=True)
+    complete.add_argument("--verification", action="append", required=True)
+    complete.add_argument("--model", required=True)
+    complete.add_argument("--status", choices=sorted(WORKER_STATUS), required=True)
+    complete.add_argument("--head")
+    complete.add_argument("--summary")
+    complete.set_defaults(handler=command_complete)
+
+    consume = commands.add_parser(
+        "consume", help="CAS the validated completion to consumed"
+    )
+    add_identity(consume)
+    consume.add_argument("--manifest-sha256", required=True)
+    consume.set_defaults(handler=command_consume)
+
+    fail = commands.add_parser(
+        "fail", help="durably fail a claimed, running, or unconsumed attempt"
+    )
+    add_identity(fail)
+    fail.add_argument("--reason", required=True)
+    fail.set_defaults(handler=command_fail)
+
+    reconcile = commands.add_parser(
+        "reconcile", help="recover manifest-last completion or expire a stale lease"
+    )
+    add_identity(reconcile)
+    reconcile.set_defaults(handler=command_reconcile)
+    return result
+
+
+def main() -> int:
+    args = parser().parse_args()
+    try:
+        args.run_dir = args.run_dir.expanduser().resolve()
+        validate_common(args)
+        args.handler(args)
+        return 0
+    except (HandoffError, OSError) as exc:
+        print(f"orc-phase-handoff: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

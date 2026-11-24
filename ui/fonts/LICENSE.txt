@@ -1,0 +1,9 @@
+Inter and JetBrains Mono variable webfonts (latin subset), from fontsource.
+Both licensed under the SIL Open Font License 1.1.
+https://github.com/rsms/inter · https://github.com/JetBrains/JetBrainsMono
+
+JetBrains Mono Nerd Font Mono (Regular and Bold, Nerd Fonts 3.5.1), converted
+to woff2 unchanged, for the terminal. The font is licensed under the SIL Open
+Font License 1.1, as its name table states. The icon glyphs Nerd Fonts adds
+keep their own sets' licences (among them MIT, SIL OFL 1.1, Apache 2.0 and
+CC BY 4.0), as the Nerd Fonts README lists: https://github.com/ryanoasis/nerd-fonts

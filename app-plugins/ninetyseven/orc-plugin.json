@@ -1,0 +1,53 @@
+{
+  "apiVersion": 2,
+  "id": "ninetyseven",
+  "name": "Orcsoft 97",
+  "version": "1.0.0",
+  "description": "Grey bevels, navy title bars and a teal desktop.",
+  "contributes": {
+    "frontend": "frontend.js",
+    "theme": {
+      "id": "ninetyseven",
+      "label": "Orcsoft 97",
+      "description": "Grey bevels and a teal desktop, ta-da~",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "gary": "gary.png",
+      "sheila": "sheila.png",
+      "scene": "scene.bundle.js",
+      "favicon": "data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2064%2064'%20shape-rendering%3D'crispEdges'%3E%3Crect%20width%3D'64'%20height%3D'64'%20fill%3D'%23008080'%2F%3E%3Crect%20x%3D'6'%20y%3D'8'%20width%3D'52'%20height%3D'48'%20fill%3D'%23c0c0c0'%2F%3E%3Cpath%20d%3D'M6%208h52v2H8v46H6z'%20fill%3D'%23fff'%2F%3E%3Cpath%20d%3D'M58%208v48H6v-2h50V8z'%20fill%3D'%230a0a0a'%2F%3E%3Crect%20x%3D'10'%20y%3D'12'%20width%3D'44'%20height%3D'9'%20fill%3D'%23000080'%2F%3E%3Crect%20x%3D'20'%20y%3D'26'%20width%3D'24'%20height%3D'24'%20fill%3D'%235a9a3a'%2F%3E%3Crect%20x%3D'15'%20y%3D'29'%20width%3D'5'%20height%3D'7'%20fill%3D'%235a9a3a'%2F%3E%3Crect%20x%3D'44'%20y%3D'29'%20width%3D'5'%20height%3D'7'%20fill%3D'%235a9a3a'%2F%3E%3Crect%20x%3D'24'%20y%3D'32'%20width%3D'5'%20height%3D'5'%20fill%3D'%23101010'%2F%3E%3Crect%20x%3D'35'%20y%3D'32'%20width%3D'5'%20height%3D'5'%20fill%3D'%23101010'%2F%3E%3Crect%20x%3D'25'%20y%3D'42'%20width%3D'3'%20height%3D'7'%20fill%3D'%23fff'%2F%3E%3Crect%20x%3D'36'%20y%3D'42'%20width%3D'3'%20height%3D'7'%20fill%3D'%23fff'%2F%3E%3C%2Fsvg%3E",
+      "announce": {
+        "on": "Orcsoft 97 mode on. Ta-da~",
+        "off": "Orcsoft 97 mode off"
+      },
+      "radio": {
+        "style": "Mellow nineties ambient lounge and soft MIDI jazz from a beige family computer",
+        "leads": [
+          "glassy FM electric piano",
+          "General MIDI vibraphone",
+          "soft synth bells",
+          "warm fretless bass",
+          "airy new-age pads",
+          "gentle MIDI marimba"
+        ],
+        "scenes": [
+          "a teal desktop glowing in a quiet study",
+          "clouds drifting across a start-up screen",
+          "a screen saver flying through stars at midnight",
+          "a dial-up modem connecting on a rainy evening",
+          "a card game cascading across the screen"
+        ],
+        "textures": [
+          "soft drum machine with a gated snare",
+          "hard drive hum and gentle clicks",
+          "a distant modem handshake",
+          "CRT hum and warm tape hiss",
+          "wide chorus and digital reverb"
+        ]
+      }
+    }
+  },
+  "build": {
+    "scene": "scene.js"
+  }
+}

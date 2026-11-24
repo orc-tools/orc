@@ -1,0 +1,165 @@
+/* Activity (#stats): a headline strip and three linked charts. Every colour is
+   a theme token. An outcome reads one --oc custom property from the .o-* class
+   its mark carries, so a dot, a ribbon and a legend key agree in every theme. */
+.act {
+  --act-line: color-mix(in srgb, var(--border) 50%, transparent);
+  --act-surface: color-mix(in srgb, var(--panel) 72%, var(--bg));
+  max-width: 1600px; min-width: 0; margin-inline: auto;
+}
+.act .o-Merged { --oc: var(--purple); }
+.act .o-Completed { --oc: var(--green); }
+.act .o-Answered { --oc: var(--cyan); }
+.act .o-Inprogress { --oc: var(--accent); }
+.act .o-Escalated { --oc: var(--orange); }
+.act .o-Failed { --oc: var(--red); }
+.act .o-Cancelled { --oc: var(--muted); }
+.act :is(button, a, [tabindex]):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* The heading takes focus only so a screen reader starts at the top of the page. */
+.act h2[tabindex]:is(:focus, :focus-visible) { outline: none; }
+#stats-view[data-pointer] .act :is(button, [tabindex]):focus-visible { outline: none; }
+#stats-view[data-pointer] .act :is(.act-node, .act-lane):focus-visible :is(.act-node-hit, .act-lane-wash) { stroke: none; }
+
+.act-head { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 10px 18px; margin-bottom: 14px; }
+.act-head h2 { margin: 0 0 4px; width: fit-content; color: var(--heading); font-size: 17px; }
+.act-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-height: 26px; margin: 0; color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums; }
+.act-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 9px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--heading); font: inherit; cursor: var(--orc-cursor-pointer, pointer);
+}
+.act-chip:hover { border-color: var(--accent); }
+.act-chip-facet { color: var(--muted-strong); }
+.act-chip-x { color: var(--muted-strong); font-size: 10px; }
+.act-sub .linkish { font-size: 12px; }
+
+/* One band, four figures, hairlines between: the page's only numerals at display size. */
+.act-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 12px; background: var(--act-surface); }
+.act-figure { position: relative; min-width: 0; padding: 13px 16px 12px; }
+.act-figure + .act-figure { border-left: 1px solid var(--act-line); }
+.act-figure-label { color: var(--muted-strong); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.act-figure-value { margin-top: 2px; color: var(--heading); font-size: 28px; font-weight: 700; line-height: 1.15; letter-spacing: -.01em; }
+.act-figure-value small { margin-left: 7px; color: var(--muted-strong); font-size: 14px; font-weight: 600; letter-spacing: 0; }
+.act-figure-foot { margin-top: 4px; padding-right: 92px; min-height: 17px; color: var(--muted-strong); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+/* The arrow carries the direction as well as the colour. */
+.act-delta { color: var(--text); font-weight: 600; }
+.act-delta.good { color: var(--green-text); }
+.act-delta.bad { color: var(--red-text); }
+.act-delta-arrow { margin-right: 3px; font-size: 9px; vertical-align: 1px; }
+.act-spark { position: absolute; right: 14px; bottom: 13px; width: 84px; height: 26px; overflow: visible; }
+.act-spark-area { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
+.act-spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.act-spark-end { fill: var(--accent); stroke: var(--act-surface); stroke-width: 1.5; }
+
+.act-panel { min-width: 0; margin-top: 14px; padding: 14px 16px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--act-surface); }
+.act-panel-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px 18px; }
+.act-panel-head > div { flex: 1 1 200px; min-width: 0; }
+.act-panel-head > orc-segmented { flex: none; }
+.act-panel h3 { margin: 0; color: var(--heading); font-size: 14px; line-height: 1.3; }
+.act-hint { margin: 2px 0 0; max-width: 62ch; color: var(--muted-strong); font-size: 11.5px; line-height: 1.5; }
+.act-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+
+.act-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 2px; margin: -2px -6px 0 0; padding: 0; list-style: none; }
+.act-key {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid transparent; border-radius: 12px; background: none;
+  color: var(--muted-strong); font: inherit; font-size: 11.5px; cursor: var(--orc-cursor-pointer, pointer);
+}
+.act-key i, .act-tip-outcome i { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--oc, var(--muted-strong)); }
+.act-key.o-Answered i, .act-tip-outcome.o-Answered i { box-sizing: border-box; border: 2px solid var(--oc); background: none; }
+.act-key b { color: var(--heading); font-weight: 600; font-variant-numeric: tabular-nums; }
+.act-key:hover { background: var(--button-hover); color: var(--heading); }
+.act-key[aria-pressed="true"] { border-color: color-mix(in srgb, var(--oc) 55%, transparent); background: color-mix(in srgb, var(--oc) 13%, transparent); color: var(--heading); }
+
+.act-plot { position: relative; min-width: 0; margin-top: 10px; border-radius: 8px; }
+.act-plot[data-pointing] { cursor: var(--orc-cursor-pointer, pointer); }
+.act-chart { display: block; max-width: 100%; overflow: visible; touch-action: pan-y; }
+.act-grid { stroke: var(--act-line); stroke-width: 1; }
+.act-tick { fill: var(--muted-strong); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.act-plot-empty, .act-empty { margin: 0; color: var(--muted-strong); font-size: 13px; }
+.act-plot-empty { padding: 28px 0 34px; }
+.act-empty { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 22px 16px; border: 1px solid var(--border); border-radius: 12px; }
+.act-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 8px 0 0; color: var(--muted-strong); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.act-status:empty { display: none; }
+.act-status [data-error="true"] { color: var(--red-text); }
+
+/* When you worked. The ring in the surface colour keeps overlapping runs apart. */
+.act-weekend { fill: color-mix(in srgb, var(--heading) 3%, transparent); }
+.act-dot { fill: var(--oc, var(--muted-strong)); fill-opacity: .82; stroke: var(--act-surface); stroke-width: 1; }
+/* A question is a ring: Answered's cyan sits too near In progress's blue to
+   tell the two apart by colour alone. */
+.act-dot.o-Answered { fill: var(--act-surface); fill-opacity: 1; stroke: var(--oc); stroke-width: 1.75; }
+.act-dot.is-off { fill: var(--muted); fill-opacity: .16; stroke: none; }
+.act-daybar, .act-hourbar { fill: color-mix(in srgb, var(--muted-strong) 46%, transparent); }
+.act-daybar.is-hot, .act-hourbar.is-hot, .act-daybar.is-picked { fill: var(--accent); }
+.act-band { fill: color-mix(in srgb, var(--accent) 9%, transparent); pointer-events: none; }
+.act-band:not([data-on], .is-picked), .act-crosshair:not([data-on]), .act-ring:not([data-on]) { display: none; }
+.act-band.is-picked { fill: color-mix(in srgb, var(--accent) 13%, transparent); }
+.act-crosshair { stroke: color-mix(in srgb, var(--accent) 55%, transparent); stroke-width: 1; pointer-events: none; }
+.act-ring { fill: none; stroke: var(--heading); stroke-width: 2; pointer-events: none; }
+
+/* Where runs ended up. A ribbon fades in from its project to its outcome's colour. */
+.act-fade-from { stop-color: var(--oc); stop-opacity: .14; }
+.act-fade-to { stop-color: var(--oc); stop-opacity: .62; }
+.act-ribbon { cursor: var(--orc-cursor-pointer, pointer); }
+.act-ribbon.is-off { opacity: .16; }
+[data-hot] .act-ribbon:not(.is-hot) { opacity: .13; }
+[data-hot] .act-ribbon.is-hot { opacity: 1; filter: saturate(1.25) brightness(1.08); }
+.act-node, .act-lane { cursor: var(--orc-cursor-pointer, pointer); }
+.act-node.is-folded { cursor: default; }
+.act-node:focus-visible, .act-lane:focus-visible { outline: none; }
+.act-node:focus-visible .act-node-hit, .act-lane:focus-visible .act-lane-wash { stroke: var(--focus); stroke-width: 2; }
+.act-node-hit { fill: transparent; rx: 6px; }
+.act-node:not(.is-folded):hover .act-node-hit, .act-node.is-hot .act-node-hit { fill: var(--button-hover); }
+.act-node.is-picked .act-node-hit { fill: var(--chip); }
+.act-node-bar { fill: var(--oc, color-mix(in srgb, var(--heading) 62%, transparent)); }
+.act-node-label { fill: var(--heading); font-size: 12px; }
+.act-node-count, .act-lane-count { fill: var(--muted-strong); font-size: 11px; font-variant-numeric: tabular-nums; }
+.act-node.is-off, .act-lane.is-off, .act-lane-marks.is-off { opacity: .42; }
+
+/* How long runs took. */
+.act-lane-wash { fill: transparent; pointer-events: none; }
+.act-lane:hover .act-lane-wash { fill: color-mix(in srgb, var(--heading) 4%, transparent); }
+.act-lane.is-picked .act-lane-wash { fill: color-mix(in srgb, var(--accent) 9%, transparent); }
+.act-lane-band { fill: color-mix(in srgb, var(--accent) 20%, transparent); pointer-events: none; }
+.act-lane-median { stroke: var(--accent); stroke-width: 3; stroke-linecap: round; pointer-events: none; }
+.act-lane-median-halo { stroke: var(--act-surface); stroke-width: 6; stroke-linecap: round; pointer-events: none; }
+.act-lane-value { fill: var(--heading); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.act-pace-dot { fill: color-mix(in srgb, var(--text) 78%, transparent); fill-opacity: .62; stroke: var(--act-surface); stroke-width: 1; }
+.act-outlier { fill: var(--yellow); stroke: var(--act-surface); stroke-width: 1.5; stroke-linejoin: round; }
+.act-pace-dot.is-off, .act-outlier.is-off { fill: var(--muted); fill-opacity: .16; stroke: none; }
+
+.act-tip {
+  position: fixed; z-index: var(--z-tooltip); max-width: min(300px, 80vw); padding: 9px 11px; pointer-events: none;
+  border: 1px solid var(--control-border); border-radius: 8px; background: var(--bg); color: var(--text);
+  font-size: 12px; line-height: 1.5; overflow-wrap: anywhere;
+}
+.act-tip-value { color: var(--heading); font-size: 15px; font-weight: 700; }
+.act-tip-title { color: var(--heading); font-weight: 600; }
+.act-tip-line { color: var(--muted-strong); }
+.act-tip-outcome { display: flex; align-items: center; gap: 6px; color: var(--text); }
+.act-tip-flag { margin-top: 2px; color: var(--yellow-text); font-weight: 600; }
+
+/* A new range or filter draws the marks in from the left. */
+@keyframes act-sweep { from { clip-path: inset(-20px 100% -20px -20px); opacity: .2; } to { clip-path: inset(-20px -80px -20px -20px); opacity: 1; } }
+.act-sweep .act-marks { animation: act-sweep .7s cubic-bezier(.22, .8, .24, 1) both; }
+.act-dot, .act-pace-dot, .act-outlier, .act-ribbon, .act-node, .act-lane, .act-daybar, .act-hourbar { transition: opacity .16s ease-out, fill .16s ease-out, fill-opacity .16s ease-out, filter .16s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .act-sweep .act-marks { animation: none; }
+  .act-dot, .act-pace-dot, .act-outlier, .act-ribbon, .act-node, .act-lane, .act-daybar, .act-hourbar { transition: none; }
+}
+
+@media (max-width: 900px) {
+  .act-split { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+@media (max-width: 760px) {
+  #stats-view { padding: 16px 16px 48px; }
+  .act-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .act-figure:nth-child(3) { border-left: 0; }
+  .act-figure:nth-child(n + 3) { border-top: 1px solid var(--act-line); }
+  .act-figure-foot { padding-right: 0; }
+  .act-spark { top: 14px; bottom: auto; width: 64px; }
+  .act-panel { padding: 12px 12px 10px; }
+  .act-legend { justify-content: flex-start; margin-left: -8px; }
+  .act-key, .act-chip { min-height: 32px; }
+}
+@media (max-width: 480px) {
+  .act-spark { display: none; }
+}

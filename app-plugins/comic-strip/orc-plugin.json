@@ -1,0 +1,27 @@
+{
+  "apiVersion": 2,
+  "id": "comic-strip",
+  "name": "Comic Strip",
+  "version": "1.0.0",
+  "description": "Follow a paper-plane courier across three inked panels, from warm newsprint to midnight blue.",
+  "contributes": {
+    "frontend": "frontend.js",
+    "theme": {
+      "id": "comic-strip",
+      "label": "Comic Strip",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "favicon": "favicon.png",
+      "gary": "gary.png",
+      "sheila": "sheila.png",
+      "scene": "scene.bundle.js",
+      "radio": {
+        "style": "Small-combo cool jazz in a newspaper print shop after hours",
+        "leads": ["brushed snare and upright bass", "muted trumpet", "vibraphone", "felt piano"],
+        "scenes": ["a courier folding the morning edition", "a paper plane between city rooftops", "the last light in a print-shop window"],
+        "textures": ["soft paper rustles", "a letterpress turning slowly", "quiet street sounds through an open window"]
+      }
+    }
+  },
+  "build": { "scene": "scene.js" }
+}

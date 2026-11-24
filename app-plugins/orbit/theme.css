@@ -1,0 +1,986 @@
+/* Orbit mode: frontend.js sets data-orbit on <html> and this file dresses
+   Orc as mission control. By night it is deep space: near-black navy, a star
+   field behind the chrome, cyan telemetry and amber for whatever needs you.
+   By day it is a 1960s flight manual: cream graph paper, ink line work,
+   Futura and one orange. It re-points the shell's own tokens, so every surface
+   that reads var(--bg), var(--accent) and friends follows without its own
+   rule, then redraws the chrome: runs as cards with a status lamp, lettered
+   tabs, a framed transcript and a planet under the Settled shelf.
+
+   The gate pages load this file too, inlined through string.Template, so keep
+   it free of the dollar sign.
+
+   Every block below out-specifies the swamp block it replaces. The day block
+   matches at night too, so both night blocks declare again everything it sets
+   per mode, and the rules below read those values instead of repeating
+   themselves per mode. tests/test_orbit_mode.py holds the palettes to the
+   swamp's contrast floors.
+
+   --accent stays cyan (ink blue by day) so danger never reads as the accent;
+   the amber and orange that mark what needs you are --orbit-flare. */
+:root[data-orbit] {
+  color-scheme: light;
+  --bg: #efe6d0; --panel: #f9f3e3; --border: #2a2620;
+  --text: #2b2620; --heading: #14110d; --muted: #6b6150; --accent: #1f5f7a;
+  --accent-soft: #e3d6b8; --chip: #ece2c8; --code: #ece2c8;
+  --green: #2f6b3c; --yellow: #8a5a00; --red: #b3261e;
+  --purple: #6b3fa0; --cyan: #1f5f7a; --orange: #b8470b;
+  --focus: #c2410c;
+  --ready-text: #2f6b3c;
+  --blue-text: #1f5f7a;
+  --orbit-on-accent: #fffaf0;
+  --orbit-flare: #d8480f; --orbit-go: #c9410f; --orbit-go-ink: #ffffff;
+  --orbit-line: #2a2620;
+  --orbit-sans: "Futura", "Avenir Next", "Helvetica Neue", system-ui, sans-serif;
+  --orc-font-sans: var(--orbit-sans);
+  --orc-font-sans-nudge: 0px;
+  --orbit-mono: "SF Mono", "JetBrains Mono", ui-monospace, "Menlo", monospace;
+  --orbit-radius: 2px; --orc-radius-sm: 2px; --orc-radius-md: 2px;
+  --orbit-title-case: uppercase; --orbit-title-track: .08em;
+  /* A flight manual's graph paper: blue rules, a heavier one every fifth
+     square, and the page browned towards its edges. */
+  --orbit-pattern:
+    radial-gradient(ellipse 85% 85% at 50% 45%, transparent 55%, rgb(150 104 40 / .14) 100%),
+    repeating-linear-gradient(0deg, transparent 0 199px, rgb(31 95 122 / .2) 199px 200px),
+    repeating-linear-gradient(90deg, transparent 0 199px, rgb(31 95 122 / .2) 199px 200px),
+    repeating-linear-gradient(0deg, transparent 0 39px, rgb(31 95 122 / .11) 39px 40px),
+    repeating-linear-gradient(90deg, transparent 0 39px, rgb(31 95 122 / .11) 39px 40px);
+  /* What the chrome shows behind itself: by day a printer's registration
+     mark in each corner of the window, by night the star field. Fixed, so
+     the sidebar, the run's header and the transcript's margins share one sky. */
+  --orbit-stars:
+    var(--orbit-mark) left 3px top 8px / 22px 22px no-repeat fixed,
+    var(--orbit-mark) right 3px top 8px / 22px 22px no-repeat fixed,
+    var(--orbit-mark) left 3px bottom 3px / 22px 22px no-repeat fixed,
+    var(--orbit-mark) right 3px bottom 3px / 22px 22px no-repeat fixed;
+  --orbit-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22'%3E%3Cg fill='none' stroke='%232a2620'%3E%3Ccircle cx='11' cy='11' r='5'/%3E%3Cpath d='M2 11h18M11 2v18'/%3E%3C/g%3E%3C/svg%3E");
+  /* The night sky, in three layers: the nearer stars, the far ones on a tile
+     of another size so the two never line up the same way twice across a
+     window, and over them one picture as wide as the window. That picture
+     keeps today's stars where they were, under a galaxy band with a warm
+     core torn by dust lanes, clouds given shape by noise, a far spiral low
+     down and the few stars bright enough to flare. It hangs from the top of
+     the window, and the header's band is kept quiet: few stars, and the
+     clouds and the galaxy's core start below the run's header, so its text
+     reads on dark sky at any window size. Every star is one short stroke of
+     a path under a round cap, which keeps a thousand of them small. The
+     stroke has a length: a subpath that closes where it began ("M380 334z")
+     can be drawn as lines from star to star. The satellite and the planet's
+     four layers, drawn for project home's scene, live here too, and
+     `node docs/orbit-art/pictures.mjs --write` draws them all. */
+  --orbit-star-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M380 334h.01M241 255h.01M401 230h.01M93 228h.01M230 449h.01M228 318h.01M45 30h.01M135 200h.01M294 73h.01M5 202h.01M82 369h.01M401 68h.01M122 142h.01M150 172h.01' stroke='%23dfe8ff' stroke-width='1.4' opacity='.5'/%3E%3Cpath d='M16 135h.01M432 385h.01M247 164h.01M14 454h.01M393 138h.01M65 434h.01M169 263h.01M156 75h.01M107 454h.01M195 168h.01M172 17h.01M304 383h.01' stroke='%23dfe8ff' stroke-width='1.9' opacity='.7'/%3E%3Cpath d='M266 375h.01M102 80h.01M326 206h.01M455 330h.01M43 316h.01M46 192h.01M89 279h.01' stroke='%23dfe8ff' stroke-width='2.5' opacity='.8'/%3E%3Cpath d='M350 264h.01M468 59h.01M405 474h.01M300 452h.01M253 116h.01' stroke='%23ffd9a0' stroke-width='1.6' opacity='.6'/%3E%3Cpath d='M464 262h.01M22 372h.01M188 416h.01' stroke='%23ffd9a0' stroke-width='2.3' opacity='.8'/%3E%3Cpath d='M342 420h.01M293 243h.01M416 321h.01M266 212h.01' stroke='%239be6f5' stroke-width='1.7' opacity='.6'/%3E%3C/g%3E%3C/svg%3E");
+  --orbit-star-dust: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='340' viewBox='0 0 340 340'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M164 51h.01M201 68h.01M181 24h.01M133 49h.01M113 320h.01M177 132h.01M209 286h.01M45 177h.01M121 265h.01M293 90h.01M267 55h.01M98 172h.01M41 239h.01M126 102h.01M231 26h.01M90 298h.01M104 229h.01M41 151h.01M198 240h.01M223 103h.01M27 314h.01M39 112h.01' stroke='%23dfe8ff' stroke-width='.9' opacity='.4'/%3E%3Cpath d='M186 196h.01M331 265h.01M87 58h.01M226 180h.01M155 163h.01M284 317h.01M101 28h.01M62 59h.01M41 278h.01M37 25h.01M229 265h.01M197 322h.01M133 195h.01M302 25h.01' stroke='%23dfe8ff' stroke-width='1.2' opacity='.5'/%3E%3Cpath d='M232 155h.01M175 295h.01M326 144h.01M266 142h.01M314 53h.01' stroke='%23ffd9a0' stroke-width='1' opacity='.5'/%3E%3Cpath d='M269 187h.01M166 87h.01M278 228h.01M313 193h.01M286 127h.01' stroke='%239be6f5' stroke-width='1' opacity='.5'/%3E%3C/g%3E%3C/svg%3E");
+  --orbit-sky: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000'%3E%3Cdefs%3E%3CradialGradient id='h'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='.5'/%3E%3Cstop offset='1' stop-color='%23fff' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='gb'%3E%3Cstop offset='0' stop-color='%2393a8ff' stop-opacity='.55'/%3E%3Cstop offset='.4' stop-color='%237f96f5' stop-opacity='.36'/%3E%3Cstop offset='.75' stop-color='%236a7fe8' stop-opacity='.14'/%3E%3Cstop offset='1' stop-color='%236a7fe8' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='gc'%3E%3Cstop offset='0' stop-color='%23fff4de' stop-opacity='.9'/%3E%3Cstop offset='.3' stop-color='%23ffdfb0' stop-opacity='.62'/%3E%3Cstop offset='.65' stop-color='%23dcb4a6' stop-opacity='.24'/%3E%3Cstop offset='1' stop-color='%23a890b4' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='nv'%3E%3Cstop offset='0' stop-color='%238a5cf5' stop-opacity='.55'/%3E%3Cstop offset='.45' stop-color='%236a48e0' stop-opacity='.36'/%3E%3Cstop offset='.8' stop-color='%235338c8' stop-opacity='.14'/%3E%3Cstop offset='1' stop-color='%235338c8' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='nr'%3E%3Cstop offset='0' stop-color='%23f58ac0' stop-opacity='.5'/%3E%3Cstop offset='.4' stop-color='%23c8509c' stop-opacity='.34'/%3E%3Cstop offset='.8' stop-color='%23a23c8c' stop-opacity='.14'/%3E%3Cstop offset='1' stop-color='%23a23c8c' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='nt'%3E%3Cstop offset='0' stop-color='%233fc4d0' stop-opacity='.34'/%3E%3Cstop offset='.45' stop-color='%231f9aa8' stop-opacity='.24'/%3E%3Cstop offset='.8' stop-color='%2317788f' stop-opacity='.12'/%3E%3Cstop offset='1' stop-color='%2317788f' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='ni'%3E%3Cstop offset='0' stop-color='%234a6cff' stop-opacity='.4'/%3E%3Cstop offset='.45' stop-color='%233350e0' stop-opacity='.27'/%3E%3Cstop offset='.8' stop-color='%232a3fc0' stop-opacity='.12'/%3E%3Cstop offset='1' stop-color='%232a3fc0' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='far'%3E%3Cstop offset='0' stop-color='%23fff4dc' stop-opacity='.95'/%3E%3Cstop offset='.12' stop-color='%23ffe2b8' stop-opacity='.6'/%3E%3Cstop offset='.4' stop-color='%23a9b8ff' stop-opacity='.3'/%3E%3Cstop offset='1' stop-color='%238ea2ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cfilter id='mw' filterUnits='userSpaceOnUse' x='-1300' y='-420' width='2600' height='840' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0045 .011' numOctaves='5' seed='4' result='n'/%3E%3CfeColorMatrix in='n' type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 2.5 0 0 -.74' result='a'/%3E%3CfeComposite in='SourceGraphic' in2='a' operator='in'/%3E%3C/filter%3E%3Cfilter id='rift' filterUnits='userSpaceOnUse' x='-1300' y='-420' width='2600' height='840' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.006 .016' numOctaves='4' seed='9' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='90' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeGaussianBlur in='d' stdDeviation='7'/%3E%3C/filter%3E%3Cfilter id='neb' filterUnits='userSpaceOnUse' x='0' y='0' width='1600' height='1000' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0038 .0052' numOctaves='5' seed='23' result='n'/%3E%3CfeColorMatrix in='n' type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 2.8 0 0 0 -.92' result='body'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0055 .0075' numOctaves='4' seed='57' result='n2'/%3E%3CfeColorMatrix in='n2' type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 1 0 0 0' result='r0'/%3E%3CfeComponentTransfer in='r0' result='ridge'%3E%3CfeFuncA type='table' tableValues='0 0 0 .08 .5 1 .5 .08 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeComposite in='SourceGraphic' in2='body' operator='in' result='c1'/%3E%3CfeComposite in='SourceGraphic' in2='ridge' operator='in' result='c2'/%3E%3CfeMerge%3E%3CfeMergeNode in='c1'/%3E%3CfeMergeNode in='c2'/%3E%3C/feMerge%3E%3C/filter%3E%3Cfilter id='smudge' x='-30%25' y='-60%25' width='160%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='1.4'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23neb)'%3E%3Cellipse cx='1440' cy='430' rx='330' ry='230' fill='url(%23nv)' transform='rotate(-24 1440 430)'/%3E%3Cellipse cx='1330' cy='500' rx='190' ry='120' fill='url(%23nr)' transform='rotate(-36 1330 500)'/%3E%3Cellipse cx='1400' cy='900' rx='360' ry='230' fill='url(%23nt)' transform='rotate(18 1400 900)'/%3E%3Cellipse cx='330' cy='700' rx='360' ry='230' fill='url(%23ni)' transform='rotate(-32 330 700)'/%3E%3C/g%3E%3Cg transform='translate(800 520) rotate(-30)'%3E%3Cg filter='url(%23mw)'%3E%3Cellipse cx='-60' cy='0' rx='1150' ry='170' fill='url(%23gb)' opacity='.55'/%3E%3Cellipse cx='-120' cy='6' rx='820' ry='96' fill='url(%23gb)' opacity='.9'/%3E%3Cellipse cx='-330' cy='4' rx='400' ry='150' fill='url(%23gc)' opacity='.7'/%3E%3Cellipse cx='-360' cy='0' rx='200' ry='84' fill='url(%23gc)' opacity='1'/%3E%3Cellipse cx='330' cy='-6' rx='300' ry='60' fill='url(%23gb)' opacity='.8'/%3E%3C/g%3E%3Cg filter='url(%23rift)' fill='none' stroke='%2303050c' stroke-linecap='round'%3E%3Cpath d='M-900 22C-700 -8 -560 30 -400 10S-120 -16 60 12S380 6 560 -8' stroke-width='30' opacity='.64'/%3E%3Cpath d='M-620 34C-520 52 -420 30 -330 44' stroke-width='22' opacity='.5'/%3E%3Cpath d='M-470 -6C-420 -40 -350 -52 -290 -78' stroke-width='16' opacity='.46'/%3E%3Cpath d='M-160 18C-80 44 0 40 90 58' stroke-width='18' opacity='.46'/%3E%3Cpath d='M120 4C200 -26 280 -22 360 -44' stroke-width='14' opacity='.42'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(625 905) rotate(-34)' filter='url(%23smudge)'%3E%3Cellipse rx='50' ry='15' fill='url(%23far)' opacity='.75'/%3E%3Cpath d='M-40 2C-22 -12 8 -11 22 -3M40 -2C22 12 -8 11 -22 3' fill='none' stroke='%23c9d4ff' stroke-width='2.2' stroke-linecap='round' opacity='.3'/%3E%3Cellipse rx='9' ry='4.5' fill='%23fff4dc' opacity='.85'/%3E%3C/g%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M637 596h.01M249 829h.01M367 756h.01M1458 170h.01M1148 324h.01M714 533h.01M594 636h.01M884 330h.01M393 760h.01M1204 262h.01M1533 162h.01M461 496h.01' stroke='%239be6f5' stroke-width='1.0' opacity='0.55'/%3E%3Cpath d='M991 452h.01M1049 365h.01M1438 147h.01M1283 234h.01' stroke='%239be6f5' stroke-width='1.2' opacity='0.65'/%3E%3Cpath d='M557 509h.01M800 496h.01M132 933h.01M1237 183h.01M1511 220h.01M166 157h.01M654 600h.01M202 851h.01M564 749h.01M272 313h.01M1567 943h.01M331 822h.01M1419 144h.01M623 692h.01M408 826h.01M821 510h.01M44 913h.01' stroke='%239be6f5' stroke-width='1.5' opacity='0.75'/%3E%3Cpath d='M1570 183h.01M1051 483h.01M246 774h.01' stroke='%239be6f5' stroke-width='1.9' opacity='0.85'/%3E%3Cpath d='M36 675h.01M1493 202h.01M990 697h.01M1433 155h.01M845 559h.01' stroke='%239be6f5' stroke-width='2.4' opacity='0.9'/%3E%3Cpath d='M1338 203h.01M54 646h.01M1127 332h.01M138 788h.01M35 923h.01M243 923h.01M484 667h.01M932 489h.01M537 359h.01M1025 500h.01M1030 291h.01M1304 467h.01M1063 966h.01M1122 373h.01M530 690h.01M1264 832h.01M770 421h.01M570 613h.01M1100 326h.01M896 641h.01M171 417h.01M910 315h.01M1530 978h.01M694 850h.01M497 889h.01M506 740h.01M1069 433h.01M898 488h.01M880 501h.01M280 356h.01M13 36h.01M1209 309h.01M379 248h.01M1555 981h.01M1328 201h.01M1238 300h.01M1420 556h.01M483 908h.01M1414 166h.01M804 672h.01M1425 252h.01M330 806h.01M268 857h.01M1494 110h.01M1499 913h.01' stroke='%23dfe8ff' stroke-width='1.0' opacity='0.55'/%3E%3Cpath d='M480 672h.01M1453 125h.01M910 455h.01M349 810h.01M430 754h.01M1154 366h.01M777 374h.01M1147 623h.01M1590 535h.01M746 473h.01M1545 192h.01M996 471h.01M1386 290h.01M760 470h.01M796 491h.01M1101 489h.01M618 656h.01M237 918h.01M478 405h.01M81 920h.01M75 906h.01M1397 454h.01M1153 854h.01M706 594h.01M561 985h.01M1321 268h.01M1299 205h.01M1264 312h.01M1129 490h.01M746 919h.01M1426 99h.01M1404 215h.01M463 717h.01M932 444h.01M455 620h.01M1144 305h.01M1315 668h.01M634 639h.01M1352 226h.01M924 426h.01M640 719h.01M413 332h.01M1305 179h.01M701 558h.01M246 204h.01M162 241h.01M349 731h.01M78 941h.01M1401 228h.01M1027 351h.01M417 791h.01M1113 925h.01M218 657h.01M916 436h.01M356 696h.01M738 470h.01M1063 664h.01M1141 279h.01M840 580h.01M759 611h.01M1316 147h.01M875 427h.01M1263 245h.01M1310 291h.01M920 832h.01M1489 371h.01M1353 720h.01M1163 146h.01M746 622h.01M665 719h.01M486 549h.01M945 371h.01M1079 577h.01M1036 515h.01M350 702h.01M218 914h.01M566 633h.01M531 675h.01M858 542h.01M790 891h.01M82 734h.01M359 816h.01M392 540h.01M1037 369h.01M1018 448h.01M883 343h.01' stroke='%23dfe8ff' stroke-width='1.2' opacity='0.65'/%3E%3Cpath d='M380 728h.01M1233 234h.01M1027 392h.01M1161 155h.01M128 986h.01M168 834h.01M129 910h.01M1219 400h.01M794 452h.01M392 672h.01M1109 73h.01M1179 284h.01M437 991h.01M731 549h.01M1576 926h.01M1011 900h.01M252 848h.01M302 324h.01M1210 904h.01M507 687h.01M854 498h.01M355 571h.01M541 692h.01M687 496h.01M1306 309h.01M1583 958h.01M366 841h.01M1096 422h.01M972 907h.01M1583 247h.01M1261 250h.01M211 973h.01M692 604h.01M993 411h.01M1159 236h.01M958 476h.01M618 622h.01M421 222h.01M85 988h.01M1203 519h.01M1507 14h.01M923 374h.01M910 363h.01M794 527h.01M618 514h.01M952 330h.01M767 673h.01M91 875h.01M944 548h.01M1060 944h.01M266 718h.01M992 482h.01M1067 295h.01M45 919h.01M1197 300h.01M990 291h.01M602 393h.01M1185 395h.01M1200 311h.01M1166 999h.01M1163 652h.01M991 360h.01M272 714h.01M891 515h.01M1206 433h.01M1406 869h.01M1194 320h.01M420 692h.01' stroke='%23dfe8ff' stroke-width='1.5' opacity='0.75'/%3E%3Cpath d='M1004 553h.01M1154 207h.01M999 312h.01M1323 308h.01M336 794h.01M202 893h.01M1311 340h.01M1598 129h.01M63 963h.01M780 488h.01M503 706h.01M695 527h.01M566 430h.01M1203 337h.01M1276 957h.01M1401 237h.01M1233 498h.01M323 958h.01M193 921h.01M119 870h.01M189 943h.01M736 670h.01M145 884h.01M797 44h.01M881 459h.01M1318 153h.01M730 661h.01M886 427h.01M868 379h.01M1246 334h.01M674 517h.01M1044 312h.01M752 553h.01M877 523h.01M711 549h.01M1287 208h.01' stroke='%23dfe8ff' stroke-width='1.9' opacity='0.85'/%3E%3Cpath d='M1066 479h.01M1430 99h.01M1581 953h.01M1427 52h.01M1113 846h.01M0 924h.01M942 384h.01M1531 582h.01M844 939h.01M1413 368h.01M746 300h.01M65 861h.01M727 508h.01M1007 294h.01M393 176h.01M125 937h.01M1144 220h.01M399 752h.01M642 896h.01M1120 579h.01M1418 793h.01M760 529h.01M1107 437h.01M1050 935h.01M355 678h.01M1085 300h.01M890 382h.01M154 228h.01M242 904h.01' stroke='%23dfe8ff' stroke-width='2.4' opacity='0.9'/%3E%3Cpath d='M639 127h.01M1231 275h.01M1304 234h.01M1193 284h.01M318 820h.01M337 848h.01M447 978h.01M542 642h.01M1340 197h.01M1122 287h.01M193 39h.01M1372 508h.01M1050 487h.01M1048 319h.01M209 879h.01M416 267h.01M1319 924h.01M298 763h.01M1022 240h.01M1145 365h.01M114 783h.01M15 559h.01' stroke='%23ffd9a0' stroke-width='1.0' opacity='0.55'/%3E%3Cpath d='M1109 894h.01M910 862h.01M48 707h.01M1163 278h.01M1532 879h.01M751 606h.01M418 909h.01M1276 280h.01M1525 515h.01M1021 323h.01M826 414h.01M869 415h.01M797 465h.01M173 811h.01M852 502h.01M622 860h.01M1214 337h.01M23 707h.01M736 628h.01M618 522h.01M510 744h.01M1194 322h.01M906 508h.01M464 734h.01' stroke='%23ffd9a0' stroke-width='1.2' opacity='0.65'/%3E%3Cpath d='M445 324h.01M466 756h.01M1409 92h.01M663 668h.01M108 733h.01M1028 506h.01M1461 459h.01M208 384h.01M931 505h.01M1078 427h.01M1367 854h.01M981 389h.01M1237 187h.01M1296 357h.01M1363 292h.01M1416 288h.01M1467 177h.01M149 928h.01M601 920h.01M793 881h.01M741 131h.01M641 138h.01M601 559h.01' stroke='%23ffd9a0' stroke-width='1.5' opacity='0.75'/%3E%3Cpath d='M1561 551h.01M780 569h.01M1241 152h.01M102 610h.01M195 942h.01M161 531h.01M918 464h.01M1063 655h.01' stroke='%23ffd9a0' stroke-width='1.9' opacity='0.85'/%3E%3Cpath d='M452 871h.01M762 521h.01M1314 291h.01M867 405h.01M1224 935h.01M587 622h.01M125 910h.01M938 497h.01' stroke='%23ffd9a0' stroke-width='2.4' opacity='0.9'/%3E%3C/g%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M305 763h.01M1048 422h.01M1405 154h.01M1020 335h.01M832 478h.01M1263 238h.01M454 755h.01M1149 206h.01M1108 154h.01M763 688h.01M1498 138h.01M1011 353h.01M528 675h.01M898 337h.01M1145 398h.01M1496 26h.01M1202 318h.01M386 706h.01M1531 300h.01M656 647h.01M437 757h.01M1004 392h.01M1238 362h.01M700 324h.01M450 713h.01M247 833h.01M1040 471h.01M492 768h.01M1498 63h.01M1068 379h.01M930 496h.01M650 549h.01M347 837h.01M885 463h.01M673 657h.01M1044 387h.01M1024 372h.01M1128 219h.01M301 702h.01M957 403h.01M575 680h.01M438 731h.01M913 424h.01M459 728h.01M218 824h.01M1152 298h.01M1423 198h.01M1432 121h.01M1525 159h.01M287 787h.01M1351 186h.01M235 870h.01M1330 152h.01M131 916h.01M505 655h.01M664 622h.01M1597 105h.01M1210 200h.01M396 706h.01M290 782h.01M1355 179h.01M1572 162h.01M1507 66h.01M1111 375h.01M603 541h.01M316 721h.01M736 505h.01M894 537h.01M1371 151h.01M1077 460h.01M384 771h.01M660 601h.01M156 981h.01M41 944h.01M448 684h.01M981 469h.01M256 876h.01M1211 324h.01M17 928h.01M1333 257h.01M1330 173h.01M816 564h.01M641 578h.01M869 489h.01M1519 94h.01M1118 389h.01M1196 225h.01M89 956h.01M1299 233h.01M67 965h.01M61 830h.01M1346 211h.01M1168 253h.01M1300 340h.01M935 486h.01M331 791h.01M1289 302h.01M547 638h.01M59 987h.01M1113 261h.01M1088 288h.01M1526 108h.01M662 520h.01M237 864h.01M488 758h.01M1122 275h.01M728 760h.01M955 433h.01M767 549h.01M189 838h.01M726 477h.01M1392 195h.01M802 602h.01M1179 196h.01M744 559h.01M1210 494h.01M1449 158h.01M272 920h.01M1449 137h.01M501 785h.01M1248 334h.01M442 775h.01M964 467h.01M685 588h.01M292 858h.01M875 464h.01M422 812h.01M1571 138h.01M395 677h.01M1071 342h.01M847 450h.01M1197 292h.01M904 420h.01M152 745h.01M1093 374h.01M480 674h.01M964 395h.01M441 686h.01M17 976h.01M1211 225h.01M378 773h.01M804 508h.01M1279 220h.01M926 564h.01M567 735h.01M82 958h.01M1322 253h.01M683 667h.01M1347 142h.01M609 616h.01M855 499h.01M1327 249h.01M1405 295h.01M890 454h.01M1024 347h.01M1439 115h.01M1083 584h.01M1095 351h.01M852 510h.01M1019 287h.01M1493 73h.01M1350 244h.01M321 810h.01M819 390h.01M1190 378h.01M1480 193h.01M1222 244h.01M1397 267h.01M1251 222h.01M101 951h.01M189 887h.01M1137 267h.01M458 749h.01M1286 281h.01M1238 357h.01M554 635h.01M1302 201h.01M275 831h.01M634 638h.01M198 871h.01M1177 318h.01M675 710h.01M297 830h.01M741 524h.01M103 893h.01M1219 290h.01M1566 28h.01M356 802h.01M492 638h.01M1128 321h.01M228 914h.01M1538 116h.01M453 739h.01M416 723h.01M84 898h.01M1274 333h.01M1548 38h.01M649 617h.01M358 723h.01M1196 280h.01M757 500h.01M1150 242h.01M1129 346h.01M248 668h.01M1445 74h.01M1494 55h.01M38 998h.01M34 953h.01M345 821h.01M979 471h.01M323 828h.01M726 730h.01M954 348h.01M211 854h.01M1444 267h.01M276 875h.01M53 966h.01M1047 463h.01M1231 169h.01M723 616h.01M1415 177h.01M859 457h.01M1202 258h.01M1212 245h.01M258 782h.01M290 822h.01M884 195h.01M906 553h.01M1342 311h.01M420 735h.01M223 846h.01M819 471h.01M578 788h.01M1262 284h.01M648 631h.01M121 801h.01M560 639h.01M868 529h.01M531 643h.01M1566 222h.01M433 734h.01M127 902h.01M878 505h.01M1295 244h.01M226 850h.01M701 632h.01M69 960h.01M301 718h.01M1063 440h.01M322 752h.01M1162 61h.01M892 462h.01M171 822h.01M1505 36h.01M1132 399h.01M619 567h.01M176 822h.01M829 372h.01M538 688h.01M430 657h.01M1455 278h.01M982 363h.01M766 513h.01M1249 419h.01M584 686h.01M1496 64h.01M1555 60h.01M569 611h.01M466 708h.01M376 834h.01M37 966h.01M870 531h.01M1416 166h.01M398 739h.01M1 945h.01M886 475h.01M397 931h.01M1122 344h.01M1277 257h.01M248 868h.01M541 565h.01M439 816h.01M128 846h.01M530 663h.01M768 528h.01M530 701h.01M1289 182h.01M701 590h.01M1367 104h.01M1408 109h.01M272 856h.01M1307 163h.01M1261 202h.01M890 506h.01M500 743h.01M553 623h.01M1423 77h.01M435 854h.01M757 442h.01M474 869h.01M674 500h.01M713 614h.01M1457 199h.01M595 725h.01M784 287h.01M1201 327h.01M422 702h.01M1109 418h.01M957 438h.01M1027 432h.01M38 958h.01M884 503h.01M914 574h.01M1518 28h.01M1146 353h.01M717 479h.01M424 765h.01M21 914h.01M536 687h.01M378 738h.01M801 473h.01M663 550h.01M1292 308h.01M1525 119h.01M458 634h.01M237 797h.01M851 509h.01M7 888h.01M879 492h.01M427 720h.01M119 882h.01M1252 174h.01M1456 155h.01M685 602h.01M266 881h.01M1555 91h.01M599 658h.01M615 613h.01M211 854h.01M540 741h.01M278 790h.01M1157 300h.01M1126 367h.01M637 683h.01M971 406h.01M1328 231h.01M777 522h.01M1180 399h.01M1270 1h.01M824 632h.01M1191 287h.01M60 886h.01M1399 85h.01M693 559h.01M958 446h.01M1284 260h.01M495 820h.01M1281 312h.01M1230 277h.01M761 542h.01M945 508h.01M76 906h.01M234 914h.01M239 824h.01M262 841h.01M891 520h.01M1464 123h.01M398 763h.01M673 577h.01M243 818h.01M1203 167h.01M526 774h.01M188 866h.01M636 772h.01M1237 249h.01M1334 167h.01M876 465h.01M204 873h.01M133 577h.01M1428 147h.01M537 600h.01M1554 58h.01M174 871h.01M1211 230h.01M871 457h.01M132 889h.01M1507 131h.01M1319 221h.01M685 507h.01M1155 292h.01M405 754h.01M838 509h.01M1337 167h.01M1108 350h.01M1368 242h.01M323 828h.01M942 461h.01M982 426h.01M508 690h.01M927 451h.01M1017 215h.01M837 493h.01M1342 223h.01M2 819h.01M675 561h.01M781 573h.01M440 716h.01M148 934h.01M253 868h.01M1248 268h.01M1014 342h.01M1118 341h.01M14 972h.01M1569 62h.01M577 591h.01M974 394h.01M391 827h.01M338 742h.01M273 856h.01M959 440h.01M340 809h.01M810 531h.01M1486 97h.01M1254 252h.01M274 787h.01M228 803h.01M7 811h.01M739 506h.01M254 834h.01M1098 423h.01M1492 76h.01M1252 408h.01M1553 146h.01M942 368h.01M1577 159h.01M165 910h.01M446 682h.01M473 722h.01M356 826h.01M432 708h.01M858 442h.01M474 803h.01M1598 81h.01M339 770h.01M880 416h.01M680 619h.01M389 698h.01M223 779h.01M600 600h.01M325 743h.01M950 463h.01M186 844h.01M78 891h.01M493 685h.01M685 377h.01M782 561h.01M144 769h.01M836 516h.01M571 648h.01M884 477h.01M761 470h.01M245 877h.01M396 826h.01M940 592h.01M581 648h.01M1181 155h.01M64 963h.01M1081 325h.01M341 939h.01M1101 181h.01M1137 271h.01M253 867h.01M955 424h.01M1401 105h.01M127 881h.01M1337 191h.01M232 943h.01M657 532h.01M465 704h.01M1278 229h.01M992 457h.01M279 808h.01M497 621h.01M1109 426h.01M1074 322h.01M826 469h.01M1406 179h.01M1418 125h.01M769 530h.01M355 747h.01M924 477h.01M254 836h.01M711 555h.01M1398 241h.01M1328 216h.01M404 702h.01M1442 122h.01M497 654h.01M860 471h.01M1447 164h.01M311 771h.01M1252 247h.01M1501 213h.01M916 388h.01M1395 118h.01M462 750h.01M617 638h.01M1397 105h.01M346 720h.01M1526 186h.01M1565 44h.01M1306 352h.01M553 638h.01M1487 101h.01M1079 379h.01M823 669h.01M1528 166h.01M105 722h.01M1410 176h.01M246 794h.01M178 658h.01M522 642h.01M1517 63h.01M701 618h.01M872 574h.01M1265 239h.01M281 905h.01M204 691h.01M824 464h.01M1037 306h.01M1065 319h.01M1449 162h.01M926 385h.01M1002 368h.01M1578 55h.01M698 458h.01M231 956h.01M1372 402h.01M741 469h.01M1046 424h.01M1388 218h.01M21 973h.01M852 425h.01M965 429h.01M907 372h.01M530 799h.01M311 827h.01M1295 261h.01M204 718h.01M675 661h.01M920 471h.01M1397 157h.01M536 692h.01M803 524h.01M478 896h.01M509 628h.01M213 881h.01M1318 231h.01M1146 289h.01M678 620h.01' stroke='%23dfe8ff' stroke-width='.8' opacity='.4'/%3E%3Cpath d='M737 575h.01M181 597h.01M1582 237h.01M644 635h.01M680 653h.01M350 845h.01M1291 34h.01M438 767h.01M71 901h.01M1599 50h.01M1190 313h.01M1079 451h.01M561 592h.01M184 897h.01M505 763h.01M893 486h.01M1156 344h.01M999 145h.01M1102 563h.01M832 465h.01M821 480h.01M764 610h.01M1349 159h.01M1171 309h.01M203 861h.01M519 570h.01M677 565h.01M1169 269h.01M1374 493h.01M1026 448h.01M740 565h.01M1293 487h.01M169 845h.01M1200 327h.01M1223 256h.01M208 806h.01M1008 408h.01M1584 75h.01M78 928h.01M557 633h.01M565 733h.01M1022 366h.01M438 693h.01M722 423h.01M278 857h.01M347 777h.01M22 925h.01M1032 377h.01M1473 219h.01M119 868h.01M187 917h.01M115 945h.01M316 744h.01M666 653h.01M520 704h.01M174 806h.01M490 755h.01M479 665h.01M1472 116h.01M332 860h.01M111 878h.01M787 488h.01M298 946h.01M304 703h.01M231 787h.01M905 398h.01M1474 460h.01M22 954h.01M1331 225h.01M412 675h.01M763 703h.01M1145 249h.01M1114 279h.01M449 729h.01M1593 162h.01M853 567h.01M489 656h.01M483 921h.01M471 772h.01M145 944h.01M827 473h.01M452 713h.01M1490 43h.01M951 478h.01M697 598h.01M407 753h.01M68 981h.01M1460 188h.01M386 754h.01M320 782h.01M802 499h.01M1523 73h.01M303 829h.01M1506 135h.01M792 746h.01M320 781h.01M801 501h.01M362 848h.01M961 364h.01M1141 335h.01M1397 112h.01M1309 324h.01M76 955h.01M307 696h.01M1390 172h.01M64 991h.01M1563 125h.01M1077 362h.01M582 677h.01M1407 200h.01M960 365h.01M804 518h.01M563 743h.01M393 720h.01M488 725h.01M831 554h.01M491 793h.01M1590 50h.01M43 842h.01M859 389h.01M1108 412h.01M255 804h.01M988 469h.01M1110 272h.01M1159 321h.01M1524 79h.01M377 723h.01M1145 291h.01M1452 73h.01M1005 429h.01M438 764h.01M1396 183h.01M1009 515h.01M582 904h.01M454 720h.01M387 630h.01M529 803h.01M1306 233h.01M274 713h.01M1316 235h.01M727 509h.01M1073 352h.01M61 960h.01M113 870h.01M1178 289h.01M1572 114h.01M964 426h.01M551 684h.01M1005 494h.01M49 997h.01M1040 382h.01M1532 94h.01M1033 384h.01M379 724h.01M1219 302h.01M939 476h.01M902 309h.01M363 588h.01M1271 256h.01M1198 268h.01M972 404h.01M282 859h.01M505 636h.01M1265 348h.01M1205 193h.01M544 601h.01M1275 283h.01M289 859h.01M219 815h.01M1439 137h.01M811 489h.01M870 451h.01M12 949h.01M1547 133h.01M428 833h.01M1319 137h.01M927 558h.01M317 573h.01M1075 363h.01M1556 75h.01M814 440h.01M1552 72h.01M17 967h.01M1127 214h.01M1347 173h.01M1073 142h.01M1394 215h.01M69 899h.01M1158 361h.01M758 572h.01M185 890h.01M842 482h.01M585 628h.01M772 577h.01M1392 162h.01M475 683h.01M1122 492h.01M1123 224h.01M1459 171h.01M125 911h.01M1500 87h.01M1146 323h.01M1058 427h.01M874 514h.01M202 855h.01M987 438h.01M808 499h.01M232 805h.01M1313 261h.01M68 938h.01M443 695h.01M439 719h.01M1396 89h.01M929 562h.01M406 663h.01M514 658h.01M662 684h.01M156 949h.01M1001 345h.01M618 675h.01M1432 160h.01M941 361h.01M907 420h.01M1030 289h.01M703 510h.01M948 488h.01M244 884h.01M728 600h.01M1467 172h.01M793 625h.01M462 752h.01M398 710h.01M1255 231h.01M1572 43h.01M1179 233h.01M211 791h.01M1087 318h.01M1344 270h.01M1143 310h.01M153 906h.01' stroke='%23dfe8ff' stroke-width='1.1' opacity='.6'/%3E%3Cpath d='M1451 180h.01M20 633h.01M1514 93h.01M700 603h.01M354 754h.01M193 844h.01M1157 252h.01M1236 192h.01M1240 251h.01M606 699h.01M1248 244h.01M976 414h.01M1428 483h.01M251 948h.01M1577 143h.01M565 717h.01M635 546h.01M990 566h.01M725 515h.01M1213 264h.01M181 801h.01M1002 450h.01M1581 44h.01M882 504h.01M950 376h.01M375 812h.01M1274 298h.01M1491 84h.01M826 612h.01M307 846h.01M1200 238h.01M400 737h.01M332 760h.01M935 420h.01M58 962h.01M1192 245h.01M537 670h.01M690 585h.01M171 923h.01M762 437h.01M1150 198h.01M91 935h.01M927 757h.01M1332 281h.01M1402 222h.01M541 602h.01M1358 194h.01M718 629h.01M1114 392h.01M823 680h.01M233 851h.01M1353 238h.01M434 642h.01M1195 382h.01M611 498h.01M805 557h.01M619 575h.01M742 542h.01M836 535h.01M607 683h.01M335 792h.01M194 814h.01M1312 227h.01M892 498h.01M311 787h.01M954 417h.01M1187 301h.01M1215 357h.01M1067 408h.01M116 890h.01M45 810h.01M555 647h.01M586 414h.01M1488 258h.01M1221 199h.01M557 702h.01M248 776h.01M1394 215h.01M614 650h.01M1503 128h.01M548 648h.01M1154 395h.01M514 688h.01M660 607h.01M351 773h.01M370 770h.01M313 701h.01M1498 101h.01M1359 179h.01M1239 243h.01M1179 353h.01M1093 380h.01M548 306h.01M1146 236h.01M781 561h.01M1180 246h.01M929 459h.01M375 745h.01M1328 230h.01M894 431h.01' stroke='%23ffd9a0' stroke-width='1.2' opacity='.6'/%3E%3C/g%3E%3Cg transform='translate(727 892)' fill='%23dfe8ff'%3E%3Ccircle r='4.5' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-6.3 0L0-.6L6.3 0L0 .6zM0-6.3L.6 0L0 6.3L-.6 0z' opacity='.75'/%3E%3Ccircle r='.9'/%3E%3C/g%3E%3Cg transform='translate(1334 625)' fill='%23dfe8ff'%3E%3Ccircle r='6.3' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-8.8 0L0-.6L8.8 0L0 .6zM0-8.8L.6 0L0 8.8L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.3'/%3E%3C/g%3E%3Cg transform='translate(212 409)' fill='%239be6f5'%3E%3Ccircle r='8.1' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-11.3 0L0-.6L11.3 0L0 .6zM0-11.3L.6 0L0 11.3L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.6'/%3E%3C/g%3E%3Cg transform='translate(209 678)' fill='%23dfe8ff'%3E%3Ccircle r='5.4' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-7.6 0L0-.6L7.6 0L0 .6zM0-7.6L.6 0L0 7.6L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.1'/%3E%3C/g%3E%3Cg transform='translate(949 482)' fill='%23ffd9a0'%3E%3Ccircle r='7.2' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-10.1 0L0-.6L10.1 0L0 .6zM0-10.1L.6 0L0 10.1L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.4'/%3E%3C/g%3E%3Cg transform='translate(1443 344)' fill='%23dfe8ff'%3E%3Ccircle r='4.5' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-6.3 0L0-.6L6.3 0L0 .6zM0-6.3L.6 0L0 6.3L-.6 0z' opacity='.75'/%3E%3Ccircle r='.9'/%3E%3C/g%3E%3Cg transform='translate(1094 930)' fill='%23dfe8ff'%3E%3Ccircle r='6.3' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-8.8 0L0-.6L8.8 0L0 .6zM0-8.8L.6 0L0 8.8L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.3'/%3E%3C/g%3E%3Cg transform='translate(1151 628)' fill='%23dfe8ff'%3E%3Ccircle r='8.1' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-11.3 0L0-.6L11.3 0L0 .6zM0-11.3L.6 0L0 11.3L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.6'/%3E%3C/g%3E%3Cg transform='translate(771 385)' fill='%239be6f5'%3E%3Ccircle r='5.4' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-7.6 0L0-.6L7.6 0L0 .6zM0-7.6L.6 0L0 7.6L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.1'/%3E%3C/g%3E%3Cg transform='translate(342 291)' fill='%23dfe8ff'%3E%3Ccircle r='7.2' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-10.1 0L0-.6L10.1 0L0 .6zM0-10.1L.6 0L0 10.1L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.4'/%3E%3C/g%3E%3Cg transform='translate(994 791)' fill='%23ffd9a0'%3E%3Ccircle r='4.5' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-6.3 0L0-.6L6.3 0L0 .6zM0-6.3L.6 0L0 6.3L-.6 0z' opacity='.75'/%3E%3Ccircle r='.9'/%3E%3C/g%3E%3Cg transform='translate(59 239)' fill='%23dfe8ff'%3E%3Ccircle r='6.3' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-8.8 0L0-.6L8.8 0L0 .6zM0-8.8L.6 0L0 8.8L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.3'/%3E%3C/g%3E%3Cg transform='translate(1084 337)' fill='%23dfe8ff'%3E%3Ccircle r='8.1' fill='url(%23h)' opacity='.5'/%3E%3Cpath d='M-11.3 0L0-.6L11.3 0L0 .6zM0-11.3L.6 0L0 11.3L-.6 0z' opacity='.75'/%3E%3Ccircle r='1.6'/%3E%3C/g%3E%3Cg transform='translate(570 470)' fill='%23cfe0ff'%3E%3Ccircle r='18.9' fill='url(%23h)' opacity='.34'/%3E%3Ccircle r='8.6' fill='url(%23h)' opacity='.6'/%3E%3Cpath d='M-23.4 0L0 -0.85L23.4 0L0 0.85zM0 -23.4L0.85 0L0 23.4L-0.85 0z' opacity='.8'/%3E%3Ccircle r='1.8' fill='%23fff'/%3E%3C/g%3E%3Cg transform='translate(1425 318)' fill='%23e6ecff'%3E%3Ccircle r='16.3' fill='url(%23h)' opacity='.34'/%3E%3Ccircle r='7.4' fill='url(%23h)' opacity='.6'/%3E%3Cpath d='M-20.1 0L0 -0.73L20.1 0L0 0.73zM0 -20.1L0.73 0L0 20.1L-0.73 0z' opacity='.8'/%3E%3Ccircle r='1.6' fill='%23fff'/%3E%3C/g%3E%3Cg transform='translate(760 640)' fill='%23ffd9a0'%3E%3Ccircle r='15.4' fill='url(%23h)' opacity='.34'/%3E%3Ccircle r='7.0' fill='url(%23h)' opacity='.6'/%3E%3Cpath d='M-19.0 0L0 -0.69L19.0 0L0 0.69zM0 -19.0L0.69 0L0 19.0L-0.69 0z' opacity='.8'/%3E%3Ccircle r='1.5' fill='%23fff'/%3E%3C/g%3E%3C/svg%3E");
+  --orbit-satellite: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 30'%3E%3Cpath d='M22 15h20' stroke='%23aeb8cc' stroke-width='2.4'/%3E%3Cg stroke='%23060a18' stroke-width='1'%3E%3Crect x='1.5' y='8' width='21' height='14' rx='1.5' fill='%232f6fc2'/%3E%3Crect x='41.5' y='8' width='21' height='14' rx='1.5' fill='%232f6fc2'/%3E%3Crect x='26' y='7' width='12' height='16' rx='2.5' fill='%23e3b54e'/%3E%3Cpath d='M32 7V3.4' stroke='%23eef0f4' stroke-width='1.4'/%3E%3Ccircle cx='32' cy='2.9' r='2.4' fill='%23eef0f4'/%3E%3C/g%3E%3Cpath d='M7 8.5v13M12 8.5v13M17 8.5v13M2 15h20M47 8.5v13M52 8.5v13M57 8.5v13M42 15h20' stroke='%23a9d2ff' stroke-opacity='.55' stroke-width='.7' fill='none'/%3E%3Cpath d='M28.5 11h7M28.5 19h7' stroke='%238a6a1e' stroke-width='1' fill='none'/%3E%3C/svg%3E");
+  --orbit-ring-back: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='332' viewBox='0 0 500 332'%3E%3Cdefs%3E%3CclipPath id='disc'%3E%3Ccircle r='92.0'/%3E%3C/clipPath%3E%3CradialGradient id='rings' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='207.0'%3E%3Cstop offset='0.0000' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='0.5111' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='0.5111' stop-color='%238e8173' stop-opacity='0.088'/%3E%3Cstop offset='0.5511' stop-color='%238e8173' stop-opacity='0.088'/%3E%3Cstop offset='0.5511' stop-color='%23887a6c' stop-opacity='0.194'/%3E%3Cstop offset='0.5956' stop-color='%23887a6c' stop-opacity='0.194'/%3E%3Cstop offset='0.5956' stop-color='%238b7d6e' stop-opacity='0.264'/%3E%3Cstop offset='0.6356' stop-color='%238b7d6e' stop-opacity='0.264'/%3E%3Cstop offset='0.6356' stop-color='%2392816f' stop-opacity='0.352'/%3E%3Cstop offset='0.6756' stop-color='%2392816f' stop-opacity='0.352'/%3E%3Cstop offset='0.6756' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.6978' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.6978' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.7289' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.7289' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.7489' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.7489' stop-color='%23ab9272' stop-opacity='0.757'/%3E%3Cstop offset='0.7844' stop-color='%23ab9272' stop-opacity='0.757'/%3E%3Cstop offset='0.7844' stop-color='%23b09a7e' stop-opacity='0.792'/%3E%3Cstop offset='0.8111' stop-color='%23b09a7e' stop-opacity='0.792'/%3E%3Cstop offset='0.8111' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.8333' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.8333' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.8644' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.8644' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.8667' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.8667' stop-color='%238e7e6b' stop-opacity='0.062'/%3E%3Cstop offset='0.8978' stop-color='%238e7e6b' stop-opacity='0.062'/%3E%3Cstop offset='0.8978' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9244' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9244' stop-color='%23a2896b' stop-opacity='0.528'/%3E%3Cstop offset='0.9467' stop-color='%23a2896b' stop-opacity='0.528'/%3E%3Cstop offset='0.9467' stop-color='%23ac967a' stop-opacity='0.651'/%3E%3Cstop offset='0.9778' stop-color='%23ac967a' stop-opacity='0.651'/%3E%3Cstop offset='0.9778' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9867' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9867' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='1.0000' stop-color='%23b29877' stop-opacity='0.0'/%3E%3C/radialGradient%3E%3CclipPath id='near'%3E%3Crect x='-227' y='0' width='454' height='227'/%3E%3C/clipPath%3E%3Cfilter id='pen' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='8.3'/%3E%3C/filter%3E%3Cmask id='lit' maskUnits='userSpaceOnUse' x='-227' y='-227' width='454' height='454'%3E%3Crect x='-227' y='-227' width='454' height='454' fill='%23fff'/%3E%3Cpolygon points='44.7,80.2 317.5,-71.8 228.0,-232.2 -44.7,-80.2' fill='%23000' filter='url(%23pen)'/%3E%3C/mask%3E%3ClinearGradient id='ringlight' gradientUnits='userSpaceOnUse' x1='-207' y1='0' x2='207' y2='0'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='1'/%3E%3Cstop offset='.55' stop-color='%23fff' stop-opacity='.92'/%3E%3Cstop offset='1' stop-color='%23fff' stop-opacity='.6'/%3E%3C/linearGradient%3E%3Cmask id='ringfade' maskUnits='userSpaceOnUse' x='-227' y='-227' width='454' height='454'%3E%3Crect x='-227' y='-227' width='454' height='454' fill='url(%23ringlight)'/%3E%3C/mask%3E%3Cfilter id='gas' filterUnits='userSpaceOnUse' x='-122' y='-122' width='244' height='244' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .06' numOctaves='3' seed='12' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='4.6' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeGaussianBlur in='d' stdDeviation='.6'/%3E%3C/filter%3E%3Cfilter id='grain' filterUnits='userSpaceOnUse' x='-92' y='-92' width='184' height='184' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .16' numOctaves='3' seed='31'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .86 0 0 0 0 .93 0 0 0 0 1 0 3.2 0 0 -1.5'/%3E%3C/filter%3E%3Cfilter id='grain2' filterUnits='userSpaceOnUse' x='-92' y='-92' width='184' height='184' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .13' numOctaves='3' seed='77'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .03 0 0 0 0 .08 0 0 0 0 .26 0 0 3.2 0 -1.55'/%3E%3C/filter%3E%3CradialGradient id='shade' gradientUnits='userSpaceOnUse' cx='-57.0' cy='-18.4' r='158.2'%3E%3Cstop offset='0' stop-color='%23030614' stop-opacity='0'/%3E%3Cstop offset='.5' stop-color='%23030614' stop-opacity='0'/%3E%3Cstop offset='.66' stop-color='%23030614' stop-opacity='.42'/%3E%3Cstop offset='.78' stop-color='%23030614' stop-opacity='.86'/%3E%3Cstop offset='.88' stop-color='%23030614' stop-opacity='.97'/%3E%3Cstop offset='1' stop-color='%23030614' stop-opacity='1'/%3E%3C/radialGradient%3E%3CradialGradient id='sheen' gradientUnits='userSpaceOnUse' cx='-46.0' cy='-25.8' r='96.6'%3E%3Cstop offset='0' stop-color='%23eaf6ff' stop-opacity='.2'/%3E%3Cstop offset='.5' stop-color='%23cfe6ff' stop-opacity='.06'/%3E%3Cstop offset='1' stop-color='%23cfe6ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='limb' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='92.0'%3E%3Cstop offset='0' stop-color='%2304081c' stop-opacity='.1'/%3E%3Cstop offset='.72' stop-color='%2304081c' stop-opacity='.1'/%3E%3Cstop offset='.93' stop-color='%2304081c' stop-opacity='.4'/%3E%3Cstop offset='1' stop-color='%2304081c' stop-opacity='.66'/%3E%3C/radialGradient%3E%3CradialGradient id='air' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='92.0'%3E%3Cstop offset='0' stop-color='%23bfeaff' stop-opacity='0'/%3E%3Cstop offset='.88' stop-color='%23bfeaff' stop-opacity='0'/%3E%3Cstop offset='.96' stop-color='%23bfeaff' stop-opacity='.34'/%3E%3Cstop offset='1' stop-color='%23e6f8ff' stop-opacity='.78'/%3E%3C/radialGradient%3E%3ClinearGradient id='sunside' gradientUnits='userSpaceOnUse' x1='-92' y1='-18' x2='92' y2='18'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='1'/%3E%3Cstop offset='.42' stop-color='%23fff' stop-opacity='.75'/%3E%3Cstop offset='.68' stop-color='%23fff' stop-opacity='0'/%3E%3C/linearGradient%3E%3Cmask id='day' maskUnits='userSpaceOnUse' x='-147' y='-147' width='294' height='294'%3E%3Crect x='-147' y='-147' width='294' height='294' fill='url(%23sunside)'/%3E%3C/mask%3E%3CradialGradient id='halo' gradientUnits='userSpaceOnUse' cx='-23.0' cy='-7.4' r='156.4'%3E%3Cstop offset='0' stop-color='%234f9dff' stop-opacity='.2'/%3E%3Cstop offset='.55' stop-color='%234f9dff' stop-opacity='.13'/%3E%3Cstop offset='.78' stop-color='%233f7fe8' stop-opacity='.05'/%3E%3Cstop offset='1' stop-color='%233f7fe8' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cfilter id='glow' x='-30%25' y='-30%25' width='160%25' height='160%25'%3E%3CfeGaussianBlur stdDeviation='2.8'/%3E%3C/filter%3E%3Cfilter id='bloom' x='-10%25' y='-40%25' width='120%25' height='180%25'%3E%3CfeGaussianBlur stdDeviation='4.1'/%3E%3C/filter%3E%3Cfilter id='soften' x='-10%25' y='-10%25' width='120%25' height='120%25'%3E%3CfeGaussianBlur stdDeviation='0.92'/%3E%3C/filter%3E%3C/defs%3E%3Cg transform='translate(250 166)'%3E%3Ccircle cx='-23.0' cy='-7.4' r='156.4' fill='url(%23halo)'/%3E%3Cg transform='rotate(17) scale(1 0.2706)'%3E%3Cg mask='url(%23lit)'%3E%3Cg mask='url(%23ringfade)'%3E%3Ccircle r='207.0' fill='url(%23rings)' opacity='.2' filter='url(%23bloom)'/%3E%3Ccircle r='207.0' fill='url(%23rings)'/%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --orbit-globe: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='332' viewBox='0 0 500 332'%3E%3Cdefs%3E%3CclipPath id='disc'%3E%3Ccircle r='92.0'/%3E%3C/clipPath%3E%3CradialGradient id='rings' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='207.0'%3E%3Cstop offset='0.0000' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='0.5111' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='0.5111' stop-color='%238e8173' stop-opacity='0.088'/%3E%3Cstop offset='0.5511' stop-color='%238e8173' stop-opacity='0.088'/%3E%3Cstop offset='0.5511' stop-color='%23887a6c' stop-opacity='0.194'/%3E%3Cstop offset='0.5956' stop-color='%23887a6c' stop-opacity='0.194'/%3E%3Cstop offset='0.5956' stop-color='%238b7d6e' stop-opacity='0.264'/%3E%3Cstop offset='0.6356' stop-color='%238b7d6e' stop-opacity='0.264'/%3E%3Cstop offset='0.6356' stop-color='%2392816f' stop-opacity='0.352'/%3E%3Cstop offset='0.6756' stop-color='%2392816f' stop-opacity='0.352'/%3E%3Cstop offset='0.6756' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.6978' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.6978' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.7289' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.7289' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.7489' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.7489' stop-color='%23ab9272' stop-opacity='0.757'/%3E%3Cstop offset='0.7844' stop-color='%23ab9272' stop-opacity='0.757'/%3E%3Cstop offset='0.7844' stop-color='%23b09a7e' stop-opacity='0.792'/%3E%3Cstop offset='0.8111' stop-color='%23b09a7e' stop-opacity='0.792'/%3E%3Cstop offset='0.8111' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.8333' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.8333' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.8644' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.8644' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.8667' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.8667' stop-color='%238e7e6b' stop-opacity='0.062'/%3E%3Cstop offset='0.8978' stop-color='%238e7e6b' stop-opacity='0.062'/%3E%3Cstop offset='0.8978' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9244' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9244' stop-color='%23a2896b' stop-opacity='0.528'/%3E%3Cstop offset='0.9467' stop-color='%23a2896b' stop-opacity='0.528'/%3E%3Cstop offset='0.9467' stop-color='%23ac967a' stop-opacity='0.651'/%3E%3Cstop offset='0.9778' stop-color='%23ac967a' stop-opacity='0.651'/%3E%3Cstop offset='0.9778' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9867' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9867' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='1.0000' stop-color='%23b29877' stop-opacity='0.0'/%3E%3C/radialGradient%3E%3CclipPath id='near'%3E%3Crect x='-227' y='0' width='454' height='227'/%3E%3C/clipPath%3E%3Cfilter id='pen' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='8.3'/%3E%3C/filter%3E%3Cmask id='lit' maskUnits='userSpaceOnUse' x='-227' y='-227' width='454' height='454'%3E%3Crect x='-227' y='-227' width='454' height='454' fill='%23fff'/%3E%3Cpolygon points='44.7,80.2 317.5,-71.8 228.0,-232.2 -44.7,-80.2' fill='%23000' filter='url(%23pen)'/%3E%3C/mask%3E%3ClinearGradient id='ringlight' gradientUnits='userSpaceOnUse' x1='-207' y1='0' x2='207' y2='0'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='1'/%3E%3Cstop offset='.55' stop-color='%23fff' stop-opacity='.92'/%3E%3Cstop offset='1' stop-color='%23fff' stop-opacity='.6'/%3E%3C/linearGradient%3E%3Cmask id='ringfade' maskUnits='userSpaceOnUse' x='-227' y='-227' width='454' height='454'%3E%3Crect x='-227' y='-227' width='454' height='454' fill='url(%23ringlight)'/%3E%3C/mask%3E%3Cfilter id='gas' filterUnits='userSpaceOnUse' x='-122' y='-122' width='244' height='244' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .06' numOctaves='3' seed='12' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='4.6' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeGaussianBlur in='d' stdDeviation='.6'/%3E%3C/filter%3E%3Cfilter id='grain' filterUnits='userSpaceOnUse' x='-92' y='-92' width='184' height='184' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .16' numOctaves='3' seed='31'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .86 0 0 0 0 .93 0 0 0 0 1 0 3.2 0 0 -1.5'/%3E%3C/filter%3E%3Cfilter id='grain2' filterUnits='userSpaceOnUse' x='-92' y='-92' width='184' height='184' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .13' numOctaves='3' seed='77'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .03 0 0 0 0 .08 0 0 0 0 .26 0 0 3.2 0 -1.55'/%3E%3C/filter%3E%3CradialGradient id='shade' gradientUnits='userSpaceOnUse' cx='-57.0' cy='-18.4' r='158.2'%3E%3Cstop offset='0' stop-color='%23030614' stop-opacity='0'/%3E%3Cstop offset='.5' stop-color='%23030614' stop-opacity='0'/%3E%3Cstop offset='.66' stop-color='%23030614' stop-opacity='.42'/%3E%3Cstop offset='.78' stop-color='%23030614' stop-opacity='.86'/%3E%3Cstop offset='.88' stop-color='%23030614' stop-opacity='.97'/%3E%3Cstop offset='1' stop-color='%23030614' stop-opacity='1'/%3E%3C/radialGradient%3E%3CradialGradient id='sheen' gradientUnits='userSpaceOnUse' cx='-46.0' cy='-25.8' r='96.6'%3E%3Cstop offset='0' stop-color='%23eaf6ff' stop-opacity='.2'/%3E%3Cstop offset='.5' stop-color='%23cfe6ff' stop-opacity='.06'/%3E%3Cstop offset='1' stop-color='%23cfe6ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='limb' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='92.0'%3E%3Cstop offset='0' stop-color='%2304081c' stop-opacity='.1'/%3E%3Cstop offset='.72' stop-color='%2304081c' stop-opacity='.1'/%3E%3Cstop offset='.93' stop-color='%2304081c' stop-opacity='.4'/%3E%3Cstop offset='1' stop-color='%2304081c' stop-opacity='.66'/%3E%3C/radialGradient%3E%3CradialGradient id='air' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='92.0'%3E%3Cstop offset='0' stop-color='%23bfeaff' stop-opacity='0'/%3E%3Cstop offset='.88' stop-color='%23bfeaff' stop-opacity='0'/%3E%3Cstop offset='.96' stop-color='%23bfeaff' stop-opacity='.34'/%3E%3Cstop offset='1' stop-color='%23e6f8ff' stop-opacity='.78'/%3E%3C/radialGradient%3E%3ClinearGradient id='sunside' gradientUnits='userSpaceOnUse' x1='-92' y1='-18' x2='92' y2='18'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='1'/%3E%3Cstop offset='.42' stop-color='%23fff' stop-opacity='.75'/%3E%3Cstop offset='.68' stop-color='%23fff' stop-opacity='0'/%3E%3C/linearGradient%3E%3Cmask id='day' maskUnits='userSpaceOnUse' x='-147' y='-147' width='294' height='294'%3E%3Crect x='-147' y='-147' width='294' height='294' fill='url(%23sunside)'/%3E%3C/mask%3E%3CradialGradient id='halo' gradientUnits='userSpaceOnUse' cx='-23.0' cy='-7.4' r='156.4'%3E%3Cstop offset='0' stop-color='%234f9dff' stop-opacity='.2'/%3E%3Cstop offset='.55' stop-color='%234f9dff' stop-opacity='.13'/%3E%3Cstop offset='.78' stop-color='%233f7fe8' stop-opacity='.05'/%3E%3Cstop offset='1' stop-color='%233f7fe8' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cfilter id='glow' x='-30%25' y='-30%25' width='160%25' height='160%25'%3E%3CfeGaussianBlur stdDeviation='2.8'/%3E%3C/filter%3E%3Cfilter id='bloom' x='-10%25' y='-40%25' width='120%25' height='180%25'%3E%3CfeGaussianBlur stdDeviation='4.1'/%3E%3C/filter%3E%3Cfilter id='soften' x='-10%25' y='-10%25' width='120%25' height='120%25'%3E%3CfeGaussianBlur stdDeviation='0.92'/%3E%3C/filter%3E%3C/defs%3E%3Cg transform='translate(250 166)'%3E%3Cg clip-path='url(%23disc)'%3E%3Ccircle r='92.0' fill='%2316306c'/%3E%3Cg transform='rotate(17)'%3E%3Cg filter='url(%23gas)'%3E%3Cpath d='M-184.0 88.6L-0.0 88.6A0.0 0.0 0 0 0 0.0 88.6L184.0 88.6V-184.0H-184.0Z' fill='%2316306c'/%3E%3Cpath d='M-184.0 78.2L-43.2 78.2A43.2 11.7 0 0 0 43.2 78.2L184.0 78.2V-184.0H-184.0Z' fill='%23214a98'/%3E%3Cpath d='M-184.0 65.8L-61.6 65.8A61.6 16.7 0 0 0 61.6 65.8L184.0 65.8V-184.0H-184.0Z' fill='%231a3f88'/%3E%3Cpath d='M-184.0 54.5L-72.5 54.5A72.5 19.6 0 0 0 72.5 54.5L184.0 54.5V-184.0H-184.0Z' fill='%233568b8'/%3E%3Cpath d='M-184.0 38.8L-82.7 38.8A82.7 22.4 0 0 0 82.7 38.8L184.0 38.8V-184.0H-184.0Z' fill='%23204692'/%3E%3Cpath d='M-184.0 24.4L-88.4 24.4A88.4 23.9 0 0 0 88.4 24.4L184.0 24.4V-184.0H-184.0Z' fill='%23497cca'/%3E%3Cpath d='M-184.0 12.3L-91.1 12.3A91.1 24.7 0 0 0 91.1 12.3L184.0 12.3V-184.0H-184.0Z' fill='%236d9fde'/%3E%3Cpath d='M-184.0 -0.0L-92.0 -0.0A92.0 24.9 0 0 0 92.0 -0.0L184.0 -0.0V-184.0H-184.0Z' fill='%2393bdec'/%3E%3Cpath d='M-184.0 -10.8L-91.3 -10.8A91.3 24.7 0 0 0 91.3 -10.8L184.0 -10.8V-184.0H-184.0Z' fill='%235386cf'/%3E%3Cpath d='M-184.0 -22.9L-88.9 -22.9A88.9 24.0 0 0 0 88.9 -22.9L184.0 -22.9V-184.0H-184.0Z' fill='%232752a0'/%3E%3Cpath d='M-184.0 -36.0L-84.0 -36.0A84.0 22.7 0 0 0 84.0 -36.0L184.0 -36.0V-184.0H-184.0Z' fill='%236292d6'/%3E%3Cpath d='M-184.0 -49.5L-76.3 -49.5A76.3 20.6 0 0 0 76.3 -49.5L184.0 -49.5V-184.0H-184.0Z' fill='%233060ae'/%3E%3Cpath d='M-184.0 -63.7L-63.9 -63.7A63.9 17.3 0 0 0 63.9 -63.7L184.0 -63.7V-184.0H-184.0Z' fill='%231f4a96'/%3E%3Cpath d='M-184.0 -75.1L-48.8 -75.1A48.8 13.2 0 0 0 48.8 -75.1L184.0 -75.1V-184.0H-184.0Z' fill='%232b5aa6'/%3E%3Cpath d='M-184.0 -84.2L-28.4 -84.2A28.4 7.7 0 0 0 28.4 -84.2L184.0 -84.2V-184.0H-184.0Z' fill='%231a3c84'/%3E%3Cpath d='M-31.5 83.2A31.5 8.5 0 0 0 31.5 83.2' fill='none' stroke='%23d7e8ff' stroke-width='0.7' opacity='0.14'/%3E%3Cpath d='M-91.1 12.6A91.1 24.6 0 0 0 91.1 12.6' fill='none' stroke='%230e2664' stroke-width='1.9' opacity='0.23'/%3E%3Cpath d='M-54.6 -71.3A54.6 14.8 0 0 0 54.6 -71.3' fill='none' stroke='%23d7e8ff' stroke-width='1.5' opacity='0.17'/%3E%3Cpath d='M-83.6 36.9A83.6 22.6 0 0 0 83.6 36.9' fill='none' stroke='%230e2664' stroke-width='1.1' opacity='0.26'/%3E%3Cpath d='M-73.3 -53.5A73.3 19.8 0 0 0 73.3 -53.5' fill='none' stroke='%23d7e8ff' stroke-width='0.7' opacity='0.20'/%3E%3Cpath d='M-69.4 58.1A69.4 18.8 0 0 0 69.4 58.1' fill='none' stroke='%230e2664' stroke-width='1.9' opacity='0.14'/%3E%3Cpath d='M-86.0 -31.5A86.0 23.3 0 0 0 86.0 -31.5' fill='none' stroke='%23d7e8ff' stroke-width='1.5' opacity='0.23'/%3E%3Cpath d='M-49.6 74.6A49.6 13.4 0 0 0 49.6 74.6' fill='none' stroke='%230e2664' stroke-width='1.1' opacity='0.17'/%3E%3Cpath d='M-91.7 -6.8A91.7 24.8 0 0 0 91.7 -6.8' fill='none' stroke='%23d7e8ff' stroke-width='0.7' opacity='0.26'/%3E%3Cpath d='M-37.1 -81.0A37.1 10.0 0 0 0 37.1 -81.0' fill='none' stroke='%230e2664' stroke-width='1.9' opacity='0.20'/%3E%3Cpath d='M-90.0 18.4A90.0 24.4 0 0 0 90.0 18.4' fill='none' stroke='%23d7e8ff' stroke-width='1.5' opacity='0.14'/%3E%3Cpath d='M-59.4 -67.6A59.4 16.1 0 0 0 59.4 -67.6' fill='none' stroke='%230e2664' stroke-width='1.1' opacity='0.23'/%3E%3Cpath d='M-80.9 42.1A80.9 21.9 0 0 0 80.9 42.1' fill='none' stroke='%23d7e8ff' stroke-width='0.7' opacity='0.17'/%3E%3Cpath d='M-76.8 -48.8A76.8 20.8 0 0 0 76.8 -48.8' fill='none' stroke='%230e2664' stroke-width='1.9' opacity='0.26'/%3E%3Cpath d='M-65.3 62.4A65.3 17.7 0 0 0 65.3 62.4' fill='none' stroke='%23d7e8ff' stroke-width='1.5' opacity='0.20'/%3E%3Cpath d='M-88.0 -25.9A88.0 23.8 0 0 0 88.0 -25.9' fill='none' stroke='%230e2664' stroke-width='1.1' opacity='0.14'/%3E%3Cpath d='M-44.3 77.6A44.3 12.0 0 0 0 44.3 77.6' fill='none' stroke='%23d7e8ff' stroke-width='0.7' opacity='0.23'/%3E%3Cpath d='M-92.0 -0.9A92.0 24.9 0 0 0 92.0 -0.9' fill='none' stroke='%230e2664' stroke-width='1.9' opacity='0.17'/%3E%3Cpath d='M-42.6 -78.5A42.6 11.5 0 0 0 42.6 -78.5' fill='none' stroke='%23d7e8ff' stroke-width='1.5' opacity='0.26'/%3E%3Cpath d='M-88.5 24.1A88.5 24.0 0 0 0 88.5 24.1' fill='none' stroke='%230e2664' stroke-width='1.1' opacity='0.20'/%3E%3Cpath d='M-63.9 -63.7A63.9 17.3 0 0 0 63.9 -63.7' fill='none' stroke='%23d7e8ff' stroke-width='0.7' opacity='0.14'/%3E%3Cpath d='M-77.8 47.2A77.8 21.1 0 0 0 77.8 47.2' fill='none' stroke='%230e2664' stroke-width='1.9' opacity='0.23'/%3E%3Cpath d='M-80.0 -43.7A80.0 21.6 0 0 0 80.0 -43.7' fill='none' stroke='%23d7e8ff' stroke-width='1.5' opacity='0.17'/%3E%3Cpath d='M-60.8 66.4A60.8 16.5 0 0 0 60.8 66.4' fill='none' stroke='%230e2664' stroke-width='1.1' opacity='0.26'/%3E%3Cpath d='M-89.6 -20.2A89.6 24.2 0 0 0 89.6 -20.2' fill='none' stroke='%23d7e8ff' stroke-width='0.7' opacity='0.20'/%3E%3Cpath d='M-38.9 80.3A38.9 10.5 0 0 0 38.9 80.3' fill='none' stroke='%230e2664' stroke-width='1.9' opacity='0.14'/%3E%3Cpath d='M-91.9 4.9A91.9 24.9 0 0 0 91.9 4.9' fill='none' stroke='%23d7e8ff' stroke-width='1.5' opacity='0.23'/%3E%3Cpath d='M-47.9 -75.6A47.9 13.0 0 0 0 47.9 -75.6' fill='none' stroke='%230e2664' stroke-width='1.1' opacity='0.17'/%3E%3Cpath d='M-86.7 29.7A86.7 23.5 0 0 0 86.7 29.7' fill='none' stroke='%23d7e8ff' stroke-width='0.7' opacity='0.26'/%3E%3Cpath d='M-68.2 -59.5A68.2 18.4 0 0 0 68.2 -59.5' fill='none' stroke='%230e2664' stroke-width='1.9' opacity='0.20'/%3E%3C/g%3E%3Crect x='-92' y='-92' width='184' height='184' filter='url(%23grain)' opacity='.12'/%3E%3Crect x='-92' y='-92' width='184' height='184' filter='url(%23grain2)' opacity='.18'/%3E%3Cpath d='M-92.0 3.7A92.0 24.9 0 0 0 92.0 3.7' fill='none' stroke='%23060f2c' stroke-width='4.3' opacity='.6' filter='url(%23soften)'/%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --orbit-shade: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='332' viewBox='0 0 500 332'%3E%3Cdefs%3E%3CclipPath id='disc'%3E%3Ccircle r='92.0'/%3E%3C/clipPath%3E%3CradialGradient id='rings' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='207.0'%3E%3Cstop offset='0.0000' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='0.5111' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='0.5111' stop-color='%238e8173' stop-opacity='0.088'/%3E%3Cstop offset='0.5511' stop-color='%238e8173' stop-opacity='0.088'/%3E%3Cstop offset='0.5511' stop-color='%23887a6c' stop-opacity='0.194'/%3E%3Cstop offset='0.5956' stop-color='%23887a6c' stop-opacity='0.194'/%3E%3Cstop offset='0.5956' stop-color='%238b7d6e' stop-opacity='0.264'/%3E%3Cstop offset='0.6356' stop-color='%238b7d6e' stop-opacity='0.264'/%3E%3Cstop offset='0.6356' stop-color='%2392816f' stop-opacity='0.352'/%3E%3Cstop offset='0.6756' stop-color='%2392816f' stop-opacity='0.352'/%3E%3Cstop offset='0.6756' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.6978' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.6978' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.7289' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.7289' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.7489' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.7489' stop-color='%23ab9272' stop-opacity='0.757'/%3E%3Cstop offset='0.7844' stop-color='%23ab9272' stop-opacity='0.757'/%3E%3Cstop offset='0.7844' stop-color='%23b09a7e' stop-opacity='0.792'/%3E%3Cstop offset='0.8111' stop-color='%23b09a7e' stop-opacity='0.792'/%3E%3Cstop offset='0.8111' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.8333' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.8333' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.8644' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.8644' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.8667' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.8667' stop-color='%238e7e6b' stop-opacity='0.062'/%3E%3Cstop offset='0.8978' stop-color='%238e7e6b' stop-opacity='0.062'/%3E%3Cstop offset='0.8978' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9244' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9244' stop-color='%23a2896b' stop-opacity='0.528'/%3E%3Cstop offset='0.9467' stop-color='%23a2896b' stop-opacity='0.528'/%3E%3Cstop offset='0.9467' stop-color='%23ac967a' stop-opacity='0.651'/%3E%3Cstop offset='0.9778' stop-color='%23ac967a' stop-opacity='0.651'/%3E%3Cstop offset='0.9778' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9867' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9867' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='1.0000' stop-color='%23b29877' stop-opacity='0.0'/%3E%3C/radialGradient%3E%3CclipPath id='near'%3E%3Crect x='-227' y='0' width='454' height='227'/%3E%3C/clipPath%3E%3Cfilter id='pen' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='8.3'/%3E%3C/filter%3E%3Cmask id='lit' maskUnits='userSpaceOnUse' x='-227' y='-227' width='454' height='454'%3E%3Crect x='-227' y='-227' width='454' height='454' fill='%23fff'/%3E%3Cpolygon points='44.7,80.2 317.5,-71.8 228.0,-232.2 -44.7,-80.2' fill='%23000' filter='url(%23pen)'/%3E%3C/mask%3E%3ClinearGradient id='ringlight' gradientUnits='userSpaceOnUse' x1='-207' y1='0' x2='207' y2='0'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='1'/%3E%3Cstop offset='.55' stop-color='%23fff' stop-opacity='.92'/%3E%3Cstop offset='1' stop-color='%23fff' stop-opacity='.6'/%3E%3C/linearGradient%3E%3Cmask id='ringfade' maskUnits='userSpaceOnUse' x='-227' y='-227' width='454' height='454'%3E%3Crect x='-227' y='-227' width='454' height='454' fill='url(%23ringlight)'/%3E%3C/mask%3E%3Cfilter id='gas' filterUnits='userSpaceOnUse' x='-122' y='-122' width='244' height='244' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .06' numOctaves='3' seed='12' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='4.6' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeGaussianBlur in='d' stdDeviation='.6'/%3E%3C/filter%3E%3Cfilter id='grain' filterUnits='userSpaceOnUse' x='-92' y='-92' width='184' height='184' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .16' numOctaves='3' seed='31'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .86 0 0 0 0 .93 0 0 0 0 1 0 3.2 0 0 -1.5'/%3E%3C/filter%3E%3Cfilter id='grain2' filterUnits='userSpaceOnUse' x='-92' y='-92' width='184' height='184' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .13' numOctaves='3' seed='77'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .03 0 0 0 0 .08 0 0 0 0 .26 0 0 3.2 0 -1.55'/%3E%3C/filter%3E%3CradialGradient id='shade' gradientUnits='userSpaceOnUse' cx='-57.0' cy='-18.4' r='158.2'%3E%3Cstop offset='0' stop-color='%23030614' stop-opacity='0'/%3E%3Cstop offset='.5' stop-color='%23030614' stop-opacity='0'/%3E%3Cstop offset='.66' stop-color='%23030614' stop-opacity='.42'/%3E%3Cstop offset='.78' stop-color='%23030614' stop-opacity='.86'/%3E%3Cstop offset='.88' stop-color='%23030614' stop-opacity='.97'/%3E%3Cstop offset='1' stop-color='%23030614' stop-opacity='1'/%3E%3C/radialGradient%3E%3CradialGradient id='sheen' gradientUnits='userSpaceOnUse' cx='-46.0' cy='-25.8' r='96.6'%3E%3Cstop offset='0' stop-color='%23eaf6ff' stop-opacity='.2'/%3E%3Cstop offset='.5' stop-color='%23cfe6ff' stop-opacity='.06'/%3E%3Cstop offset='1' stop-color='%23cfe6ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='limb' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='92.0'%3E%3Cstop offset='0' stop-color='%2304081c' stop-opacity='.1'/%3E%3Cstop offset='.72' stop-color='%2304081c' stop-opacity='.1'/%3E%3Cstop offset='.93' stop-color='%2304081c' stop-opacity='.4'/%3E%3Cstop offset='1' stop-color='%2304081c' stop-opacity='.66'/%3E%3C/radialGradient%3E%3CradialGradient id='air' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='92.0'%3E%3Cstop offset='0' stop-color='%23bfeaff' stop-opacity='0'/%3E%3Cstop offset='.88' stop-color='%23bfeaff' stop-opacity='0'/%3E%3Cstop offset='.96' stop-color='%23bfeaff' stop-opacity='.34'/%3E%3Cstop offset='1' stop-color='%23e6f8ff' stop-opacity='.78'/%3E%3C/radialGradient%3E%3ClinearGradient id='sunside' gradientUnits='userSpaceOnUse' x1='-92' y1='-18' x2='92' y2='18'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='1'/%3E%3Cstop offset='.42' stop-color='%23fff' stop-opacity='.75'/%3E%3Cstop offset='.68' stop-color='%23fff' stop-opacity='0'/%3E%3C/linearGradient%3E%3Cmask id='day' maskUnits='userSpaceOnUse' x='-147' y='-147' width='294' height='294'%3E%3Crect x='-147' y='-147' width='294' height='294' fill='url(%23sunside)'/%3E%3C/mask%3E%3CradialGradient id='halo' gradientUnits='userSpaceOnUse' cx='-23.0' cy='-7.4' r='156.4'%3E%3Cstop offset='0' stop-color='%234f9dff' stop-opacity='.2'/%3E%3Cstop offset='.55' stop-color='%234f9dff' stop-opacity='.13'/%3E%3Cstop offset='.78' stop-color='%233f7fe8' stop-opacity='.05'/%3E%3Cstop offset='1' stop-color='%233f7fe8' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cfilter id='glow' x='-30%25' y='-30%25' width='160%25' height='160%25'%3E%3CfeGaussianBlur stdDeviation='2.8'/%3E%3C/filter%3E%3Cfilter id='bloom' x='-10%25' y='-40%25' width='120%25' height='180%25'%3E%3CfeGaussianBlur stdDeviation='4.1'/%3E%3C/filter%3E%3Cfilter id='soften' x='-10%25' y='-10%25' width='120%25' height='120%25'%3E%3CfeGaussianBlur stdDeviation='0.92'/%3E%3C/filter%3E%3C/defs%3E%3Cg transform='translate(250 166)'%3E%3Cg clip-path='url(%23disc)'%3E%3Ccircle r='92.0' fill='url(%23sheen)'/%3E%3Ccircle r='92.0' fill='url(%23limb)'/%3E%3Ccircle r='92.0' fill='url(%23shade)'/%3E%3Ccircle r='92.0' fill='url(%23air)' mask='url(%23day)'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --orbit-ring-front: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='332' viewBox='0 0 500 332'%3E%3Cdefs%3E%3CclipPath id='disc'%3E%3Ccircle r='92.0'/%3E%3C/clipPath%3E%3CradialGradient id='rings' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='207.0'%3E%3Cstop offset='0.0000' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='0.5111' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='0.5111' stop-color='%238e8173' stop-opacity='0.088'/%3E%3Cstop offset='0.5511' stop-color='%238e8173' stop-opacity='0.088'/%3E%3Cstop offset='0.5511' stop-color='%23887a6c' stop-opacity='0.194'/%3E%3Cstop offset='0.5956' stop-color='%23887a6c' stop-opacity='0.194'/%3E%3Cstop offset='0.5956' stop-color='%238b7d6e' stop-opacity='0.264'/%3E%3Cstop offset='0.6356' stop-color='%238b7d6e' stop-opacity='0.264'/%3E%3Cstop offset='0.6356' stop-color='%2392816f' stop-opacity='0.352'/%3E%3Cstop offset='0.6756' stop-color='%2392816f' stop-opacity='0.352'/%3E%3Cstop offset='0.6756' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.6978' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.6978' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.7289' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.7289' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.7489' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.7489' stop-color='%23ab9272' stop-opacity='0.757'/%3E%3Cstop offset='0.7844' stop-color='%23ab9272' stop-opacity='0.757'/%3E%3Cstop offset='0.7844' stop-color='%23b09a7e' stop-opacity='0.792'/%3E%3Cstop offset='0.8111' stop-color='%23b09a7e' stop-opacity='0.792'/%3E%3Cstop offset='0.8111' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.8333' stop-color='%23b3a087' stop-opacity='0.81'/%3E%3Cstop offset='0.8333' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.8644' stop-color='%23ae9577' stop-opacity='0.704'/%3E%3Cstop offset='0.8644' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.8667' stop-color='%23b6a591' stop-opacity='0.845'/%3E%3Cstop offset='0.8667' stop-color='%238e7e6b' stop-opacity='0.062'/%3E%3Cstop offset='0.8978' stop-color='%238e7e6b' stop-opacity='0.062'/%3E%3Cstop offset='0.8978' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9244' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9244' stop-color='%23a2896b' stop-opacity='0.528'/%3E%3Cstop offset='0.9467' stop-color='%23a2896b' stop-opacity='0.528'/%3E%3Cstop offset='0.9467' stop-color='%23ac967a' stop-opacity='0.651'/%3E%3Cstop offset='0.9778' stop-color='%23ac967a' stop-opacity='0.651'/%3E%3Cstop offset='0.9778' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9867' stop-color='%23a99275' stop-opacity='0.616'/%3E%3Cstop offset='0.9867' stop-color='%23b29877' stop-opacity='0.0'/%3E%3Cstop offset='1.0000' stop-color='%23b29877' stop-opacity='0.0'/%3E%3C/radialGradient%3E%3CclipPath id='near'%3E%3Crect x='-227' y='0' width='454' height='227'/%3E%3C/clipPath%3E%3Cfilter id='pen' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='8.3'/%3E%3C/filter%3E%3Cmask id='lit' maskUnits='userSpaceOnUse' x='-227' y='-227' width='454' height='454'%3E%3Crect x='-227' y='-227' width='454' height='454' fill='%23fff'/%3E%3Cpolygon points='44.7,80.2 317.5,-71.8 228.0,-232.2 -44.7,-80.2' fill='%23000' filter='url(%23pen)'/%3E%3C/mask%3E%3ClinearGradient id='ringlight' gradientUnits='userSpaceOnUse' x1='-207' y1='0' x2='207' y2='0'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='1'/%3E%3Cstop offset='.55' stop-color='%23fff' stop-opacity='.92'/%3E%3Cstop offset='1' stop-color='%23fff' stop-opacity='.6'/%3E%3C/linearGradient%3E%3Cmask id='ringfade' maskUnits='userSpaceOnUse' x='-227' y='-227' width='454' height='454'%3E%3Crect x='-227' y='-227' width='454' height='454' fill='url(%23ringlight)'/%3E%3C/mask%3E%3Cfilter id='gas' filterUnits='userSpaceOnUse' x='-122' y='-122' width='244' height='244' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .06' numOctaves='3' seed='12' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='4.6' xChannelSelector='R' yChannelSelector='G' result='d'/%3E%3CfeGaussianBlur in='d' stdDeviation='.6'/%3E%3C/filter%3E%3Cfilter id='grain' filterUnits='userSpaceOnUse' x='-92' y='-92' width='184' height='184' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .16' numOctaves='3' seed='31'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .86 0 0 0 0 .93 0 0 0 0 1 0 3.2 0 0 -1.5'/%3E%3C/filter%3E%3Cfilter id='grain2' filterUnits='userSpaceOnUse' x='-92' y='-92' width='184' height='184' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .13' numOctaves='3' seed='77'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .03 0 0 0 0 .08 0 0 0 0 .26 0 0 3.2 0 -1.55'/%3E%3C/filter%3E%3CradialGradient id='shade' gradientUnits='userSpaceOnUse' cx='-57.0' cy='-18.4' r='158.2'%3E%3Cstop offset='0' stop-color='%23030614' stop-opacity='0'/%3E%3Cstop offset='.5' stop-color='%23030614' stop-opacity='0'/%3E%3Cstop offset='.66' stop-color='%23030614' stop-opacity='.42'/%3E%3Cstop offset='.78' stop-color='%23030614' stop-opacity='.86'/%3E%3Cstop offset='.88' stop-color='%23030614' stop-opacity='.97'/%3E%3Cstop offset='1' stop-color='%23030614' stop-opacity='1'/%3E%3C/radialGradient%3E%3CradialGradient id='sheen' gradientUnits='userSpaceOnUse' cx='-46.0' cy='-25.8' r='96.6'%3E%3Cstop offset='0' stop-color='%23eaf6ff' stop-opacity='.2'/%3E%3Cstop offset='.5' stop-color='%23cfe6ff' stop-opacity='.06'/%3E%3Cstop offset='1' stop-color='%23cfe6ff' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='limb' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='92.0'%3E%3Cstop offset='0' stop-color='%2304081c' stop-opacity='.1'/%3E%3Cstop offset='.72' stop-color='%2304081c' stop-opacity='.1'/%3E%3Cstop offset='.93' stop-color='%2304081c' stop-opacity='.4'/%3E%3Cstop offset='1' stop-color='%2304081c' stop-opacity='.66'/%3E%3C/radialGradient%3E%3CradialGradient id='air' gradientUnits='userSpaceOnUse' cx='0' cy='0' r='92.0'%3E%3Cstop offset='0' stop-color='%23bfeaff' stop-opacity='0'/%3E%3Cstop offset='.88' stop-color='%23bfeaff' stop-opacity='0'/%3E%3Cstop offset='.96' stop-color='%23bfeaff' stop-opacity='.34'/%3E%3Cstop offset='1' stop-color='%23e6f8ff' stop-opacity='.78'/%3E%3C/radialGradient%3E%3ClinearGradient id='sunside' gradientUnits='userSpaceOnUse' x1='-92' y1='-18' x2='92' y2='18'%3E%3Cstop offset='0' stop-color='%23fff' stop-opacity='1'/%3E%3Cstop offset='.42' stop-color='%23fff' stop-opacity='.75'/%3E%3Cstop offset='.68' stop-color='%23fff' stop-opacity='0'/%3E%3C/linearGradient%3E%3Cmask id='day' maskUnits='userSpaceOnUse' x='-147' y='-147' width='294' height='294'%3E%3Crect x='-147' y='-147' width='294' height='294' fill='url(%23sunside)'/%3E%3C/mask%3E%3CradialGradient id='halo' gradientUnits='userSpaceOnUse' cx='-23.0' cy='-7.4' r='156.4'%3E%3Cstop offset='0' stop-color='%234f9dff' stop-opacity='.2'/%3E%3Cstop offset='.55' stop-color='%234f9dff' stop-opacity='.13'/%3E%3Cstop offset='.78' stop-color='%233f7fe8' stop-opacity='.05'/%3E%3Cstop offset='1' stop-color='%233f7fe8' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cfilter id='glow' x='-30%25' y='-30%25' width='160%25' height='160%25'%3E%3CfeGaussianBlur stdDeviation='2.8'/%3E%3C/filter%3E%3Cfilter id='bloom' x='-10%25' y='-40%25' width='120%25' height='180%25'%3E%3CfeGaussianBlur stdDeviation='4.1'/%3E%3C/filter%3E%3Cfilter id='soften' x='-10%25' y='-10%25' width='120%25' height='120%25'%3E%3CfeGaussianBlur stdDeviation='0.92'/%3E%3C/filter%3E%3C/defs%3E%3Cg transform='translate(250 166)'%3E%3Ccircle r='93.0' fill='none' stroke='%238fdcff' stroke-width='2.8' opacity='.5' filter='url(%23glow)' mask='url(%23day)'/%3E%3Cg clip-path='url(%23disc)'%3E%3Cg transform='rotate(17) scale(1 0.2706)'%3E%3Cg mask='url(%23lit)'%3E%3Cg mask='url(%23ringfade)'%3E%3Ccircle r='207.0' fill='url(%23rings)' clip-path='url(%23near)'/%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --orbit-night-sky:
+    var(--orbit-sky) 50% 0 / cover no-repeat fixed,
+    var(--orbit-star-tile) 0 0 / 480px 480px fixed,
+    var(--orbit-star-dust) 0 0 / 340px 340px fixed;
+  /* A run's lamp: printed as an inked dot by day, lit by night. */
+  --orbit-lamp-off: 0 0 0 1.5px var(--border);
+  --orbit-lamp-on: 0 0 0 1.5px var(--border);
+  --orbit-lamp-alert: 0 0 0 1.5px var(--border);
+  /* The planet under the Settled shelf: by day an engraving, hatched in ink
+     over a wash of the second colour. Its stops are in pixels because the
+     open drawer wears it too, and that is as tall as the list. */
+  --orbit-planet:
+    repeating-linear-gradient(-58deg, rgb(42 38 32 / .13) 0 1px, transparent 1px 6px),
+    linear-gradient(180deg, #f3c39c 0, #f6dcc0 34px, #f9f3e3 96px);
+  --orbit-ground: var(--panel); --orbit-ground-rule: var(--border);
+  --orbit-limb: #2a2620; --orbit-limb-glow: 0 0 0 0 transparent; --orbit-arc: #2a2620;
+  /* The horizon is the top of an ellipse wider than the sidebar, --orbit-over
+     past each edge, so it meets the edges on a slant: half an ellipse the
+     sidebar's own width would turn straight down there. --orbit-dome is that
+     ellipse's height and --orbit-drop how far it has fallen by the sidebar's
+     edge, which is the closed shelf's height less 2px, so the ends land on
+     the usage meters. Print has no light, so only the night sky has a sun. */
+  --orbit-over: 25%; --orbit-dome: 140px; --orbit-drop: 36px; --orbit-shelf: 38px; --orbit-sun: none;
+  /* Print has no glow, so by day a card stands off the page on a hard shadow,
+     the open run's in the second colour, and the page wears a stripe along
+     its top edge and a double rule under the tabs. */
+  --orbit-lift: 2px 2px 0 rgb(42 38 32 / .22); --orbit-lift-side: 2px 0 0 rgb(42 38 32 / .22);
+  --orbit-active-border: var(--border); --orbit-active-bg: #fffaf0;
+  --orbit-active-shadow: 3px 3px 0 var(--orbit-flare);
+  --orbit-stripe: inset 0 5px 0 var(--orbit-flare);
+  --orbit-rule: 3px double var(--border);
+  /* The few stars that twinkle at the window's edge print as crosses, and
+     the satellite and the comets come out only at night. */
+  --orbit-star: #14110d;
+  --orbit-star-paint:
+    linear-gradient(var(--orbit-star), var(--orbit-star)) center / 100% 1px no-repeat,
+    linear-gradient(var(--orbit-star), var(--orbit-star)) center / 1px 100% no-repeat;
+  --orbit-star-round: 0; --orbit-star-glow: none;
+  --orbit-night-only: none;
+  /* At night project home has a sky of its own, satellite and all, so the
+     window's edge keeps its stars and satellite for the other views. A
+     phone's project home has neither: the galaxy alone, nothing moving. */
+  --orbit-edge-on-home: visible;
+  /* The swamp's green mist and fireflies stay out of space, by day and by night. */
+  --nc-firefly-gold: transparent; --nc-firefly-lime: transparent;
+  --nc-firefly-alpha: 0; --nc-mist-alpha-low: 0; --nc-mist-alpha-high: 0;
+  accent-color: var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-orbit]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #060a18; --panel: #0c1326; --border: #26355a;
+    --text: #c6d2ee; --heading: #f3f6ff; --muted: #7486b0; --accent: #62d6e8;
+    --accent-soft: #101a33; --chip: #101a33; --code: #101a33;
+    --green: #7be0a0; --yellow: #ffc14d; --red: #ff7a6b;
+    --purple: #b9a2ff; --cyan: #62d6e8; --orange: #ffa25c;
+    --focus: #ffb347;
+    --ready-text: var(--green);
+    --blue-text: var(--accent);
+    --orbit-on-accent: var(--bg);
+    --orbit-flare: #ffb347; --orbit-go: #ffb347; --orbit-go-ink: #14110d;
+    --orbit-line: #62d6e8;
+    --orbit-sans: "Avenir Next", "Helvetica Neue", system-ui, sans-serif;
+    --orc-font-sans: var(--orbit-sans);
+    --orc-font-sans-nudge: 1px;
+    --orbit-radius: 10px; --orc-radius-sm: 6px; --orc-radius-md: 10px;
+    --orbit-title-case: none; --orbit-title-track: .01em;
+    --orbit-pattern: radial-gradient(ellipse 70% 70% at 20% 0%, rgb(27 42 107 / .55), transparent 100%);
+    --orbit-stars: var(--orbit-night-sky);
+    --orbit-lamp-off: 0 0 0 0 transparent;
+    --orbit-lamp-on: 0 0 6px currentColor;
+    --orbit-lamp-alert: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent), 0 0 6px currentColor;
+    --orbit-planet:
+      radial-gradient(ellipse 31% 26px at 33% 0, rgb(176 234 255 / .5), transparent 100%),
+      radial-gradient(ellipse 29% 38px at 83.3% 0, rgb(4 9 32 / .72), transparent 100%),
+      radial-gradient(circle at 70% 21px, rgb(255 208 138 / .95) 0 .6px, transparent 1.8px),
+      radial-gradient(circle at 74% 26px, rgb(255 208 138 / .8) 0 .5px, transparent 1.6px),
+      radial-gradient(circle at 77.4% 30px, rgb(255 208 138 / .9) 0 .6px, transparent 1.8px),
+      radial-gradient(ellipse 34px 2.5px at 43.4% 12px, rgb(255 255 255 / .3), transparent 100%),
+      radial-gradient(ellipse 26px 2px at 24.7% 26px, rgb(255 255 255 / .22), transparent 100%),
+      radial-gradient(ellipse 30px 2.5px at 57.4% 29px, rgb(255 255 255 / .2), transparent 100%),
+      radial-gradient(ellipse 36px 7px at 34% 31px, rgb(38 160 120 / .5), transparent 100%),
+      radial-gradient(ellipse 44px 6px at 60.7% 18px, rgb(38 160 120 / .42), transparent 100%),
+      linear-gradient(180deg, #3684e6 0, #1b4fae 14px, #143a86 32px, #0b2052 76px);
+    --orbit-ground: #0b2052; --orbit-ground-rule: rgb(155 230 245 / .16);
+    --orbit-limb: #c4f3ff; --orbit-arc: transparent;
+    --orbit-limb-glow:
+      inset 0 2px 3px -1px rgb(218 249 255 / .75), inset 0 10px 14px -9px rgb(111 214 255 / .65),
+      0 -2px 6px -1px rgb(155 230 245 / .8), 0 -10px 28px -6px rgb(74 150 255 / .6);
+    --orbit-sun:
+      radial-gradient(ellipse 100% 1.5px at 0 50%, rgb(255 238 204 / .9), transparent 100%) right / 50% 100% no-repeat,
+      radial-gradient(circle at 50% 50%, #fffaf0 0 1.5px, rgb(255 216 154 / .95) 3.5px, rgb(255 179 71 / .5) 8px, rgb(255 179 71 / .14) 17px, transparent 27px);
+    --orbit-lift: 0 0 0 0 transparent; --orbit-lift-side: 0 0 0 0 transparent;
+    --orbit-active-border: #3f6f96; --orbit-active-bg: #121e3d;
+    --orbit-active-shadow: 0 0 0 1px rgb(98 214 232 / .12), 0 0 18px -6px rgb(98 214 232 / .7);
+    --orbit-stripe: 0 0 0 0 transparent;
+    --orbit-rule: 1px solid var(--border);
+    --orbit-star: #ffffff; --orbit-star-paint: var(--orbit-star); --orbit-star-round: 50%;
+    --orbit-star-glow: 0 0 calc(var(--size) * 2) color-mix(in srgb, var(--orbit-star) 70%, transparent);
+    --orbit-night-only: block;
+    --orbit-edge-on-home: hidden;
+  }
+}
+:root[data-orbit][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #060a18; --panel: #0c1326; --border: #26355a;
+  --text: #c6d2ee; --heading: #f3f6ff; --muted: #7486b0; --accent: #62d6e8;
+  --accent-soft: #101a33; --chip: #101a33; --code: #101a33;
+  --green: #7be0a0; --yellow: #ffc14d; --red: #ff7a6b;
+  --purple: #b9a2ff; --cyan: #62d6e8; --orange: #ffa25c;
+  --focus: #ffb347;
+  --ready-text: var(--green);
+  --blue-text: var(--accent);
+  --orbit-on-accent: var(--bg);
+  --orbit-flare: #ffb347; --orbit-go: #ffb347; --orbit-go-ink: #14110d;
+  --orbit-line: #62d6e8;
+  --orbit-sans: "Avenir Next", "Helvetica Neue", system-ui, sans-serif;
+  --orc-font-sans: var(--orbit-sans);
+  --orc-font-sans-nudge: 1px;
+  --orbit-radius: 10px; --orc-radius-sm: 6px; --orc-radius-md: 10px;
+  --orbit-title-case: none; --orbit-title-track: .01em;
+  --orbit-pattern: radial-gradient(ellipse 70% 70% at 20% 0%, rgb(27 42 107 / .55), transparent 100%);
+  --orbit-stars: var(--orbit-night-sky);
+  --orbit-lamp-off: 0 0 0 0 transparent;
+  --orbit-lamp-on: 0 0 6px currentColor;
+  --orbit-lamp-alert: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent), 0 0 6px currentColor;
+  --orbit-planet:
+    radial-gradient(ellipse 31% 26px at 33% 0, rgb(176 234 255 / .5), transparent 100%),
+    radial-gradient(ellipse 29% 38px at 83.3% 0, rgb(4 9 32 / .72), transparent 100%),
+    radial-gradient(circle at 70% 21px, rgb(255 208 138 / .95) 0 .6px, transparent 1.8px),
+    radial-gradient(circle at 74% 26px, rgb(255 208 138 / .8) 0 .5px, transparent 1.6px),
+    radial-gradient(circle at 77.4% 30px, rgb(255 208 138 / .9) 0 .6px, transparent 1.8px),
+    radial-gradient(ellipse 34px 2.5px at 43.4% 12px, rgb(255 255 255 / .3), transparent 100%),
+    radial-gradient(ellipse 26px 2px at 24.7% 26px, rgb(255 255 255 / .22), transparent 100%),
+    radial-gradient(ellipse 30px 2.5px at 57.4% 29px, rgb(255 255 255 / .2), transparent 100%),
+    radial-gradient(ellipse 36px 7px at 34% 31px, rgb(38 160 120 / .5), transparent 100%),
+    radial-gradient(ellipse 44px 6px at 60.7% 18px, rgb(38 160 120 / .42), transparent 100%),
+    linear-gradient(180deg, #3684e6 0, #1b4fae 14px, #143a86 32px, #0b2052 76px);
+  --orbit-ground: #0b2052; --orbit-ground-rule: rgb(155 230 245 / .16);
+  --orbit-limb: #c4f3ff; --orbit-arc: transparent;
+  --orbit-limb-glow:
+    inset 0 2px 3px -1px rgb(218 249 255 / .75), inset 0 10px 14px -9px rgb(111 214 255 / .65),
+    0 -2px 6px -1px rgb(155 230 245 / .8), 0 -10px 28px -6px rgb(74 150 255 / .6);
+  --orbit-sun:
+    radial-gradient(ellipse 100% 1.5px at 0 50%, rgb(255 238 204 / .9), transparent 100%) right / 50% 100% no-repeat,
+    radial-gradient(circle at 50% 50%, #fffaf0 0 1.5px, rgb(255 216 154 / .95) 3.5px, rgb(255 179 71 / .5) 8px, rgb(255 179 71 / .14) 17px, transparent 27px);
+  --orbit-lift: 0 0 0 0 transparent; --orbit-lift-side: 0 0 0 0 transparent;
+  --orbit-active-border: #3f6f96; --orbit-active-bg: #121e3d;
+  --orbit-active-shadow: 0 0 0 1px rgb(98 214 232 / .12), 0 0 18px -6px rgb(98 214 232 / .7);
+  --orbit-stripe: 0 0 0 0 transparent;
+  --orbit-rule: 1px solid var(--border);
+  --orbit-star: #ffffff; --orbit-star-paint: var(--orbit-star); --orbit-star-round: 50%;
+  --orbit-star-glow: 0 0 calc(var(--size) * 2) color-mix(in srgb, var(--orbit-star) 70%, transparent);
+  --orbit-night-only: block;
+  --orbit-edge-on-home: hidden;
+}
+
+:root[data-orbit] body {
+  font-family: var(--orbit-sans);
+  background: var(--orbit-pattern), var(--bg);
+}
+/* Form controls take the UA's font rather than inheriting it. Zero
+   specificity so any author font-family wins, which keeps code, diffs and
+   terminals monospace. */
+:where(:root[data-orbit]) :where(button, input, textarea, select) {
+  font-family: var(--orbit-sans);
+}
+:root[data-orbit] :is(h1, h2, h3) {
+  font-family: var(--orbit-sans);
+  letter-spacing: .01em;
+}
+:root[data-orbit] ::selection {
+  background: color-mix(in srgb, var(--orbit-flare) 34%, var(--panel));
+  color: var(--heading);
+}
+:root[data-orbit] :is(:hover, :focus-within) { scrollbar-color: var(--border) transparent; }
+:root[data-orbit] :is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: var(--border); }
+
+/* The sidebar is a window onto the sky, and each run is a card on it. */
+:root[data-orbit] #run-sidebar { background: var(--orbit-stars); }
+:root[data-orbit] :is(#sidebar-head, #head) { box-shadow: var(--orbit-stripe); }
+/* The lockup reads as a mission patch: an orbit ringing Gary, a moon on it,
+   and the callsign lettered beside him. */
+:root[data-orbit] #logo { gap: 10px; }
+:root[data-orbit] #logo::before {
+  content: ""; position: absolute; left: -5px; top: 6px; width: 36px; height: 13px;
+  border: 1.4px solid var(--orbit-line); border-radius: 50%;
+  rotate: -24deg; clip-path: inset(46% 0 0 0); pointer-events: none;
+}
+:root[data-orbit] #logo::after {
+  content: ""; position: absolute; left: 27px; top: 4px; width: 4px; height: 4px;
+  border-radius: 50%; background: var(--orbit-flare); pointer-events: none;
+}
+:root[data-orbit] .logo-word {
+  font: 700 12px/1.1 var(--orbit-sans); letter-spacing: .14em; text-transform: uppercase;
+  white-space: nowrap;
+}
+:root[data-orbit] .logo-slash { color: var(--orbit-flare); }
+:root[data-orbit] .logo-word::after {
+  content: "Mission control"; content: "Mission control" / "";
+  display: block; margin-top: 3px; white-space: nowrap;
+  font: 400 9px/1 var(--orbit-mono); letter-spacing: .1em; color: var(--muted-strong);
+}
+@media (min-width: 701px) {
+  :root[data-orbit] .link-switch { max-width: 5.5rem; }
+}
+:root[data-orbit] { --run-row-inset: 10px; --run-row-gap: 6px; }
+:root[data-orbit] #list .run {
+  padding: 7px 10px 8px;
+  border: 1px solid var(--border); border-radius: var(--orbit-radius);
+  background: var(--panel);
+  box-shadow: var(--orbit-lift);
+}
+:root[data-orbit] #list .run:hover {
+  background: var(--chip);
+  border-color: color-mix(in srgb, var(--orbit-line) 60%, var(--border));
+}
+/* The open run is lit, not outlined: a brighter card with a short flare
+   mark on its edge, clear of the corners. */
+:root[data-orbit] #list .run.active {
+  border-color: var(--orbit-active-border);
+  background: linear-gradient(var(--orbit-flare) 0 0) left center / 3px 44% no-repeat, var(--orbit-active-bg);
+  box-shadow: var(--orbit-active-shadow);
+}
+/* The branch lines of nested runs cross the gap the cards now leave. */
+:root[data-orbit] #list .run.fork-child { margin-left: 30px; }
+:root[data-orbit] #list .run.fork-child::before { top: -7px; left: -14px; }
+:root[data-orbit] #list .run.fork-child:not(.fork-last)::after { top: -7px; bottom: -7px; left: -14px; }
+:root[data-orbit] .run-project {
+  font: 500 10px/1 var(--orbit-mono); letter-spacing: .08em; text-transform: uppercase;
+}
+:root[data-orbit] .run .name { font-weight: 600; font-size: 13px; }
+/* The lamp sits inside the title's own line, because nested runs already
+   draw their branch on the card's two pseudo-elements. */
+:root[data-orbit] .run .name::before {
+  content: ""; display: inline-block; width: 9px; height: 9px; margin: 0 9px 0 4px;
+  border-radius: 50%; color: var(--muted); background: currentColor;
+  box-shadow: var(--orbit-lamp-off);
+}
+:root[data-orbit] .run:has(.state-working) .name::before { color: var(--cyan); box-shadow: var(--orbit-lamp-on); }
+:root[data-orbit] .run:has(.state-reviewing, .state-done) .name::before { color: var(--purple); box-shadow: var(--orbit-lamp-on); }
+:root[data-orbit] .run:has(.state-ready) .name::before { color: var(--green); box-shadow: var(--orbit-lamp-on); }
+:root[data-orbit] .run:has(.state-started, .state-waiting) .name::before { color: var(--orange); box-shadow: var(--orbit-lamp-on); }
+:root[data-orbit] .run:has(.state-cancelled) .name::before { color: var(--red); box-shadow: var(--orbit-lamp-on); }
+:root[data-orbit] .run:has(.state-blocked) .name::before { color: var(--orbit-flare); box-shadow: var(--orbit-lamp-alert); }
+:root[data-orbit] .run[data-unread] .name::before { color: var(--orbit-flare); box-shadow: var(--orbit-lamp-alert); }
+:root[data-orbit] #list .run[data-unread]:not(.active) { border-color: var(--orbit-flare); }
+/* The lamp says a session is live by pulsing, so the row's own dot goes. */
+:root[data-orbit] .run .session-status.running { display: none; }
+:root[data-orbit] .run:has(.session-status.running) .name::before { animation: orbit-lamp 1.8s ease-in-out infinite; }
+:root[data-orbit] .run :is(.state-tag, .unread-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+  font: 500 10px/1.5 var(--orbit-mono); letter-spacing: .06em; text-transform: uppercase;
+}
+/* The Settled shelf is the planet's horizon, closed and open: finished runs
+   come down to it, and the usage meters, the radio and the footer stand on its
+   surface. The shell's --settled-shelf-* tokens give it the dome and, by
+   night, the air along the limb: the inset shadows are the haze inside it and
+   the outer ones the glow above. */
+:root[data-orbit] {
+  --settled-shelf-radius: 50% 50% 0 0 / var(--orbit-dome) var(--orbit-dome) 0 0;
+  --settled-shelf-border-width: 1.5px 0 0;
+  --settled-shelf-border-color: var(--orbit-limb);
+  --settled-shelf-bg: var(--orbit-planet);
+  --settled-shelf-shadow: var(--orbit-limb-glow);
+  --settled-head-justify: center;
+}
+/* Closed and open, the shelf overhangs the sidebar by --orbit-over a side and
+   #list-frame clips it, and the same inline padding keeps what is in it
+   within the sidebar. Closed, all but --orbit-shelf of it hangs below the frame. */
+:root[data-orbit] :is(#list > .settled-heading, .settled-drawer) {
+  left: calc(-1 * var(--orbit-over)); right: calc(-1 * var(--orbit-over)); padding-inline: var(--orbit-over);
+}
+:root[data-orbit] #list > .settled-heading {
+  height: var(--orbit-dome); bottom: calc(var(--orbit-shelf) - var(--orbit-dome)); padding-block: 11px 0;
+}
+/* The list runs on down to where the limb meets the sidebar's edges: runs set
+   behind the planet, and the scrollbar ends on the horizon. The padding stops
+   the last run above it. */
+:root[data-orbit] #list:has(> .settled-heading) {
+  margin-bottom: calc(var(--orbit-shelf) - var(--orbit-drop)); padding-bottom: var(--orbit-drop);
+}
+:root[data-orbit] .settled-drawer .settled-heading {
+  padding-top: 11px; border-bottom-color: var(--orbit-ground-rule);
+}
+:root[data-orbit] .settled-heading::before {
+  content: ""; position: absolute; inset: 6px 0 auto; height: var(--orbit-dome);
+  border-top: 1px dashed var(--orbit-arc);
+  border-radius: 50% 50% 0 0 / var(--orbit-dome) var(--orbit-dome) 0 0;
+  opacity: .55; pointer-events: none;
+}
+/* The sun coming up over the limb, a quarter of the way along the sidebar:
+   a third of the way along the ellipse, where it has fallen .06 of its height.
+   Its streak runs right only, along the planet: the limb falls away to the
+   left, where a streak would lie across the runs behind it. */
+:root[data-orbit] #settled-head::after {
+  content: ""; position: absolute; left: 33%; top: calc(var(--orbit-dome) * .06);
+  width: 120px; height: 56px; translate: -50% -50%;
+  background: var(--orbit-sun); mix-blend-mode: screen; pointer-events: none;
+  animation: orbit-sunrise 7s ease-in-out infinite alternate;
+}
+/* A craft passing over, along the limb from one end of the ellipse to the
+   other. Across and down are eased apart, as a sine and a cosine of the same
+   angle, which carries it round the ellipse at any sidebar width. It is out of
+   sight past the sidebar's edges for half of each pass. */
+:root[data-orbit] #list > .settled-heading::after {
+  content: ""; position: absolute; left: 0; top: -7px; width: 5px; height: 5px; margin-left: -2.5px;
+  border-radius: 50%; color: var(--orbit-flare); background: currentColor;
+  box-shadow: var(--orbit-lamp-on); pointer-events: none;
+  animation: orbit-pass-across 26s cubic-bezier(.37, 0, .63, 1) infinite, orbit-pass-over 26s infinite;
+}
+:root[data-orbit] #settled-head {
+  font: 500 10px/1.2 var(--orbit-mono); letter-spacing: .16em; text-transform: uppercase;
+}
+:root[data-orbit] :is(#sidebar-usage, #radio-now, #sidebar-footer) {
+  background: var(--orbit-ground);
+  border-top-color: var(--orbit-ground-rule);
+}
+
+/* The run's header and tab bar are open sky too, lettered like a console. */
+:root[data-orbit] :is(#head, #tabbar) { background: var(--orbit-stars); }
+:root[data-orbit] #tabbar { border-bottom: var(--orbit-rule); }
+:root[data-orbit] #head h2 {
+  text-transform: var(--orbit-title-case); letter-spacing: var(--orbit-title-track);
+}
+:root[data-orbit] #tabs button {
+  padding: 10px 12px 9px;
+  font: 500 11px/1.6 var(--orbit-mono); letter-spacing: .12em; text-transform: uppercase;
+}
+:root[data-orbit] #tabs button.active { color: var(--heading); font-weight: 500; }
+/* The active tab is underlined in the flare, not filled. */
+:root[data-orbit] #tabs .tab-indicator {
+  top: auto; bottom: 0; height: 2px;
+  border: 0; border-radius: 0; background: var(--orbit-flare);
+}
+:root[data-orbit] #run-times {
+  font: 10px/1.6 var(--orbit-mono); letter-spacing: .1em; text-transform: uppercase;
+}
+:root[data-orbit] #run-panel-tabs button {
+  font: 500 11px/1.6 var(--orbit-mono); letter-spacing: .12em; text-transform: uppercase;
+}
+
+/* The transcript and its composer share one opaque console panel, with the
+   sky in the margins either side. 982px is the 832px lane plus the room the
+   shell keeps for message times, so the lane stays centred in the panel. The
+   panel is drawn on the transcript and the composer themselves, each one end
+   of it: a layer behind them would need .chat to be a stacking context, and
+   that would trap the composer under the twinkling stars. */
+:root[data-orbit] .chat { background: var(--orbit-stars); }
+@media not all and (max-width: 700px) {
+  :root[data-orbit] .chat { --chat-pane: min(100cqw - 30px, 982px); }
+  :root[data-orbit] .chat > :is(.chat-body, .chat-reviews, .chat-composer) {
+    border-inline: 1px solid var(--border);
+    background: var(--panel);
+    box-shadow: var(--orbit-lift);
+  }
+  /* The transcript is positioned, so it paints over the composer below it:
+     its shadow falls to the side only, or it would rule a line across the
+     composer's top. */
+  :root[data-orbit] .chat > .chat-body {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    border-radius: var(--orbit-radius) var(--orbit-radius) 0 0;
+    box-shadow: var(--orbit-lift-side);
+  }
+  :root[data-orbit] .chat > .chat-composer {
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0 0 var(--orbit-radius) var(--orbit-radius);
+  }
+}
+@media (max-width: 700px) {
+  :root[data-orbit] .chat { background: var(--panel); }
+}
+:root[data-orbit] .chat-bubble {
+  border: 1px solid var(--border); border-radius: var(--orbit-radius);
+  box-shadow: var(--orbit-lift);
+}
+:root[data-orbit] .chat-md :not(pre) > code {
+  border: 1px solid var(--border); border-radius: min(4px, var(--orbit-radius));
+  color: var(--heading);
+}
+:root[data-orbit] .chat-md th { background: var(--chip); }
+/* Timings and step counts are telemetry: small, lettered and spaced. */
+:root[data-orbit] :is(.chat-fold, .chat-working, .chat-steps-toggle, .chat-files-title) {
+  font: 500 10.5px/1.6 var(--orbit-mono); letter-spacing: .1em; text-transform: uppercase;
+}
+:root[data-orbit] .chat-time { font-family: var(--orbit-mono); }
+/* The composer is a shade off the panel it sits in, and the beam's cover is
+   painted to match. */
+:root[data-orbit] .chat .newconv-prompt { border-radius: var(--orbit-radius); background: var(--chip); }
+:root[data-orbit] .chat .nc-beam::after { background: linear-gradient(var(--chip) 0 0) padding-box; }
+:root[data-orbit] .chat-composer-info {
+  font: 10px/1.6 var(--orbit-mono); letter-spacing: .12em; text-transform: uppercase;
+}
+
+/* Controls whose own cursor already says drag, busy or unavailable keep it,
+   and text entry keeps the native I-beam. The arrow is a little rocket nose;
+   the pointing hand wears a flight-suit glove with an orange cuff. */
+:root[data-orbit], :root[data-orbit] body {
+  --orc-cursor-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cg transform='translate(0 .5)'%3E%3Cg fill='none' stroke='%23fffaf0' stroke-opacity='.9' stroke-width='3.6' stroke-linejoin='round'%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5'/%3E%3C/g%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z' fill='%23eef0f4' stroke='%23121110' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M14.5 13.5v3M19 14.25v2.75M23.5 15.25v2.5' fill='none' stroke='%23121110' stroke-width='1.1' stroke-linecap='round' stroke-opacity='.45'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5' fill='%23e8590c' stroke='%23121110' stroke-width='1.5'/%3E%3Cpath d='M14.5 27h7.5' fill='none' stroke='%23fffaf0' stroke-width='1.3' stroke-linecap='round'/%3E%3C/g%3E%3C/svg%3E") 12 2, pointer;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M4 3v19l5-5 4 9 4-2-4-9h7z' fill='%23eef0f4' stroke='%23121110' stroke-width='1.6' stroke-linejoin='round'/%3E%3Cpath d='M4.8 4.6v5.2l4.6-1.4z' fill='%23e8590c'/%3E%3C/svg%3E") 4 3, auto;
+}
+:root[data-orbit] :where(a[href], button, summary, label, select, [role="button"], [role="tab"], [role="option"], [role="menuitem"], orc-button, orc-icon-button, orc-theme-toggle):not(:disabled, [disabled], [aria-disabled="true"], [aria-busy="true"], .is-busy, [draggable="true"]) {
+  cursor: var(--orc-cursor-pointer);
+}
+:root[data-orbit] :where(input:not([type="checkbox"], [type="radio"], [type="range"]), textarea, [contenteditable="true"], orc-input):not(:disabled, [disabled]) {
+  cursor: text;
+}
+
+/* Design-system primary buttons fill with --orc-green; here they are the
+   launch button: amber at night, the manual's orange by day, lettered like a
+   console key. Scoped to the button host so status chips keep their own
+   green. */
+:root[data-orbit] orc-button:is(:not([variant]), [variant="primary"]) {
+  --orc-green: var(--orbit-go);
+  --orc-button-text: var(--orbit-go-ink);
+}
+:root[data-orbit] orc-button {
+  --orc-font-sans: var(--orbit-mono);
+  --orc-font-sans-nudge: 0px;
+  letter-spacing: .1em; text-transform: uppercase;
+}
+
+/* The gate pages pin these copy buttons to the swamp's day blue by hex rather
+   than by token, so they are named here. A finished #copy-answers keeps its
+   green. */
+:root[data-orbit] body :is(#orc-copy, #copy-answers:not(.done)) {
+  background: var(--accent);
+  color: var(--orbit-on-accent);
+}
+:root[data-orbit] body :is(#orc-copy, #copy-answers:not(.done)):not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--heading));
+}
+
+/* Decorative text below uses the `content: "…" / ""` alternative so screen
+   readers skip it; the first declaration is the fallback for engines that
+   drop the second. */
+:root[data-orbit] #empty::before {
+  content: "·  ✦  🛰️  ✦  ·"; content: "·  ✦  🛰️  ✦  ·" / "";
+  display: block; margin-bottom: 8px; font-size: 32px; text-align: center;
+  white-space: pre; color: var(--orbit-flare);
+}
+:root[data-orbit] #cmdk-layout::before {
+  content: "🚀  ORBIT · MISSION CONTROL  🛰️"; content: "🚀  ORBIT · MISSION CONTROL  🛰️" / "";
+  padding: 0 14px;
+  font: 500 11px var(--orbit-mono); letter-spacing: .18em; color: var(--heading);
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(90deg, var(--accent-soft), color-mix(in srgb, var(--orbit-flare) 14%, var(--panel)), var(--accent-soft));
+}
+:root[data-orbit] #cmdk-footer::after { content: " · go for launch 🚀"; content: " · go for launch 🚀" / ""; }
+
+/* A few stars twinkle down the window's right edge, over the transcript's
+   margin, a satellite drifts among them, and now and then a comet falls past.
+   By day the stars print as crosses and the rest stays away. */
+#orbit-sky {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+}
+.orbit-piece {
+  position: absolute; left: var(--x, 98%); top: var(--y, 50%);
+  width: var(--size); height: var(--size);
+  translate: -50% -50%;
+}
+.orbit-star {
+  border-radius: var(--orbit-star-round);
+  background: var(--orbit-star-paint);
+  box-shadow: var(--orbit-star-glow);
+  animation: orbit-twinkle var(--dur) ease-in-out var(--delay) infinite alternate;
+}
+.orbit-satellite {
+  display: var(--orbit-night-only);
+  height: calc(var(--size) * .47);
+  background: var(--orbit-satellite) center / contain no-repeat;
+  animation: orbit-drift var(--dur) ease-in-out var(--delay) infinite alternate;
+}
+/* The tail points back up the way the comet came: the turn here and the fall
+   in orbit-comet are the same slope. */
+.orbit-comet {
+  display: var(--orbit-night-only);
+  height: 1.5px; border-radius: 1px; rotate: 115deg; opacity: 0;
+  background: linear-gradient(90deg, transparent, #dfe8ff);
+  animation: orbit-comet var(--dur) linear var(--delay) infinite;
+}
+
+/* Project home's own sky (frontend.js's orbitHomeLayer), at night and wider
+   than a phone: stars that twinkle, a shooting star about every ten seconds,
+   a satellite crossing, and low in the bottom right the ringed planet with
+   its moons, a storm and cloud streaks turning on the globe and spokes
+   riding the rings. It lies under everything else in the view, which is its
+   own stacking context, so the composer and the notes always cover it.
+   Reduce animations ends every animation where it starts, so each piece
+   rests where it stands without one. */
+.orbit-home {
+  display: var(--orbit-night-only);
+  position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
+}
+.orbit-twinkle {
+  position: absolute; left: var(--x); top: var(--y); width: var(--s); height: var(--s); margin: calc(var(--s) / -2);
+  border-radius: 50%; background: var(--c);
+  box-shadow: 0 0 calc(var(--s) * 2) color-mix(in srgb, var(--c) 70%, transparent);
+  animation: orbit-home-twinkle var(--dur) ease-in-out var(--delay) infinite alternate;
+}
+.orbit-twinkle-big::before, .orbit-twinkle-big::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: calc(var(--s) * 7); height: 1px; translate: -50% -50%;
+  background: linear-gradient(90deg, transparent, var(--c), transparent); opacity: .8;
+}
+.orbit-twinkle-big::after { rotate: 90deg; }
+/* A shooting star waits out of sight for nearly all of its turn, then
+   crosses in about a second. */
+.orbit-meteor {
+  position: absolute; left: var(--x); top: var(--y); width: var(--len); height: 1.8px; margin-left: calc(-1 * var(--len));
+  border-radius: 2px; transform-origin: 100% 50%; rotate: var(--a); opacity: 0;
+  background: linear-gradient(90deg, transparent, rgb(190 214 255 / .55) 60%, #fff);
+  filter: drop-shadow(0 0 3px rgb(170 205 255 / .8));
+  animation: var(--dur) linear var(--delay) infinite;
+}
+.orbit-meteor-0 { animation-name: orbit-meteor-0; }
+.orbit-meteor-1 { animation-name: orbit-meteor-1; }
+.orbit-meteor-2 { animation-name: orbit-meteor-2; }
+/* The satellite crosses once, slowly, on a shallow arc, then waits off to
+   the right. */
+.orbit-crossing { position: absolute; left: 70%; top: 45.2%; animation: orbit-cross 120s linear -65s infinite; }
+.orbit-crossing-arc { translate: 0 -26px; animation: orbit-cross-arc 48s cubic-bezier(.37, 0, .63, 1) -17s infinite alternate; }
+.orbit-craft {
+  width: 36px; height: 17px; rotate: -16deg;
+  background: var(--orbit-satellite) center / contain no-repeat;
+  animation: orbit-craft-turn 9s ease-in-out infinite alternate;
+}
+.orbit-beacon {
+  position: absolute; left: 17px; top: 3px; width: 3px; height: 3px; border-radius: 50%;
+  background: #ffb347; box-shadow: 0 0 6px 1px #ffb347;
+  animation: orbit-beacon 1.6s steps(1, end) infinite;
+}
+/* The planet's four still pictures lie exactly over one another on a
+   500x332 canvas whose centre, 250,166, sits 175px in from the view's right
+   and 120px up from its foot. What moves goes between them. */
+.orbit-planet { position: absolute; right: -75px; bottom: -46px; width: 500px; height: 332px; }
+.orbit-layer { position: absolute; inset: 0; background: 0 0 / 100% 100% no-repeat; }
+.orbit-ring-back { background-image: var(--orbit-ring-back); }
+.orbit-globe { background-image: var(--orbit-globe); }
+.orbit-shade { background-image: var(--orbit-shade); }
+.orbit-ring-front { background-image: var(--orbit-ring-front); }
+/* Whatever goes round the planet's axis. Each rides a circle seen at the
+   rings' tilt, so across and down are eased apart, as a cosine and a sine of
+   one angle. .orbit-near shows for the half of the turn on our side,
+   .orbit-far for the other, and --rx, --ry and --rest hold it where it rests. */
+.orbit-axis { position: absolute; left: 250px; top: 166px; width: 0; height: 0; rotate: 17deg; }
+.orbit-go { position: absolute; left: 0; top: var(--y0); width: 0; height: 0; opacity: var(--rest); }
+.orbit-near { animation: orbit-go-near var(--period) steps(1, end) var(--t0) infinite; }
+.orbit-far { animation: orbit-go-far var(--period) steps(1, end) var(--t0) infinite; }
+.orbit-ox { translate: var(--rx) 0; animation: orbit-go-x var(--half) cubic-bezier(.37, 0, .63, 1) var(--t0) infinite alternate; }
+.orbit-oy {
+  translate: 0 var(--ry);
+  animation: orbit-go-y var(--half) cubic-bezier(.37, 0, .63, 1) calc(var(--t0) - var(--half) / 2) infinite alternate;
+}
+.orbit-sq {
+  scale: var(--rs) 1;
+  animation: orbit-go-squeeze var(--half) cubic-bezier(.37, 0, .63, 1) calc(var(--t0) - var(--half) / 2) infinite alternate;
+}
+/* Two moons in the plane of the rings, lit from the left like the planet. */
+.orbit-moon {
+  width: var(--d); height: var(--d); margin: calc(var(--d) / -2);
+  border-radius: 50%; rotate: -17deg;
+}
+.orbit-moon-a {
+  background:
+    radial-gradient(circle at 4% 40%, transparent 0 52%, rgb(4 7 18 / .6) 70%, rgb(4 7 18 / .97) 90%),
+    radial-gradient(circle at 38% 28%, rgb(70 68 78 / .2) 0 7%, transparent 14%),
+    radial-gradient(circle at 52% 66%, rgb(70 68 78 / .18) 0 9%, transparent 18%),
+    radial-gradient(circle at 32% 34%, #ece7dd, #c9c3b8 58%, #9e988e);
+  box-shadow: -1px 0 5px rgb(200 228 255 / .22);
+}
+.orbit-moon-b {
+  background:
+    radial-gradient(circle at 6% 42%, transparent 0 54%, rgb(4 7 18 / .6) 72%, rgb(4 7 18 / .97) 92%),
+    radial-gradient(circle at 34% 34%, #f6dcb8, #d8ae82 60%, #b08660);
+  box-shadow: -1px 0 4px rgb(255 214 170 / .24);
+}
+/* The globe's bands are the same all the way round, so the storm and the
+   cloud streaks show it turning: they cross the near side from the left limb
+   to the right, narrowing towards each, and stay hidden round the back. */
+.orbit-disc { position: absolute; left: 158px; top: 74px; width: 184px; height: 184px; border-radius: 50%; overflow: hidden; }
+.orbit-disc > :is(.orbit-axis, .orbit-ringplane) { left: 92px; top: 92px; }
+.orbit-feature {
+  width: var(--w); height: var(--h); margin: calc(var(--h) / -2) 0 0 calc(var(--w) / -2);
+  border-radius: 50%;
+}
+.orbit-wisp { background: radial-gradient(closest-side, rgb(228 241 255 / var(--o)), rgb(228 241 255 / calc(var(--o) * .5)) 55%, transparent); }
+.orbit-knot { background: radial-gradient(closest-side, rgb(12 34 96 / var(--o)), rgb(12 34 96 / calc(var(--o) * .5)) 55%, transparent); }
+.orbit-storm { background: radial-gradient(closest-side, #ffe2b4 0 34%, #f3cf9e 50%, rgb(20 48 116 / .62) 70%, transparent); }
+/* The spokes ride the bright ring, 1.52 to 1.95 planet radii out of 2.25,
+   and fade on the side away from the sun, where the planet's shadow lies. */
+.orbit-ringplane { position: absolute; left: 250px; top: 166px; width: 0; height: 0; rotate: 17deg; scale: 1 .2706; }
+.orbit-sunward {
+  position: absolute; left: -207px; top: -207px; width: 414px; height: 414px;
+  -webkit-mask-image: linear-gradient(90deg, #000 54%, transparent 68%);
+  mask-image: linear-gradient(90deg, #000 54%, transparent 68%);
+}
+.orbit-sunward-near { clip-path: inset(50% 0 0 0); }
+.orbit-spokes {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(transparent 0 6%, rgb(3 6 16 / .5) 10%, transparent 15% 27%, rgb(3 6 16 / .36) 31%, transparent 35% 52%,
+    rgb(3 6 16 / .5) 57%, transparent 62% 74%, rgb(3 6 16 / .32) 78%, transparent 82%);
+  -webkit-mask-image: radial-gradient(circle closest-side, transparent 66.6%, #000 68.2% 86.1%, transparent 87.7%);
+  mask-image: radial-gradient(circle closest-side, transparent 66.6%, #000 68.2% 86.1%, transparent 87.7%);
+  animation: orbit-ring-turn 64s linear infinite;
+}
+:root[data-orbit]:has(#new-view:not([hidden])) #orbit-sky > .orbit-piece { visibility: var(--orbit-edge-on-home); }
+
+/* The composers rise over the sky, so nothing shows under what you type.
+   Project home's composer sits inside its view's own layer, so the whole view
+   rises there. Composer textareas stay out: the pickers in the composer's
+   footer open over them. */
+:root[data-orbit] :is(#new-view, .newconv-prompt) { z-index: 1; }
+/* Project home stands under the same sky as the transcript's margins. Its
+   heading sits above where the picture's clouds start, and the composer and
+   the notes are opaque. */
+:root[data-orbit] #new-view { background: var(--orbit-stars); }
+:root[data-orbit] textarea:not(.newconv-prompt textarea) { position: relative; z-index: 1; }
+/* The side panel rises too, so the sky never shows over a PR body. On a
+   phone the panel is already a sheet over everything. */
+@media not all and (max-width: 900px) {
+  :root[data-orbit] #run-diff { z-index: 1; }
+}
+/* The stars run down the window's right edge, which is where the Factory
+   tab's roster stands, so it rises over them as well. */
+:root[data-orbit] .factory-roster { z-index: 1; }
+
+/* A click fires a thruster: sparks thrown out and a puff that spreads. */
+.orbit-spark {
+  position: fixed; left: var(--px); top: var(--py);
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--orbit-flare);
+  box-shadow: 0 0 6px var(--orbit-flare);
+  animation: orbit-spark .7s cubic-bezier(.2, .7, .4, 1) var(--delay, 0s) both;
+}
+.orbit-spark.orbit-puff {
+  width: 18px; height: 18px; background: none;
+  border: 1.5px solid color-mix(in srgb, var(--orbit-flare) 70%, transparent);
+  box-shadow: none;
+  animation-name: orbit-puff;
+}
+/* A held press's exhaust: smaller and shorter-lived, so a long drag stays
+   under frontend.js's cap. */
+.orbit-spark.orbit-trail { width: 4px; height: 4px; animation-duration: .5s; }
+@keyframes orbit-twinkle {
+  from { opacity: .25; scale: .7; }
+  to { opacity: 1; scale: 1.1; }
+}
+@keyframes orbit-lamp {
+  50% { opacity: .45; }
+}
+@keyframes orbit-sunrise {
+  from { opacity: .78; scale: .92; }
+  to { opacity: 1; scale: 1.08; }
+}
+@keyframes orbit-pass-across {
+  from { left: 0; }
+  to { left: 100%; }
+}
+@keyframes orbit-pass-over {
+  0% { translate: 0 var(--orbit-dome); opacity: 0; animation-timing-function: cubic-bezier(.61, 1, .88, 1); }
+  12%, 88% { opacity: 1; }
+  50% { translate: 0 0; animation-timing-function: cubic-bezier(.12, 0, .39, 0); }
+  100% { translate: 0 var(--orbit-dome); opacity: 0; }
+}
+@keyframes orbit-drift {
+  from { translate: -50% -50%; rotate: -8deg; }
+  to { translate: -50% calc(-50% + 60px); rotate: 8deg; }
+}
+/* A comet waits out of sight for nearly all of its turn, then falls in the
+   last twentieth of it. */
+@keyframes orbit-comet {
+  0%, 95% { translate: -50% -50%; opacity: 0; }
+  96% { opacity: 1; }
+  100% { translate: calc(-50% - 80px) calc(-50% + 172px); opacity: 0; }
+}
+@keyframes orbit-home-twinkle {
+  from { opacity: .22; scale: .6; }
+  to { opacity: 1; scale: 1.15; }
+}
+@keyframes orbit-meteor-0 {
+  0%, 95.65% { translate: 0 0; opacity: 0; }
+  96.17%, 99.13% { opacity: 1; }
+  100% { translate: var(--dx) var(--dy); opacity: 0; }
+}
+@keyframes orbit-meteor-1 {
+  0%, 97.3% { translate: 0 0; opacity: 0; }
+  97.62%, 99.46% { opacity: 1; }
+  100% { translate: var(--dx) var(--dy); opacity: 0; }
+}
+@keyframes orbit-meteor-2 {
+  0%, 98.11% { translate: 0 0; opacity: 0; }
+  98.34%, 99.62% { opacity: 1; }
+  100% { translate: var(--dx) var(--dy); opacity: 0; }
+}
+@keyframes orbit-cross {
+  0% { left: -60px; }
+  80%, 100% { left: calc(100% + 60px); }
+}
+@keyframes orbit-cross-arc {
+  from { translate: 0 30px; }
+  to { translate: 0 -40px; }
+}
+@keyframes orbit-craft-turn {
+  from { rotate: -19deg; }
+  to { rotate: -11deg; }
+}
+@keyframes orbit-beacon {
+  0% { opacity: 1; }
+  30% { opacity: .15; }
+}
+@keyframes orbit-go-x {
+  from { translate: calc(-1 * var(--a)) 0; }
+  to { translate: var(--a) 0; }
+}
+@keyframes orbit-go-y {
+  from { translate: 0 calc(-1 * var(--b)); }
+  to { translate: 0 var(--b); }
+}
+@keyframes orbit-go-squeeze {
+  from { scale: -1 1; }
+  to { scale: 1 1; }
+}
+@keyframes orbit-go-near {
+  0% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes orbit-go-far {
+  0% { opacity: 0; }
+  50% { opacity: 1; }
+}
+@keyframes orbit-ring-turn {
+  to { rotate: -360deg; }
+}
+@keyframes orbit-spark {
+  0% { translate: -50% -50%; scale: 1; opacity: 0; }
+  10% { opacity: 1; }
+  100% { translate: calc(-50% + var(--dx, 0px)) calc(-50% + var(--dy, 0px)); scale: .3; opacity: 0; }
+}
+@keyframes orbit-puff {
+  from { translate: -50% -50%; scale: .3; opacity: .9; }
+  to { translate: -50% -50%; scale: 2.4; opacity: 0; }
+}
+@media (max-width: 640px) {
+  .orbit-star:nth-child(n + 8), .orbit-satellite, .orbit-comet { display: none; }
+}
+/* A phone keeps the new galaxy but not project home's planet or motion. */
+@media (max-width: 700px) {
+  .orbit-home { display: none; }
+}
+@media (forced-colors: active), print {
+  #orbit-sky, .orbit-home { display: none; }
+  :root[data-orbit] #settled-head::after { display: none; }
+}
+
+/* Typing effects, drawn by frontend.js's orbitTyping into the shell's typing
+   layer. Each piece runs one animation and leaves when it ends. */
+.orbit-typed-spark {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--orbit-flare); box-shadow: 0 0 5px var(--orbit-flare);
+  animation: orbit-typed-thrust .55s ease-out var(--delay, 0s) both;
+}
+.orbit-typed-ring {
+  width: var(--size, 10px); height: var(--size, 10px); border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  animation: orbit-typed-ring .8s ease-out both;
+}
+.orbit-typed-abort {
+  font: 600 10px var(--orbit-mono); letter-spacing: .12em; color: var(--red);
+  animation: orbit-typed-fall .8s ease-in both;
+}
+.orbit-typed-launch {
+  font-size: 24px;
+  animation: orbit-typed-launch 1.6s cubic-bezier(.5, 0, .8, .4) both;
+}
+.orbit-typed-say {
+  padding: 2px 9px; border-radius: 3px;
+  font: 600 11px var(--orbit-mono); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--orbit-go-ink); background: var(--orbit-go);
+  animation: orbit-typed-say 1.6s ease-out both;
+}
+@keyframes orbit-typed-thrust {
+  from { translate: -50% -50%; scale: 1.2; opacity: 1; }
+  to { translate: calc(-50% + var(--dx)) calc(-50% + var(--dy)); scale: .2; opacity: 0; }
+}
+@keyframes orbit-typed-ring {
+  from { translate: calc(-50% + var(--dx, 0px)) -50%; scale: .3; opacity: 1; }
+  to { translate: calc(-50% + var(--dx, 0px)) -80%; scale: 1.8; opacity: 0; }
+}
+@keyframes orbit-typed-fall {
+  0% { translate: -50% -110%; opacity: 0; }
+  20% { opacity: 1; }
+  100% { translate: -50% 0%; rotate: 8deg; opacity: 0; }
+}
+@keyframes orbit-typed-launch {
+  0% { translate: -50% -40%; rotate: -45deg; opacity: 0; }
+  12% { opacity: 1; }
+  20% { translate: -50% -60%; }
+  85% { opacity: 1; }
+  100% { translate: -50% -900%; rotate: -45deg; opacity: 0; }
+}
+@keyframes orbit-typed-say {
+  0%, 20% { translate: 0 -40%; scale: .4; opacity: 0; }
+  35% { translate: 0 -100%; scale: 1; opacity: 1; }
+  82% { translate: 0 -100%; opacity: 1; }
+  100% { translate: 0 -150%; opacity: 0; }
+}
+
+/* Typing heat (see index.html's --typing-heat): fast typing heats the
+   composer like re-entry, its edge running from rest through amber and
+   orange to white-hot. It holds steady, with no beat. */
+:root[data-orbit] .newconv-prompt[data-typing-hot] { animation: none; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :root[data-orbit] .newconv-prompt,
+  :root[data-orbit] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    --orbit-heat-hot: color-mix(in oklab, var(--orbit-flare), #fff6e0 clamp(0%, (var(--typing-heat) - .6) * 180%, 100%));
+    border-color: color-mix(in srgb, var(--orbit-heat-hot) clamp(0%, var(--typing-heat) * 200%, 100%), var(--typing-heat-rest));
+    --typing-glow:
+      0 0 calc(var(--typing-heat) * 6px) calc(var(--typing-heat) * 1px) color-mix(in srgb, var(--orbit-heat-hot) calc(var(--typing-heat) * 75%), transparent),
+      0 0 calc(var(--typing-heat) * 26px) calc(var(--typing-heat) * 3px) color-mix(in srgb, #ff4d1a calc(var(--typing-heat) * 40%), transparent);
+  }
+}
+
+/* The maximised terminal stage: a capsule window, a telemetry screen inside
+   a riveted bezel. terminal.js opens the airlock over it. */
+:root[data-orbit] #run-terminal.terminal-staged {
+  --stage-radius: 18px;
+  border: 2px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--border) 55%, transparent), 0 0 40px color-mix(in srgb, var(--accent) 16%, transparent), 0 30px 90px rgb(2 4 12 / .55);
+}
+:root[data-orbit] .terminal-staged #run-terminal-bar {
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--accent) 10%, var(--panel)), var(--panel));
+  border-bottom: 0;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--orbit-flare) 45%, transparent);
+  font-family: var(--orbit-mono);
+}
+
+:root[data-orbit] {
+  --answer-mode-done: "✓"; --answer-mode-now: "🚀"; --answer-mode-next: "○";
+  --answer-mode-heading-font: var(--orbit-sans);
+  --answer-mode-trim: linear-gradient(90deg, var(--orbit-flare), var(--orbit-line));
+  --answer-mode-trim-height: 3px;
+  --answer-mode-on-accent: var(--orbit-on-accent);
+  --answer-mode-radius: var(--orbit-radius);
+  --run-row-radius: var(--orbit-radius);
+  --run-row-bg: var(--panel);
+  --run-row-shadow: var(--orbit-lift);
+  --run-row-active-bg: var(--orbit-active-bg);
+  --run-row-active-border-color: var(--orbit-active-border);
+  --tab-indicator-height: 2px;
+  --tab-indicator-color: var(--orbit-flare);
+  --composer-radius: var(--orbit-radius);
+  --chat-bubble-radius: var(--orbit-radius);
+  --chat-bubble-shadow: var(--orbit-lift);
+  --card-radius: var(--orbit-radius);
+  --dialog-radius: var(--orbit-radius);
+}
+
+:root[data-orbit] [data-part="command-palette"],
+:root[data-orbit] orc-dialog::part(dialog) {
+  border-radius: var(--dialog-radius);
+  border-color: var(--border);
+  box-shadow: var(--orbit-lift);
+}
+/* Answering is the go call, so its buttons take the launch colour and the
+   card that asks for it has the panel's corners. */
+:root[data-orbit] .am-invite { border-radius: var(--orbit-radius); }
+:root[data-orbit] .am-btn.primary {
+  background: var(--orbit-go); color: var(--orbit-go-ink);
+  font: 600 12px/1.5 var(--orbit-mono); letter-spacing: .1em; text-transform: uppercase;
+}
+:root[data-orbit] .am-btn.primary:hover { background: color-mix(in srgb, var(--orbit-go) 86%, var(--heading)); }
+:root[data-orbit] .am-btn.primary kbd {
+  border-color: color-mix(in srgb, var(--orbit-go-ink) 45%, transparent); color: var(--orbit-go-ink);
+}
+
+/* Sticky notes: a card out of the flight manual by day, on graph paper with a
+   band of the project's colour and a hard ink shadow; a telemetry panel by
+   night, rimmed and lit in that colour. Either way it sits square. */
+:root[data-orbit] { --orbit-note-glow: 0%; --orbit-note-drop: 3px; }
+:root[data-orbit][data-theme="dark"] { --orbit-note-glow: 46%; --orbit-note-drop: 0px; }
+@media (prefers-color-scheme: dark) {
+  :root[data-orbit]:not([data-theme="light"]) { --orbit-note-glow: 46%; --orbit-note-drop: 0px; }
+}
+:root[data-orbit] .nc-note {
+  --note-paper:
+    linear-gradient(var(--note-tint), var(--note-tint)) 0 0 / 100% 5px no-repeat,
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--note-tint) 13%, transparent) 0 1px, transparent 1px 22px),
+    color-mix(in srgb, var(--note-tint) 6%, var(--panel));
+  --note-edge: color-mix(in srgb, var(--note-tint) var(--orbit-note-glow), var(--border));
+  --note-edge-width: 1.5px;
+  --note-radius: var(--orbit-radius);
+  --note-shadow: drop-shadow(var(--orbit-note-drop) var(--orbit-note-drop) 0 color-mix(in srgb, var(--border) 40%, transparent))
+    drop-shadow(0 0 6px color-mix(in srgb, var(--note-tint) var(--orbit-note-glow), transparent));
+  --note-shadow-raised: drop-shadow(calc(var(--orbit-note-drop) * 2) calc(var(--orbit-note-drop) * 2) 0 color-mix(in srgb, var(--border) 40%, transparent))
+    drop-shadow(0 0 12px color-mix(in srgb, var(--note-tint) calc(var(--orbit-note-glow) * 1.6), transparent));
+  --note-rule: color-mix(in srgb, var(--note-tint) 13%, transparent);
+  --note-lean: 0;
+  --note-fold: 0px;
+  --note-tape: none;
+}
+:root[data-orbit] .nc-note-key { border-radius: 0; font-family: var(--orbit-mono); }
+
+/* The hidden sidebar's strip keeps its buttons clear of the corner marks. */
+@media (min-width: 701px) {
+  :root[data-orbit][data-sidebar-collapsed] #run-sidebar #sidebar-head { padding-top: 32px; }
+  :root[data-orbit][data-sidebar-collapsed] #run-sidebar #sidebar-footer { padding-bottom: 28px; }
+}

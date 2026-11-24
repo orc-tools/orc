@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Start the build of a finished plan, as the plan page's Start work does.
+
+    orc-plan-start --run-dir <run-dir> [--step N] [--agent <agent>]
+                   [--model <model>] [--effort <effort>] [--fast on|off|ultrafast]
+                   [--permission-mode <mode>] [--account <account>]
+                   [--orchestration | --no-orchestration]
+
+A plan run (skills/orc-plan/SKILL.md) or a finished planning session calls
+this when the user asks it in chat, or in a note, to build the plan. It posts
+the request Start work sends to Orc (`/runs/<id>/planning-start`), so the
+build is the same run the button would launch: the plan run's own model,
+effort, Fast, permissions, account and Orchestrate, with notes still in the
+plan's tray, unless an option here names another. Without `--step` the run
+builds the whole plan; `--step N` starts step N of its `## Work` list. It
+prints the new run's id and its link.
+"""
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+ROUTE = "planning-session"
+
+
+def port():
+    return int(os.environ.get("ORC_UI_PORT") or 4173)
+
+
+def post(run_id, payload):
+    url = "http://127.0.0.1:%d/runs/%s/planning-start" % (
+        port(), urllib.parse.quote(run_id, safe=""))
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read()).get("error") or str(exc)
+        except (ValueError, AttributeError):
+            detail = str(exc)
+        raise ValueError(detail) from exc
+    except urllib.error.URLError as exc:
+        raise ValueError("Orc could not be reached: %s" % exc.reason) from exc
+
+
+def payload(args):
+    body = {}
+    if args.step is not None:
+        body["step"] = args.step
+    for key, value in (("agent", args.agent), ("model", args.model), ("effort", args.effort),
+                       ("permissionMode", args.permission_mode), ("claudeAccount", args.account)):
+        if value:
+            body[key] = value
+    if args.fast is not None:
+        body["fast"] = args.fast if args.fast == "ultrafast" else args.fast == "on"
+    if args.orchestration is not None:
+        body["orchestration"] = args.orchestration
+    return body
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-plan-start")
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--step", type=int, help="the step of the plan's Work list to start")
+    parser.add_argument("--agent", help="the agent that builds, such as codex or claude")
+    parser.add_argument("--model")
+    parser.add_argument("--effort")
+    parser.add_argument("--fast", choices=("on", "off", "ultrafast"))
+    parser.add_argument("--permission-mode")
+    parser.add_argument("--account", help="the Claude account the build runs on")
+    parser.add_argument("--orchestration", dest="orchestration", action="store_true", default=None)
+    parser.add_argument("--no-orchestration", dest="orchestration", action="store_false")
+    args = parser.parse_args(argv)
+    run_dir = Path(args.run_dir).expanduser().resolve()
+    try:
+        meta = json.loads((run_dir / "meta.json").read_text())
+    except (OSError, ValueError) as exc:
+        print("orc-plan-start: %s" % exc, file=sys.stderr)
+        return 2
+    if not isinstance(meta, dict) or meta.get("route") != ROUTE:
+        print("orc-plan-start: %s is not a plan" % run_dir.name, file=sys.stderr)
+        return 2
+    if args.step is not None and args.step < 1:
+        print("orc-plan-start: the plan has no step %d" % args.step, file=sys.stderr)
+        return 2
+    try:
+        reply = post(run_dir.name, payload(args))
+    except ValueError as exc:
+        print("orc-plan-start: the build did not start: %s" % exc, file=sys.stderr)
+        return 1
+    child = reply.get("childRunId") if isinstance(reply, dict) else None
+    if not child:
+        print("orc-plan-start: the build did not start: Orc named no run", file=sys.stderr)
+        return 1
+    out = {"ok": True, "childRunId": child,
+           "link": "http://127.0.0.1:%d/#%s" % (port(), child)}
+    # A plan whose steps name their repositories opens one run per step.
+    others = reply.get("childRunIds") if isinstance(reply.get("childRunIds"), list) else []
+    if len(others) > 1:
+        out["childRunIds"] = others
+        out["links"] = ["http://127.0.0.1:%d/#%s" % (port(), run) for run in others]
+    if reply.get("errors"):
+        out["errors"] = reply["errors"]
+    print(json.dumps(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

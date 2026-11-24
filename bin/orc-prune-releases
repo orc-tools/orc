@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Move old Orc runtime releases to the Bin.
+
+install.sh seals a new release under ~/.orc/runtime/releases/<id> on every
+install and nothing else removes one. After a promotion commits, the
+installer runs this, still holding its install lock, to move every release
+nothing can be using into one Bin folder, where it stays recoverable.
+
+A release stays when it is the target of runtime/current, one of the
+KEEP_NEWEST newest, younger than KEEP_YOUNGER_THAN_SECONDS, named in
+~/.orc/owner, in a running process's argv, or in a live run's orchestration
+instructions, headless launch record, latest turn prompt or start prompt.
+
+Usage: orc-prune-releases [--dry-run] [--orc-home DIR] [--bin-dir DIR]
+                          [--ps-output FILE]
+"""
+
+import argparse
+import errno
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+
+KEEP_NEWEST = 3
+# Turns started from a release's hook context, sessions whose prompts are not
+# in the run dir, and MCP servers started through runtime/current can all
+# still follow a release's paths for a while after it stops being current.
+KEEP_YOUNGER_THAN_SECONDS = 48 * 3600
+TERMINAL_STATUSES = ("merged", "merged-to-parent", "cancelled", "complete", "failed")
+
+
+def _read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def _live_run_texts(orc_home):
+    runs = os.path.join(orc_home, "runs")
+    try:
+        names = sorted(os.listdir(runs))
+    except OSError:
+        return []
+    texts = []
+    for name in names:
+        if name.startswith(".") or not os.path.isdir(os.path.join(runs, name)):
+            continue
+        status = re.search(r'"status"\s*:\s*"([^"]*)"', _read(os.path.join(runs, name, "meta.json")))
+        if status and status.group(1) in TERMINAL_STATUSES:
+            continue
+        texts.append(_read(os.path.join(orc_home, "orchestration", name + ".instructions.md")))
+        texts.append(_read(os.path.join(runs, name, ".headless", "launch.json")))
+        texts.append(_read(os.path.join(runs, name, "inputs", "start-prompt.txt")))
+        try:
+            prompts = [entry for entry in os.listdir(os.path.join(runs, name, ".headless"))
+                       if re.fullmatch(r"turn-\d+\.prompt", entry)]
+        except OSError:
+            prompts = []
+        if prompts:
+            latest = max(prompts, key=lambda entry: int(entry[5:-7]))
+            texts.append(_read(os.path.join(runs, name, ".headless", latest)))
+    return texts
+
+
+def _named_in(path, texts):
+    # A path followed by more of a name is another release, not this one.
+    names = {path, os.path.realpath(path)}
+    pattern = re.compile("|".join(re.escape(name) + r"(?![\w.-])" for name in names))
+    return any(pattern.search(text) for text in texts)
+
+
+def plan(orc_home, ps_text, now=None):
+    """(keep, move): release directory paths."""
+    releases_dir = os.path.join(orc_home, "runtime", "releases")
+    try:
+        names = os.listdir(releases_dir)
+    except OSError:
+        return [], []
+    releases = []
+    for name in names:
+        path = os.path.join(releases_dir, name)
+        if name.startswith(".") or os.path.islink(path) or not os.path.isdir(path):
+            continue
+        releases.append((os.lstat(path).st_mtime, path))
+    releases.sort(reverse=True)
+    current = os.path.realpath(os.path.join(orc_home, "runtime", "current"))
+    texts = [_read(os.path.join(orc_home, "owner")), ps_text] + _live_run_texts(orc_home)
+    young = (time.time() if now is None else now) - KEEP_YOUNGER_THAN_SECONDS
+    keep, move = [], []
+    for index, (mtime, path) in enumerate(releases):
+        if (index < KEEP_NEWEST or mtime > young or os.path.realpath(path) == current
+                or _named_in(path, texts)):
+            keep.append(path)
+        else:
+            move.append(path)
+    return keep, move
+
+
+def _size(path):
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _make_writable(path):
+    # Releases are sealed read-only, and rmtree cannot unlink inside them.
+    for root, dirs, _files in os.walk(path):
+        for name in [root] + [os.path.join(root, d) for d in dirs]:
+            if not os.path.islink(name):
+                os.chmod(name, os.lstat(name).st_mode | stat.S_IWUSR)
+
+
+def _move(source, target):
+    # Writable first, so the user can empty the Bin without a permissions prompt.
+    _make_writable(source)
+    try:
+        os.rename(source, target)
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+        shutil.copytree(source, target, symlinks=True)
+        shutil.rmtree(source)
+
+
+def _bin_folder(bin_dir):
+    base = os.path.join(bin_dir, "Orc runtime releases %s" % time.strftime("%Y-%m-%d %H%M"))
+    os.makedirs(bin_dir, exist_ok=True)
+    candidate, n = base, 1
+    while True:
+        try:
+            os.mkdir(candidate)
+            return candidate
+        except FileExistsError:
+            n += 1
+            candidate = "%s %d" % (base, n)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--orc-home", default=os.path.expanduser("~/.orc"))
+    parser.add_argument("--bin-dir", default=os.path.expanduser("~/.Trash"))
+    parser.add_argument("--ps-output", help="read the process list from this file instead of ps")
+    args = parser.parse_args(argv)
+
+    if args.ps_output:
+        ps_text = _read(args.ps_output)
+    else:
+        try:
+            ps_text = subprocess.run(["ps", "-axo", "command="], capture_output=True,
+                                     text=True, check=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError) as error:
+            print("runtime releases: kept all, the process list is unreadable (%s)" % error,
+                  file=sys.stderr)
+            return 1
+    keep, move = plan(args.orc_home, ps_text)
+    sizes = {path: _size(path) for path in move}
+    if args.dry_run or not move:
+        print("runtime releases: kept %d, %s %d (%.1f MB)" % (
+            len(keep), "would move" if args.dry_run else "moved", len(move),
+            sum(sizes.values()) / 1e6))
+        return 0
+    try:
+        folder = _bin_folder(args.bin_dir)
+    except OSError as error:
+        print("runtime releases: kept all, cannot write to the Bin at %s (%s)" % (
+            args.bin_dir, error.strerror or error), file=sys.stderr)
+        return 1
+    moved = failed = total = 0
+    for path in move:
+        try:
+            _move(path, os.path.join(folder, os.path.basename(path)))
+        except OSError:
+            failed += 1
+            continue
+        moved += 1
+        total += sizes[path]
+    print("runtime releases: kept %d, moved %d (%.1f MB) to %s%s" % (
+        len(keep) + failed, moved, total / 1e6, folder,
+        ", %d could not move" % failed if failed else ""))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

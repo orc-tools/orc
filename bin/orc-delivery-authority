@@ -1,0 +1,814 @@
+#!/usr/bin/env python3
+"""Publish and validate lifecycle-v4 delivery authority from existing evidence."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+from datetime import datetime, timezone
+import fcntl
+from hashlib import sha256
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+from linked_pr import branch_pr_to_link, linked_pr_url  # noqa: E402
+import run_checks  # noqa: E402
+
+
+SHA = re.compile(r"^[0-9a-f]{40}$")
+DIGEST = re.compile(r"^[0-9a-f]{64}$")
+MINIMAL_SHELL_ROUTE = "minimal-shell"
+
+
+def canonical_json(value: Any) -> bytes:
+    return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
+
+
+def compact_json(value: Any) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def digest(payload: bytes) -> str:
+    return sha256(payload).hexdigest()
+
+
+def read_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
+def safe_file(run_dir: Path, raw: str, label: str) -> Path:
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{label}.path is missing")
+    path = (run_dir / raw).resolve()
+    try:
+        path.relative_to(run_dir.resolve())
+    except ValueError as exc:
+        raise ValueError(f"{label}.path escapes the run directory") from exc
+    if not path.is_file():
+        raise ValueError(f"{label}.path is not a file: {raw}")
+    return path
+
+
+def checked_digest(raw: Any, label: str) -> str:
+    if not isinstance(raw, str) or not DIGEST.fullmatch(raw):
+        raise ValueError(f"{label} is not a sha256 digest")
+    return raw
+
+
+def checked_sha(raw: Any, label: str) -> str:
+    if not isinstance(raw, str) or not SHA.fullmatch(raw):
+        raise ValueError(f"{label} is not a full Git SHA")
+    return raw
+
+
+def artifact(run_dir: Path, path: str, label: str, nonempty: bool = False) -> dict:
+    target = safe_file(run_dir, path, label)
+    payload = target.read_bytes()
+    if nonempty and not payload:
+        raise ValueError(f"{label} must not be empty")
+    return {"path": path, "sha256": digest(payload)}
+
+
+def validate_artifact(run_dir: Path, value: Any, label: str, path: str) -> None:
+    if not isinstance(value, dict) or value.get("path") != path:
+        raise ValueError(f"{label}.path must be {path}")
+    live = artifact(run_dir, path, label, nonempty=path == "diff.patch")
+    if checked_digest(value.get("sha256"), f"{label}.sha256") != live["sha256"]:
+        raise ValueError(f"{label} digest does not match live bytes")
+
+
+def frozen_bindings(run_dir: Path) -> tuple[dict, dict]:
+    authority = read_object(run_dir / "inputs/build-spec/authority.json")
+    if authority.get("schemaVersion") != 1 or authority.get("status") != "frozen":
+        raise ValueError("frozen Build authority is invalid")
+    source = artifact(run_dir, "inputs/build-spec/source.json", "frozen source")
+    if authority.get("route") == "minimal-shell":
+        # Minimal shell: the route freezes the request alone and promises
+        # the user no Plan, so a plan.mdx is drift, not authority.
+        if authority.get("plan") is not None:
+            raise ValueError("minimal shell authority must carry no frozen Plan")
+        if (run_dir / "plan.mdx").exists():
+            raise ValueError("minimal shell run must not carry plan.mdx")
+        plan = None
+        bindings = (("source", source),)
+    else:
+        plan = artifact(run_dir, "inputs/build-spec/plan.mdx", "frozen plan")
+        bindings = (("plan", plan), ("source", source))
+    for label, live in bindings:
+        record = authority.get(label)
+        if not isinstance(record, dict) or record.get("path") != live["path"]:
+            raise ValueError(f"frozen authority {label} path is invalid")
+        if record.get("sha256") != live["sha256"]:
+            raise ValueError(f"frozen authority {label} digest is stale")
+    if plan is not None:
+        live_plan = artifact(run_dir, "plan.mdx", "live plan")
+        if live_plan["sha256"] != plan["sha256"]:
+            raise ValueError("live plan.mdx differs from frozen Plan")
+    return plan, source
+
+
+def repository_roster(meta: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    roster: dict[str, dict[str, Any]] = {}
+    if meta.get("repositoriesVersion") == 1:
+        raw = meta.get("repositories")
+        if not isinstance(raw, list) or not raw:
+            raise ValueError("meta.repositories must be a nonempty list")
+        for index, entry in enumerate(raw):
+            if not isinstance(entry, dict):
+                raise ValueError(f"repositories[{index}] must be an object")
+            participant = entry.get("id")
+            repo_path = entry.get("repoPath") or entry.get("path")
+            base = entry.get("buildBaseCommit")
+            if not isinstance(participant, str) or not participant or participant in roster:
+                raise ValueError(f"repositories[{index}].id is invalid or duplicated")
+            if not isinstance(repo_path, str) or not repo_path:
+                raise ValueError(f"repositories[{index}].repoPath is missing")
+            roster[participant] = {"repoPath": repo_path, "base": checked_sha(base, f"repositories[{index}].buildBaseCommit")}
+        return roster
+    participant = meta.get("primaryRepositoryId") or "primary"
+    repo_path = meta.get("repoPath")
+    if not isinstance(participant, str) or not participant:
+        raise ValueError("primary repository ID is invalid")
+    if not isinstance(repo_path, str) or not repo_path:
+        raise ValueError("meta.repoPath is missing")
+    roster[participant] = {
+        "repoPath": repo_path,
+        "base": checked_sha(meta.get("buildBaseCommit"), "meta.buildBaseCommit"),
+    }
+    return roster
+
+
+def git_head(path: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", path, "rev-parse", "--verify", "HEAD"],
+        text=True, capture_output=True, check=False,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+    )
+    if result.returncode != 0:
+        raise ValueError(f"cannot resolve repository HEAD for {path}")
+    return checked_sha(result.stdout.strip(), f"live HEAD for {path}")
+
+
+def participant_bindings(meta: dict[str, Any]) -> list[dict]:
+    return [
+        {
+            "participantId": participant,
+            "repoPath": str(Path(data["repoPath"]).expanduser().resolve()),
+            "base": data["base"],
+            "head": git_head(str(Path(data["repoPath"]).expanduser().resolve())),
+        }
+        for participant, data in sorted(repository_roster(meta).items())
+    ]
+
+
+def git_lines(path: str, *args: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "-C", path, *args], text=True, capture_output=True, check=False,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+    )
+    if result.returncode != 0:
+        raise ValueError(f"cannot read repository state for {path}")
+    return result.stdout.splitlines()
+
+
+def require_committed_worktrees(participants: list[dict]) -> None:
+    """Catch leftovers while the agent can still commit, ignore or delete them.
+
+    The merge queue merges past a dirty run worktree, so this is the last check
+    that notices a file the agent forgot to commit. An in-place checkout is the
+    person's own default checkout, so its unrelated edits are not checked."""
+    for participant in participants:
+        repo = participant["repoPath"]
+        git_dir, common_dir = git_lines(
+            repo, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+        if git_dir == common_dir:
+            continue
+        dirty = (git_lines(repo, "diff", "--name-only", "HEAD")
+                 + git_lines(repo, "ls-files", "--others", "--exclude-standard"))
+        if dirty:
+            shown = ", ".join(dirty[:5]) + (f" (+{len(dirty) - 5} more)" if len(dirty) > 5 else "")
+            raise ValueError(
+                f"repository {participant['participantId']} has uncommitted files: {shown}; "
+                "commit them, delete them, or add them to .gitignore, then publish again")
+
+
+def ticket_binding(run_dir: Path) -> dict | None:
+    path = run_dir / "evidence/manifest.json"
+    return artifact(run_dir, "evidence/manifest.json", "ticketEvidence") if path.is_file() else None
+
+
+def validate_build_proof(value: Any, participants: list[dict]) -> None:
+    heads = {item["participantId"]: item["head"] for item in participants}
+    if not isinstance(value, list) or not value:
+        raise ValueError("buildProof must be a nonempty list")
+    seen: set[str] = set()
+    for index, entry in enumerate(value):
+        label = f"buildProof[{index}]"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{label} must be an object")
+        participant = entry.get("participantId")
+        if not isinstance(participant, str) or participant not in heads or participant in seen:
+            raise ValueError(f"{label}.participantId is invalid or duplicated")
+        if entry.get("head") != heads[participant]:
+            raise ValueError(f"{label}.head is stale")
+        commands = entry.get("commands")
+        if not isinstance(commands, list) or not commands:
+            raise ValueError(f"{label}.commands must be nonempty")
+        for command_index, command in enumerate(commands):
+            prefix = f"{label}.commands[{command_index}]"
+            if not isinstance(command, dict):
+                raise ValueError(f"{prefix} must be an object")
+            if not isinstance(command.get("command"), str) or not command["command"].strip():
+                raise ValueError(f"{prefix}.command is missing")
+            if command.get("status") != "pass" or command.get("exitCode") != 0:
+                raise ValueError(f"{prefix} must record a passing targeted check")
+            if not isinstance(command.get("result"), str) or not command["result"].strip():
+                raise ValueError(f"{prefix}.result is missing")
+        if "knownFailures" in entry:
+            known = entry["knownFailures"]
+            if not isinstance(known, list):
+                raise ValueError(f"{label}.knownFailures must be a list")
+            for kf_index, item in enumerate(known):
+                kf_prefix = f"{label}.knownFailures[{kf_index}]"
+                if not isinstance(item, dict):
+                    raise ValueError(f"{kf_prefix} must be an object")
+                if not isinstance(item.get("spec"), str) or not item["spec"].strip():
+                    raise ValueError(f"{kf_prefix}.spec is missing")
+                if not isinstance(item.get("reason"), str) or not item["reason"].strip():
+                    raise ValueError(f"{kf_prefix}.reason is missing")
+        seen.add(participant)
+    if seen != set(heads):
+        raise ValueError("buildProof does not cover every participant")
+
+
+def validate_hands_on(run_dir: Path, value: Any) -> None:
+    if not isinstance(value, dict) or not isinstance(value.get("applicable"), bool):
+        raise ValueError("handsOn applicability is invalid")
+    flows = value.get("flows")
+    if not isinstance(flows, list) or any(not isinstance(flow, str) or not flow.strip() for flow in flows):
+        raise ValueError("handsOn flows are invalid")
+    if not value["applicable"]:
+        if value.get("state") != "not-applicable" or flows or "shots" in value:
+            raise ValueError("non-UI handsOn must be not-applicable without flows or shots")
+        return
+    if len(flows) not in {1, 2, 3}:
+        raise ValueError("UI handsOn requires one to three flows")
+    state = value.get("state")
+    if state == "ready":
+        shots = value.get("shots")
+        if not isinstance(shots, dict) or shots.get("path") != "shots/manifest.json":
+            raise ValueError("ready UI handsOn requires shots/manifest.json")
+        validate_artifact(run_dir, shots, "handsOn.shots", "shots/manifest.json")
+    elif state == "manual-override":
+        if not isinstance(value.get("overrideReason"), str) or not value["overrideReason"].strip():
+            raise ValueError("manual handsOn override requires a reason")
+    elif state != "blocked":
+        raise ValueError("UI handsOn state is invalid")
+
+
+def validate_feedback(run_dir: Path, value: Any, participants: list[dict]) -> None:
+    if not isinstance(value, list):
+        raise ValueError("feedbackEvidence must be a list")
+    heads = {item["head"] for item in participants}
+    seen: set[str] = set()
+    for index, entry in enumerate(value):
+        label = f"feedbackEvidence[{index}]"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{label} must be an object")
+        raw = entry.get("path")
+        if raw in seen:
+            raise ValueError("feedbackEvidence paths must not be duplicated")
+        path = safe_file(run_dir, raw, label)
+        if checked_digest(entry.get("sha256"), f"{label}.sha256") != digest(path.read_bytes()):
+            raise ValueError(f"{label} digest does not match live bytes")
+        if checked_sha(entry.get("producerHead"), f"{label}.producerHead") not in heads:
+            raise ValueError(f"{label}.producerHead is stale")
+        seen.add(raw)
+
+
+def approval_for(run_dir: Path, meta: dict[str, Any], plan_digest: str) -> dict[str, Any]:
+    if meta.get("mode") == "quick":
+        return {"kind": "quick", "sourceDigest": plan_digest}
+    manifests = sorted((run_dir / "plan-review/manifests").glob("*.json"))
+    for path in reversed(manifests):
+        try:
+            manifest = read_object(path)
+        except ValueError:
+            continue
+        if (
+            manifest.get("intent") == "approve"
+            and manifest.get("runId") == meta.get("runId")
+            and manifest.get("sourceDigest") == plan_digest
+        ):
+            return {
+                "kind": "exact",
+                "sourceDigest": plan_digest,
+                "manifest": str(path.relative_to(run_dir)),
+            }
+    raise ValueError("gated build has no exact approval for current plan.mdx")
+
+
+def freeze_source_payload(args: argparse.Namespace, meta: dict[str, Any]) -> bytes:
+    if args.source:
+        raw = Path(args.source).expanduser()
+        if raw.is_file():
+            try:
+                value = json.loads(raw.resolve().read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError(f"cannot read {raw}: {exc}") from exc
+        else:
+            try:
+                value = json.loads(args.source)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"JSON argument is neither a readable file nor valid JSON: {exc}"
+                ) from exc
+        return compact_json(value)
+    if meta.get("source") not in {"prompt", "fork"}:
+        raise ValueError("refreshable build source requires --source")
+    try:
+        brief = (args.run_dir / "inputs/grilling-brief.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"cannot freeze immutable brief: {exc}") from exc
+    return compact_json({
+        "brief": brief,
+        "source": meta.get("source"),
+        "sourceRef": meta.get("sourceRef"),
+    })
+
+
+def freeze_build_spec(args: argparse.Namespace) -> int:
+    try:
+        meta = read_object(args.run_dir / "meta.json")
+        if meta.get("mode") == "review" or meta.get("source") == "pr":
+            raise ValueError("foreign review has no Build spec to freeze")
+        if meta.get("lifecycleVersion") not in (3, 4):
+            raise ValueError("Build authority requires lifecycleVersion 3 or 4; start a fresh run")
+        plan_less = meta.get("route") == MINIMAL_SHELL_ROUTE
+        source = freeze_source_payload(args, meta)
+        frozen = args.run_dir / "inputs/build-spec"
+        members = {frozen / "source.json": source}
+        if plan_less:
+            if (args.run_dir / "plan.mdx").exists():
+                raise ValueError("minimal shell run must not carry plan.mdx")
+            plan_record = None
+            approval = {"kind": MINIMAL_SHELL_ROUTE, "sourceDigest": digest(source)}
+        else:
+            plan_payload = (args.run_dir / "plan.mdx").read_bytes()
+            plan_payload.decode("utf-8")
+            plan_digest = digest(plan_payload)
+            approval = approval_for(args.run_dir, meta, plan_digest)
+            members[frozen / "plan.mdx"] = plan_payload
+            plan_record = {
+                "path": "inputs/build-spec/plan.mdx",
+                "sha256": plan_digest,
+            }
+        authority_path = frozen / "authority.json"
+        existing = [path.exists() for path in (*members, authority_path)]
+        if any(existing):
+            if not all(existing):
+                raise ValueError("frozen build spec is partial and cannot be replaced")
+            frozen_bindings(args.run_dir)
+            authority = read_object(authority_path)
+            if any(path.read_bytes() != payload for path, payload in members.items()):
+                raise ValueError("frozen build spec differs from requested bytes")
+            if authority.get("approval") != approval:
+                raise ValueError("frozen build authority differs from requested approval")
+        else:
+            frozen.mkdir(parents=True, exist_ok=True)
+            authority: dict[str, Any] = {
+                "schemaVersion": 1,
+                "status": "frozen",
+                "frozenAt": args.evaluated_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "mode": meta.get("mode"),
+                "sourceKind": meta.get("source"),
+                "refreshable": meta.get("source") in {"linear", "sentry", "notion"},
+                "plan": plan_record,
+                "source": {
+                    "path": "inputs/build-spec/source.json",
+                    "sha256": digest(source),
+                },
+                "approval": approval,
+            }
+            if plan_less:
+                authority["route"] = MINIMAL_SHELL_ROUTE
+            for path, payload in members.items():
+                atomic_write(path, payload)
+            atomic_write(authority_path, compact_json(authority))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        return 1
+    print("build spec: frozen")
+    return 0
+
+
+@contextlib.contextmanager
+def meta_lock(run_dir: Path, meta: dict):
+    # The flock orc-ui's run_mutation_lock and orc-ship-hold take, so a meta
+    # update never races another writer of this run's meta.json.
+    path = meta.get("mainRepoPath")
+    identity = (os.path.realpath(os.path.expanduser(path))
+                if isinstance(path, str) and path.strip() else "unknown")
+    lock_path = run_dir.parent / f".merge-parent-{digest(identity.encode())[:16]}.lock"
+    with lock_path.open("a+") as handle:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise ValueError("another run mutation is holding the lock") from exc
+                time.sleep(0.1)
+        yield
+
+
+def payload_from_input(run_dir: Path, supplied: dict[str, Any]) -> dict[str, Any]:
+    meta = read_object(run_dir / "meta.json")
+    if meta.get("lifecycleVersion") != 4:
+        raise ValueError("delivery authority requires lifecycleVersion 4")
+    plan, source = frozen_bindings(run_dir)
+    participants = participant_bindings(meta)
+    build_proof = supplied.get("buildProof")
+    hands_on = supplied.get("handsOn")
+    feedback = supplied.get("feedbackEvidence", [])
+    validate_build_proof(build_proof, participants)
+    validate_hands_on(run_dir, hands_on)
+    validate_feedback(run_dir, feedback, participants)
+    published_at = supplied.get("publishedAt") or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if not isinstance(published_at, str) or not published_at.strip():
+        raise ValueError("publishedAt is invalid")
+    return {
+        "schemaVersion": 1,
+        "lifecycleVersion": 4,
+        "publishedAt": published_at,
+        "plan": plan,
+        "source": source,
+        "diff": artifact(run_dir, "diff.patch", "diff", nonempty=True),
+        "ticketEvidence": ticket_binding(run_dir),
+        "participants": participants,
+        "buildProof": build_proof,
+        "handsOn": hands_on,
+        "feedbackEvidence": feedback,
+    }
+
+
+def validate_payload(run_dir: Path, payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("delivery authority must be a JSON object")
+    version = payload.get("schemaVersion")
+    if version not in {1, 2} or payload.get("lifecycleVersion") != 4:
+        raise ValueError("delivery authority schema/lifecycle version is invalid")
+    expected = payload_from_input(run_dir, payload)
+    if version == 2:
+        # Historical runs already on disk may carry schema v2 with retired
+        # reviewEvidence; validate their live non-review bindings read-only.
+        review_evidence = payload.get("reviewEvidence")
+        if review_evidence is not None and not isinstance(review_evidence, dict):
+            raise ValueError("delivery authority reviewEvidence must be an object")
+        comparable = {k: v for k, v in payload.items() if k != "reviewEvidence"}
+        comparable["schemaVersion"] = 1
+        if comparable != expected:
+            raise ValueError("delivery authority differs from derived live authority")
+        return
+    if payload != expected:
+        raise ValueError("delivery authority differs from derived live authority")
+
+
+def atomic_write(path: Path, payload: bytes) -> None:
+    descriptor, raw = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    temporary = Path(raw)
+    try:
+        with os.fdopen(descriptor, "wb") as target:
+            target.write(payload)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def json_argument(raw: str) -> dict[str, Any]:
+    path = Path(raw)
+    value = read_object(path) if path.is_file() else json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("--input must contain a JSON object")
+    return value
+
+
+def link_branch_pr(run_dir: Path) -> str | None:
+    """Record the open PR the run's branch already has, so Ship offers Push to
+    PR and a PR link instead of Open PR. Best effort: authority is published
+    either way."""
+    meta_path = run_dir / "meta.json"
+    try:
+        url = branch_pr_to_link(read_object(meta_path))
+        if not url:
+            return None
+        meta = read_object(meta_path)
+        with meta_lock(run_dir, meta):
+            meta = read_object(meta_path)
+            if linked_pr_url(meta):
+                return None
+            meta["prUrl"] = url
+            atomic_write(meta_path, (json.dumps(meta, indent=2) + "\n").encode())
+    except (OSError, ValueError):
+        return None
+    return url
+
+
+def publish(args: argparse.Namespace) -> int:
+    try:
+        payload = payload_from_input(args.run_dir, json_argument(args.input))
+        require_committed_worktrees(payload["participants"])
+        validate_payload(args.run_dir, payload)
+        atomic_write(args.run_dir / "delivery-authority.json", canonical_json(payload))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        return 1
+    print(f"delivery authority: published ({digest(canonical_json(payload))})")
+    linked = link_branch_pr(args.run_dir)
+    if linked:
+        print(f"linked PR: {linked} (branch already has an open PR; Ship offers Push to PR)")
+    return 0
+
+
+def validate(args: argparse.Namespace) -> int:
+    try:
+        path = args.run_dir / "delivery-authority.json"
+        raw = path.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+        if raw != canonical_json(payload):
+            raise ValueError("delivery-authority.json is not canonical JSON")
+        validate_payload(args.run_dir, payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        return 1
+    print(f"delivery authority: valid ({digest(raw)})")
+    return 0
+
+
+def ship_template(args: argparse.Namespace) -> int:
+    try:
+        meta = read_object(args.run_dir / "meta.json")
+        participants = participant_bindings(meta)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        return 1
+    filled, stale = run_checks.proven_commands(
+        str(args.run_dir), {item["participantId"]: item["head"] for item in participants})
+    template = {
+        "buildProof": [
+            {"participantId": item["participantId"], "head": item["head"],
+             "commands": filled[item["participantId"]]}
+            for item in participants
+        ],
+        "handsOn": {"applicable": False, "state": "not-applicable", "flows": []},
+    }
+    rendered = json.dumps(template, indent=2) + "\n"
+    if args.out is None:
+        sys.stdout.write(rendered)
+    else:
+        # Writing the file here replaces a stale one: a shell `>` cannot under
+        # zsh noclobber, and a redirect sends the command past its allow rule.
+        try:
+            atomic_write(args.out.expanduser(), rendered.encode())
+        except OSError as exc:
+            print(f"ERROR cannot write {args.out}: {exc}", file=sys.stderr)
+            return 1
+        print(f"Wrote {args.out}")
+    # stdout can be the Ship input, so what was left out goes to stderr.
+    live_heads = {item["head"] for item in participants}
+    for check in stale:
+        where = (f"at {check['head'][:7]}, not the current commit" if check["head"]
+                 else "outside the run's checkout or over uncommitted edits")
+        print(f"Left out {check['id']} ({check['label']}): it passed {where}. "
+              "Rerun it with `orc-check run`.", file=sys.stderr)
+    for check in run_checks.unresolved_failures(str(args.run_dir)):
+        at_head = (f" (from {check['head'][:7]}, before the current commit)"
+                   if check.get("head") and check["head"] not in live_heads else "")
+        print(f"Warning: check {check['id']} ({check['label']}) is still failing{at_head}. "
+              f"Fix it and rerun `orc-check run {check['id']}`, or mark a base-commit failure with "
+              f"`orc-check fail {check['id']} --on-main --detail \"...\"`.", file=sys.stderr)
+    if not any(filled.values()):
+        print("No `orc-check run` check passed at the current commit: fill buildProof[].commands "
+              "with the checks you ran there.", file=sys.stderr)
+    return 0
+
+
+def ship(args: argparse.Namespace) -> int:
+    try:
+        meta_path = args.run_dir / "meta.json"
+        meta = read_object(meta_path)
+        participants = participant_bindings(meta)
+        if len(participants) != 1:
+            raise ValueError(
+                "multi-repository runs must run `orc-delivery-authority publish`, "
+                "`orc-delivery-authority validate`, and `orc-split-children`, then "
+                "`orc-delivery-authority ship` each child"
+            )
+        supplied = json_argument(args.input)
+        try:
+            validate_build_proof(supplied.get("buildProof"), participants)
+        except ValueError as exc:
+            raise ValueError(
+                f"{exc}. Run `orc-delivery-authority ship-template --run-dir <run-dir> --out <input>` "
+                "for the registered participant ID and live HEAD: it fills commands from "
+                "`orc-check run` checks that passed at that HEAD. Rerun any it leaves out, "
+                "or add passing checks run at that HEAD, before retrying."
+            ) from exc
+        require_committed_worktrees(participants)
+        try:
+            import collision_radar as _collision_radar
+        except ModuleNotFoundError:
+            _collision_radar = None
+        sync_res = (
+            _collision_radar.sync_worktree_with_main(
+                args.run_dir, config_dir=os.environ.get("ORC_CONFIG_DIR")
+            )
+            if _collision_radar is not None
+            else {"state": "skipped"}
+        )
+        sync_state = sync_res.get("state")
+        if sync_state in ("conflicted", "conflict-in-progress"):
+            files = ", ".join(sync_res.get("files") or [])
+            raise ValueError(
+                f"{sync_res.get('targetBranch', 'main')} moved to {str(sync_res.get('targetHead', ''))[:7]} "
+                f"and conflicted in {files}; resolve the conflict in {participants[0]['repoPath']}, "
+                f"commit the merge, run `orc-sync-main --run-dir {args.run_dir}` to reset buildBaseCommit, "
+                "re-run targeted checks, and run `orc-delivery-authority ship` again"
+            )
+        if sync_state == "error":
+            raise ValueError(
+                f"could not sync {sync_res.get('targetBranch', 'main')} into worktree: {sync_res.get('error')}"
+            )
+        if sync_state in ("synced", "reset-base"):
+            meta = read_object(meta_path)
+            participants = participant_bindings(meta)
+            touched_overlap = (sync_res.get("sharedFiles") or []) + (sync_res.get("regeneratedFiles") or [])
+            if sync_state == "synced" and touched_overlap:
+                raise ValueError(
+                    f"{sync_res.get('targetBranch', 'main')} moved to {str(sync_res.get('newBase', ''))[:7]} "
+                    f"and merged into this worktree touching {', '.join(touched_overlap)} "
+                    f"(buildBaseCommit reset to {str(sync_res.get('newBase', ''))[:7]}); "
+                    f"re-run targeted checks at {participants[0]['head'][:7]} and run `orc-delivery-authority ship` again"
+                )
+        primary = participants[0]
+        diff_proc = subprocess.run(
+            [
+                "git", "-C", primary["repoPath"], "diff",
+                "--no-ext-diff", "--no-textconv", "--no-color", "--binary", "--full-index",
+                f"{primary['base']}..HEAD",
+            ],
+            capture_output=True,
+            check=False,
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+        )
+        if diff_proc.returncode != 0:
+            detail = diff_proc.stderr.decode("utf-8", "replace").strip() or "git diff failed"
+            raise ValueError(f"cannot write diff.patch: {detail}")
+        if not diff_proc.stdout.strip():
+            raise ValueError(
+                "diff is empty; commit changes before shipping or use orc-record-delivery --no-diff"
+            )
+        atomic_write(args.run_dir / "diff.patch", diff_proc.stdout)
+
+        pr_body_dest = args.run_dir / "pr-body.md"
+        if args.pr_body is not None:
+            src = args.pr_body.expanduser()
+            if src.is_symlink() or not src.is_file():
+                raise ValueError("pr-body input must be a regular non-symlink file")
+            if src.resolve() != pr_body_dest.resolve():
+                atomic_write(pr_body_dest, src.read_bytes())
+        if pr_body_dest.is_symlink() or not pr_body_dest.is_file() or not pr_body_dest.read_bytes().strip():
+            raise ValueError("pr-body.md is missing or empty; draft <run-dir>/pr-body.md before shipping")
+
+        if (
+            sync_state == "synced"
+            and isinstance(supplied.get("buildProof"), list)
+        ):
+            old_head = sync_res.get("oldHead")
+            for proof_entry in supplied["buildProof"]:
+                if isinstance(proof_entry, dict) and proof_entry.get("head") == old_head:
+                    proof_entry["head"] = primary["head"]
+        payload = payload_from_input(args.run_dir, supplied)
+        validate_payload(args.run_dir, payload)
+
+        authority_path = args.run_dir / "delivery-authority.json"
+        prior_authority = authority_path.read_bytes() if authority_path.is_file() else None
+        canonical = canonical_json(payload)
+        # Write authority before linting and roll it back if linting or gate open fails.
+        atomic_write(authority_path, canonical)
+        # The branch's open PR is a fact about the branch, not about this
+        # Ship, so a lint or gate failure below must not leave it unrecorded.
+        linked = link_branch_pr(args.run_dir)
+        try:
+            validate_payload(args.run_dir, json.loads(authority_path.read_text("utf-8")))
+            bin_dir = Path(__file__).resolve().parent
+            lint_cmd = [sys.executable, str(bin_dir / "orc-pr-body-lint"), str(pr_body_dest), "--repo", primary["repoPath"]]
+            shots_manifest = args.run_dir / "shots" / "manifest.json"
+            if (
+                isinstance(payload.get("handsOn"), dict)
+                and payload["handsOn"].get("state") == "ready"
+                and shots_manifest.is_file()
+            ):
+                lint_cmd.extend(["--shots", str(shots_manifest)])
+            lint_proc = subprocess.run(lint_cmd, capture_output=True, text=True, check=False)
+            if lint_proc.returncode != 0:
+                detail = (lint_proc.stdout + "\n" + lint_proc.stderr).strip()
+                raise ValueError(detail)
+
+            run_id = str(meta.get("runId") or args.run_dir.name)
+            ui_proc = subprocess.run(
+                [str(bin_dir / "orc-ui"), "open", "--gate", f"{run_id}/pr-body.md"],
+                capture_output=True, text=True, check=False,
+            )
+            combined = f"{ui_proc.stdout}\n{ui_proc.stderr}"
+            updated_meta = read_object(meta_path)
+            if (
+                ui_proc.returncode != 0
+                or "WARN:" in combined
+                or "gate NOT opened" in combined
+                or updated_meta.get("phase") != "ship"
+                or updated_meta.get("status") != "awaiting-gate"
+            ):
+                detail = combined.strip() or f"phase={updated_meta.get('phase')} status={updated_meta.get('status')}"
+                raise ValueError(f"Ship gate failed to open: {detail}")
+        except Exception:
+            if prior_authority is None:
+                authority_path.unlink(missing_ok=True)
+            else:
+                atomic_write(authority_path, prior_authority)
+            raise
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        return 1
+
+    port = os.environ.get("ORC_UI_PORT") or os.environ.get("ORC_UI_DEFAULT_PORT") or "4173"
+    summary: dict[str, Any] = {
+        "ok": True,
+        "runId": run_id,
+        "phase": updated_meta["phase"],
+        "status": updated_meta["status"],
+        "authoritySha256": digest(canonical),
+        "diffBytes": len(diff_proc.stdout),
+        "gateUrl": f"http://127.0.0.1:{port}/#{run_id}/pr-body.md",
+    }
+    if linked:
+        summary["linkedPrUrl"] = linked
+    print(json.dumps(summary, sort_keys=True))
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description=__doc__)
+    commands = root.add_subparsers(dest="command", required=True)
+    publish_parser = commands.add_parser("publish")
+    publish_parser.add_argument("--run-dir", type=Path, required=True)
+    publish_parser.add_argument("--input", required=True)
+    publish_parser.set_defaults(handler=publish)
+    ship_parser = commands.add_parser("ship")
+    ship_parser.add_argument("--run-dir", type=Path, required=True)
+    ship_parser.add_argument("--input", required=True)
+    ship_parser.add_argument("--pr-body", type=Path)
+    ship_parser.set_defaults(handler=ship)
+    ship_template_parser = commands.add_parser(
+        "ship-template", help="print Ship input with the live participant IDs and heads")
+    ship_template_parser.add_argument("--run-dir", type=Path, required=True)
+    ship_template_parser.add_argument(
+        "--out", type=Path, help="write the input to this file, replacing it, instead of stdout")
+    ship_template_parser.set_defaults(handler=ship_template)
+    validate_parser = commands.add_parser("validate")
+    validate_parser.add_argument("--run-dir", type=Path, required=True)
+    validate_parser.set_defaults(handler=validate)
+    freeze_parser = commands.add_parser("freeze-build-spec")
+    freeze_parser.add_argument("--run-dir", type=Path, required=True)
+    freeze_parser.add_argument("--source")
+    freeze_parser.add_argument("--evaluated-at")
+    freeze_parser.set_defaults(handler=freeze_build_spec)
+    return root
+
+
+def main() -> int:
+    args = parser().parse_args()
+    args.run_dir = args.run_dir.expanduser().resolve()
+    return args.handler(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

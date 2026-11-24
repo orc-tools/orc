@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""Facts and publication for an evals parent run (skills/_shared/evals.md).
+
+gather   writes evals/facts.json, the deterministic facts per candidate under
+         a blind letter, and evals/blind.json, which letter is which child.
+publish  checks a written report, saves it as evals-report.md and settles the
+         parent while its Chat stays open for follow-up questions.
+
+Both print one JSON object; exit 0 on success, 1 with {"error": ...}.
+"""
+
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import random
+import re
+import sys
+import tempfile
+
+
+SETTLED = {"escalated", "complete", "merged", "merged-to-parent", "cancelled", "failed"}
+OPEN_GATE_PHASES = {"grilling", "clarification", "plan", "planning"}
+SCOREBOARD = ("candidate", "outcome", "checks", "diff size", "time", "tokens", "cost", "score")
+REPORT_LIMIT = 256 * 1024
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def read_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def parent_meta(run_dir: Path) -> dict:
+    meta = read_json(run_dir / "meta.json")
+    if not isinstance(meta, dict) or meta.get("route") != "evals" \
+            or not isinstance(meta.get("evals"), dict):
+        raise ValueError("%s is not an evals parent run" % run_dir)
+    return meta
+
+
+def parse_time(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def settled(meta: dict | None) -> bool:
+    if not meta:
+        return False
+    if meta.get("status") == "awaiting-gate":
+        return meta.get("phase") not in OPEN_GATE_PHASES
+    return meta.get("status") in SETTLED
+
+
+def diff_stats(path: Path):
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    files, added, removed = set(), 0, 0
+    for line in lines:
+        match = re.match(r"diff --git a/.* b/(.*)$", line)
+        if match:
+            files.add(match.group(1))
+        elif line.startswith("+") and not line.startswith("+++ "):
+            added += 1
+        elif line.startswith("-") and not line.startswith("--- "):
+            removed += 1
+    return {"files": len(files), "added": added, "removed": removed}
+
+
+def build_proof(child_dir: Path):
+    authority = read_json(child_dir / "delivery-authority.json")
+    if not isinstance(authority, dict) or not isinstance(authority.get("buildProof"), list):
+        return None
+    return [{"command": command.get("command"), "exitCode": command.get("exitCode"),
+             "status": command.get("status"), "result": command.get("result")}
+            for entry in authority["buildProof"] if isinstance(entry, dict)
+            for command in entry.get("commands") or [] if isinstance(command, dict)]
+
+
+def cost(child_id: str, runs: Path):
+    """The figure Orc's Run Control shows, from ui/serve.py's run_cost."""
+    argv = sys.argv
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+        # serve.py reads its port from argv[1] on import; ours is a subcommand.
+        sys.argv = argv[:1]
+        import serve  # noqa: E402  imported late: it is large and only cost needs it
+        serve.RUNS = str(runs)
+        estimate = serve.run_cost(child_id)
+    except Exception as exc:  # cost is one fact among many; never lose the rest
+        return {"unavailable": "cost estimate failed: %s" % exc}
+    finally:
+        sys.argv = argv
+    if estimate.get("unavailable"):
+        return {"unavailable": estimate["unavailable"]}
+    total = estimate.get("total") or {}
+    tokens = {key: total.get(key, 0) for key in
+              ("input", "output", "cacheRead", "cache5m", "cache1h")}
+    return {"tokens": {**tokens, "total": sum(tokens.values())},
+            "costUsd": total.get("cost"), "unpriced": estimate.get("unpriced") or []}
+
+
+def existing(path: Path):
+    return str(path) if path.exists() else None
+
+
+def candidate_facts(child: dict, runs: Path) -> dict:
+    child_id = child.get("childRunId")
+    child_dir = runs / child_id if child_id else None
+    meta = read_json(child_dir / "meta.json") if child_dir else None
+    meta = meta if isinstance(meta, dict) else None
+    facts = {"childRunId": child_id, "launch": child.get("state"),
+             "launchError": child.get("error"),
+             "phase": meta.get("phase") if meta else None,
+             "status": meta.get("status") if meta else None,
+             "settled": child.get("state") == "failed" or settled(meta),
+             "wallSeconds": None, "cost": None, "diff": None, "buildProof": None,
+             "prBody": None, "screenshots": None, "diffPatch": None}
+    if not meta:
+        return facts
+    started, ended = parse_time(child.get("launchedAt")), parse_time(child.get("settledAt"))
+    if started is not None and ended is not None:
+        facts["wallSeconds"] = max(0, round(ended - started))
+    facts["cost"] = cost(child_id, runs)
+    facts["diff"] = diff_stats(child_dir / "diff.patch")
+    facts["diffPatch"] = existing(child_dir / "diff.patch")
+    facts["buildProof"] = build_proof(child_dir)
+    facts["prBody"] = existing(child_dir / "pr-body.md")
+    facts["screenshots"] = existing(child_dir / "shots" / "manifest.json")
+    return facts
+
+
+def blinding(run_dir: Path, children: list[dict]) -> dict:
+    """letter -> candidate index. Kept once made: regathering must not move
+    a judged candidate to another letter."""
+    path = run_dir / "evals" / "blind.json"
+    saved = read_json(path)
+    indexes = sorted(child["index"] for child in children)
+    if isinstance(saved, dict) and sorted(entry.get("index") for entry in
+                                          (saved.get("letters") or {}).values()) == indexes:
+        return saved
+    shuffled = indexes[:]
+    random.SystemRandom().shuffle(shuffled)
+    return {"schemaVersion": 1, "createdAt": now(),
+            "letters": {chr(ord("A") + at): {"index": index} for at, index in enumerate(shuffled)}}
+
+
+def gather(run_dir: Path) -> dict:
+    meta = parent_meta(run_dir)
+    evals = meta["evals"]
+    children = [child for child in evals.get("children") or [] if isinstance(child, dict)]
+    if not children:
+        raise ValueError("this evals run has no children yet")
+    candidates = {candidate.get("index"): candidate for candidate in evals.get("candidates") or []}
+    by_index = {child["index"]: child for child in children}
+    blind = blinding(run_dir, children)
+    runs = run_dir.parent
+    letters = {}
+    for letter, entry in sorted(blind["letters"].items()):
+        child = by_index[entry["index"]]
+        candidate = candidates.get(entry["index"]) or {}
+        entry.update(label=child.get("label") or candidate.get("label"),
+                     agent=candidate.get("agent"), model=candidate.get("model"),
+                     effort=candidate.get("effort"), childRunId=child.get("childRunId"),
+                     # An eval launched before candidates had their own
+                     # toggles recorded one choice for all of them.
+                     **{key: candidate.get(key, evals.get(key)) is True
+                        for key in ("fast", "orchestration")})
+        letters[letter] = candidate_facts(child, runs)
+        letters[letter]["prompt"] = candidate.get("prompt") or evals.get("prompt")
+    facts = {"schemaVersion": 2, "gatheredAt": now(), "prompt": evals.get("prompt"),
+             "ownPrompts": any(candidate.get("prompt") for candidate in candidates.values()),
+             "baseCommit": evals.get("baseCommit"),
+             "repeatTrials": len({entry["label"] for entry in blind["letters"].values()})
+             < len(blind["letters"]),
+             "allSettled": all(item["settled"] for item in letters.values()),
+             "candidates": letters}
+    # The judge reads facts.json; identities stay in blind.json until scored.
+    write_atomic(run_dir / "evals" / "blind.json", json.dumps(blind, indent=2) + "\n")
+    write_atomic(run_dir / "evals" / "facts.json", json.dumps(facts, indent=2) + "\n")
+    return {"ok": True, "facts": str(run_dir / "evals" / "facts.json"),
+            "blind": str(run_dir / "evals" / "blind.json"),
+            "candidates": sorted(letters), "allSettled": facts["allSettled"]}
+
+
+def validate_report(text: str, children: list[dict]) -> None:
+    if not text.strip():
+        raise ValueError("the report is empty")
+    if len(text.encode("utf-8")) > REPORT_LIMIT:
+        raise ValueError("the report is larger than %d bytes" % REPORT_LIMIT)
+    if not re.search(r"(?m)^\s*(?:\*\*)?TL;DR:", text):
+        raise ValueError("the report needs a `TL;DR:` verdict line")
+    header = next((line for line in text.splitlines()
+                   if line.strip().startswith("|") and "candidate" in line.lower()), None)
+    cells = [cell.strip().lower() for cell in header.strip().strip("|").split("|")] if header else []
+    missing = [column for column in SCOREBOARD if column not in cells]
+    if missing:
+        raise ValueError("the scoreboard table is missing columns: %s" % ", ".join(missing))
+    unnamed = [child["childRunId"] for child in children
+               if child.get("childRunId") and child["childRunId"] not in text]
+    if unnamed:
+        raise ValueError("the report does not link child runs: %s" % ", ".join(unnamed))
+    if not re.search(r"(?m)^\s*(?:\*\*)?Next:", text):
+        raise ValueError("the report needs a `Next:` line")
+
+
+def publish(run_dir: Path, report: Path) -> dict:
+    meta = parent_meta(run_dir)
+    if not (run_dir / "evals" / "facts.json").is_file():
+        raise ValueError("run `orc-evals-report gather` before publishing")
+    try:
+        text = report.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError("cannot read the report: %s" % exc) from exc
+    validate_report(text, meta["evals"].get("children") or [])
+    write_atomic(run_dir / "evals-report.md", text if text.endswith("\n") else text + "\n")
+    meta = parent_meta(run_dir)
+    meta["evals"]["reportPublishedAt"] = now()
+    meta.update(phase="done", status="complete", outcome="evals")
+    meta.pop("titlePending", None)
+    write_atomic(run_dir / "meta.json", json.dumps(meta, indent=2) + "\n")
+    return {"ok": True, "report": str(run_dir / "evals-report.md")}
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    gather_parser = commands.add_parser("gather")
+    gather_parser.add_argument("--run-dir", required=True, type=Path)
+    publish_parser = commands.add_parser("publish")
+    publish_parser.add_argument("--run-dir", required=True, type=Path)
+    publish_parser.add_argument("--report", required=True, type=Path)
+    args = parser.parse_args(argv)
+    try:
+        result = gather(args.run_dir.resolve()) if args.command == "gather" \
+            else publish(args.run_dir.resolve(), args.report)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 1
+    print(json.dumps(result))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

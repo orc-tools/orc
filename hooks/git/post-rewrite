@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# A pull --rebase/rebase records the pre-rewrite tip in ORIG_HEAD. Amend is
+# already covered by post-commit.
+"$(dirname "$0")/run-previous-hook" post-rewrite "$@"
+[ "${1:-}" = "rebase" ] || exit 0
+exec "$(dirname "$0")/orc-reinstall-check" ORIG_HEAD HEAD

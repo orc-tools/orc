@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Explore a run's app in an isolated headless browser."""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'ui'))
+from agent_browser import main
+
+if __name__ == '__main__':
+    raise SystemExit(main())

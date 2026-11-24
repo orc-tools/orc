@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Check, redraft and post the review you drafted of a colleague's PR.
+
+    orc-pr-review check --run-dir <run-dir>
+    orc-pr-review edit  --run-dir <run-dir> (--note | --comment <id>) --body-file <file|->
+    orc-pr-review post  --run-dir <run-dir> --event APPROVE|COMMENT|REQUEST_CHANGES --digest <sha256>
+
+`check` validates `pr-review-draft.json` after the review writes it. `edit`
+rewrites the note or one comment, e.g. when an Ask in Answer mode redrafts it.
+`post` is the Your review card's button: Orc UI runs it with the draft digest
+the card showed, and it posts one GitHub review as you. See
+ui/pr_review_draft.py for the file and the rules.
+"""
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+import pr_review_draft as drafts
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-pr-review", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("check", "edit", "post"):
+        command = commands.add_parser(name)
+        command.add_argument("--run-dir", type=Path, required=True)
+        if name == "edit":
+            target = command.add_mutually_exclusive_group(required=True)
+            target.add_argument("--note", action="store_true")
+            target.add_argument("--comment")
+            command.add_argument("--body-file", required=True)
+        if name == "post":
+            command.add_argument("--event", choices=drafts.EVENTS, required=True)
+            command.add_argument("--digest", required=True)
+    args = parser.parse_args(argv)
+    run_dir = str(args.run_dir.expanduser().resolve())
+    meta_path = str(Path(run_dir) / "meta.json")
+    try:
+        meta = json.loads(Path(meta_path).read_text())
+        if args.command == "check":
+            model = drafts.card_model(run_dir, meta)
+            if model is None:
+                raise drafts.DraftError(
+                    "no draft for this run: it needs a flag-mode review whose "
+                    "review.prUrl matches the draft's pr")
+            print(json.dumps({"ok": True, "state": model["state"], "comments": len(model["comments"]),
+                              "recommended": model["recommended"], "digest": model["digest"]}))
+        elif args.command == "edit":
+            body = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text()
+            draft = drafts.edit(run_dir, meta, "note" if args.note else args.comment, body=body)
+            print(json.dumps({"ok": True, "digest": draft["digest"]}))
+        else:
+            record = drafts.post(run_dir, meta_path, args.event, args.digest)
+            print(json.dumps({"ok": True, **record}))
+    except (drafts.DraftError, OSError, ValueError) as exc:
+        print("orc-pr-review: %s" % exc, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

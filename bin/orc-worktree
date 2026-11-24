@@ -1,0 +1,2279 @@
+#!/usr/bin/env python3
+"""Resolve and perform Orc's policy-free generic git worktree operations."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from types import SimpleNamespace
+from urllib.parse import urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ui"))
+import clarification_files
+import project_setup
+import rails_helpers
+import worktree_servers
+
+
+class WorktreeError(Exception):
+    pass
+
+
+_servers_active = False
+
+
+def servers():
+    """The built-in dev server module, given this helper's Git and process
+    tools on first use (they are defined further down this file)."""
+    global _servers_active
+    if not _servers_active:
+        worktree_servers.activate(SimpleNamespace(**{key: globals()[key] for key in (
+            "WorktreeError", "load_config", "matching_value", "run_git", "devd_repo",
+            "normalized", "home", "write_json", "config_path", "canonical_repo",
+            "port_open", "process_in_tree", "process_group", "listening_pids",
+            "server_pids", "install_marker", "clear_server", "process_identity",
+            "run_server_state",
+        )}))
+        _servers_active = True
+    return worktree_servers
+
+
+def server_config(repo: Path, config: dict | None = None) -> dict | None:
+    return None if devd_repo(repo) else servers().server_config(repo, config)
+
+
+def detect_server(repo: Path) -> dict:
+    return servers().detect_server(repo)
+
+
+# ponytail: see orc-merge-main.git_env — inherited GIT_INDEX_FILE/GIT_DIR from a
+# hook context resolve relative to the worktree and break `git -C`.
+def git_env() -> dict:
+    env = dict(os.environ)
+    for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+        env.pop(name, None)
+    return env
+
+
+def run_git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args], text=True, capture_output=True,
+        env=git_env())
+    if check and result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise WorktreeError(
+            "git %s failed%s" % (" ".join(args), ": " + detail if detail else ""))
+    return result
+
+
+def git_value(repo: Path, *args: str) -> str:
+    return run_git(repo, *args).stdout.strip()
+
+
+def read_json(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise WorktreeError("cannot read %s: %s" % (path, exc)) from exc
+    if not isinstance(value, dict):
+        raise WorktreeError("%s must contain a JSON object" % path)
+    return value
+
+
+def write_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".%s." % path.name, dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(value, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def home() -> Path:
+    return Path(os.environ.get("HOME", str(Path.home()))).resolve()
+
+
+def expand_path(raw: str | Path) -> Path:
+    text = str(raw)
+    if text == "~":
+        return home()
+    if text.startswith("~/"):
+        return home() / text[2:]
+    return Path(text).expanduser()
+
+
+def canonical_repo(raw: str | Path) -> Path:
+    candidate = expand_path(raw).resolve()
+    common = run_git(
+        candidate, "rev-parse", "--path-format=absolute", "--git-common-dir",
+        check=False)
+    if common.returncode:
+        raise WorktreeError("not a Git checkout: %s" % candidate)
+    common_path = Path(common.stdout.strip()).resolve()
+    return common_path.parent if common_path.name == ".git" else candidate
+
+
+def normalized(raw: str | Path) -> Path:
+    return expand_path(raw).resolve()
+
+
+def normalized_remote(raw: object) -> str | None:
+    """Return a comparison identity for common Git URL spellings."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    value = raw.strip()
+    scp = re.fullmatch(r"(?:[^@/]+@)?([^:/]+):(.+)", value)
+    if scp and "://" not in value:
+        host, path = scp.groups()
+    else:
+        parsed = urlsplit(value if "://" in value else "file://" + value)
+        if parsed.scheme == "file":
+            return "file:" + str(normalized(parsed.path))
+        host, path = parsed.hostname or "", parsed.path
+    return "%s/%s" % (host.casefold(), path.strip("/").removesuffix(".git").casefold())
+
+
+def participant_selection(meta: dict, repo_id: str | None) -> tuple[dict, bool] | None:
+    """Validate and select a versioned participant; None means legacy root state."""
+    repositories = meta.get("repositories")
+    if repositories is None:
+        if repo_id:
+            raise WorktreeError("unknown repository id: %s (legacy run has no repositories)" % repo_id)
+        return None
+    if meta.get("repositoriesVersion") != 1:
+        raise WorktreeError("unsupported repositoriesVersion (expected 1)")
+    if not isinstance(repositories, list) or not repositories:
+        raise WorktreeError("meta.repositories must be a non-empty array")
+    ids: set[str] = set()
+    aliases: set[str] = set()
+    paths: dict[Path, str] = {}
+    remotes: dict[str, str] = {}
+    primary_id = meta.get("primaryRepositoryId")
+    selected = None
+    primary_count = 0
+    for participant in repositories:
+        if not isinstance(participant, dict):
+            raise WorktreeError("every meta.repositories entry must be an object")
+        item_id = participant.get("id")
+        if not isinstance(item_id, str) or not item_id.strip():
+            raise WorktreeError("every repository participant needs an immutable id")
+        item_id = item_id.strip()
+        if item_id in ids:
+            raise WorktreeError("duplicate repository id: %s" % item_id)
+        ids.add(item_id)
+        alias = participant.get("alias")
+        if isinstance(alias, str) and alias.strip():
+            normalized_alias = alias.strip().casefold()
+            if normalized_alias in aliases:
+                raise WorktreeError("duplicate repository alias: %s" % alias.strip())
+            aliases.add(normalized_alias)
+        identity = participant.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        raw_path = identity.get("path") or participant.get("mainRepoPath")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise WorktreeError("repository %s has no path identity" % item_id)
+        path_identity = canonical_repo(raw_path)
+        if path_identity in paths:
+            raise WorktreeError(
+                "duplicate repository path identity: %s and %s" %
+                (paths[path_identity], item_id))
+        paths[path_identity] = item_id
+        remote = normalized_remote(identity.get("remote") or participant.get("remote"))
+        if remote:
+            if remote in remotes:
+                raise WorktreeError(
+                    "duplicate repository remote identity: %s and %s" %
+                    (remotes[remote], item_id))
+            remotes[remote] = item_id
+        is_primary = participant.get("primary") is True or item_id == primary_id
+        primary_count += int(is_primary)
+        if item_id == repo_id or (repo_id is None and is_primary):
+            selected = (participant, is_primary)
+    if primary_count != 1:
+        raise WorktreeError("meta.repositories must identify exactly one primary repository")
+    if selected is None:
+        raise WorktreeError("unknown repository id: %s" % repo_id if repo_id else
+                            "primary repository participant is missing")
+    return selected
+
+
+def participant_value(meta: dict, participant: dict | None, key: str):
+    if participant is not None and key in participant:
+        return participant[key]
+    return meta.get(key)
+
+
+def matching_value(mapping: object, repo: Path, field: str | None = None):
+    if not isinstance(mapping, dict):
+        return None, False
+    matches = []
+    for key, entry in mapping.items():
+        if not isinstance(key, str):
+            continue
+        try:
+            same = normalized(key) == repo
+        except OSError:
+            same = False
+        if not same:
+            continue
+        if field is None:
+            matches.append((key, entry))
+        elif isinstance(entry, dict) and field in entry:
+            matches.append((key, entry[field]))
+    if not matches:
+        return None, False
+    values = {
+        json.dumps(
+            value.get("worktree")
+            if field is None and isinstance(value, dict) and "worktree" in value
+            else value,
+            sort_keys=True,
+        )
+        for _, value in matches
+    }
+    if len(values) > 1:
+        aliases = ", ".join(sorted(key for key, _ in matches))
+        raise WorktreeError(
+            "conflicting config values for equivalent repo aliases: %s" % aliases)
+    matches.sort(key=lambda pair: normalized(pair[0]) != repo or pair[0] != str(repo))
+    return matches[0][1], True
+
+
+def config_path() -> Path:
+    override = os.environ.get("ORC_CONFIG_PATH")
+    return expand_path(override) if override else home() / ".orc" / "config.json"
+
+
+def load_config() -> dict:
+    path = config_path()
+    if not path.exists():
+        return {}
+    return read_json(path)
+
+
+def ref_commit(repo: Path, ref: object) -> str | None:
+    if not isinstance(ref, str) or not ref.strip():
+        return None
+    result = run_git(repo, "rev-parse", "--verify", "%s^{commit}" % ref.strip(),
+                     check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def default_ref(repo: Path) -> tuple[str, str]:
+    result = run_git(repo, "symbolic-ref", "--quiet", "--short",
+                     "refs/remotes/origin/HEAD", check=False)
+    if result.returncode == 0 and result.stdout.strip():
+        ref = result.stdout.strip()
+        commit = ref_commit(repo, ref)
+        if commit:
+            return commit, ref
+    for name in ("main", "master"):
+        commit = ref_commit(repo, name)
+        if commit:
+            return commit, name
+    result = run_git(repo, "rev-parse", "--verify", "HEAD", check=False)
+    if result.returncode == 0:
+        return result.stdout.strip(), "HEAD"
+    raise WorktreeError("cannot resolve a default branch or HEAD")
+
+
+def fork_fields(meta: dict) -> dict:
+    fields = {}
+    fork_file = meta.get("forkFile") or meta.get("contextBrief")
+    if isinstance(fork_file, str) and fork_file.strip():
+        try:
+            text = expand_path(fork_file).read_text()
+        except OSError:
+            text = ""
+        match = re.match(r"\A---\s*\n(.*?)\n---(?:\s*\n|\Z)", text, re.S)
+        if match:
+            for line in match.group(1).splitlines():
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    fields[key.strip()] = value.strip().strip("\"'")
+    for key in ("baseCommit", "parentBranch"):
+        if key in meta:
+            fields[key] = meta[key]
+    based_on = meta.get("basedOnRun")
+    if isinstance(based_on, dict) and isinstance(based_on.get("branch"), str) and "parentBranch" not in fields:
+        fields["parentBranch"] = based_on["branch"]
+    provenance = meta.get("gitProvenance")
+    if isinstance(provenance, dict):
+        for key in ("baseCommit", "parentBranch"):
+            if isinstance(provenance.get(key), str):
+                fields[key] = provenance[key]
+    return fields
+
+
+def resolve_base(repo: Path, meta: dict) -> tuple[str, str, list[str]]:
+    immutable = ref_commit(repo, meta.get("buildBaseCommit"))
+    if immutable:
+        return immutable, "buildBaseCommit", []
+    has_explicit_base = (
+        meta.get("source") == "fork"
+        or bool(meta.get("parentRunId"))
+        or bool(meta.get("parentBranch"))
+        or isinstance(meta.get("basedOnRun"), dict)
+    )
+    if not has_explicit_base:
+        # A normal run always branches off the repo default (main/master), not
+        # whatever branch the session happens to sit on. default_ref falls back
+        # to HEAD only when no default branch is resolvable. A user-named base
+        # is honored above via the buildBaseCommit short-circuit.
+        commit, source = default_ref(repo)
+        return commit, "default:%s" % source, []
+    fields = fork_fields(meta)
+    attempted = []
+    for name in ("baseCommit", "parentBranch"):
+        ref = fields.get(name)
+        if name == "parentBranch" and isinstance(ref, str) and ref.strip() and not ref.startswith("refs/"):
+            commit = ref_commit(repo, "refs/heads/%s" % ref.strip()) or ref_commit(repo, ref)
+        else:
+            commit = ref_commit(repo, ref)
+        if commit:
+            return commit, name, attempted
+        if isinstance(ref, str) and ref.strip():
+            attempted.append(name)
+    commit, source = default_ref(repo)
+    return commit, "default:%s" % source, attempted
+
+
+def slugify(branch: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", branch.lower()).strip("-")
+    if not slug:
+        raise WorktreeError("branch does not produce a usable worktree slug")
+    return slug
+
+
+LOCALHOST_FAMILIES = ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1"))
+MONITOR_INTERVAL_SECONDS = 5.0
+MONITOR_STALE_HOURS = 24.0
+TERMINAL_RUN_STATUSES = {
+    "complete", "merged", "merged-to-parent", "cancelled",
+}
+
+
+SCRIPT_ID_MAX = 48
+
+
+def script_id(name: str, taken: set[str]) -> str:
+    """t3code's nextProjectScriptId: a slug of the name, suffixed -2, -3...
+    when an earlier script already took it. serve.py derives the same ids."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    base = base[:SCRIPT_ID_MAX].rstrip("-") or "script"
+    candidate, suffix = base, 2
+    while candidate in taken:
+        candidate = "%s-%d" % (base, suffix)
+        suffix += 1
+    return candidate
+
+
+def project_scripts(repo: Path, config: dict | None = None) -> list[dict]:
+    """Per-repo `repos[<mainRepoPath>].scripts`: [{name, command, icon?,
+    runOnWorktreeCreate?}]. Optional and lenient: a missing key, a non-list,
+    or a malformed entry yields no script rather than an error, so a bad
+    scripts block can never break the worktree route it rides on."""
+    if config is None:
+        config = load_config()
+    try:
+        value, found = matching_value(config.get("repos"), repo, "scripts")
+    except WorktreeError:
+        return []
+    if not found or not isinstance(value, list):
+        return []
+    scripts, taken = [], set()
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        name, command = entry.get("name"), entry.get("command")
+        if (not isinstance(name, str) or not name.strip()
+                or not isinstance(command, str) or not command.strip()):
+            continue
+        sid = script_id(name, taken)
+        taken.add(sid)
+        scripts.append({"id": sid, "name": name.strip(), "command": command.strip(),
+                        "runOnWorktreeCreate": entry.get("runOnWorktreeCreate") is True})
+    return scripts
+
+
+def run_create_scripts(run_dir: Path, repo: Path, target: Path) -> list[dict]:
+    """Launch every runOnWorktreeCreate script detached in the fresh tree,
+    logging to <run-dir>/.scripts/<id>.log. Fire and forget: setup never
+    waits on a script, and a launch failure is reported, never raised."""
+    results = []
+    for script in project_scripts(repo):
+        if not script["runOnWorktreeCreate"]:
+            continue
+        row = {"id": script["id"], "name": script["name"]}
+        try:
+            log_dir = run_dir / ".scripts"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log = log_dir / ("%s.log" % script["id"])
+            with log.open("ab") as handle:
+                proc = subprocess.Popen(
+                    script["command"], shell=True, cwd=str(target),
+                    stdin=subprocess.DEVNULL, stdout=handle,
+                    stderr=subprocess.STDOUT, start_new_session=True)
+            row.update({"ok": True, "pid": proc.pid, "log": str(log)})
+        except Exception as exc:  # noqa: BLE001 - a script never fails setup
+            row.update({"ok": False, "error": str(exc)})
+        results.append(row)
+    return results
+
+
+DEVD_LABEL_LIMIT = 24
+
+
+def devd_repo(repo: Path) -> str | None:
+    remote = run_git(repo, "remote", "get-url", "origin", check=False)
+    url = remote.stdout.strip() if remote.returncode == 0 else ""
+    return rails_helpers.repository(url)
+
+
+def port_open(port: int) -> bool:
+    """A listener on either localhost family answers. Node dev servers
+    (`astro dev`) bind `::1` only, so an IPv4-only probe would call a live
+    server dead and hand out its port again."""
+    for family, address in LOCALHOST_FAMILIES:
+        try:
+            with socket.socket(family) as probe:
+                probe.settimeout(1)
+                if probe.connect_ex((address, port)) == 0:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def process_identity(pid: int) -> str | None:
+    """The process's start time — the one property a reused pid cannot share.
+    Matching argv instead would not work: a shell `exec`s a single command, so
+    `ps` reports the resolved binary, not the command that was typed."""
+    result = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)],
+                            text=True, capture_output=True)
+    started = result.stdout.strip()
+    return started if result.returncode == 0 and started else None
+
+
+def process_alive(pid: object, identity: str | None = None) -> bool:
+    """Is the recorded server still the process behind `pid`?
+
+    A recorded pid outlives its process and the OS reuses pids, so before any
+    signal goes out the recorded identity is matched against what is running —
+    otherwise a stale record aims a process-group kill at a stranger. No
+    recorded identity (a server started before this field existed) falls back
+    to plain liveness."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False   # gone, or another user's — either way not ours
+    return identity is None or process_identity(pid) == identity
+
+
+def listening_pids(port: int) -> list[int]:
+    result = subprocess.run(
+        ["lsof", "-nP", "-tiTCP:%d" % port, "-sTCP:LISTEN"],
+        text=True, capture_output=True)
+    return [int(line) for line in result.stdout.split() if line.isdigit()]
+
+
+def listening_ports(ports: list[int]) -> set[int]:
+    """Which of these ports have a listener, from one lsof over their range.
+
+    One lsof costs about as much as one per port does, so probing a 40-port
+    band this way first saves the per-port scans on every idle port."""
+    result = subprocess.run(
+        ["lsof", "-nP", "-iTCP:%d-%d" % (min(ports), max(ports)), "-sTCP:LISTEN", "-Fn"],
+        text=True, capture_output=True)
+    found = set()
+    for line in result.stdout.splitlines():
+        if line.startswith("n") and ":" in line:
+            tail = line.rsplit(":", 1)[1]
+            if tail.isdigit():
+                found.add(int(tail))
+    return found
+
+
+def process_in_tree(pid: int, target: Path) -> bool:
+    """Was this process launched out of our worktree? A dev command carries
+    the tree in its argv (`node <worktree>/node_modules/...`), which is what
+    lets us claim a listener we did not directly parent. A whole-path match,
+    because a main checkout's path prefixes its `<repo>-worktrees/` trees."""
+    result = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
+                            text=True, capture_output=True)
+    return result.returncode == 0 and command_mentions_path(
+        result.stdout, str(target))
+
+
+def process_group(pid: int) -> int | None:
+    try:
+        return os.getpgid(pid)
+    except OSError:
+        return None
+
+
+def server_pids(worktree: dict, server: dict) -> list[int]:
+    """Every process this worktree's dev server is currently running as.
+
+    The recorded pid alone is not enough: a dev command may daemonize —
+    Astro 7's `astro dev` forks a background server and the launcher exits 0 —
+    leaving the real listener in its own process group, unreachable from ours.
+    So the port is the anchor: whoever listens on it out of our tree is ours."""
+    pids = []
+    recorded = server.get("pid")
+    identity = server.get("startedAt")
+    if (process_alive(recorded, identity)
+            and (identity or (worktree.get("path") and process_in_tree(recorded, normalized(worktree["path"]))))):
+        pids.append(recorded)
+    port, target = server.get("port"), worktree.get("path")
+    if isinstance(port, int) and not isinstance(port, bool) and target:
+        resolved = normalized(target)
+        pids.extend(pid for pid in listening_pids(port)
+                    if pid not in pids and process_in_tree(pid, resolved))
+    return pids
+
+
+def signal_group(pid: int, sig: int) -> None:
+    """Best-effort signal to the server's own process group — a dev command is
+    a shell wrapping a runtime wrapping a bundler, so killing the leader alone
+    orphans the listener."""
+    try:
+        group = os.getpgid(pid)
+        if group == pid:
+            os.killpg(group, sig)
+        else:
+            os.kill(pid, sig)
+    except OSError:
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+
+
+def inherit_root_worktree(meta: dict, participant: dict | None,
+                          primary: bool) -> None:
+    """Late-written primary rosters can omit the worktree or carry an empty
+    placeholder. The root block still owns that tree; explicit participant
+    state, including a disabled worktree, must keep precedence.
+    """
+    if participant is None or not primary:
+        return
+    if "worktree" in participant and participant["worktree"] != {}:
+        return
+    root = meta.get("worktree")
+    if isinstance(root, dict):
+        participant["worktree"] = root
+
+
+def worktree_state(meta: dict, repo_id: str | None) -> tuple[dict, dict, bool]:
+    """(participant-or-root state, its generic worktree block, primary)."""
+    selection = participant_selection(meta, repo_id)
+    participant, primary = selection if selection else (None, True)
+    inherit_root_worktree(meta, participant, primary)
+    state = participant if participant is not None else meta
+    worktree = state.get("worktree")
+    if not isinstance(worktree, dict) or worktree.get("enabled") is not True:
+        raise WorktreeError("run has no active worktree")
+    if worktree.get("adapter") != "generic":
+        raise WorktreeError("dev-server control is generic-adapter only")
+    return state, worktree, primary
+
+
+def project_primary(meta: dict, state: dict, primary: bool) -> None:
+    if primary and state is not meta:
+        for key in ("mainRepoPath", "repoPath", "branch", "buildBaseCommit",
+                    "worktree"):
+            if key in state:
+                meta[key] = state[key]
+
+
+def install_marker(run_dir: Path, worktree: dict) -> Path:
+    """One marker per worktree, not per run: a multi-repo run sets up several
+    trees and each needs its own install."""
+    return run_dir / (".worktree-server-installed-%s" % worktree.get("slug", ""))
+
+
+# What starting or stopping a server writes into a worktree block.
+SERVER_KEYS = ("server", "url", "started")
+
+
+def clear_server(worktree: dict) -> None:
+    worktree.pop("server", None)
+    worktree.pop("url", None)
+    worktree["started"] = False
+
+
+def probed_anchors(anchors: list[dict]) -> list[dict]:
+    """The anchors server_pids can find anything at: one with a recorded pid,
+    or a bare port that has a listener right now."""
+    bare = [anchor["port"] for anchor in anchors if not anchor.get("pid")
+            and isinstance(anchor.get("port"), int) and not isinstance(anchor.get("port"), bool)]
+    if len(bare) < 2:
+        return anchors
+    live = listening_ports(bare)
+    return [anchor for anchor in anchors if anchor.get("pid") or anchor.get("port") in live]
+
+
+def anchored_server_pids(worktree: dict, anchors: list[dict]) -> list[int]:
+    pids = []
+    for anchor in probed_anchors(anchors):
+        pids.extend(pid for pid in server_pids(worktree, anchor)
+                    if pid not in pids)
+    return pids
+
+
+def run_server_state(run_dir: Path, repo_id: str | None):
+    """(repo, worktree block, save) for one run participant's dev server."""
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    state, worktree, primary = worktree_state(meta, repo_id)
+
+    def save() -> None:
+        # A server can take minutes to come up, and the run's agent or the UI
+        # may write meta.json meanwhile. So this saves over what is on disk
+        # now and changes only what a server start or stop owns.
+        fresh = read_json(meta_path)
+        try:
+            fresh_state, fresh_worktree, fresh_primary = worktree_state(fresh, repo_id)
+        except WorktreeError:
+            # The worktree left the run while the server booted: nothing to record.
+            return
+        for key in SERVER_KEYS:
+            if key in worktree:
+                fresh_worktree[key] = worktree[key]
+            else:
+                fresh_worktree.pop(key, None)
+        project_primary(fresh, fresh_state, fresh_primary)
+        write_json(meta_path, fresh)
+
+    return state.get("mainRepoPath") or meta.get("mainRepoPath"), worktree, save
+
+
+def stop_server(run_dir: Path, repo_id: str | None = None) -> dict:
+    raw_repo, worktree, save = run_server_state(run_dir, repo_id)
+    return halt_server(worktree, server_stop_anchors(raw_repo, worktree), save)
+
+
+def server_stop_anchors(raw_repo, worktree):
+    server = worktree.get("server")
+    if isinstance(server, dict):
+        return [server]
+    return servers().server_stop_anchors(raw_repo, worktree)
+
+
+def start_server(run_dir: Path, repo_id: str | None = None) -> dict:
+    raw_repo, worktree, save = run_server_state(run_dir, repo_id)
+    return servers().launch_server(canonical_repo(raw_repo), worktree, run_dir, save)
+
+
+def adopt_checkout(run_dir: Path, path: str) -> dict:
+    """Makes a checkout something else created the run's worktree and starts
+    its app: the review checkout the Pull requests plugin keeps for a pull
+    request, for the QA run that walks it. Orc did not create the tree, so
+    it is never Orc's to delete (`managedByOrc: false`)."""
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    raw_repo = meta.get("mainRepoPath") or meta.get("repoPath")
+    if not isinstance(raw_repo, str) or not raw_repo.strip():
+        raise WorktreeError("meta.json has no mainRepoPath or repoPath")
+    repo = canonical_repo(raw_repo)
+    target = normalized(path)
+    listed = listed_worktrees(repo)
+    if target == repo or target not in listed:
+        raise WorktreeError("not a worktree of %s: %s" % (repo, target))
+    devd = devd_repo(repo)
+    adapter = "devd" if devd else "generic"
+    recorded = meta.get("worktree") if isinstance(meta.get("worktree"), dict) else {}
+    same_tree = normalized(recorded.get("path", "")) == target
+    # A second adoption keeps what the first one started, and a tree Orc
+    # created for this run stays Orc's to delete.
+    kept = {key: recorded[key] for key in ("operation", "server", "url", "started", "devd",
+                                           "relevantLinks", "relevantPath")
+            if key in recorded and same_tree}
+    meta["mainRepoPath"] = str(repo)
+    meta["repoPath"] = str(target)
+    meta["worktree"] = {
+        "enabled": True, "adapter": adapter, "slug": slugify(listed[target] or target.name),
+        "path": str(target), "managedByOrc": same_tree and recorded.get("managedByOrc") is True,
+        **({"devdRepo": devd} if devd else {}), **kept,
+    }
+    selection = participant_selection(meta, None)
+    if selection and selection[1]:
+        # The primary participant is the copy devd_attach and teardown read.
+        selection[0].update(mainRepoPath=str(repo), repoPath=str(target),
+                            worktree=meta["worktree"])
+    write_json(meta_path, meta)
+    config = load_config()
+    worktree_config = config.get("worktree")
+    details = {
+        "ok": True, "runDir": str(run_dir.resolve()), "mainRepoPath": str(repo), "adapter": adapter,
+        "path": str(target), "repoPath": str(target),
+        "start": not isinstance(worktree_config, dict) or worktree_config.get("start") is not False,
+        "server": server_config(repo, config),
+    }
+    if devd:
+        try:
+            details["devd"] = devd_attach(run_dir, None, start=details["start"])
+        except WorktreeError as exc:
+            details["devd"] = {"ok": False, "error": str(exc)}
+        return details
+    servers().setup(run_dir, None, details)
+    return details
+
+
+def main_server_state(raw_repo: str):
+    """(repo, worktree block, state dir, save) for a project's main checkout.
+
+    No run owns it, so its state sits beside the config, one directory per
+    project. The block has the run shape so the same start/stop serves both."""
+    repo = canonical_repo(raw_repo)
+    digest = hashlib.sha1(str(repo).encode("utf-8")).hexdigest()[:10]
+    name = re.sub(r"[^a-z0-9]+", "-", repo.name.lower()).strip("-") or "project"
+    state_dir = config_path().parent / "main-servers" / ("%s-%s" % (name, digest))
+    path = state_dir / "state.json"
+    state = read_json(path) if path.exists() else {}
+    worktree = state.get("worktree")
+    if not isinstance(worktree, dict):
+        worktree = {}
+    worktree.update({"enabled": True, "adapter": "generic", "slug": "main",
+                     "path": str(repo)})
+    state.update({"mainRepoPath": str(repo), "worktree": worktree})
+    return repo, worktree, state_dir, lambda: write_json(path, state)
+
+
+def stop_main_server(raw_repo: str) -> dict:
+    repo, worktree, _, save = main_server_state(raw_repo)
+    return halt_server(worktree, server_stop_anchors(str(repo), worktree), save)
+
+
+def start_main_server(raw_repo: str) -> dict:
+    repo, worktree, state_dir, save = main_server_state(raw_repo)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    # The main checkout is where seeds come from and where the user installs.
+    return servers().launch_server(repo, worktree, state_dir, save, seed=False)
+
+
+def halt_server(worktree: dict, anchors: list[dict], save) -> dict:
+    server = worktree.get("server") if isinstance(worktree.get("server"), dict) else {}
+    pids = anchored_server_pids(worktree, anchors)
+    active_anchors = [
+        anchor for anchor in probed_anchors(anchors) if server_pids(worktree, anchor)]
+    for pid in pids:
+        signal_group(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 10
+    while (anchored_server_pids(worktree, active_anchors)
+           and time.monotonic() < deadline):
+        time.sleep(0.2)
+    survivors = anchored_server_pids(worktree, active_anchors)
+    for pid in survivors:
+        signal_group(pid, signal.SIGKILL)
+    if survivors:
+        time.sleep(0.5)
+    remaining = anchored_server_pids(worktree, active_anchors)
+    if remaining:
+        raise WorktreeError("dev server did not stop: %s" %
+                            ", ".join(str(pid) for pid in remaining))
+    clear_server(worktree)
+    save()
+    return {"ok": True, "stopped": bool(pids), "pids": pids,
+            "port": server.get("port")}
+
+
+def resolve(run_dir: Path, repo_id: str | None = None) -> dict:
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    selection = participant_selection(meta, repo_id)
+    participant, primary = selection if selection else (None, True)
+    raw_repo = (participant_value(meta, participant, "mainRepoPath")
+                or participant_value(meta, participant, "repoPath"))
+    if not isinstance(raw_repo, str) or not raw_repo.strip():
+        raise WorktreeError("meta.json has no mainRepoPath or repoPath")
+    repo = canonical_repo(raw_repo)
+    branch = participant_value(meta, participant, "branch")
+    if not isinstance(branch, str) or not branch.strip():
+        raise WorktreeError("meta.json has no branch")
+    branch = branch.strip()
+    config = load_config()
+    repo_config = config.get("repos")
+    value, found = matching_value(repo_config, repo, "worktree")
+    source = "repos"
+    worktree_config = config.get("worktree")
+    if not isinstance(worktree_config, dict):
+        worktree_config = {}
+    if not found:
+        value, found = matching_value(worktree_config.get("repos"), repo)
+        source = "worktree.repos"
+        if found and isinstance(value, dict):
+            value = value.get("worktree")
+    if not found:
+        setup_version, repo_found = matching_value(
+            repo_config, repo, "setupVersion")
+        if (repo_found and not isinstance(setup_version, bool)
+                and isinstance(setup_version, (int, float))
+                and setup_version >= 1):
+            value, found, source = True, True, "repos"
+    if found and not isinstance(value, bool):
+        raise WorktreeError("configured worktree value must be true or false")
+    devd = devd_repo(repo)
+    adapter = "devd" if devd else "generic"
+    slug = slugify(branch)
+    path = repo.parent / (repo.name + "-worktrees") / slug
+    base_meta = dict(meta)
+    if participant is not None:
+        base_meta.update(participant)
+    participant_base = (ref_commit(repo, participant.get("baseCommit"))
+                        if participant is not None else None)
+    if participant_base:
+        base, base_source, fallbacks = participant_base, "baseCommit", []
+    else:
+        base, base_source, fallbacks = resolve_base(repo, base_meta)
+    result = {
+        "ok": True, "runDir": str(run_dir.resolve()), "mainRepoPath": str(repo),
+        "configured": found, "enabled": value if found else None,
+        "configSource": source if found else None, "adapter": adapter,
+        **({"devdRepo": devd} if devd else {}),
+        "branch": branch, "slug": slug, "path": str(path),
+        "start": worktree_config.get("start") is not False,
+        "baseCommit": base, "baseSource": base_source,
+        "fallbacks": fallbacks, "server": server_config(repo, config),
+    }
+    if participant is not None:
+        identity = participant.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        remote_identity = normalized_remote(
+            identity.get("remote") or participant.get("remote"))
+        result.update({"repoId": participant["id"], "primary": primary,
+                       "status": participant.get("status"),
+                       "identity": {
+                           "path": str(repo),
+                           **({"remote": remote_identity}
+                              if remote_identity else {}),
+                       }})
+    return result
+
+
+def listed_worktrees(repo: Path) -> dict[Path, str | None]:
+    result = run_git(repo, "worktree", "list", "--porcelain")
+    listed = {}
+    path = None
+    branch = None
+    for line in result.stdout.splitlines() + [""]:
+        if line.startswith("worktree "):
+            if path is not None:
+                listed[path] = branch
+            path = Path(line[9:]).resolve()
+            branch = None
+        elif line.startswith("branch refs/heads/"):
+            branch = line[len("branch refs/heads/"):]
+        elif not line and path is not None:
+            listed[path] = branch
+            path = None
+            branch = None
+    return listed
+
+
+def devd_bin() -> str:
+    command = rails_helpers.command()
+    if not command:
+        raise WorktreeError("Install and configure Rails helpers before using this adapter")
+    return command
+
+
+def run_devd(*args: str) -> dict:
+    try:
+        result = subprocess.run([devd_bin(), *args], text=True, capture_output=True,
+                                timeout=900)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise WorktreeError("orc-devd %s failed: %s" % (args[0], exc)) from exc
+    if result.returncode:
+        try:
+            detail = json.loads(result.stderr.strip().splitlines()[-1])["error"]
+        except (ValueError, KeyError, IndexError, TypeError):
+            detail = (result.stderr or result.stdout).strip() or "exit %d" % result.returncode
+        raise WorktreeError("orc-devd %s failed: %s" % (args[0], detail))
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        return {"ok": True}
+
+
+def devd_worktree_id(worktree: dict) -> str | None:
+    devd = worktree.get("devd")
+    value = devd.get("id") if isinstance(devd, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
+def devd_label(branch: str) -> str:
+    """The run's host label: its ticket when the branch names one, so rails
+    uses the ticket label, else the branch's last part."""
+    for segment in branch.lower().split("/"):
+        if re.fullmatch(r"[a-z]+-\d+", segment):
+            return segment
+    tail = slugify(branch.split("/")[-1])[:DEVD_LABEL_LIMIT].strip("-")
+    return tail or "run"
+
+
+def devd_family(meta: dict, run_dir: Path) -> str:
+    split = meta.get("splitFrom")
+    if isinstance(split, dict) and isinstance(split.get("runId"), str):
+        return split["runId"]
+    run_id = meta.get("runId")
+    return run_id if isinstance(run_id, str) and run_id else run_dir.name
+
+
+def devd_attach(run_dir: Path, repo_id: str | None, database: bool = False,
+                start: bool = True) -> dict:
+    """Registers the participant's worktree with orc-devd, gives it its own
+    database when the run adds a migration, and starts it in the background."""
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    selection = participant_selection(meta, repo_id)
+    participant, primary = selection if selection else (None, True)
+    inherit_root_worktree(meta, participant, primary)
+    state = participant if participant is not None else meta
+    worktree = state.get("worktree")
+    if not isinstance(worktree, dict) or not worktree.get("path") or not worktree.get("devdRepo"):
+        raise WorktreeError("run has no devd worktree to register")
+    run_id = meta.get("runId") if isinstance(meta.get("runId"), str) else run_dir.name
+    known = worktree.get("devd") if isinstance(worktree.get("devd"), dict) else {}
+    label = known.get("label") or devd_label(state.get("branch") or worktree["slug"])
+    registered = run_devd("register", "--repo", worktree["devdRepo"],
+                          "--path", worktree["path"], "--label", label,
+                          "--family", devd_family(meta, run_dir), "--run", run_id)
+    entry = registered.get("worktree") or {}
+    devd_id = entry.get("id")
+    if not isinstance(devd_id, str):
+        raise WorktreeError("orc-devd register returned no worktree id")
+    database_name = entry.get("database")
+    if database and not database_name:
+        database_name = run_devd("db", "copy", devd_id).get("database")
+    if start:
+        run_devd("start", devd_id)
+    meta = read_json(meta_path)
+    selection = participant_selection(meta, repo_id)
+    participant, primary = selection if selection else (None, True)
+    inherit_root_worktree(meta, participant, primary)
+    state = participant if participant is not None else meta
+    worktree = state["worktree"]
+    worktree["devd"] = {"id": devd_id, "label": entry.get("label", label),
+                        "family": entry.get("family"),
+                        **({"database": database_name} if database_name else {})}
+    hosts = entry.get("hosts") or []
+    if isinstance(entry.get("url"), str):
+        worktree["url"] = entry["url"]
+    if hosts:
+        worktree["baseDomain"] = hosts[0]
+    worktree["started"] = False
+    if primary and participant is not None:
+        meta["worktree"] = participant["worktree"]
+    write_json(meta_path, meta)
+    return {"ok": True, "id": devd_id, "url": worktree.get("url"),
+            "database": database_name,
+            "warnings": registered.get("warnings") or []}
+
+
+def adopt_legacy_rails() -> dict:
+    """Moves open runs' rails worktrees from the retired worktree CLI to
+    orc-devd, keeping each tree, branch and files."""
+    legacy_pattern = rails_helpers.configuration().get('legacyDomainPattern')
+    if not legacy_pattern:
+        raise WorktreeError("Rails helpers must configure legacy domain adoption")
+    runs = runs_dir()
+    adopted: list[dict] = []
+    skipped: list[dict] = []
+    for meta_path in sorted(runs.glob("*/meta.json"), key=str):
+        try:
+            meta = read_json(meta_path)
+        except WorktreeError:
+            continue
+        if meta.get("status") in TERMINAL_RUN_STATUSES:
+            continue
+        states = [meta] + [p for p in meta.get("repositories") or [] if isinstance(p, dict)]
+        legacy = [s for s in states
+                  if isinstance(s.get("worktree"), dict)
+                  and s["worktree"].get("enabled") is True
+                  and s["worktree"].get("adapter") == "rails"]
+        if not legacy:
+            continue
+        run_id = meta.get("runId") if isinstance(meta.get("runId"), str) else meta_path.parent.name
+        registered: dict[str, dict] = {}
+        for state in legacy:
+            worktree = state["worktree"]
+            path = worktree.get("path")
+            if not isinstance(path, str) or not Path(path).is_dir():
+                skipped.append({"runId": run_id, "path": path, "reason": "worktree is gone"})
+                continue
+            if path not in registered:
+                domain = re.fullmatch(legacy_pattern,
+                                      str(worktree.get("baseDomain") or ""))
+                label = domain.group(1) if domain else devd_label(
+                    str(state.get("branch") or worktree.get("slug") or ""))
+                try:
+                    entry = run_devd("register", "--repo", "rails", "--path", path,
+                                     "--label", label,
+                                     "--family", devd_family(meta, meta_path.parent),
+                                     "--run", run_id)["worktree"]
+                    run_devd("start", entry["id"])
+                except (WorktreeError, KeyError, TypeError) as exc:
+                    skipped.append({"runId": run_id, "path": path, "reason": str(exc)})
+                    continue
+                registered[path] = entry
+            entry = registered[path]
+            worktree.update({
+                "adapter": "devd", "devdRepo": "rails",
+                "devd": {"id": entry["id"], "label": entry.get("label"),
+                         "family": entry.get("family")},
+                "url": entry.get("url"), "started": False,
+                "legacySlug": worktree.get("slug"),
+            })
+            if entry.get("hosts"):
+                worktree["baseDomain"] = entry["hosts"][0]
+        if registered:
+            write_json(meta_path, meta)
+            adopted.extend({"runId": run_id, "id": e["id"], "url": e.get("url")}
+                           for e in registered.values())
+    return {"ok": True, "adopted": adopted, "skipped": skipped}
+
+
+def runs_dir() -> Path:
+    return Path(os.environ.get("ORC_RUNS_DIR") or home() / ".orc" / "runs")
+
+
+def tree_owner(run_dir: Path, target: Path) -> tuple[Path, dict] | None:
+    """(meta path, meta) of the other run whose enabled worktree is `target`."""
+    own = run_dir.resolve()
+    for meta_path in sorted(runs_dir().glob("*/meta.json"), key=str):
+        if meta_path.parent.resolve() == own:
+            continue
+        try:
+            meta = read_json(meta_path)
+        except WorktreeError:
+            continue
+        states = [meta] + [p for p in meta.get("repositories") or [] if isinstance(p, dict)]
+        for state in states:
+            worktree = state.get("worktree")
+            if (isinstance(worktree, dict) and worktree.get("enabled") is True
+                    and isinstance(worktree.get("path"), str)
+                    and normalized(worktree["path"]) == target):
+                return meta_path, meta
+    return None
+
+
+def take_settled_tree(run_dir: Path, target: Path, adapter: str) -> dict:
+    """Hands `target` from the finished run that made it to this one, which
+    works on the same branch: a follow-up run of a merged or complete run.
+    The old run stops owning it, so its cleanup never deletes the tree under
+    this run, and this run keeps the old app (its devd id, url, server).
+    Returns the old worktree block plus `takenFrom`. Refuses while the owner
+    is still open, and for a tree no run made."""
+    found = tree_owner(run_dir, target)
+    if found is None:
+        raise WorktreeError(
+            "worktree path is already registered to another run: %s; no Orc run owns it, "
+            "so adopt it with `orc-worktree adopt-checkout --run-dir %s --path %s`"
+            % (target, run_dir, target))
+    meta_path, meta = found
+    owner = meta.get("runId") if isinstance(meta.get("runId"), str) else meta_path.parent.name
+    if meta.get("status") not in TERMINAL_RUN_STATUSES:
+        raise WorktreeError(
+            "worktree path is already registered to another run: %s is still open "
+            "(%s) and works in %s; finish or cancel it first" % (owner, meta.get("status"), target))
+    previous = {}
+    for state in [meta] + [p for p in meta.get("repositories") or [] if isinstance(p, dict)]:
+        worktree = state.get("worktree")
+        if isinstance(worktree, dict) and isinstance(worktree.get("path"), str) \
+                and normalized(worktree["path"]) == target:
+            if worktree.get("adapter") == adapter and not previous:
+                previous = {key: worktree[key] for key in ("devd", "server", "url", "started")
+                            if key in worktree}
+            worktree.update(managedByOrc=False, handedTo=run_dir.resolve().name)
+    write_json(meta_path, meta)
+    return {**previous, "takenFrom": owner}
+
+
+def setup_generic(run_dir: Path, repo_id: str | None = None,
+                  expected: str = "generic", database: bool = False,
+                  require_worktree: bool = False) -> dict:
+    details = resolve(run_dir, repo_id)
+    if require_worktree:
+        # A repository added mid-run never takes over its main checkout.
+        details["enabled"] = True
+    if details["enabled"] is False:
+        if repo_id is not None:
+            meta_path = run_dir / "meta.json"
+            meta = read_json(meta_path)
+            selection = participant_selection(meta, repo_id)
+            if selection:
+                participant, _ = selection
+                participant["status"] = "ready"
+                participant.pop("setupError", None)
+                write_json(meta_path, meta)
+        details["reused"] = False
+        return details
+    if details["enabled"] is None:
+        raise WorktreeError("worktree preference is not configured")
+    if details["adapter"] != expected:
+        raise WorktreeError("setup-%s cannot set up the %s adapter; use setup-%s" %
+                            (expected, details["adapter"], details["adapter"]))
+    repo = Path(details["mainRepoPath"])
+    target = Path(details["path"])
+    branch = details["branch"]
+    listed = listed_worktrees(repo)
+    if target in listed and not target.exists():
+        # Deleted by hand: git still lists it until pruned, and would refuse
+        # to make the tree again.
+        run_git(repo, "worktree", "prune")
+        listed = listed_worktrees(repo)
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    selection = participant_selection(meta, repo_id)
+    participant, primary = selection if selection else (None, True)
+    reused = False
+    handed = None
+    if target in listed:
+        if listed[target] != branch:
+            raise WorktreeError(
+                "worktree path is registered to %s, expected %s" %
+                (listed[target] or "detached HEAD", branch))
+        recorded = participant_value(meta, participant, "worktree")
+        owns_target = (
+            isinstance(recorded, dict)
+            and recorded.get("enabled") is True
+            and recorded.get("managedByOrc") is True
+            and recorded.get("adapter") == expected
+            and normalized(recorded.get("path", "")) == target
+        )
+        if not owns_target:
+            handed = take_settled_tree(run_dir, target, expected)
+        reused = True
+    else:
+        if target.exists():
+            raise WorktreeError("worktree path already exists but is not registered: %s" % target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        branch_exists = ref_commit(repo, "refs/heads/%s" % branch) is not None
+        if branch_exists:
+            run_git(repo, "worktree", "add", str(target), branch)
+        else:
+            run_git(repo, "worktree", "add", "-b", branch, str(target),
+                    details["baseCommit"])
+    actual_branch = git_value(target, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if actual_branch != branch:
+        raise WorktreeError("created worktree has branch %s, expected %s" %
+                            (actual_branch, branch))
+    original = (participant_value(meta, participant, "mainRepoPath")
+                or participant_value(meta, participant, "repoPath"))
+    state = participant if participant is not None else meta
+    state["mainRepoPath"] = str(canonical_repo(original))
+    state["repoPath"] = str(target.resolve())
+    if "buildBaseCommit" not in state:
+        state["buildBaseCommit"] = details["baseCommit"]
+    prior = state.get("worktree") if isinstance(state.get("worktree"), dict) else {}
+    previous = handed or (prior if reused else None)
+    state["worktree"] = {
+        "enabled": True, "adapter": expected, "slug": details["slug"],
+        "path": str(target.resolve()), "managedByOrc": True,
+        # Orc's Recreate tracks its start through this until the app is up.
+        **({"operation": prior["operation"]} if isinstance(prior.get("operation"), dict) else {}),
+    }
+    if expected == "generic" and isinstance(previous, dict):
+        for key in ("server", "url", "started"):
+            if key in previous:
+                state["worktree"][key] = previous[key]
+    if expected == "devd":
+        state["worktree"]["devdRepo"] = details["devdRepo"]
+        if isinstance(previous, dict) and isinstance(previous.get("devd"), dict):
+            state["worktree"]["devd"] = previous["devd"]
+    if participant is not None:
+        participant["status"] = "ready"
+        participant.pop("setupError", None)
+    if primary and participant is not None:
+        for key in ("mainRepoPath", "repoPath", "branch", "buildBaseCommit", "worktree"):
+            if key in participant:
+                meta[key] = participant[key]
+    write_json(meta_path, meta)
+    details.update({"reused": reused, "repoPath": str(target.resolve()),
+                    "buildBaseCommit": state["buildBaseCommit"]})
+    if handed:
+        details["takenFrom"] = handed["takenFrom"]
+    if expected == "devd":
+        # Like a generic server, a failed registration or boot never fails
+        # setup: the tree exists, and `orc-devd start` retries it.
+        try:
+            details["devd"] = devd_attach(run_dir, repo_id, database=database,
+                                          start=details["start"])
+        except WorktreeError as exc:
+            details["devd"] = {"ok": False, "error": str(exc)}
+        return details
+    if not reused:
+        # Opt-in: only a project whose scripts[] flags runOnWorktreeCreate
+        # gets a "scripts" key at all, and nothing a script does fails setup.
+        try:
+            launched = run_create_scripts(run_dir, repo, target)
+        except Exception as exc:  # noqa: BLE001
+            launched = [{"ok": False, "error": str(exc)}]
+        if launched:
+            details["scripts"] = launched
+    servers().setup(run_dir, repo_id, details)
+    return details
+
+
+def teardown_generic(run_dir: Path, repo_id: str | None = None) -> dict:
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    selection = participant_selection(meta, repo_id)
+    participant, primary = selection if selection else (None, True)
+    inherit_root_worktree(meta, participant, primary)
+    state = participant if participant is not None else meta
+    worktree = state.get("worktree")
+    if not isinstance(worktree, dict) or worktree.get("enabled") is not True:
+        return {"ok": True, "enabled": False, "removed": False}
+    adapter = worktree.get("adapter")
+    if adapter not in ("generic", "devd"):
+        raise WorktreeError("teardown cannot tear down the %s adapter" % adapter)
+    # Stop before the dirty-tree refusal so an abandoned tree cannot leak its
+    # listener.
+    devd_id = devd_worktree_id(worktree)
+    if adapter == "devd":
+        if devd_id:
+            run_devd("stop", devd_id)
+    else:
+        stop_server(run_dir, repo_id)
+    meta = read_json(meta_path)
+    selection = participant_selection(meta, repo_id)
+    participant, primary = selection if selection else (None, True)
+    inherit_root_worktree(meta, participant, primary)
+    state = participant if participant is not None else meta
+    worktree = state["worktree"]
+    raw_repo = state.get("mainRepoPath")
+    raw_target = worktree.get("path")
+    if not isinstance(raw_repo, str) or not isinstance(raw_target, str):
+        raise WorktreeError("worktree metadata is missing mainRepoPath or path")
+    repo = canonical_repo(raw_repo)
+    target = normalized(raw_target)
+    branch = state.get("branch")
+    if not isinstance(branch, str) or not branch.strip():
+        raise WorktreeError("worktree metadata is missing branch")
+    managed_root = (repo.parent / (repo.name + "-worktrees")).resolve()
+    try:
+        target.relative_to(managed_root)
+    except ValueError:
+        raise WorktreeError(
+            "worktree path is outside managed root: %s (expected below %s)" %
+            (target, managed_root))
+    listed = listed_worktrees(repo)
+    removed = False
+    if target in listed:
+        # A linked worktree keeps a `.git` file pointing at the main
+        # checkout's gitdir; a `.git` directory means a full checkout that
+        # setup never created, and removing it would destroy a repository.
+        if not (target / ".git").is_file():
+            raise WorktreeError(
+                "worktree is not a linked checkout; refusing teardown: %s" % target)
+        actual_branch = listed[target]
+        if actual_branch != branch:
+            raise WorktreeError(
+                "worktree branch mismatch; refusing teardown: %s has %s, "
+                "expected %s" % (target, actual_branch or "detached HEAD", branch))
+        status = run_git(target, "status", "--porcelain").stdout.strip()
+        if status:
+            raise WorktreeError("worktree is dirty; refusing teardown: %s" % target)
+        run_git(repo, "worktree", "remove", str(target))
+        removed = True
+    elif target.exists():
+        raise WorktreeError("worktree path exists but is not registered: %s" % target)
+    if devd_id:
+        # After removal, so a refused teardown keeps the run's database copy.
+        run_devd("unregister", devd_id)
+    worktree["enabled"] = False
+    install_marker(run_dir, worktree).unlink(missing_ok=True)
+    state["repoPath"] = str(repo)
+    if participant is not None:
+        participant["status"] = "ready"
+    if primary and participant is not None:
+        meta["mainRepoPath"] = participant["mainRepoPath"]
+        meta["repoPath"] = participant["repoPath"]
+        meta["branch"] = participant["branch"]
+        meta["worktree"] = participant["worktree"]
+    write_json(meta_path, meta)
+    return {"ok": True, "enabled": False, "removed": removed,
+            "path": str(target), "branch": state.get("branch"),
+            **({"repoId": participant["id"]} if participant is not None else {})}
+
+
+def positive_number(raw: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a number greater than zero") from None
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError("must be a number greater than zero")
+    return value
+
+
+def monitor_participants(meta: dict, warnings: list[str],
+                         source: Path) -> list[tuple[dict, str | None]]:
+    """Valid participant states without the multi-repo primary projection."""
+    repositories = meta.get("repositories")
+    version = meta.get("repositoriesVersion")
+    if version == 1:
+        if not isinstance(repositories, list) or not repositories:
+            warnings.append(
+                "skipping %s: repositoriesVersion 1 requires a non-empty "
+                "repositories array" % source)
+            return []
+        result = []
+        seen = set()
+        for index, participant in enumerate(repositories):
+            if not isinstance(participant, dict):
+                warnings.append(
+                    "skipping %s participant %d: expected an object" %
+                    (source, index))
+                continue
+            repo_id = participant.get("id")
+            if not isinstance(repo_id, str) or not repo_id.strip():
+                warnings.append(
+                    "skipping %s participant %d: missing repository id" %
+                    (source, index))
+                continue
+            repo_id = repo_id.strip()
+            if repo_id in seen:
+                warnings.append(
+                    "skipping %s participant %s: duplicate repository id" %
+                    (source, repo_id))
+                continue
+            seen.add(repo_id)
+            result.append((participant, repo_id))
+        return result
+    if repositories is not None or version is not None:
+        warnings.append(
+            "skipping %s: unsupported repository participant metadata" % source)
+        return []
+    return [(meta, None)]
+
+
+def monitor_activity_timestamp(path: Path) -> float | None:
+    try:
+        value = path.stat().st_mtime
+    except OSError:
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def monitor_roots_and_claims(warnings: list[str]) -> tuple[dict[Path, dict],
+                                                               dict[Path, list[dict]]]:
+    """Read run metadata into canonical repo roots and active path claims."""
+    runs_dir = home() / ".orc" / "runs"
+    roots: dict[Path, dict] = {}
+    claims: dict[Path, list[dict]] = {}
+    repo_cache: dict[str, tuple[Path | None, str | None]] = {}
+    try:
+        meta_paths = sorted(runs_dir.glob("*/meta.json"), key=lambda item: str(item))
+    except OSError as exc:
+        warnings.append("cannot scan %s: %s" % (runs_dir, exc))
+        return roots, claims
+    for meta_path in meta_paths:
+        try:
+            meta = read_json(meta_path)
+        except WorktreeError as exc:
+            warnings.append("skipping %s: %s" % (meta_path, exc))
+            continue
+        participants = monitor_participants(meta, warnings, meta_path)
+        run_id = meta.get("runId")
+        if not isinstance(run_id, str) or not run_id.strip():
+            run_id = meta_path.parent.name
+        run_status = meta.get("status")
+        run_status = run_status.strip() if isinstance(run_status, str) else "unknown"
+        meta_activity = monitor_activity_timestamp(meta_path)
+        for participant, repo_id in participants:
+            identity = participant.get("identity")
+            identity = identity if isinstance(identity, dict) else {}
+            raw_repo = (identity.get("path") or participant.get("mainRepoPath")
+                        or (meta.get("mainRepoPath") if participant is meta else None))
+            if not isinstance(raw_repo, str) or not raw_repo.strip():
+                warnings.append(
+                    "skipping %s%s: missing repository path" %
+                    (meta_path, " participant %s" % repo_id if repo_id else ""))
+                continue
+            cache_key = str(expand_path(raw_repo).resolve())
+            if cache_key not in repo_cache:
+                try:
+                    repo_cache[cache_key] = (canonical_repo(raw_repo), None)
+                except (OSError, WorktreeError) as exc:
+                    repo_cache[cache_key] = (None, str(exc))
+            repo, repo_error = repo_cache[cache_key]
+            if repo is None:
+                warnings.append(
+                    "skipping %s%s: %s" %
+                    (meta_path, " participant %s" % repo_id if repo_id else "",
+                     repo_error))
+                continue
+            managed_root = (repo.parent / (repo.name + "-worktrees")).resolve()
+            roots.setdefault(repo, {"managedRoot": managed_root})
+            worktree = participant.get("worktree")
+            if not isinstance(worktree, dict) or worktree.get("enabled") is not True:
+                continue
+            raw_target = worktree.get("path") or participant.get("repoPath")
+            if not isinstance(raw_target, str) or not raw_target.strip():
+                warnings.append(
+                    "skipping active worktree claim in %s%s: missing path" %
+                    (meta_path, " participant %s" % repo_id if repo_id else ""))
+                continue
+            target = normalized(raw_target)
+            try:
+                relative = target.relative_to(managed_root)
+                if not relative.parts:
+                    raise ValueError
+            except ValueError:
+                warnings.append(
+                    "skipping active worktree claim outside managed root: %s" %
+                    target)
+                continue
+            participant_status = participant.get("status")
+            claim = {
+                "runId": run_id,
+                "repositoryId": repo_id,
+                "runStatus": run_status,
+                "participantStatus": (
+                    participant_status.strip()
+                    if isinstance(participant_status, str) else None),
+                "branch": (
+                    participant.get("branch").strip()
+                    if isinstance(participant.get("branch"), str) else None),
+                "metaActivity": meta_activity,
+                "worktree": worktree,
+                "repo": repo,
+            }
+            claims.setdefault(target, []).append(claim)
+    return roots, claims
+
+
+def process_snapshot(warnings: list[str]) -> dict[int, dict]:
+    """One injectable ps snapshot, including start identity for safe PID reuse."""
+    injected = os.environ.get("ORC_WORKTREE_PS_SNAPSHOT")
+    if injected is not None:
+        try:
+            values = json.loads(injected)
+            if not isinstance(values, list):
+                raise ValueError("snapshot must be a JSON array")
+        except ValueError as exc:
+            warnings.append("cannot read injected process snapshot: %s" % exc)
+            return {}
+        records = values
+    else:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,rss=,lstart=,command="],
+            text=True, capture_output=True)
+        if result.returncode:
+            warnings.append(
+                "cannot scan processes: %s" %
+                ((result.stderr or result.stdout).strip() or
+                 "ps exited %d" % result.returncode))
+            return {}
+        records = []
+        pattern = re.compile(
+            r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+"
+            r"(\S+\s+\S+\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(.*)$")
+        for line in result.stdout.splitlines():
+            match = pattern.match(line)
+            if not match:
+                continue
+            pid, ppid, rss, started, command = match.groups()
+            records.append({
+                "pid": int(pid), "ppid": int(ppid), "rss": int(rss),
+                "startedAt": started, "command": command,
+            })
+    snapshot = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        pid, ppid, rss = record.get("pid"), record.get("ppid"), record.get("rss")
+        command = record.get("command")
+        if (isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0
+                or isinstance(ppid, bool) or not isinstance(ppid, int)
+                or isinstance(rss, bool) or not isinstance(rss, int) or rss < 0
+                or not isinstance(command, str)):
+            continue
+        identity = record.get("startedAt")
+        snapshot[pid] = {
+            "pid": pid, "ppid": ppid, "rss": rss, "command": command,
+            "startedAt": identity if isinstance(identity, str) else None,
+        }
+    return snapshot
+
+
+def run_git_readonly(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    env = git_env()
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], text=True, capture_output=True,
+        env=env)
+
+
+def command_mentions_path(command: str, path: str) -> bool:
+    """Match one argv path, not a sibling that merely shares its prefix."""
+    return re.search(
+        re.escape(path) + r"""(?=$|[/\s'",;)\]])""", command) is not None
+
+
+def head_activity(path: Path) -> float | None:
+    result = run_git_readonly(path, "log", "-1", "--format=%ct", "HEAD")
+    if result.returncode:
+        return None
+    try:
+        value = float(result.stdout.strip())
+    except ValueError:
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def monitor_advice(row: dict) -> tuple[str, str]:
+    if not row["exists"]:
+        return "review", "worktree is missing; verify metadata and registration"
+    if not row["registered"]:
+        return "review", "worktree is not registered; inspect before cleanup"
+    if row["dirty"] is True:
+        return "review", "dirty worktree; inspect changes before cleanup"
+    if row["dirty"] is None:
+        return "review", "Git state is unknown; inspect before cleanup"
+    if not row["claimed"]:
+        return "review", "unclaimed worktree; identify its owner before cleanup"
+    if row["runStatus"] in TERMINAL_RUN_STATUSES:
+        return "clean-up", "terminal run and clean worktree; consider manual cleanup"
+    if row["stale"]:
+        return "review", "stale active run; confirm it is abandoned before cleanup"
+    return "keep", "active clean worktree"
+
+
+def monitor_inventory(stale_hours: float, interval: float) -> dict:
+    warnings: list[str] = []
+    roots, claims = monitor_roots_and_claims(warnings)
+    registrations: dict[Path, dict] = {}
+    for repo, root in sorted(roots.items(), key=lambda pair: str(pair[0])):
+        try:
+            listed = listed_worktrees(repo)
+        except WorktreeError as exc:
+            warnings.append("cannot scan registered worktrees for %s: %s" %
+                            (repo, exc))
+            continue
+        for path, branch in listed.items():
+            try:
+                relative = path.relative_to(root["managedRoot"])
+                if not relative.parts:
+                    continue
+            except ValueError:
+                continue
+            previous = registrations.get(path)
+            if previous is not None and previous["repo"] != repo:
+                warnings.append("worktree is registered by multiple repos: %s" % path)
+                continue
+            registrations[path] = {"repo": repo, "branch": branch}
+    all_paths = sorted(set(registrations) | set(claims), key=lambda item: str(item))
+    rows = []
+    private_claims = {}
+    for path in all_paths:
+        path_claims = claims.get(path, [])
+        if len(path_claims) > 1:
+            owners = ", ".join(sorted(claim["runId"] for claim in path_claims))
+            warnings.append("multiple runs claim %s: %s" % (path, owners))
+        claim = max(
+            path_claims,
+            key=lambda item: (item["metaActivity"] or -1, item["runId"]),
+            default=None)
+        registration = registrations.get(path)
+        repo = registration["repo"] if registration else (
+            claim["repo"] if claim else None)
+        exists = path.is_dir()
+        dirty = None
+        if exists:
+            result = run_git_readonly(path, "status", "--porcelain")
+            if result.returncode:
+                warnings.append(
+                    "cannot inspect Git state for %s: %s" %
+                    (path, (result.stderr or result.stdout).strip() or
+                     "git status failed"))
+            else:
+                dirty = bool(result.stdout.strip())
+        activity = claim["metaActivity"] if claim else None
+        if activity is None and exists:
+            activity = head_activity(path)
+        raw_age_hours = (
+            max(0.0, time.time() - activity) / 3600.0
+            if activity is not None else None)
+        age_hours = round(raw_age_hours, 1) if raw_age_hours is not None else None
+        row = {
+            "path": str(path),
+            "mainRepoPath": str(repo) if repo else None,
+            "branch": (
+                registration["branch"] if registration else
+                (claim["branch"] if claim else None)),
+            "claimed": claim is not None,
+            "runId": claim["runId"] if claim else None,
+            "repositoryId": claim["repositoryId"] if claim else None,
+            "runStatus": claim["runStatus"] if claim else "unclaimed",
+            "participantStatus": claim["participantStatus"] if claim else None,
+            "registered": registration is not None,
+            "exists": exists,
+            "dirty": dirty,
+            "activityAt": (
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(activity))
+                if activity is not None else None),
+            "ageHours": age_hours,
+            "stale": (
+                raw_age_hours is not None and raw_age_hours >= stale_hours),
+            "processCount": 0,
+            "rssKb": 0,
+            "advice": "",
+            "adviceReason": "",
+        }
+        rows.append(row)
+        if claim:
+            private_claims[path] = claim
+    processes = process_snapshot(warnings)
+    assignment: dict[int, Path] = {}
+    resolved_home = home()
+    raw_home = Path(os.environ.get("HOME", str(resolved_home))).absolute()
+
+    def command_names(path: Path) -> list[str]:
+        names = [str(path)]
+        try:
+            relative = path.relative_to(resolved_home)
+        except ValueError:
+            return names
+        alias = str(raw_home / relative)
+        if alias not in names:
+            names.append(alias)
+        return names
+
+    for pid, process in sorted(processes.items()):
+        candidates = [
+            (len(name), str(path), path)
+            for path in all_paths
+            for name in command_names(path)
+            if command_mentions_path(process["command"], name)
+        ]
+        matched = max(candidates)[2] if candidates else None
+        if matched is not None:
+            assignment[pid] = matched
+    # A generic server launcher may not name its cwd in argv. Only trust its
+    # recorded pid when the start-time identity from the same ps snapshot
+    # matches, so a reused pid is never charged to an old worktree.
+    for path, claim in private_claims.items():
+        worktree = claim["worktree"]
+        server = worktree.get("server")
+        if not isinstance(server, dict):
+            continue
+        pid, identity = server.get("pid"), server.get("startedAt")
+        process = processes.get(pid) if isinstance(pid, int) else None
+        if (pid not in assignment and process is not None
+                and isinstance(identity, str) and identity
+                and process["startedAt"] == identity):
+            assignment[pid] = path
+    changed = True
+    while changed:
+        changed = False
+        for pid, process in sorted(processes.items()):
+            if pid in assignment:
+                continue
+            parent_path = assignment.get(process["ppid"])
+            if parent_path is not None:
+                assignment[pid] = parent_path
+                changed = True
+    by_path = {Path(row["path"]): row for row in rows}
+    for pid, path in assignment.items():
+        row = by_path[path]
+        row["processCount"] += 1
+        row["rssKb"] += processes[pid]["rss"]
+    for row in rows:
+        row["advice"], row["adviceReason"] = monitor_advice(row)
+    advice_order = {"clean-up": 0, "review": 1, "keep": 2}
+    rows.sort(key=lambda row: (
+        -row["rssKb"],
+        advice_order[row["advice"]],
+        -(row["ageHours"] if row["ageHours"] is not None else -1),
+        row["path"],
+    ))
+    summary = {
+        "worktreeCount": len(rows),
+        "claimedCount": sum(row["claimed"] for row in rows),
+        "unclaimedCount": sum(not row["claimed"] for row in rows),
+        "dirtyCount": sum(row["dirty"] is True for row in rows),
+        "missingCount": sum(not row["exists"] for row in rows),
+        "staleCount": sum(row["stale"] for row in rows),
+        "processCount": sum(row["processCount"] for row in rows),
+        "rssKb": sum(row["rssKb"] for row in rows),
+    }
+    return {
+        "ok": True,
+        "schemaVersion": 1,
+        "intervalSeconds": interval,
+        "staleHours": stale_hours,
+        "summary": summary,
+        "warnings": sorted(set(warnings)),
+        "worktrees": rows,
+    }
+
+
+def human_age(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    if value < 1:
+        return "%dm" % round(value * 60)
+    if value < 48:
+        return "%.1fh" % value
+    return "%.1fd" % (value / 24)
+
+
+def human_rss(value: int) -> str:
+    return "%.1fM" % (value / 1024) if value >= 1024 else "%dK" % value
+
+
+def render_monitor(payload: dict) -> str:
+    headings = ("STATUS", "AGE", "RSS", "PROCS", "GIT", "ADVICE", "WORKTREE")
+    values = []
+    for row in payload["worktrees"]:
+        values.append((
+            row["runStatus"],
+            human_age(row["ageHours"]),
+            human_rss(row["rssKb"]),
+            str(row["processCount"]),
+            "missing" if not row["exists"] else (
+                "dirty" if row["dirty"] is True else
+                "clean" if row["dirty"] is False else "unknown"),
+            row["advice"],
+            "%s/%s" % (
+                Path(row["mainRepoPath"]).name
+                if row["mainRepoPath"] else "unknown",
+                Path(row["path"]).name),
+        ))
+    widths = [
+        max([len(headings[index]), *(len(row[index]) for row in values)])
+        for index in range(len(headings))
+    ]
+    lines = [
+        "  ".join(headings[index].ljust(widths[index])
+                  for index in range(len(headings))),
+        "  ".join("-" * width for width in widths),
+    ]
+    lines.extend(
+        "  ".join(value.ljust(widths[index])
+                  for index, value in enumerate(row))
+        for row in values)
+    summary = payload["summary"]
+    lines.append(
+        "%d worktrees · %d processes · %s RSS · %d dirty · %d stale" %
+        (summary["worktreeCount"], summary["processCount"],
+         human_rss(summary["rssKb"]), summary["dirtyCount"],
+         summary["staleCount"]))
+    if payload["warnings"]:
+        lines.append("Warnings:")
+        visible = payload["warnings"][:10]
+        lines.extend("- %s" % warning for warning in visible)
+        hidden = len(payload["warnings"]) - len(visible)
+        if hidden:
+            lines.append("- ... %d more; use --json for full warnings" % hidden)
+    return "\n".join(lines)
+
+
+def monitor_command(args: argparse.Namespace) -> int:
+    first = True
+    try:
+        while True:
+            payload = monitor_inventory(args.stale_hours, args.interval)
+            output = (
+                json.dumps(payload, sort_keys=True)
+                if args.json_output else render_monitor(payload))
+            if args.watch and sys.stdout.isatty():
+                sys.stdout.write("\033[2J\033[H]")
+            elif args.watch and not first:
+                sys.stdout.write("\n")
+            sys.stdout.write(output + "\n")
+            sys.stdout.flush()
+            if not args.watch:
+                return 0
+            first = False
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        return 0
+
+
+def installed_runtime_commit() -> str | None:
+    link = home() / ".orc" / "runtime" / "current"
+    try:
+        if not link.exists() and not link.is_symlink():
+            return None
+        candidate = link.resolve().name
+    except OSError:
+        return None
+    return candidate if re.fullmatch(r"[0-9a-f]{40}", candidate) else None
+
+
+def default_minimal_source(run_dir: Path, meta: dict) -> str:
+    brief = ""
+    # A continued answer's brief holds the request with its question and answer.
+    for rel in ("inputs/follow-up-brief.md", "inputs/start-prompt.txt", "inputs/grilling-brief.md"):
+        path = run_dir / rel
+        if path.is_file():
+            try:
+                brief = path.read_text(encoding="utf-8")
+                break
+            except (OSError, UnicodeDecodeError):
+                pass
+    payload: dict = {
+        "brief": brief or str(meta.get("title") or ""),
+        "source": meta.get("source") or "prompt",
+        "sourceRef": meta.get("sourceRef") or "",
+    }
+    for key in ("parentRunId", "contextBrief", "contextPackage", "gitProvenance"):
+        if key in meta:
+            payload[key] = meta[key]
+    return json.dumps(payload, sort_keys=True)
+
+
+def run_helper_command(command: list[str], label: str) -> None:
+    proc = subprocess.run(command, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip() or ("exit %d" % proc.returncode)
+        raise WorktreeError("%s failed: %s" % (label, detail))
+
+
+def checkout_in_place(repo: Path, branch: str, base_commit: str) -> None:
+    dirty = run_git(repo, "status", "--porcelain").stdout.strip()
+    current = ""
+    sym = subprocess.run(
+        ["git", "-C", str(repo), "symbolic-ref", "--short", "HEAD"],
+        capture_output=True, text=True, check=False, env=git_env(),
+    )
+    if sym.returncode == 0:
+        current = sym.stdout.strip()
+    if current == branch:
+        return
+    if dirty:
+        raise WorktreeError(
+            "checkout %s has uncommitted changes; refusing in-place branch switch to %s"
+            % (repo, branch)
+        )
+    exists = subprocess.run(
+        ["git", "-C", str(repo), "show-ref", "--verify", "--quiet",
+         "refs/heads/%s" % branch],
+        capture_output=True, text=True, check=False, env=git_env(),
+    ).returncode == 0
+    if exists:
+        run_git(repo, "checkout", branch)
+    else:
+        run_git(repo, "checkout", "-b", branch, base_commit)
+
+
+def start_minimal(
+    run_dir: Path,
+    title: str,
+    branch: str,
+    model: str | None = None,
+    source: str | None = None,
+) -> dict:
+    run_dir = run_dir.expanduser().resolve()
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    clean_title = title.strip()
+    clean_branch = branch.strip()
+    if not clean_title:
+        raise WorktreeError("--title must be non-empty")
+    if len(clean_title) > 80:
+        raise WorktreeError("--title must be 80 characters or fewer")
+    if not clean_branch:
+        raise WorktreeError("--branch must be non-empty")
+
+    raw_repo = meta.get("mainRepoPath") or meta.get("repoPath")
+    if not isinstance(raw_repo, str) or not raw_repo.strip():
+        raise WorktreeError("meta.json is missing mainRepoPath")
+    repo = canonical_repo(raw_repo)
+
+    meta["title"] = clean_title
+    meta.pop("titlePending", None)
+    meta.pop("noDiffCompletion", None)
+    meta["lifecycleVersion"] = 4
+    meta["mode"] = "quick"
+    meta["route"] = "minimal-shell"
+    meta["phase"] = "plan"
+    meta["status"] = "running"
+    meta["gatedPhases"] = ["ship"]
+    if not isinstance(meta.get("phaseDispatch"), dict):
+        meta["phaseDispatch"] = {"schemaVersion": 1, "phases": {}}
+    meta["mainRepoPath"] = str(repo)
+    meta.setdefault("repoPath", str(repo))
+    meta["branch"] = clean_branch
+    if "runtimeCommit" not in meta:
+        commit = installed_runtime_commit()
+        if commit:
+            meta["runtimeCommit"] = commit
+    if meta.get("repositoriesVersion") != 1 or not isinstance(meta.get("repositories"), list) or not meta["repositories"]:
+        meta["repositoriesVersion"] = 1
+        meta["repositories"] = [{
+            "id": "primary",
+            "primary": True,
+            "mainRepoPath": str(repo),
+            "repoPath": str(repo),
+            "branch": clean_branch,
+            "status": "pending",
+        }]
+    else:
+        for item in meta["repositories"]:
+            if isinstance(item, dict) and item.get("primary") is True:
+                item["branch"] = clean_branch
+    write_json(meta_path, meta)
+    # Build means the Clarification is settled; a question file left behind
+    # would keep showing its card.
+    if (run_dir / clarification_files.BRIEF).is_file():
+        clarification_files.remove_questions(run_dir)
+
+    bin_dir = Path(__file__).resolve().parent
+    project_targets = [str(repo)]
+    for item in meta.get("repositories") or []:
+        if isinstance(item, dict) and isinstance(item.get("mainRepoPath"), str) and item["mainRepoPath"].strip():
+            project_targets.append(item["mainRepoPath"])
+    try:
+        project_setup.ensure_projects(
+            project_targets,
+            config_path=config_path(),
+            runs_dir=run_dir.parent,
+            current_run_id=str(meta.get("runId") or run_dir.name),
+            home=home(),
+        )
+    except (OSError, ValueError) as exc:
+        raise WorktreeError("project setup failed: %s" % exc) from exc
+    recorded_model = None
+    recorded_source = "self-report"
+    if model and model.strip():
+        recorded_model = model.strip()
+    elif isinstance(meta.get("launchModel"), str) and meta["launchModel"].strip():
+        recorded_model = meta["launchModel"].strip()
+        recorded_source = "inherited"
+    if recorded_model:
+        for phase_name in ("plan", "build"):
+            run_helper_command(
+                [str(bin_dir / "orc-record-model"), str(run_dir),
+                 phase_name, "orchestrator", recorded_model, recorded_source],
+                "orc-record-model",
+            )
+    run_helper_command(
+        [
+            str(bin_dir / "orc-decision"),
+            str(run_dir),
+            "--phase", "plan",
+            "--decision", "Use lifecycle-v4 minimal-shell route",
+            "--why", "Request is concrete and ready to build directly to the Ship gate.",
+        ],
+        "orc-decision",
+    )
+    source_arg = source if source else default_minimal_source(run_dir, meta)
+    run_helper_command(
+        [
+            str(bin_dir / "orc-delivery-authority"),
+            "freeze-build-spec",
+            "--run-dir", str(run_dir),
+            "--source", source_arg,
+        ],
+        "orc-delivery-authority freeze-build-spec",
+    )
+
+    resolved = resolve(run_dir)
+    adapter = resolved["adapter"]
+    enabled = resolved["enabled"] is not False
+    if adapter == "devd" and enabled:
+        meta = read_json(meta_path)
+        meta["phase"] = "build"
+        meta["status"] = "running"
+        write_json(meta_path, meta)
+        return {
+            "ok": True,
+            "runDir": str(run_dir),
+            "adapter": "devd",
+            "devdDeferred": True,
+            "branch": clean_branch,
+            "mainRepoPath": str(repo),
+            "repoPath": str(repo),
+            "baseCommit": resolved["baseCommit"],
+        }
+
+    if enabled:
+        details = setup_generic(run_dir)
+        meta = read_json(meta_path)
+        meta["phase"] = "build"
+        meta["status"] = "running"
+        write_json(meta_path, meta)
+        return {
+            "ok": True,
+            "runDir": str(run_dir),
+            "adapter": adapter,
+            "branch": clean_branch,
+            "mainRepoPath": details["mainRepoPath"],
+            "repoPath": details["repoPath"],
+            "buildBaseCommit": details["buildBaseCommit"],
+            "worktree": meta.get("worktree"),
+        }
+
+    base_commit = resolved["baseCommit"]
+    checkout_in_place(repo, clean_branch, base_commit)
+    meta = read_json(meta_path)
+    selection = participant_selection(meta, None)
+    participant, primary = selection if selection else (None, True)
+    state = participant if participant is not None else meta
+    state["mainRepoPath"] = str(repo)
+    state["repoPath"] = str(repo)
+    state.setdefault("buildBaseCommit", base_commit)
+    state["worktree"] = {"enabled": False, "adapter": adapter}
+    if participant is not None:
+        participant["status"] = "ready"
+        participant.pop("setupError", None)
+    if primary and participant is not None:
+        for key in ("mainRepoPath", "repoPath", "branch", "buildBaseCommit", "worktree"):
+            if key in participant:
+                meta[key] = participant[key]
+    meta["phase"] = "build"
+    meta["status"] = "running"
+    write_json(meta_path, meta)
+    return {
+        "ok": True,
+        "runDir": str(run_dir),
+        "adapter": adapter,
+        "branch": clean_branch,
+        "mainRepoPath": str(repo),
+        "repoPath": str(repo),
+        "buildBaseCommit": state["buildBaseCommit"],
+        "worktree": state["worktree"],
+    }
+
+
+REPO_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,40}\Z")
+
+
+def add_repo(run_dir: Path, raw_repo: str, branch: str,
+             repo_id: str | None = None) -> dict:
+    """Adds a second repository to a Build-phase run, with its own worktree,
+    so Ship delivers both through the multi-repository path instead of the
+    run losing track of a branch made on the side."""
+    run_dir = run_dir.expanduser().resolve()
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    if meta.get("phase") != "build":
+        raise WorktreeError("add-repo needs a run in Build (phase is %s)" % meta.get("phase"))
+    if participant_selection(meta, None) is None:
+        raise WorktreeError("run has no repositories roster; start it with start-minimal first")
+    clean_branch = branch.strip()
+    if not clean_branch:
+        raise WorktreeError("--branch must be non-empty")
+    repo = canonical_repo(raw_repo)
+    item_id = (repo_id or slugify(repo.name)).strip()
+    if not REPO_ID.match(item_id):
+        raise WorktreeError("repository id must be lowercase letters, digits and dashes: %s" % item_id)
+    default_commit, _ = default_ref(repo)
+    existing = ref_commit(repo, "refs/heads/%s" % clean_branch)
+    if existing:
+        base = git_value(repo, "merge-base", default_commit, existing)
+    else:
+        base = default_commit
+    participant = {"id": item_id, "mainRepoPath": str(repo), "repoPath": str(repo),
+                   "branch": clean_branch, "baseCommit": base, "status": "pending"}
+    checked_out = [path for path, name in listed_worktrees(repo).items()
+                   if name == clean_branch]
+    if checked_out and normalized(checked_out[0]) == repo:
+        raise WorktreeError("%s is checked out in the main checkout %s; switch it off that branch first"
+                            % (clean_branch, repo))
+    meta["repositories"].append(participant)
+    participant_selection(meta, item_id)  # rejects duplicate ids, paths and remotes
+    try:
+        project_setup.ensure_projects(
+            [str(repo)], config_path=config_path(), runs_dir=run_dir.parent,
+            current_run_id=str(meta.get("runId") or run_dir.name),
+            home=home())
+    except (OSError, ValueError) as exc:
+        raise WorktreeError("project setup failed: %s" % exc) from exc
+    if checked_out:
+        # The branch already lives in a worktree something else made: adopt
+        # it as it is, and never delete it at teardown.
+        target = normalized(checked_out[0])
+        devd = devd_repo(repo)
+        participant.update({
+            "repoPath": str(target), "buildBaseCommit": base, "status": "ready",
+            "worktree": {"enabled": True, "adapter": "devd" if devd else "generic",
+                         "slug": slugify(clean_branch), "path": str(target),
+                         "managedByOrc": False, **({"devdRepo": devd} if devd else {})},
+        })
+        write_json(meta_path, meta)
+        details = {"ok": True, "adopted": True, "repoPath": str(target),
+                   "buildBaseCommit": base}
+    else:
+        write_json(meta_path, meta)
+        adapter = resolve(run_dir, item_id)["adapter"]
+        try:
+            details = setup_generic(run_dir, item_id, expected=adapter,
+                                    require_worktree=True)
+        except WorktreeError as exc:
+            record_setup_failure(run_dir, item_id, str(exc))
+            raise
+        details["adopted"] = False
+    run_helper_command(
+        [str(Path(__file__).resolve().parent / "orc-decision"), str(run_dir),
+         "--phase", "build",
+         "--decision", "Add repository %s (%s) on %s" % (item_id, repo, clean_branch),
+         "--why", "The change spans repositories; Ship delivers one PR per repository."],
+        "orc-decision")
+    return {"ok": True, "runDir": str(run_dir), "repoId": item_id,
+            "mainRepoPath": str(repo), "branch": clean_branch,
+            "repoPath": details["repoPath"], "adopted": details["adopted"],
+            "buildBaseCommit": details["buildBaseCommit"]}
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser()
+    subs = result.add_subparsers(dest="command", required=True)
+    for command in ("resolve", "setup-generic", "setup-devd", "teardown-generic",
+                    "teardown-devd", "start-server", "stop-server"):
+        sub = subs.add_parser(command)
+        sub.add_argument("--run-dir", required=True, type=Path)
+        sub.add_argument("--repo-id")
+        if command == "setup-devd":
+            sub.add_argument(
+                "--database", action="store_true",
+                help="give the worktree its own database copy (the run adds a migration)")
+    start_min = subs.add_parser(
+        "start-minimal",
+        help="adopt stub, register project, freeze build spec, and set up minimal-shell checkout",
+    )
+    start_min.add_argument("--run-dir", required=True, type=Path)
+    start_min.add_argument("--title", required=True)
+    start_min.add_argument("--branch", required=True)
+    start_min.add_argument("--model")
+    start_min.add_argument("--source")
+    add = subs.add_parser(
+        "add-repo",
+        help="add another repository to a Build-phase run, with its own worktree")
+    add.add_argument("--run-dir", required=True, type=Path)
+    add.add_argument("--repo", required=True, help="path to the repository's main checkout")
+    add.add_argument("--branch", required=True)
+    add.add_argument("--id", dest="repo_id", help="participant id (default: the repository folder name)")
+    subs.add_parser("adopt-legacy-rails",
+                    help="move open runs' worktree-CLI rails trees to orc-devd")
+    adopt = subs.add_parser(
+        "adopt-checkout",
+        help="make an existing worktree of the project the run's own and start its app")
+    adopt.add_argument("--run-dir", required=True, type=Path)
+    adopt.add_argument("--path", required=True)
+    # detection and the main checkout's server concern a repo, not a run
+    for command in ("detect-server", "start-main-server", "stop-main-server"):
+        subs.add_parser(command).add_argument("--repo", required=True)
+    monitor = subs.add_parser(
+        "monitor", help="show read-only Orc worktree resource health")
+    monitor.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="print the stable machine-readable snapshot")
+    monitor.add_argument(
+        "--watch", action="store_true",
+        help="refresh until interrupted (clears an interactive terminal)")
+    monitor.add_argument(
+        "--interval", type=positive_number, default=MONITOR_INTERVAL_SECONDS,
+        metavar="SECONDS",
+        help="watch refresh interval; positive (default: %(default)s)")
+    monitor.add_argument(
+        "--stale-hours", type=positive_number, default=MONITOR_STALE_HOURS,
+        metavar="HOURS",
+        help="age threshold; positive (default: %(default)s)")
+    return result
+
+
+def record_setup_failure(run_dir: Path, repo_id: str | None, error: str) -> None:
+    """Preserve a selected participant's recoverable setup failure."""
+    if repo_id is None:
+        return
+    try:
+        meta_path = run_dir / "meta.json"
+        meta = read_json(meta_path)
+        selection = participant_selection(meta, repo_id)
+        if selection:
+            participant, _ = selection
+            participant["status"] = "blocked"
+            participant["setupError"] = error
+            write_json(meta_path, meta)
+    except (OSError, WorktreeError):
+        pass
+
+
+def main() -> int:
+    cli = parser()
+    args = cli.parse_args()
+    if args.command == "monitor" and args.json_output and args.watch:
+        cli.error("monitor --json and --watch cannot be used together")
+    if args.command == "monitor":
+        return monitor_command(args)
+    try:
+        if args.command == "detect-server":
+            # A project can be asked about before it is a git checkout at all
+            # (first-run setup), so fall back to the path as given.
+            try:
+                repo = canonical_repo(args.repo)
+            except WorktreeError:
+                repo = normalized(args.repo)
+            result = detect_server(repo)
+        elif args.command == "resolve":
+            result = resolve(args.run_dir, args.repo_id)
+        elif args.command == "setup-generic":
+            result = setup_generic(args.run_dir, args.repo_id)
+        elif args.command == "setup-devd":
+            result = setup_generic(args.run_dir, args.repo_id, expected="devd",
+                                   database=args.database)
+        elif args.command == "start-minimal":
+            result = start_minimal(
+                args.run_dir,
+                args.title,
+                args.branch,
+                model=args.model,
+                source=args.source,
+            )
+        elif args.command == "add-repo":
+            result = add_repo(args.run_dir, args.repo, args.branch, args.repo_id)
+        elif args.command == "adopt-legacy-rails":
+            result = adopt_legacy_rails()
+        elif args.command == "adopt-checkout":
+            result = adopt_checkout(args.run_dir, args.path)
+        elif args.command == "start-server":
+            result = start_server(args.run_dir, args.repo_id)
+        elif args.command == "stop-server":
+            result = stop_server(args.run_dir, args.repo_id)
+        elif args.command == "start-main-server":
+            result = start_main_server(args.repo)
+        elif args.command == "stop-main-server":
+            result = stop_main_server(args.repo)
+        else:
+            result = teardown_generic(args.run_dir, args.repo_id)
+    except WorktreeError as exc:
+        if args.command in ("setup-generic", "setup-devd"):
+            record_setup_failure(args.run_dir, args.repo_id, str(exc))
+        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        return 1
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

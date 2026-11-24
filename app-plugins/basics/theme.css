@@ -1,0 +1,120 @@
+/* Basics uses paper, ink and one accent. Factory shows a delegation chart.
+   Send-offs, the radio station and chime use Orc's defaults. */
+:root[data-basics] {
+  color-scheme: light;
+  --bg: #ffffff; --panel: #f7f7f5; --border: #cdcdc9;
+  --text: #37352f; --heading: #191918; --muted: #8b8a85;
+  --accent-soft: #ececea; --chip: #efefed; --code: #f3f3f1;
+  --green: #2b7a45; --yellow: #8f6400; --red: #c93a3a;
+  --purple: #7347b6; --cyan: #0f6f80; --orange: #b3541a;
+
+  --basics-green: var(--green);
+  --basics-blue: light-dark(#1f62d0, #74a9f7);
+  --basics-magenta: light-dark(#a03687, #ed92d8);
+  --basics-teal: light-dark(#13776f, #65c7c0);
+  --basics-amber: light-dark(#8a5a0c, #e6b865);
+  --basics-violet: light-dark(#6a4bc4, #b39cf2);
+  --basics-graphite: light-dark(#4b5563, #b4bcc8);
+  --accent: var(--green);
+  --accent-text: light-dark(color-mix(in srgb, var(--accent) 70%, var(--heading)), var(--accent));
+  --blue-text: light-dark(#1c5db0, #74a9f7);
+  /* Working keeps Orc's blue whatever the accent, so it never reads as Ready. */
+  --state-working: var(--basics-blue);
+}
+
+:root[data-basics][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #191919; --panel: #202020; --border: #343434;
+  --text: #d3d3d0; --heading: #f2f2f0; --muted: #7d7d79;
+  --accent-soft: #2b2b2b; --chip: #2b2b2b; --code: #232323;
+  --accent: var(--green);
+  --green: #7cc48f; --yellow: #dcb45c; --red: #f08a84;
+  --purple: #b79cf0; --cyan: #74c0cc; --orange: #ec9d62;
+}
+
+:root[data-basics][data-basics-accent="blue"] { --accent: var(--basics-blue); }
+:root[data-basics][data-basics-accent="magenta"] { --accent: var(--basics-magenta); }
+:root[data-basics][data-basics-accent="teal"] { --accent: var(--basics-teal); }
+:root[data-basics][data-basics-accent="amber"] { --accent: var(--basics-amber); }
+:root[data-basics][data-basics-accent="violet"] { --accent: var(--basics-violet); }
+:root[data-basics][data-basics-accent="graphite"] { --accent: var(--basics-graphite); }
+/* Custom: the page sets --basics-custom to the pasted hex. Dark mode lifts a
+   dark colour so it stays readable on the dark panel. */
+:root[data-basics][data-basics-accent^="#"] {
+  --accent: light-dark(var(--basics-custom, #2b7a45), color-mix(in srgb, var(--basics-custom, #2b7a45) 55%, white));
+}
+@supports (color: oklch(from red l c h)) {
+  :root[data-basics][data-basics-accent^="#"] {
+    --accent: light-dark(var(--basics-custom, #2b7a45), oklch(from var(--basics-custom, #2b7a45) max(l, 0.78) c h));
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-basics]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #191919; --panel: #202020; --border: #343434;
+    --text: #d3d3d0; --heading: #f2f2f0; --muted: #7d7d79;
+    --accent-soft: #2b2b2b; --chip: #2b2b2b; --code: #232323;
+    --green: #7cc48f; --yellow: #dcb45c; --red: #f08a84;
+    --purple: #b79cf0; --cyan: #74c0cc; --orange: #ec9d62;
+  }
+}
+
+:root[data-basics] {
+  --focus: var(--accent);
+  --head-glow: none;
+  --typing-glow: none;
+  --orc-button-radius: 8px;
+  --orc-radius-sm: 6px; --orc-radius-md: 10px;
+  --run-row-radius: 8px;
+  --tab-radius: 8px;
+  --composer-radius: 14px;
+  --chat-bubble-radius: 16px;
+  --card-radius: 10px;
+  --dialog-radius: 12px;
+  --answer-mode-done: "✓"; --answer-mode-now: "●"; --answer-mode-next: "○";
+  --answer-mode-glow: transparent;
+  --answer-mode-trim: none; --answer-mode-trim-height: 0px;
+  /* Nothing drifts across the new-run screen. */
+  --nc-firefly-gold: transparent; --nc-firefly-lime: transparent;
+  --nc-firefly-alpha: 0; --nc-mist-alpha-low: 0; --nc-mist-alpha-high: 0;
+}
+
+/* The composer is a plain box: no beam round its rim, and the accent when it has focus. */
+:root[data-basics] .nc-beam { display: none; }
+@media (forced-colors: none) {
+  :root[data-basics] .newconv-prompt:has(textarea:focus) { border-color: var(--accent); }
+}
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :root[data-basics] .newconv-prompt,
+  :root[data-basics] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    border-color: var(--typing-heat-rest);
+    --typing-glow: none;
+  }
+  :root[data-basics] .newconv-prompt:has(textarea:focus) { border-color: var(--accent); }
+}
+
+/* Sticky notes sit square on the board: flat cards in a tint of the note's own colour. */
+:root[data-basics] .nc-note {
+  --note-paper: color-mix(in srgb, var(--note-tint) 9%, var(--bg));
+  --note-ink: var(--heading);
+  --note-edge: color-mix(in srgb, var(--note-tint) 38%, var(--border));
+  --note-radius: 10px;
+  --note-rule: transparent; --note-lean: 0; --note-fold: 0px; --note-tape: none;
+  --note-shadow: none; --note-shadow-raised: none;
+}
+
+:root[data-basics] #run-panel-tabs [role="tab"][aria-selected="true"]:not([aria-disabled="true"]) {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-text);
+}
+
+/* Primary controls use the accent locally so the status palette still applies. */
+:root[data-basics] :is(orc-button:is(:not([variant]), [variant="primary"]), button.primary, button#nc-send) {
+  --orc-green: var(--accent);
+  --orc-button-text: var(--bg);
+}
+
+/* Fields are plain boxes too: no beam round the rim, the accent when focused. */
+:root[data-basics] :is(orc-input, orc-textarea, orc-select) { --orc-green: var(--accent); }
+:root[data-basics] :is(orc-input, orc-textarea, orc-select)::part(field)::before { display: none; }

@@ -1,0 +1,1043 @@
+/* Synthwave mode: frontend.js sets data-synthwave on <html> and this file
+   drives Orc into a sunset. By night it is a neon drive: a striped sun going
+   down between faceted hills and palms, over a grid that runs to the horizon.
+   By day the same scene is a printed poster: flat inks, halftone and hard
+   shadows. It re-points the shell's own tokens, so every surface that reads
+   var(--bg), var(--accent) and friends follows without its own rule, then
+   redraws the chrome: runs as cards with a level meter, lettered tabs, the
+   transcript and its reply box on one solid sheet, and the Settled shelf as
+   a horizon.
+
+   The scenery is drawn, not typed: hills, palms, grid and stars are the
+   --synthwave-art-* pictures below, and frontend.js only stands them in a
+   layer behind the page. Nothing of it lies over what you read.
+
+   The gate pages load this file too, inlined through string.Template, so keep
+   it free of the dollar sign.
+
+   Every block below out-specifies the swamp block it replaces:
+   :root[data-synthwave] beats :root, and the night blocks carry one more
+   attribute than the swamp's dark ones. The day block matches at night too,
+   so both night blocks declare again everything it sets per mode, and the
+   rules below read those values instead of repeating themselves per mode.
+   The palettes keep the swamp's contrast floors
+   (tests/test_synthwave_mode.py checks them).
+
+   Hot pink sits too close to the danger red to be the accent, so the accent
+   is neon cyan and the pink is decoration only, through --synthwave-pink. */
+:root[data-synthwave] {
+  color-scheme: light;
+  --bg: #f4dcf6; --panel: #fcf0fd; --border: #b25fd0;
+  --text: #3a1260; --heading: #240840; --muted: #7b3f9e; --accent: #00636e;
+  --accent-soft: #e7c4f2; --chip: #e7c4f2; --code: #eed2f5;
+  --green: #08795a; --yellow: #8a6100; --red: #c41f4d;
+  --purple: #7a2cc0; --cyan: #005f6b; --orange: #c2410c;
+  --focus: #c0129a;
+  --ready-text: #06664a;
+  --blue-text: #3a2fb8;
+  --synthwave-on-accent: #fff;
+  --synthwave-pink: #e0218a; --synthwave-neon: #00a3b0; --synthwave-violet: #8a3ffc;
+  --synthwave-font: "Avenir Next", "Futura", "Century Gothic", "Trebuchet MS", system-ui, sans-serif;
+  --orc-font-sans: var(--synthwave-font);
+  /* Avenir Next draws its capitals about 1px above a control's middle. A whole
+     pixel, so Chromium's snapping to whole pixels cannot round it away. */
+  --orc-font-sans-nudge: 1px;
+  --orc-radius-sm: 6px; --orc-radius-md: 12px;
+  --synthwave-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cpath d='M0 .5h56M.5 0v56' fill='none' stroke='%238a3ffc' stroke-opacity='.11'/%3E%3Ccircle cx='28' cy='22' r='1.1' fill='%23e0218a' fill-opacity='.32'/%3E%3Ccircle cx='44' cy='42' r='.8' fill='%2300a3b0' fill-opacity='.35'/%3E%3C/svg%3E");
+  /* The chrome, as a poster prints it: square corners, ink outlines and a
+     hard pink shadow where the night has a glow. */
+  --synthwave-caption: "Golden hour";
+  --synthwave-working: var(--blue-text);
+  --synthwave-card-edge: #b25fd0; --synthwave-card-radius: 4px;
+  --synthwave-card-lift: 2px 2px 0 rgb(224 33 138 / .24);
+  --synthwave-active-bg: #fffaff; --synthwave-active-lift: 3px 3px 0 var(--synthwave-pink);
+  --synthwave-meter-glow: none;
+  --synthwave-word-shadow: 1.5px 1.5px 0 rgb(224 33 138 / .32);
+  --synthwave-tube-glow: none;
+  --synthwave-title-shadow: 2px 2px 0 rgb(224 33 138 / .3);
+  --synthwave-heading-shadow: none;
+  --synthwave-rule: #b25fd0;
+  --synthwave-sheet-edge: #b25fd0; --synthwave-sheet-radius: 4px;
+  --synthwave-sheet-lift: 4px 4px 0 rgb(224 33 138 / .2);
+  --synthwave-sheet-lift-side: 4px 0 0 rgb(224 33 138 / .2);
+  /* The scene's paints. Each picture is declared once, further down, and the
+     two looks choose between them here. */
+  --synthwave-sky: var(--bg);
+  --synthwave-stars: none;
+  --synthwave-star-ink: #e0218a; --synthwave-star-rest: .5; --synthwave-twinkle: none;
+  --synthwave-haze: linear-gradient(0deg, rgb(255 168 140 / .9) 0, rgb(255 190 165 / .72) 12%, rgb(255 205 195 / .46) 34%, rgb(252 214 224 / .22) 60%, transparent 100%);
+  --synthwave-dots-fine:
+    radial-gradient(circle, rgb(224 33 138 / .34) 1.1px, transparent 1.5px) 0 0 / 10px 10px,
+    radial-gradient(circle, rgb(224 33 138 / .34) 1.1px, transparent 1.5px) 5px 5px / 10px 10px;
+  --synthwave-dots-bold:
+    radial-gradient(circle, rgb(224 33 138 / .4) 2px, transparent 2.5px) 0 0 / 10px 10px,
+    radial-gradient(circle, rgb(224 33 138 / .4) 2px, transparent 2.5px) 5px 5px / 10px 10px;
+  --synthwave-glow: radial-gradient(closest-side, #ffd0b8 0, #ffd0b8 50%, rgb(255 208 184 / 0) 80%);
+  --synthwave-sun: linear-gradient(#ffd53d 0 26%, #ffb640 26% 39%, #ff9150 39% 50%, #ff6f74 50% 59%, #f24a98 59% 68%, #c53dcd 68% 100%);
+  --synthwave-sun-shadow: 5px 5px 0 rgb(224 33 138 / .22);
+  --synthwave-sun-still: var(--synthwave-art-sun-day);
+  --synthwave-cloud: none;
+  --synthwave-ridge: var(--synthwave-art-ridge-day);
+  --synthwave-range-left: var(--synthwave-art-range-left-day);
+  --synthwave-range-right: var(--synthwave-art-range-right-day);
+  --synthwave-range-shadow: drop-shadow(3px 0 0 rgb(224 33 138 / .18));
+  --synthwave-horizon-line: #3a1260; --synthwave-horizon-ink: #3a1260; --synthwave-horizon-glow: none;
+  --synthwave-floor-paint: linear-gradient(#f6cfe2 0, #f2cdec 26%, #ecc6f2 100%);
+  --synthwave-shine: radial-gradient(ellipse 24% 90% at 50% 0, rgb(255 190 120 / .6), transparent 75%);
+  --synthwave-rays: var(--synthwave-art-rays-day);
+  --synthwave-line: rgb(224 33 138 / .78); --synthwave-line-glow: none;
+  --synthwave-palm-ink: #3a1260; --synthwave-palm-rim: rgb(224 33 138 / .22);
+  --synthwave-palm-rim-x: 3px; --synthwave-palm-rim-y: 3px; --synthwave-palm-rim-sided: 0;
+  --synthwave-night-only: none;
+  /* The Settled shelf: the floor again, under its own horizon. */
+  --synthwave-shelf:
+    radial-gradient(ellipse 34% 100% at 50% 0, rgb(255 190 120 / .6), transparent 75%) center top / 100% 44px no-repeat,
+    var(--synthwave-art-rays-day) center top / 1166px 36px no-repeat,
+    linear-gradient(#f6cfe2 0, #ecc6f2 44px);
+  --synthwave-shelf-glow: none;
+  /* The drawings: stars, the far ridge, the two ranges of hills, the floor's
+     running lines and three palms. A range, the ridge and the rays are
+     pictures in a look's own inks, so there is one of each for day and for
+     night. A palm and a star are a shape alone, cut out of whatever ink the
+     look names. */
+  --synthwave-art-stars-near: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='520' height='520' viewBox='0 0 520 520'%3E%3Ccircle cx='123.7' cy='283' r='0.6' fill='%23ffffff' fill-opacity='0.55'/%3E%3Ccircle cx='314.9' cy='472.6' r='0.7' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='99.7' cy='372.9' r='0.7' fill='%23e8dcff' fill-opacity='0.55'/%3E%3Ccircle cx='120.6' cy='78.8' r='0.7' fill='%23ffffff' fill-opacity='0.18'/%3E%3Ccircle cx='82.9' cy='497.9' r='0.4' fill='%23ffffff' fill-opacity='0.4'/%3E%3Ccircle cx='428.3' cy='140.1' r='0.7' fill='%23bfefff' fill-opacity='0.55'/%3E%3Ccircle cx='378.6' cy='300' r='0.5' fill='%23ffffff' fill-opacity='0.4'/%3E%3Ccircle cx='18.7' cy='257.3' r='0.6' fill='%23ffd6f2' fill-opacity='0.55'/%3E%3Ccircle cx='219' cy='433.4' r='0.6' fill='%23e8dcff' fill-opacity='0.55'/%3E%3Ccircle cx='470.2' cy='354.6' r='0.4' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='363.3' cy='169.7' r='0.4' fill='%23ffd6f2' fill-opacity='0.28'/%3E%3Ccircle cx='148.2' cy='33' r='0.7' fill='%23ffd6f2' fill-opacity='0.18'/%3E%3Ccircle cx='416.3' cy='213.4' r='0.5' fill='%23ffd6f2' fill-opacity='0.18'/%3E%3Ccircle cx='222.1' cy='215.9' r='0.4' fill='%23ffffff' fill-opacity='0.18'/%3E%3Ccircle cx='196.5' cy='304.9' r='0.6' fill='%23ffffff' fill-opacity='0.28'/%3E%3Ccircle cx='161' cy='40' r='0.4' fill='%23bfefff' fill-opacity='0.28'/%3E%3Ccircle cx='151.6' cy='137' r='0.4' fill='%23ffd6f2' fill-opacity='0.4'/%3E%3Ccircle cx='187.3' cy='71.9' r='0.7' fill='%23bfefff' fill-opacity='0.55'/%3E%3Ccircle cx='452.3' cy='200.8' r='0.4' fill='%23bfefff' fill-opacity='0.4'/%3E%3Ccircle cx='329.8' cy='372.1' r='0.6' fill='%23ffd6f2' fill-opacity='0.55'/%3E%3Ccircle cx='271' cy='285.2' r='0.4' fill='%23ffd6f2' fill-opacity='0.55'/%3E%3Ccircle cx='10.4' cy='320.2' r='0.5' fill='%23ffd6f2' fill-opacity='0.18'/%3E%3Ccircle cx='242.5' cy='353.2' r='0.6' fill='%23bfefff' fill-opacity='0.4'/%3E%3Ccircle cx='11.5' cy='31.5' r='0.4' fill='%23ffd6f2' fill-opacity='0.4'/%3E%3Ccircle cx='326.5' cy='155.3' r='0.6' fill='%23ffd6f2' fill-opacity='0.28'/%3E%3Ccircle cx='96.3' cy='394.2' r='0.6' fill='%23bfefff' fill-opacity='0.4'/%3E%3Ccircle cx='54.5' cy='422.8' r='0.5' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='339.9' cy='140.1' r='0.6' fill='%23bfefff' fill-opacity='0.28'/%3E%3Ccircle cx='337.8' cy='50.5' r='0.6' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='228' cy='444.9' r='0.5' fill='%23ffd6f2' fill-opacity='0.18'/%3E%3Ccircle cx='385.9' cy='113.4' r='0.7' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='409.2' cy='17.6' r='0.5' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='449.1' cy='176.9' r='0.4' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='219.1' cy='269.6' r='0.6' fill='%23ffd6f2' fill-opacity='0.55'/%3E%3Ccircle cx='329.8' cy='151' r='0.7' fill='%23bfefff' fill-opacity='0.18'/%3E%3Ccircle cx='81.1' cy='2.4' r='0.7' fill='%23ffffff' fill-opacity='0.28'/%3E%3Ccircle cx='387.7' cy='435.1' r='0.6' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='448' cy='446.2' r='0.6' fill='%23e8dcff' fill-opacity='0.18'/%3E%3Ccircle cx='23.4' cy='469.9' r='0.5' fill='%23ffffff' fill-opacity='0.55'/%3E%3Ccircle cx='6.8' cy='387.6' r='0.5' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='344.7' cy='273' r='0.7' fill='%23ffffff' fill-opacity='0.18'/%3E%3Ccircle cx='177.5' cy='131.3' r='0.7' fill='%23ffd6f2' fill-opacity='0.18'/%3E%3Ccircle cx='114.8' cy='63.6' r='0.4' fill='%23e8dcff' fill-opacity='0.28'/%3E%3Ccircle cx='411.7' cy='479.3' r='0.5' fill='%23bfefff' fill-opacity='0.18'/%3E%3Ccircle cx='326.9' cy='448.5' r='0.4' fill='%23e8dcff' fill-opacity='0.4'/%3E%3Ccircle cx='139.7' cy='274.2' r='0.7' fill='%23bfefff' fill-opacity='0.18'/%3E%3Ccircle cx='168' cy='426.2' r='0.4' fill='%23ffffff' fill-opacity='0.28'/%3E%3Ccircle cx='64.8' cy='35.6' r='0.4' fill='%23bfefff' fill-opacity='0.18'/%3E%3Ccircle cx='164.3' cy='163.6' r='0.6' fill='%23bfefff' fill-opacity='0.55'/%3E%3Ccircle cx='305' cy='187.6' r='0.5' fill='%23bfefff' fill-opacity='0.4'/%3E%3Ccircle cx='64.4' cy='288.9' r='0.7' fill='%23e8dcff' fill-opacity='0.18'/%3E%3Ccircle cx='22.3' cy='239.6' r='0.7' fill='%23bfefff' fill-opacity='0.18'/%3E%3Ccircle cx='27.6' cy='326.3' r='0.6' fill='%23bfefff' fill-opacity='0.55'/%3E%3Ccircle cx='239.6' cy='127.4' r='0.6' fill='%23bfefff' fill-opacity='0.18'/%3E%3Ccircle cx='121.1' cy='73.7' r='1.1' fill='%23ffd6f2' fill-opacity='.95'/%3E%3Ccircle cx='196.6' cy='460.5' r='1.3' fill='%23ffffff' fill-opacity='.95'/%3E%3Ccircle cx='241.9' cy='70.1' r='1.3' fill='%23ffffff' fill-opacity='.95'/%3E%3Ccircle cx='377.8' cy='292.2' r='1.1' fill='%23ffffff' fill-opacity='.95'/%3E%3C/svg%3E");
+  --synthwave-art-stars-far: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='340' viewBox='0 0 340 340'%3E%3Ccircle cx='157.4' cy='126.9' r='0.5' fill='%23ffffff' fill-opacity='0.28'/%3E%3Ccircle cx='115' cy='157.7' r='0.4' fill='%23ffffff' fill-opacity='0.4'/%3E%3Ccircle cx='247.6' cy='57.6' r='0.7' fill='%23ffffff' fill-opacity='0.55'/%3E%3Ccircle cx='57.3' cy='17.5' r='0.5' fill='%23d9c8ff' fill-opacity='0.18'/%3E%3Ccircle cx='268.5' cy='301.7' r='0.6' fill='%23ffffff' fill-opacity='0.28'/%3E%3Ccircle cx='246.7' cy='143.4' r='0.4' fill='%23ffffff' fill-opacity='0.4'/%3E%3Ccircle cx='134.8' cy='116.2' r='0.4' fill='%23ffffff' fill-opacity='0.28'/%3E%3Ccircle cx='299' cy='18.6' r='0.7' fill='%23ffffff' fill-opacity='0.55'/%3E%3Ccircle cx='8' cy='144.4' r='0.4' fill='%23ffffff' fill-opacity='0.18'/%3E%3Ccircle cx='259.9' cy='67.2' r='0.5' fill='%23ffffff' fill-opacity='0.4'/%3E%3Ccircle cx='303.4' cy='45.3' r='0.4' fill='%23d9c8ff' fill-opacity='0.18'/%3E%3Ccircle cx='182.8' cy='67.4' r='0.4' fill='%23ffffff' fill-opacity='0.55'/%3E%3Ccircle cx='217.2' cy='31.8' r='0.5' fill='%23ffffff' fill-opacity='0.28'/%3E%3Ccircle cx='18.4' cy='188.7' r='0.5' fill='%23ffffff' fill-opacity='0.4'/%3E%3Ccircle cx='41.3' cy='239.9' r='0.5' fill='%23ffffff' fill-opacity='0.28'/%3E%3Ccircle cx='250.2' cy='287.5' r='0.4' fill='%23ffffff' fill-opacity='0.4'/%3E%3Ccircle cx='293.8' cy='198.6' r='0.7' fill='%23d9c8ff' fill-opacity='0.28'/%3E%3Ccircle cx='67.6' cy='321.9' r='0.4' fill='%23d9c8ff' fill-opacity='0.55'/%3E%3Ccircle cx='0.2' cy='38' r='0.5' fill='%23d9c8ff' fill-opacity='0.55'/%3E%3Ccircle cx='110.4' cy='30.2' r='0.6' fill='%23ffffff' fill-opacity='0.18'/%3E%3Ccircle cx='8.6' cy='265.4' r='0.7' fill='%23d9c8ff' fill-opacity='0.55'/%3E%3Ccircle cx='241.2' cy='84.4' r='0.4' fill='%23ffffff' fill-opacity='0.55'/%3E%3Ccircle cx='39' cy='254.5' r='1.3' fill='%23d9c8ff' fill-opacity='.95'/%3E%3C/svg%3E");
+  --synthwave-art-spark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath d='M7 0 8.1 5.9 14 7 8.1 8.1 7 14 5.9 8.1 0 7 5.9 5.9Z'/%3E%3C/svg%3E");
+  --synthwave-art-range-left-night: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='620' height='190' viewBox='0 0 620 190' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='l' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%236b1f8f'/%3E%3Cstop offset='1' stop-color='%232a0e58'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0 190l0-25.7 62.6-68.2 22.2 93.9zm143 0l-27.4-43.7 80.5-105.8 20.5 149.5zm127.1 0l-25.2-43 74.2-78.4 27.2 121.4zm130.2 0l-16.3-46.8 47.9-60.5 30.5 107.3zm120.2 0l-15.9-24.6 46.8-11.6 28.8 36.2z' fill='%23120630'/%3E%3Cpath d='M84.8 190l-22.2-93.9 53 50.2 27.4 43.7zm131.8 0l-20.5-149.5 48.8 106.5 25.2 43zm129.7 0l-27.2-121.4 64.9 74.6 16.3 46.8zm116.1 0l-30.5-107.3 72.7 82.7 15.9 24.6zm117.8 0l-28.8-36.2 68.6 36.2 0 0z' fill='url(%23l)'/%3E%3Cpath d='M62.6 96.1l22.2 93.9m111.3-149.5l20.5 149.5m102.5-121.4l27.2 121.4m85.6-107.3l30.5 107.3m89-36.2l28.8 36.2' fill='none' stroke='%232de2e6' stroke-width='0.7'/%3E%3Cpath d='M0 164.3l62.6-68.2 53 50.2 80.5-105.8 48.8 106.5 74.2-78.4 64.9 74.6 47.9-60.5 72.7 82.7 46.8-11.6 68.6 36.2' fill='none' stroke='%23ff3fa4' stroke-width='1.1' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --synthwave-art-range-right-night: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='190' viewBox='0 0 640 190' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='l' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%236b1f8f'/%3E%3Cstop offset='1' stop-color='%232a0e58'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M640 190l0-29-73.5-63.7-33.1 92.7zm-174.6 0l22.3-32.6-65.8-85.3-27.4 117.9zm-129 0l20.2-44-59.5-76.4-37.5 120.4zm-147.1 0l18.5-27.7-54.4-32.1-19.9 59.8zm-101.3 0l18-15.3-53-10.9-22.3 26.2z' fill='%23120630'/%3E%3Cpath d='M533.4 190l33.1-92.7-78.8 60.1-22.3 32.6zm-138.9 0l27.4-117.9-65.3 73.9-20.2 44zm-134.9 0l37.5-120.4-89.3 92.7-18.5 27.7zm-126.1 0l19.9-59.8-47.4 44.5-18 15.3zm-102.8 0l22.3-26.2-53 26.2 0 0z' fill='url(%23l)'/%3E%3Cpath d='M566.5 97.3l-33.1 92.7m-111.5-117.9l-27.4 117.9m-97.4-120.4l-37.5 120.4m-106.2-59.8l-19.9 59.8m-80.5-26.2l-22.3 26.2' fill='none' stroke='%232de2e6' stroke-width='0.7'/%3E%3Cpath d='M640 161l-73.5-63.7-78.8 60.1-65.8-85.3-65.3 73.9-59.5-76.4-89.3 92.7-54.4-32.1-47.4 44.5-53-10.9-53 26.2' fill='none' stroke='%23ff3fa4' stroke-width='1.1' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --synthwave-art-range-left-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='620' height='190' viewBox='0 0 620 190' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='l' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23d2a0ec'/%3E%3Cstop offset='1' stop-color='%23b072d6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0 190l0-25.7 62.6-68.2 22.2 93.9zm143 0l-27.4-43.7 80.5-105.8 20.5 149.5zm127.1 0l-25.2-43 74.2-78.4 27.2 121.4zm130.2 0l-16.3-46.8 47.9-60.5 30.5 107.3zm120.2 0l-15.9-24.6 46.8-11.6 28.8 36.2z' fill='%237a3aab'/%3E%3Cpath d='M84.8 190l-22.2-93.9 53 50.2 27.4 43.7zm131.8 0l-20.5-149.5 48.8 106.5 25.2 43zm129.7 0l-27.2-121.4 64.9 74.6 16.3 46.8zm116.1 0l-30.5-107.3 72.7 82.7 15.9 24.6zm117.8 0l-28.8-36.2 68.6 36.2 0 0z' fill='url(%23l)'/%3E%3Cpath d='M62.6 96.1l22.2 93.9m111.3-149.5l20.5 149.5m102.5-121.4l27.2 121.4m85.6-107.3l30.5 107.3m89-36.2l28.8 36.2' fill='none' stroke='%233a1260' stroke-width='0.8'/%3E%3Cpath d='M0 164.3l62.6-68.2 53 50.2 80.5-105.8 48.8 106.5 74.2-78.4 64.9 74.6 47.9-60.5 72.7 82.7 46.8-11.6 68.6 36.2' fill='none' stroke='%233a1260' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --synthwave-art-range-right-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='190' viewBox='0 0 640 190' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='l' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23d2a0ec'/%3E%3Cstop offset='1' stop-color='%23b072d6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M640 190l0-29-73.5-63.7-33.1 92.7zm-174.6 0l22.3-32.6-65.8-85.3-27.4 117.9zm-129 0l20.2-44-59.5-76.4-37.5 120.4zm-147.1 0l18.5-27.7-54.4-32.1-19.9 59.8zm-101.3 0l18-15.3-53-10.9-22.3 26.2z' fill='%237a3aab'/%3E%3Cpath d='M533.4 190l33.1-92.7-78.8 60.1-22.3 32.6zm-138.9 0l27.4-117.9-65.3 73.9-20.2 44zm-134.9 0l37.5-120.4-89.3 92.7-18.5 27.7zm-126.1 0l19.9-59.8-47.4 44.5-18 15.3zm-102.8 0l22.3-26.2-53 26.2 0 0z' fill='url(%23l)'/%3E%3Cpath d='M566.5 97.3l-33.1 92.7m-111.5-117.9l-27.4 117.9m-97.4-120.4l-37.5 120.4m-106.2-59.8l-19.9 59.8m-80.5-26.2l-22.3 26.2' fill='none' stroke='%233a1260' stroke-width='0.8'/%3E%3Cpath d='M640 161l-73.5-63.7-78.8 60.1-65.8-85.3-65.3 73.9-59.5-76.4-89.3 92.7-54.4-32.1-47.4 44.5-53-10.9-53 26.2' fill='none' stroke='%233a1260' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --synthwave-art-ridge-night: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2800' height='100' viewBox='0 0 2800 100' preserveAspectRatio='none'%3E%3Cpath d='M0 100l0-76.1 66.6-9.1 75.5 2.9 74.6 37.6 54.5-48.3 62.5 2.2 39 22.8 44.9-3.9 59.2 28 43.6-14.1 74.3-25.6 41-1.7 40.1 9.5 39.6 32.5 72.3-11 43.5-39.3 72.4 41.2 76.3-.7 63.8 21.3 75.4-.6 76.5 9.7 47.2 11.2 41.3 3.8 36.9-.9 60.5 2.3 63.8-2.6 47.7-3.7 55.1 2.1 55.2-9.6 36.5-10 35-2.4 71.2 7.6 68.6-20.7 59.5 8.2 36-11 76.1-4.9 67.2-39 75.5 30.9 49.6-9.5 68.1 22 66.9-36.4 71.9 40.2 75.6-2.9 49-27.5 74.4 14.4 74.6-10.9 47.8 12.1 41.8 12.6 40.5-32.3 10.9 15.9 0 63.7z' fill='%232a0f58'/%3E%3Cpath d='M0 23.9l66.6-9.1 75.5 2.9 74.6 37.6 54.5-48.3 62.5 2.2 39 22.8 44.9-3.9 59.2 28 43.6-14.1 74.3-25.6 41-1.7 40.1 9.5 39.6 32.5 72.3-11 43.5-39.3 72.4 41.2 76.3-.7 63.8 21.3 75.4-.6 76.5 9.7 47.2 11.2 41.3 3.8 36.9-.9 60.5 2.3 63.8-2.6 47.7-3.7 55.1 2.1 55.2-9.6 36.5-10 35-2.4 71.2 7.6 68.6-20.7 59.5 8.2 36-11 76.1-4.9 67.2-39 75.5 30.9 49.6-9.5 68.1 22 66.9-36.4 71.9 40.2 75.6-2.9 49-27.5 74.4 14.4 74.6-10.9 47.8 12.1 41.8 12.6 40.5-32.3 10.9 15.9' fill='none' stroke='rgb(255 110 190 / .35)'/%3E%3C/svg%3E");
+  --synthwave-art-ridge-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2800' height='100' viewBox='0 0 2800 100' preserveAspectRatio='none'%3E%3Cpath d='M0 100l0-76.1 66.6-9.1 75.5 2.9 74.6 37.6 54.5-48.3 62.5 2.2 39 22.8 44.9-3.9 59.2 28 43.6-14.1 74.3-25.6 41-1.7 40.1 9.5 39.6 32.5 72.3-11 43.5-39.3 72.4 41.2 76.3-.7 63.8 21.3 75.4-.6 76.5 9.7 47.2 11.2 41.3 3.8 36.9-.9 60.5 2.3 63.8-2.6 47.7-3.7 55.1 2.1 55.2-9.6 36.5-10 35-2.4 71.2 7.6 68.6-20.7 59.5 8.2 36-11 76.1-4.9 67.2-39 75.5 30.9 49.6-9.5 68.1 22 66.9-36.4 71.9 40.2 75.6-2.9 49-27.5 74.4 14.4 74.6-10.9 47.8 12.1 41.8 12.6 40.5-32.3 10.9 15.9 0 63.7z' fill='%23dfb6ee'/%3E%3C/svg%3E");
+  --synthwave-art-rays-night: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6800' height='210' viewBox='0 0 6800 210' preserveAspectRatio='none'%3E%3Cpath d='M3400 0l-6805.7 210 11.4 0zm0 0l-6605.7 210 11.4 0zm0 0l-6405.7 210 11.4 0zm0 0l-6205.7 210 11.4 0zm0 0l-6005.7 210 11.4 0zm0 0l-5805.7 210 11.4 0zm0 0l-5605.7 210 11.4 0zm0 0l-5405.7 210 11.4 0zm0 0l-5205.7 210 11.4 0zm0 0l-5005.7 210 11.4 0zm0 0l-4805.7 210 11.4 0zm0 0l-4605.7 210 11.4 0zm0 0l-4405.7 210 11.4 0zm0 0l-4205.7 210 11.4 0zm0 0l-4005.7 210 11.4 0zm0 0l-3805.7 210 11.4 0zm0 0l-3605.7 210 11.4 0zm0 0l-3405.7 210 11.4 0zm0 0l-3205.7 210 11.4 0zm0 0l-3005.7 210 11.4 0zm0 0l-2805.7 210 11.4 0zm0 0l-2605.7 210 11.4 0zm0 0l-2405.7 210 11.4 0zm0 0l-2205.7 210 11.4 0zm0 0l-2005.7 210 11.4 0zm0 0l-1805.7 210 11.4 0zm0 0l-1605.7 210 11.4 0zm0 0l-1405.7 210 11.4 0zm0 0l-1205.7 210 11.4 0zm0 0l-1005.7 210 11.4 0zm0 0l-805.7 210 11.4 0zm0 0l-605.7 210 11.4 0zm0 0l-405.7 210 11.4 0zm0 0l-205.7 210 11.4 0zm0 0l-5.7 210 11.4 0zm0 0l194.3 210 11.4 0zm0 0l394.3 210 11.4 0zm0 0l594.3 210 11.4 0zm0 0l794.3 210 11.4 0zm0 0l994.3 210 11.4 0zm0 0l1194.3 210 11.4 0zm0 0l1394.3 210 11.4 0zm0 0l1594.3 210 11.4 0zm0 0l1794.3 210 11.4 0zm0 0l1994.3 210 11.4 0zm0 0l2194.3 210 11.4 0zm0 0l2394.3 210 11.4 0zm0 0l2594.3 210 11.4 0zm0 0l2794.3 210 11.4 0zm0 0l2994.3 210 11.4 0zm0 0l3194.3 210 11.4 0zm0 0l3394.3 210 11.4 0zm0 0l3594.3 210 11.4 0zm0 0l3794.3 210 11.4 0zm0 0l3994.3 210 11.4 0zm0 0l4194.3 210 11.4 0zm0 0l4394.3 210 11.4 0zm0 0l4594.3 210 11.4 0zm0 0l4794.3 210 11.4 0zm0 0l4994.3 210 11.4 0zm0 0l5194.3 210 11.4 0zm0 0l5394.3 210 11.4 0zm0 0l5594.3 210 11.4 0zm0 0l5794.3 210 11.4 0zm0 0l5994.3 210 11.4 0zm0 0l6194.3 210 11.4 0zm0 0l6394.3 210 11.4 0zm0 0l6594.3 210 11.4 0zm0 0l6794.3 210 11.4 0z' fill='%232de2e6' fill-opacity='0.1'/%3E%3Cpath d='M3400 0l-6801.3 210 2.6 0zm0 0l-6601.3 210 2.6 0zm0 0l-6401.3 210 2.6 0zm0 0l-6201.3 210 2.6 0zm0 0l-6001.3 210 2.6 0zm0 0l-5801.3 210 2.6 0zm0 0l-5601.3 210 2.6 0zm0 0l-5401.3 210 2.6 0zm0 0l-5201.3 210 2.6 0zm0 0l-5001.3 210 2.6 0zm0 0l-4801.3 210 2.6 0zm0 0l-4601.3 210 2.6 0zm0 0l-4401.3 210 2.6 0zm0 0l-4201.3 210 2.6 0zm0 0l-4001.3 210 2.6 0zm0 0l-3801.3 210 2.6 0zm0 0l-3601.3 210 2.6 0zm0 0l-3401.3 210 2.6 0zm0 0l-3201.3 210 2.6 0zm0 0l-3001.3 210 2.6 0zm0 0l-2801.3 210 2.6 0zm0 0l-2601.3 210 2.6 0zm0 0l-2401.3 210 2.6 0zm0 0l-2201.3 210 2.6 0zm0 0l-2001.3 210 2.6 0zm0 0l-1801.3 210 2.6 0zm0 0l-1601.3 210 2.6 0zm0 0l-1401.3 210 2.6 0zm0 0l-1201.3 210 2.6 0zm0 0l-1001.3 210 2.6 0zm0 0l-801.3 210 2.6 0zm0 0l-601.3 210 2.6 0zm0 0l-401.3 210 2.6 0zm0 0l-201.3 210 2.6 0zm0 0l-1.3 210 2.6 0zm0 0l198.7 210 2.6 0zm0 0l398.7 210 2.6 0zm0 0l598.7 210 2.6 0zm0 0l798.7 210 2.6 0zm0 0l998.7 210 2.6 0zm0 0l1198.7 210 2.6 0zm0 0l1398.7 210 2.6 0zm0 0l1598.7 210 2.6 0zm0 0l1798.7 210 2.6 0zm0 0l1998.7 210 2.6 0zm0 0l2198.7 210 2.6 0zm0 0l2398.7 210 2.6 0zm0 0l2598.7 210 2.6 0zm0 0l2798.7 210 2.6 0zm0 0l2998.7 210 2.6 0zm0 0l3198.7 210 2.6 0zm0 0l3398.7 210 2.6 0zm0 0l3598.7 210 2.6 0zm0 0l3798.7 210 2.6 0zm0 0l3998.7 210 2.6 0zm0 0l4198.7 210 2.6 0zm0 0l4398.7 210 2.6 0zm0 0l4598.7 210 2.6 0zm0 0l4798.7 210 2.6 0zm0 0l4998.7 210 2.6 0zm0 0l5198.7 210 2.6 0zm0 0l5398.7 210 2.6 0zm0 0l5598.7 210 2.6 0zm0 0l5798.7 210 2.6 0zm0 0l5998.7 210 2.6 0zm0 0l6198.7 210 2.6 0zm0 0l6398.7 210 2.6 0zm0 0l6598.7 210 2.6 0zm0 0l6798.7 210 2.6 0z' fill='%232de2e6' fill-opacity='0.7'/%3E%3C/svg%3E");
+  --synthwave-art-rays-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6800' height='210' viewBox='0 0 6800 210' preserveAspectRatio='none'%3E%3Cpath d='M3400 0l-6801.3 210 2.6 0zm0 0l-6601.3 210 2.6 0zm0 0l-6401.3 210 2.6 0zm0 0l-6201.3 210 2.6 0zm0 0l-6001.3 210 2.6 0zm0 0l-5801.3 210 2.6 0zm0 0l-5601.3 210 2.6 0zm0 0l-5401.3 210 2.6 0zm0 0l-5201.3 210 2.6 0zm0 0l-5001.3 210 2.6 0zm0 0l-4801.3 210 2.6 0zm0 0l-4601.3 210 2.6 0zm0 0l-4401.3 210 2.6 0zm0 0l-4201.3 210 2.6 0zm0 0l-4001.3 210 2.6 0zm0 0l-3801.3 210 2.6 0zm0 0l-3601.3 210 2.6 0zm0 0l-3401.3 210 2.6 0zm0 0l-3201.3 210 2.6 0zm0 0l-3001.3 210 2.6 0zm0 0l-2801.3 210 2.6 0zm0 0l-2601.3 210 2.6 0zm0 0l-2401.3 210 2.6 0zm0 0l-2201.3 210 2.6 0zm0 0l-2001.3 210 2.6 0zm0 0l-1801.3 210 2.6 0zm0 0l-1601.3 210 2.6 0zm0 0l-1401.3 210 2.6 0zm0 0l-1201.3 210 2.6 0zm0 0l-1001.3 210 2.6 0zm0 0l-801.3 210 2.6 0zm0 0l-601.3 210 2.6 0zm0 0l-401.3 210 2.6 0zm0 0l-201.3 210 2.6 0zm0 0l-1.3 210 2.6 0zm0 0l198.7 210 2.6 0zm0 0l398.7 210 2.6 0zm0 0l598.7 210 2.6 0zm0 0l798.7 210 2.6 0zm0 0l998.7 210 2.6 0zm0 0l1198.7 210 2.6 0zm0 0l1398.7 210 2.6 0zm0 0l1598.7 210 2.6 0zm0 0l1798.7 210 2.6 0zm0 0l1998.7 210 2.6 0zm0 0l2198.7 210 2.6 0zm0 0l2398.7 210 2.6 0zm0 0l2598.7 210 2.6 0zm0 0l2798.7 210 2.6 0zm0 0l2998.7 210 2.6 0zm0 0l3198.7 210 2.6 0zm0 0l3398.7 210 2.6 0zm0 0l3598.7 210 2.6 0zm0 0l3798.7 210 2.6 0zm0 0l3998.7 210 2.6 0zm0 0l4198.7 210 2.6 0zm0 0l4398.7 210 2.6 0zm0 0l4598.7 210 2.6 0zm0 0l4798.7 210 2.6 0zm0 0l4998.7 210 2.6 0zm0 0l5198.7 210 2.6 0zm0 0l5398.7 210 2.6 0zm0 0l5598.7 210 2.6 0zm0 0l5798.7 210 2.6 0zm0 0l5998.7 210 2.6 0zm0 0l6198.7 210 2.6 0zm0 0l6398.7 210 2.6 0zm0 0l6598.7 210 2.6 0zm0 0l6798.7 210 2.6 0z' fill='%2300a3b0' fill-opacity='0.85'/%3E%3C/svg%3E");
+  --synthwave-art-sun-night: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='216' viewBox='0 0 320 216' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='0' y2='320'%3E%3Cstop offset='0' stop-color='%23fff08a'/%3E%3Cstop offset='.16' stop-color='%23ffd65a'/%3E%3Cstop offset='.34' stop-color='%23ff9d4f'/%3E%3Cstop offset='.5' stop-color='%23ff5a8c'/%3E%3Cstop offset='.62' stop-color='%23f03ab4'/%3E%3Cstop offset='.8' stop-color='%23b42dff'/%3E%3C/linearGradient%3E%3CclipPath id='c'%3E%3Ccircle cx='160' cy='160' r='160'/%3E%3C/clipPath%3E%3C/defs%3E%3Cpath clip-path='url(%23c)' fill='url(%23g)' d='M0 0h320v121.6h-320zM0 121.6h320v12.4h-320zM0 136.4h320v11.6h-320zM0 152.8h320v10.8h-320zM0 170.8h320v10h-320zM0 190.4h320v9.2h-320zM0 211.6h320v4.4h-320z'/%3E%3C/svg%3E");
+  --synthwave-art-sun-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='216' viewBox='0 0 320 216' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='0' y2='320'%3E%3Cstop offset='0' stop-color='%23ffd53d'/%3E%3Cstop offset='.26' stop-color='%23ffd53d'/%3E%3Cstop offset='.26' stop-color='%23ffb640'/%3E%3Cstop offset='.39' stop-color='%23ffb640'/%3E%3Cstop offset='.39' stop-color='%23ff9150'/%3E%3Cstop offset='.5' stop-color='%23ff9150'/%3E%3Cstop offset='.5' stop-color='%23ff6f74'/%3E%3Cstop offset='.59' stop-color='%23ff6f74'/%3E%3Cstop offset='.59' stop-color='%23f24a98'/%3E%3Cstop offset='.68' stop-color='%23f24a98'/%3E%3Cstop offset='.68' stop-color='%23c53dcd'/%3E%3C/linearGradient%3E%3CclipPath id='c'%3E%3Ccircle cx='160' cy='160' r='160'/%3E%3C/clipPath%3E%3C/defs%3E%3Cpath clip-path='url(%23c)' fill='url(%23g)' d='M0 0h320v121.6h-320zM0 121.6h320v12.4h-320zM0 136.4h320v11.6h-320zM0 152.8h320v10.8h-320zM0 170.8h320v10h-320zM0 190.4h320v9.2h-320zM0 211.6h320v4.4h-320z'/%3E%3C/svg%3E");
+  --synthwave-art-palm-1: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='341' height='310' viewBox='0 0 341 310' preserveAspectRatio='none'%3E%3Cpath d='M200.3 309.8l-1.9-9.8-2-9.6-.7-9.5-.8-9.6-1-9.4-1.1-9.3-1.2-9.3-1.3-9.2-1.5-9.2-1.6-9-1.7-9-1.9-8.9-1.9-8.8-2.1-8.8-2.3-8.7-2.3-8.6-2.5-8.5-2.6-8.4-2.8-8.4-2.9-8.3-2.9-8.2-3.2-8.2-3.2-8-3.4-8-5.4 2.2 3.1 8 3.1 8.1 2.9 8.1 2.7 8.1 2.7 8.3 2.5 8.3 2.4 8.4 2.3 8.5 2.1 8.5 2 8.6 1.9 8.7 1.8 8.7 1.6 8.9 1.5 8.8 1.4 9 1.3 9 1.1 9.1 1 9.2.9 9.3.8 9.3.6 9.4.5 9.4-1 9.6-1.2 9.6z'/%3E%3Cpath d='M142.2 96.4l-11.2 12 8-12.7zm0 0l-5.8-5.4 2.6 4.7zm-4.2-.9l-12.8 14.8 9.5-15.5zm0 0l-6.9-6.2 3.6 5.5zm-4.2-.8l-13.9 17.4 10.6-17.9zm0 0l-8-6.7 4.7 6.2zm-4.2-.6l-13 17.1 9.7-17.5zm0 0l-8.1-6.1 4.8 5.7zm-4.1-.5l-14.5 20.7 11.2-20.9zm0 0l-9.6-6.6 6.3 6.4zm-4.1-.3l-14.9 23 11.6-23.1zm0 0l-10.6-6.7 7.3 6.6zm-4.1-.1l-15.3 25.4 12-25.4zm0 0l-11.7-6.7 8.4 6.7zm-4 0l-12.4 21.6 9.1-21.4zm0 0l-10.3-5.1 7 5.3zm-4 .2l-12.7 24 9.4-23.7zm0 0l-11.4-5 8.1 5.3zm-4 .4l-11.4 23.1 8.1-22.7zm0 0l-11.1-4.2 7.8 4.6zm-3.9.5l-13.1 29.4 9.8-28.8zm0 0l-13.8-4.7 10.5 5.3zm-4 .7l-11.8 29 8.6-28.2zm0 0l-13.6-3.9 10.4 4.7zm-3.8.9l-9.3 24 6.1-23.1zm0 0l-11.6-2.6 8.4 3.5zm-3.9 1l-10.7 31.8 7.5-30.8zm0 0l-14.8-2.8 11.6 3.8zm-3.8 1.3l-9.7 31.6 6.6-30.5zm0 0l-14.8-2.2 11.7 3.3zm-3.8 1.3l-8 28.9 4.9-27.6zm0 0l-13.6-1.3 10.5 2.6zm-3.8 1.6l-7 28.2 4-26.9zm0 0l-13.2-.7 10.2 2zm-3.7 1.7l-5.5 24.2 2.6-22.7zm0 0l-11.4 0 8.5 1.5zm-3.7 1.8l-4.6 22.6 1.7-20.9zm0 0l-10.7.5 7.8 1.2zm-3.6 2.1l-4.3 25.7 1.4-24zm0 0l-12 .9 9.1.8zm-3.7 2.2l-3.2 21.5.5-19.7zm0 0l-10 1.3 7.3.5zm-3.6 2.4l-2.6 21.5-.1-19.6zm0 0l-9.9 1.6 7.2.3zm-3.5 2.5l-2.1 20.8-.6-18.7zm0 0l-9.6 2 6.9.1zm-3.5 2.8l-1.6 18.2-1-16.1zm0 0l-8.5 2.1 5.9 0zm-3.5 2.9l-1.2 19.3-1.3-17.2zm0 0l-8.8 2.4 6.3-.3zm-3.5 3l-.8 17.6-1.6-15.3zm0 0l-8 2.6 5.6-.3zm-3.4 3.2l-.4 17.5-2-15.1zm0 0l-7.9 2.8 5.5-.4zm-3.4 3.4l-.3 14.1-2-11.7zm0 0l-6.4 2.6 4.1-.2zm-3.4 3.6l-.1 11.9-2.1-9.4zm0 0l-5.4 2.5 3.2 0zm-3.3 3.7l-.3 8.6-1.9-6zm0 0l-4 2.2 1.8.4zm-3.3 3.9l-.9 2.8-1.2-.2zm0 0l-1.6 1.5-.5 1.1zm120.2-44.1l-9.9-2.4-9.8-1.6-9.6-.6-9.4.2-9.2 1-9 2-8.7 2.8-8.6 3.7-8.4 4.6-8.2 5.4-8 6.2-7.7 7.1-7.6 8-7.4 8.8.5.4 7.6-8.6 7.7-7.7 7.9-6.9 8-6 8.2-5.1 8.3-4.2 8.5-3.4 8.6-2.5 8.8-1.7 8.9-.8 9.1.1 9.2.9 9.4 1.7 9.6 2.6zm-5.7-2l-14.3 8.3 12-10zm0 0l-2-7.5-.3 5.8zm-3.2-2.3l-15.9 10 13.5-11.6zm0 0l-2.5-8.3.1 6.7zm-3.2-2.1l-16.8 11.3 14.4-12.8zm0 0l-3-8.8.6 7.3zm-3.1-2l-16 11.5 13.4-12.9zm0 0l-3.5-8.4.9 7zm-3.2-1.7l-16.1 12.4 13.6-13.8zm0 0l-4-8.5 1.5 7.1zm-3.1-1.6l-16.7 13.8 14.1-15.1zm0 0l-4.7-8.8 2.1 7.5zm-3-1.4l-15.8 13.9 13.1-15.1zm0 0l-5.2-8.3 2.5 7.1zm-3.1-1.3l-19.1 18.6 16.4-19.6zm0 0l-6.9-9.9 4.2 8.9zm-3-1.1l-17 17.8 14.2-18.6zm0 0l-7.1-8.7 4.3 7.9zm-3-.9l-18.6 21.3 15.7-21.9zm0 0l-8.7-9.4 5.8 8.8zm-3-.7l-15.8 19.5 12.9-20zm0 0l-8.4-7.8 5.5 7.3zm-3-.5l-17.4 23.8 14.5-24.2zm0 0l-10.3-8.4 7.4 8zm-2.9-.4l-15.9 23.8 13-24zm0 0l-10.6-7.4 7.7 7.2zm-3-.2l-11.7 18.8 8.8-18.8zm0 0l-8.8-5 5.9 5zm-2.9 0l-11.4 20.5 8.5-20.3zm0 0l-9.7-4.6 6.8 4.8zm-2.8.2l-12.4 25.4 9.5-25zm0 0l-11.9-4.8 9 5.2zm-2.9.4l-9.9 22.4 7-21.9zm0 0l-10.7-3.4 7.8 3.9zm-2.8.5l-9.9 25.7 7-25zm0 0l-12.2-3 9.3 3.7zm-2.9.7l-7.4 21.6 4.7-20.7zm0 0l-10.3-1.7 7.6 2.6zm-2.8.9l-5.8 19.2 3.1-18.1zm0 0l-9.3-.8 6.6 1.9zm-2.7 1.1l-5.6 22 2.9-20.8zm0 0l-10.5-.4 7.8 1.6zm-2.8 1.3l-4.6 22 2-20.7zm0 0l-10.4.2 7.8 1.1zm-2.7 1.4l-3.3 18.3.8-16.8zm0 0l-8.7.8 6.2.7zm-2.7 1.7l-2.5 16.3 0-14.7zm0 0l-7.8 1.2 5.3.4zm-2.7 1.8l-1.9 16.4-.4-14.6zm0 0l-7.7 1.6 5.4.2zm-2.7 2l-1.3 17.8-.9-15.9zm0 0l-8.1 2 5.9-.1zm-2.6 2.2l-.8 15.2-1.4-13.2zm0 0l-6.9 2.2 4.7-.2zm-2.6 2.4l-.6 11.2-1.5-9.1zm0 0l-5.2 2 3.1.1zm-2.6 2.6l-.3 9.7-1.7-7.6zm0 0l-4.5 2 2.5.1zm-2.6 2.8l-.3 7-1.6-4.8zm0 0l-3.3 1.8 1.4.4zm-2.5 2.9l-.7 2.6-1.1-.3zm0 0l-1.5 1.3-.3 1zm92.4-6.1l-7.6-5.7-7.5-4.8-7.4-3.7-7.2-2.9-7.1-1.8-7-.9-6.8 0-6.7 1-6.4 2-6.3 2.9-6.2 3.8-5.9 4.8-5.8 5.7-5.7 6.6.6.4 5.7-6.4 5.9-5.4 6-4.5 6.1-3.6 6.2-2.6 6.3-1.7 6.3-.8 6.5.2 6.6 1.1 6.7 2 6.9 2.9 7 3.8 7.1 4.8 7.3 5.7zm-4.9-3.8l-12.9 3.4 11.3-5.6zm0 0l.9-6.3-2.5 4.1zm-2.3-3.1l-13.9 4.1 12.3-6.2zm0 0l.9-6.8-2.5 4.7zm-2.2-2.9l-17.9 6.2 16.2-8.3zm0 0l1-8.6-2.7 6.5zm-2.3-2.7l-16.2 5.9 14.5-7.9zm0 0l.6-7.9-2.3 5.9zm-2.2-2.5l-19.7 8.1 17.9-10.1zm0 0l.5-9.7-2.3 7.7zm-2.2-2.4l-17.5 7.7 15.6-9.6zm0 0l-.1-8.7-1.8 6.8zm-2.2-2.1l-19.6 9.5 17.6-11.4zm0 0l-.5-9.9-1.5 8zm-2.1-2l-18.7 9.8 16.6-11.6zm0 0l-1.1-9.5-1 7.7zm-2.2-1.8l-18.9 10.9 16.8-12.6zm0 0l-1.7-9.8-.4 8.1zm-2.1-1.7l-22.7 14.7 20.5-16.2zm0 0l-2.8-11.8.6 10.3zm-2.1-1.4l-21.3 15 19-16.5zm0 0l-3.6-11.2 1.3 9.7zm-2.1-1.3l-18 13.8 15.6-15.1zm0 0l-4.1-9.6 1.7 8.3zm-2.1-1.2l-20.2 17.6 17.8-18.7zm0 0l-5.6-10.6 3.2 9.5zm-2-.9l-16 15.1 13.5-16.1zm0 0l-5.7-8.3 3.2 7.3zm-2-.8l-15.8 16.8 13.2-17.5zm0 0l-6.8-8.1 4.2 7.4zm-2.1-.6l-16.4 19.9 13.8-20.4zm0 0l-8.3-8.2 5.7 7.7zm-2-.4l-14.1 19.3 11.4-19.6zm0 0l-8.6-6.7 5.9 6.4zm-2-.3l-10.8 16.7 8.1-16.8zm0 0l-7.9-4.7 5.2 4.6zm-2-.1l-11.9 21.9 9.2-21.7zm0 0l-10.2-4.9 7.5 5.1zm-2 .1l-8.3 17.6 5.7-17.1zm0 0l-8.5-2.9 5.9 3.4zm-2 .3l-7 17.6 4.4-16.9zm0 0l-8.6-1.9 6 2.6zm-1.9.5l-6.5 19.9 3.9-19zm0 0l-9.6-1.3 7 2.2zm-2 .7l-4.6 16.9 2.1-15.8zm0 0l-8.2-.3 5.7 1.4zm-2 .8l-3.4 16 1.1-14.7zm0 0l-7.7.4 5.4.9zm-1.9 1.1l-2.4 14.1.1-12.7zm0 0l-6.8.9 4.5.5zm-1.9 1.2l-1.6 13.1-.6-11.5zm0 0l-6.2 1.4 4 .2zm-1.9 1.4l-1 13.6-1.1-11.8zm0 0l-6.3 1.8 4.2 0zm-1.9 1.7l-.6 10.8-1.3-9zm0 0l-5 1.8 3.1 0zm-1.9 1.8l-.2 9.9-1.6-8zm0 0l-4.5 2 2.7-.1zm-1.8 2l-.2 7-1.6-5zm0 0l-3.3 1.8 1.5.2zm-1.8 2.2l-.6 2.5-1.1-.4zm0 0l-1.5 1.2-.2.9zm66.4 18.6l-5.5-7.5-5.4-6.5-5.2-5.6-5.2-4.6-5.2-3.7-5-2.7-4.9-1.8-4.9-.8-4.7.2-4.6 1.2-4.5 2.1-4.3 3-4.1 4-4 4.9.5.4 4.1-4.7 4.2-3.7 4.3-2.8 4.3-1.8 4.3-.9 4.3 0 4.5.9 4.5 1.9 4.7 2.7 4.7 3.7 4.9 4.6 5 5.6 5.1 6.5 5.1 7.4zm-3.6-5.5l-15.1-.3 14.2-2.3zm0 0l3.8-5.8-4.7 3.2zm-1.3-3.9l-14.7-.1 13.8-2.4zm0 0l3.6-5.7-4.5 3.2zm-1.2-3.6l-16.3.3 15.3-2.8zm0 0l3.9-6.3-4.9 3.8zm-1.3-3.4l-21.8 1.1 20.8-3.6zm0 0l5.3-8.2-6.3 5.7zm-1.2-3.2l-22.6 1.6 21.5-4.1zm0 0l5.3-8.6-6.4 6.1zm-1.3-3l-20.1 1.7 19-4.2zm0 0l4.5-7.9-5.6 5.4zm-1.2-2.8l-20.4 2.2 19.3-4.7zm0 0l4.3-8.2-5.4 5.7zm-1.2-2.6l-24.6 3.5 23.4-6zm0 0l5-9.9-6.2 7.4zm-1.2-2.4l-26.3 4.6 25-7.1zm0 0l5-10.8-6.3 8.3zm-1.2-2.3l-21.5 4.3 20.2-6.6zm0 0l3.6-9.2-4.9 6.9zm-1.1-2l-26.7 6.6 25.2-8.9zm0 0l4-11.5-5.5 9.2zm-1.1-1.8l-26.1 7.6 24.5-9.9zm0 0l3.1-11.6-4.7 9.3zm-1.2-1.7l-23.7 8.1 22-10.2zm0 0l2-11-3.7 8.9zm-1.1-1.4l-22 8.8 20.2-10.8zm0 0l.9-10.6-2.7 8.6zm-1.1-1.3l-19.2 9.1 17.2-11zm0 0l-.4-9.6-1.6 7.7zm-1-1.1l-17.9 10.2 15.7-11.9zm0 0l-1.8-9.2-.4 7.5zm-1.1-.9l-21.4 15.3 19.1-16.7zm0 0l-3.8-11.2 1.5 9.8zm-1-.7l-15.9 13.7 13.3-14.8zm0 0l-4.9-8.4 2.3 7.3zm-1.1-.6l-15.7 17.4 13.1-18.1zm0 0l-7.1-8 4.5 7.3zm-1.1-.5l-11.5 16.3 8.8-16.5zm0 0l-7.6-5.2 4.9 5zm-1.1-.2l-10.3 20 7.6-19.7zm0 0l-9.5-4 6.8 4.3zm-1.1 0l-7 19 4.4-18.2zm0 0l-9.2-1.8 6.6 2.6zm-1.2.2l-4.3 17.2 1.9-16zm0 0l-8.3-.1 5.9 1.3zm-1.1.4l-2.4 16 .1-14.4zm0 0l-7.5 1.2 5.2.4zm-1.2.7l-1 17.4-1.1-15.6zm0 0l-7.9 2.1 5.8-.3zm-1.2.9l.1 13.4-1.9-11.3zm0 0l-5.9 2.4 4.1-.3zm-1.1 1.2l.7 12.6-2.4-10.4zm0 0l-5.4 2.7 3.7-.5zm-1.1 1.4l1.3 11.9-2.8-9.7zm0 0l-5 2.9 3.5-.7zm-1.1 1.5l1.5 10.6-2.9-8.2zm0 0l-4.3 3 2.9-.6zm-1.1 1.8l1.1 7.5-2.3-5zm0 0l-3 2.6 1.8-.1zm-1 2l-.1 2.7-1.1-.2zm0 0l-1.1 1.6-.1.9zm38.1 35.3l-3.1-9.3-3-8.2-3.1-7.2-2.9-6.2-2.9-5.1-2.9-4.1-2.9-3.1-2.9-2-2.9-.9-2.8.3-2.6 1.4-2.5 2.4-2.3 3.4-2.2 4.4.6.3 2.4-4.2 2.4-3.2 2.3-2 2.3-1 2.2-.1 2.2.9 2.4 1.9 2.4 2.9 2.6 4 2.6 5.1 2.7 6 2.8 7.2 2.8 8.2 2.9 9.2zm-1.1-6l11.8-3.1-11.5.6zm0 0l-4-3.8 4.3 1.3zm.4-3.8l14.5-3.4-14.2.9zm0 0l-5-4.4 5.3 1.9zm.4-3.6l14.5-3.4-14.2.9zm0 0l-5-4.4 5.3 1.9zm.4-3.4l16.3-3.6-16 1zm0 0l-5.6-4.9 5.9 2.3zm.4-3.3l18.4-3.7-18.1 1.2zm0 0l-6.3-5.3 6.6 2.8zm.4-3l20.4-3.9-20.1 1.4zm0 0l-7.1-5.9 7.4 3.4zm.4-2.9l18.6-3.5-18.3 1zm0 0l-6.4-5.5 6.7 3zm.3-2.7l20.6-3.5-20.2 1zm0 0l-6.9-6 7.3 3.5zm.4-2.5l24.4-3.7-24 1.2zm0 0l-8.2-7 8.6 4.5zm.4-2.3l25.4-3.5-25 1zm0 0l-8.5-7.4 8.9 4.9zm.3-2.1l23.6-3-23.1.4zm0 0l-7.7-7.1 8.2 4.5zm.4-2l23.9-2.6-23.4.1zm0 0l-7.7-7.3 8.2 4.8zm.3-1.8l23.2-2.1-22.6-.4zm0 0l-7.2-7.3 7.8 4.8zm.3-1.6l20.3-1.5-19.6-.9zm0 0l-6-6.6 6.7 4.2zm.4-1.4l19.3-.9-18.7-1.5zm0 0l-5.6-6.6 6.2 4.2zm.3-1.2l19-.2-18.2-2.2zm0 0l-5.1-6.8 5.9 4.4zm.3-1l24.1 1.2-23.2-3.6zm0 0l-6.1-8.8 7 6.4zm.2-.9l22.2 2.6-21.1-4.9zm0 0l-4.7-8.8 5.8 6.5zm.3-.8l22.6 5.1-21.3-7.2zm0 0l-3.6-9.7 4.9 7.6zm.1-.6l16.1 6-14.4-7.9zm0 0l-.5-7.8 2.2 5.9zm.1-.6l16.2 11.5-14-12.8zm0 0l3.1-8.5-.9 7.2zm.2-.7l10.3 15.2-7.8-15.3zm0 0l7.1-4.6-4.6 4.5zm.4-.5l4.2 18.2-1.9-17.1zm0 0l8.7 0-6.4 1.1zm.6-.1l-.2 15.8 2-14zm0 0l6.9 2.5-5.1-.7zm.6.3l-2.9 17.2 4.2-15.1zm0 0l6.9 4.1-5.6-2zm.4.5l-2.9 12.3 4-10zm0 0l4.7 3.8-3.6-1.5zm.5.8l-3.9 12.4 4.7-10zm0 0l4.4 4.1-3.6-1.7zm.3.9l-3.8 11.2 4.6-8.7zm0 0l3.9 4.1-3.1-1.6zm.4 1.2l-3.5 9.6 4.1-7.1zm0 0l3.2 3.8-2.6-1.3zm.4 1.4l-2.6 6.9 3.1-4.4zm0 0l2.2 3-1.7-.5zm.3 1.5l-.4 2.6.9-.1zm0 0l.7 1.7-.2.8zm-9.5 42.9l.8-9.2.8-8.2.8-7.3.8-6.3.8-5.3.7-4.4.7-3.4.7-2.4.6-1.4.2-.3.2.1.7 1.1.8 2.2.8 3.2.7-.1-.6-3.3-.7-2.4-.8-1.6-1.3-.7-1.3.8-1 1.7-1 2.6-.9 3.5-.9 4.4-1 5.3-1 6.4-1 7.2-1 8.3-1 9.1zm1.5-6.9l15.6 1.6-14.3-4.3zm0 0l-2.8-6.8 4.1 4.1zm1.9-3.9l19.5 2.7-18.1-5.4zm0 0l-3.5-8.3 4.9 5.6zm2-3.7l21.5 3.6-20.1-6.3zm0 0l-3.8-9.2 5.2 6.5zm1.9-3.5l20.5 3.7-19-6.4zm0 0l-3.3-8.9 4.8 6.2zm1.9-3.3l24.1 5.2-22.5-7.8zm0 0l-3.7-10.5 5.3 7.9zm1.9-3.1l25.6 6.3-24-8.9zm0 0l-3.6-11.3 5.2 8.7zm1.8-2.9l24.4 6.7-22.7-9.2zm0 0l-2.9-11 4.6 8.5zm1.9-2.7l25.2 7.8-23.4-10.2zm0 0l-2.6-11.5 4.4 9.1zm1.8-2.4l23.8 8.1-21.9-10.5zm0 0l-1.8-11.2 3.7 8.8zm1.8-2.3l25.3 9.7-23.3-12zm0 0l-1.3-12.1 3.3 9.8zm1.8-2.1l25.2 11-23.1-13.1zm0 0l-.5-12.3 2.6 10.2zm1.8-1.8l21.2 10.1-19-12.2zm0 0l.5-10.7 1.7 8.6zm1.7-1.7l24.4 13.5-22.1-15.4zm0 0l1.5-12.4.8 10.5zm1.7-1.4l25.8 16.2-23.3-18zm0 0l2.9-13.4-.4 11.6zm1.7-1.3l23.8 17.1-21.2-18.7zm0 0l4.3-12.5-1.7 10.9zm1.7-1.1l21.4 17.7-18.7-19zm0 0l5.6-11.2-2.9 9.9zm1.7-.9l17.9 17-15-18zm0 0l6.4-9.3-3.5 8.3zm1.7-.6l17.7 19.9-14.8-20.7zm0 0l8.2-9-5.3 8.2zm1.7-.5l14.9 19.8-11.9-20.2zm0 0l8.9-7.2-5.9 6.8zm1.7-.3l12.2 19.5-9.2-19.5zm0 0l9.2-5.3-6.2 5.3zm1.6-.1l11.1 22.1-8.1-21.8zm0 0l10.6-4.2-7.6 4.5zm1.7.1l7.3 17.6-4.3-16.9zm0 0l8.8-2-5.8 2.7zm1.7.3l6.5 21-3.6-19.9zm0 0l10.1-1-7.2 2.1zm1.8.6l3.9 16.3-1.3-14.9zm0 0l7.9.3-5.3 1.1zm1.6.8l2.9 18.2-.3-16.5zm0 0l8.6 1.2-6 .5zm1.7 1.1l1.7 16.2.7-14.3zm0 0l7.6 1.7-5.2.2zm1.7 1.3l.7 13.6 1.5-11.6zm0 0l6.3 2.1-4.1-.1zm1.6 1.5l.1 13.5 2-11.3zm0 0l6.1 2.5-4-.3zm1.7 1.7l-.2 10.6 2.1-8.3zm0 0l4.7 2.5-2.8-.2zm1.6 1.9l-.3 8.2 2-5.7zm0 0l3.6 2.3-1.9.2zm1.6 2.2l.5 2.7 1.1-.2zm0 0l1.4 1.5.2 1zm-53.8 35.6l4.4-9.5 4.3-8.4 4.3-7.3 4.1-6.2 4.1-5.1 4-4 3.8-2.9 3.7-1.9 3.6-.8 3.6.2 3.6 1.3 3.6 2.3 3.6 3.5 3.6 4.7.6-.4-3.5-4.9-3.5-3.7-3.7-2.7-3.9-1.7-4.1-.4-4.1.6-4.3 1.9-4.3 3-4.3 4-4.4 5.2-4.5 6.3-4.5 7.3-4.7 8.5-4.7 9.5zm3.1-4.5l12.6 7.5-10.3-9zm0 0l2-6.6.3 5.1zm3.1-2.1l12.7 8-10.4-9.5zm0 0l2.4-6.7-.1 5.2zm3.1-2l13.7 9.3-11.4-10.7zm0 0l2.8-7.2-.5 5.8zm3-1.8l17.7 13.2-15.3-14.5zm0 0l3.9-9.3-1.5 8zm3-1.6l17.3 13.6-14.8-14.9zm0 0l4.4-9.1-1.9 7.8zm3-1.5l16.7 13.9-14.1-15.1zm0 0l4.8-8.8-2.2 7.6zm3-1.4l18.9 17.2-16.3-18.2zm0 0l6-9.9-3.4 8.9zm3-1.2l16.2 15.5-13.6-16.4zm0 0l5.9-8.4-3.3 7.5zm2.9-1l17.5 18.2-14.9-19.1zm0 0l7.1-9.1-4.5 8.2zm2.9-.9l15 16.5-12.3-17.2zm0 0l6.9-7.6-4.2 6.9zm2.9-.8l15.5 18.6-12.8-19.1zm0 0l7.8-7.7-5.1 7.2zm2.8-.5l16.4 21.4-13.6-21.9zm0 0l9.2-8.1-6.4 7.6zm2.9-.5l15.9 22.7-13.2-22.9zm0 0l9.9-7.6-7.2 7.4zm2.8-.2l14.8 23-12.1-23.2zm0 0l10.3-6.8-7.6 6.6zm2.8-.2l12.1 20.3-9.4-20.2zm0 0l9.4-5.2-6.7 5.3zm2.8.1l11.6 21.7-8.9-21.5zm0 0l10.1-4.8-7.4 5zm2.7.2l9.9 20.1-7.1-19.7zm0 0l9.6-3.7-6.8 4.1zm2.7.4l8.5 18.8-5.7-18.3zm0 0l9.2-2.8-6.4 3.3zm2.8.5l8.2 20.8-5.6-20.1zm0 0l10-2.4-7.4 3.1zm2.7.7l7.7 22.4-5.1-21.6zm0 0l10.6-2-8 2.8zm2.6.8l6.6 21.9-4-20.9zm0 0l10.4-1.2-7.8 2.2zm2.7 1l5.4 20.4-2.9-19.3zm0 0l9.7-.5-7.2 1.6zm2.6 1.2l4.6 20.7-2.1-19.5zm0 0l9.8 0-7.3 1.2zm2.6 1.3l3.3 16.3-.9-14.9zm0 0l7.8.6-5.4.8zm2.6 1.5l2.5 14.8-.2-13.3zm0 0l7.1.9-4.8.6zm2.6 1.6l2 14.8.2-13.2zm0 0l6.9 1.3-4.7.3zm2.5 1.9l1.5 12.7.7-11zm0 0l6 1.4-3.8.3zm2.5 1.9l1.1 11 1-9.2zm0 0l5.2 1.6-3.1.2zm2.5 2.2l.8 9.6 1.2-7.7zm0 0l4.6 1.7-2.6.2zm2.4 2.3l.7 7.5 1.3-5.6zm0 0l3.7 1.6-1.7.3zm2.5 2.4l.8 2.6 1.1-.5zm0 0l1.5 1.2.4.9zm-86.8.8l7-5.2 6.9-4.4 6.8-3.7 6.6-2.8 6.5-2 6.4-1.2 6.3-.4 6.1.5 6.1 1.2 5.9 2 5.9 2.9 5.8 3.7 5.6 4.5 5.6 5.4.5-.5-5.5-5.5-5.6-4.8-5.7-3.9-6-3.2-6-2.3-6.3-1.5-6.4-.6-6.6.2-6.7 1-6.8 1.9-7 2.7-7 3.6-7.3 4.4-7.3 5.2zm5.9-3.2l11.6 12.7-8.2-13.4zm0 0l6.2-5.6-2.8 4.9zm4.4-.9l11.8 13.7-8.3-14.3zm0 0l6.7-5.6-3.2 5zm4.5-.8l12.4 15.6-8.9-16zm0 0l7.5-5.8-4 5.4zm4.4-.6l16.1 22.4-12.6-22.7zm0 0l10.2-7.5-6.7 7.2zm4.4-.4l13.1 18.9-9.6-19.1zm0 0l9-5.8-5.5 5.6zm4.3-.2l15.8 24.9-12.3-25zm0 0l11.6-7-8.1 6.9zm4.3-.1l15 25.4-11.5-25.3zm0 0l11.9-6.4-8.4 6.5zm4.3.1l13.6 24.6-10.1-24.3zm0 0l11.6-5.5-8.1 5.8zm4.2.3l14.9 29.4-11.4-29zm0 0l13.8-5.9-10.3 6.3zm4.2.5l11.6 23.8-8.1-23.3zm0 0l11.6-4.1-8.1 4.6zm4.2.6l11.3 25.4-7.8-24.7zm0 0l12.2-3.7-8.7 4.4zm4.2.8l11.4 28.6-8-27.8zm0 0l13.5-3.6-10.1 4.4zm4.1 1l9.4 25.2-6-24.2zm0 0l12.1-2.5-8.7 3.5zm4.1 1.2l10.6 32.3-7.3-31.2zm0 0l15.1-2.7-11.8 3.8zm4 1.3l8.3 27.2-5-26zm0 0l12.9-1.5-9.6 2.7zm4 1.5l7.2 26.2-4-24.8zm0 0l12.5-.8-9.3 2.2zm4 1.7l6.2 25.1-3-23.6zm0 0l11.9-.3-8.7 1.8zm3.9 1.9l6.2 29.4-3.1-27.8zm0 0l13.7.1-10.6 1.5zm3.9 2.1l5.1 27.2-2-25.5zm0 0l12.7.6-9.6 1.1zm3.9 2.2l4.4 27.9-1.4-26.1zm0 0l12.9 1.1-9.9.7zm3.9 2.4l3.6 27-.7-25.1zm0 0l12.4 1.5-9.5.4zm3.8 2.6l2.9 26.9-.1-24.9zm0 0l12.2 2-9.4 0zm3.7 2.7l2.3 26.6.5-24.4zm0 0l12.1 2.4-9.3-.2zm3.8 3l1.5 23.2 1.2-21zm0 0l10.5 2.5-7.8-.3zm3.7 3.1l1.1 18.8 1.5-16.5zm0 0l8.6 2.5-6-.2zm3.6 3.3l.7 18.7 1.9-16.3zm0 0l8.5 2.7-5.9-.3zm3.7 3.4l.4 15.5 2-13zm0 0l7 2.7-4.6-.2zm3.5 3.7l.4 12.8 2-10.2zm0 0l5.9 2.6-3.5 0zm3.6 3.8l.2 12.1 2.1-9.5zm0 0l5.5 2.6-3.2 0zm3.5 4l.2 9.4 2.1-6.7zm0 0l4.4 2.4-2.1.3zm3.5 4.2l.9 2.9 1.3-.1zm0 0l1.7 1.6.5 1.2zm-126-44.5l10.1-2.6 10-1.6 9.8-.8 9.6.1 9.4 1 9.3 1.9 9.2 2.8 8.9 3.7 8.9 4.6 8.6 5.6 8.5 6.5 8.4 7.3 8.1 8.4 8 9.2.6-.4-7.9-9.5-8-8.5-8.2-7.7-8.5-6.7-8.6-5.9-8.9-4.9-9-4.1-9.3-3.1-9.5-2.2-9.8-1.3-9.9-.4-10.1.5-10.4 1.5-10.5 2.4zm3.6-1l4.2 11-2.1-10.3zm0 0l5.5-.8-3.4 1.5zm2.7.9l4.7 13.2-2.6-12.5zm0 0l6.5-1-4.4 1.7zm2.7.9l5 15.4-2.9-14.7zm0 0l7.4-1-5.3 1.7zm2.6.9l4.7 15.2-2.6-14.4zm0 0l7.4-.7-5.3 1.5zm2.7 1l5.1 18.1-3.1-17.2zm0 0l8.5-.7-6.5 1.6zm2.6 1.1l5.1 19.6-3-18.7zm0 0l9.2-.6-7.1 1.5zm2.6 1.1l4.1 16.2-2.1-15.2zm0 0l7.7-.2-5.7 1.2zm2.6 1.2l4.7 21.2-2.7-20.2zm0 0l9.8-.2-7.8 1.2zm2.6 1.3l4.2 20.6-2.3-19.6zm0 0l9.5 0-7.6 1zm2.5 1.3l3.5 17.7-1.5-16.6zm0 0l8.2.3-6.2.8zm2.5 1.4l3.5 19.7-1.5-18.6zm0 0l9.1.4-7.1.7zm2.5 1.5l3.3 20.7-1.4-19.6zm0 0l9.5.6-7.6.5zm2.5 1.5l3.2 22.4-1.3-21.3zm0 0l10.2.8-8.3.3zm2.5 1.5l2.5 19.3-.7-18zm0 0l8.8 1-7 .3zm2.4 1.7l2.3 20.2-.5-19zm0 0l9.2 1.2-7.4 0zm2.4 1.7l2.1 21.6-.3-20.3zm0 0l9.7 1.4-7.9-.1zm2.4 1.7l1.7 20.9.1-19.5zm0 0l9.3 1.6-7.5-.2zm2.4 1.8l1.4 21.2.3-19.8zm0 0l9.4 1.8-7.7-.4zm2.3 1.9l1.1 18.2.6-16.8zm0 0l8.1 1.8-6.4-.4zm2.4 2l.8 18.4.8-17zm0 0l8.2 1.9-6.6-.5zm2.3 2l.6 15.6 1-14.2zm0 0l7 1.9-5.4-.5zm2.3 2l.3 17.3 1.3-15.8zm0 0l7.6 2.2-6-.7zm2.2 2.2l.2 16.8 1.4-15.3zm0 0l7.4 2.2-5.8-.7zm2.3 2.1l0 15.1 1.5-13.5zm0 0l6.6 2.3-5.1-.7zm2.2 2.3l-.1 14.3 1.6-12.7zm0 0l6.3 2.2-4.8-.6zm2.2 2.3l-.1 11.5 1.6-9.9zm0 0l5.1 2-3.6-.4zm2.2 2.4l-.3 12.3 1.7-10.7zm0 0l5.4 2.2-4-.6zm2.1 2.4l-.3 11 1.8-9.3zm0 0l4.8 2.1-3.3-.4zm2.2 2.5l-.3 9.1 1.7-7.4zm0 0l4 2-2.6-.3zm2.1 2.6l0 6.2 1.4-4.5zm0 0l2.8 1.6-1.4.1zm2.1 2.6l.4 2.4.9-.7zm0 0l1.2 1.1.1.6zm-76.7-51.4l6.2 1.6 6.1 2 5.9 2.3 5.9 2.6 5.8 3 5.6 3.2 5.6 3.6 5.4 3.9 5.4 4.3 5.2 4.5 5.2 4.9 5 5.2 5 5.5 4.8 5.9.5-.4-4.7-6-4.8-5.7-5-5.3-5-5.1-5.2-4.7-5.3-4.4-5.4-4.1-5.6-3.8-5.7-3.4-5.7-3.2-6-2.8-6-2.5-6.1-2.2-6.3-1.9zm-6.2-.1l-6.7 15.3 3.3-14.5zm0 0l-8-1.6 4.6 2.4zm-4.3 1.1l-6.9 16.7 3.5-15.8zm0 0l-8.6-1.6 5.2 2.5zm-4.3 1.2l-7.8 20.9 4.5-19.9zm0 0l-10.3-1.8 7 2.8zm-4.2 1.2l-8.2 23.7 4.9-22.6zm0 0l-11.5-1.7 8.2 2.8zm-4.2 1.4l-8.6 27 5.3-25.8zm0 0l-12.9-1.7 9.6 2.9zm-4.2 1.5l-7.8 26.3 4.6-25zm0 0l-12.5-1.3 9.3 2.6zm-4.1 1.6l-6.8 23.8 3.6-22.4zm0 0l-11.4-.8 8.2 2.2zm-4.1 1.8l-7.8 31 4.6-29.6zm0 0l-14.5-.9 11.3 2.3zm-4.1 1.8l-6.2 25.5 3.1-24zm0 0l-12.1-.3 9 1.8zm-4 1.9l-6.9 32.4 3.8-30.8zm0 0l-15-.2 11.9 1.8zm-4 2l-5.6 27.3 2.5-25.6zm0 0l-12.8.3 9.7 1.4zm-4 2.2l-5.3 28.9 2.3-27.2zm0 0l-13.4.6 10.4 1.1zm-3.9 2.2l-5.3 33 2.3-31.2zm0 0l-15.1 1 12.1.8zm-3.9 2.4l-4.1 27.2 1.2-25.3zm0 0l-12.5 1.2 9.6.7zm-3.9 2.5l-3.6 27 .8-25.1zm0 0l-12.4 1.5 9.6.4zm-3.8 2.6l-3.4 29.8.6-27.9zm0 0l-13.5 1.8 10.7.1zm-3.8 2.6l-3 31.1.2-29zm0 0l-14 2.3 11.2-.2zm-3.8 2.8l-2.4 31.4-.3-29.2zm0 0l-14 2.6 11.3-.4zm-3.7 3l-1.9 29.2-.8-27.1zm0 0l-13.1 2.7 10.4-.6zm-3.7 3l-1.5 30.2-1.1-28zm0 0l-13.4 3 10.8-.8zm-3.7 3.1l-1 25.7-1.5-23.4zm0 0l-11.4 3 8.9-.7zm-3.6 3.2l-.6 27.8-1.9-25.4zm0 0l-12.2 3.4 9.7-1zm-3.6 3.4l-.5 20.6-2-18.2zm0 0l-9.2 2.9 6.7-.5zm-3.5 3.4l-.3 20.2-2.2-17.7zm0 0l-9 3.1 6.5-.6zm-3.6 3.6l.1 20.4-2.4-17.9zm0 0l-9 3.3 6.7-.8zm-3.4 3.6l.1 17.6-2.5-15zm0 0l-7.8 3.2 5.4-.6zm-3.5 3.8l.4 17.6-2.7-15zm0 0l-7.8 3.3 5.5-.7zm-3.4 3.9l.3 15-2.6-12.4zm0 0l-6.6 3.1 4.3-.5zm-3.4 4l.2 12-2.4-9.4zm0 0l-5.4 2.8 3.2-.2zm-3.4 4.1l0 9.5-2.1-6.8zm0 0l-4.3 2.5 2.2.2zm-3.3 4.2l-.8 2.8-1.3-.1zm0 0l-1.6 1.6-.5 1.1zm120.6-82.6l-10 2.4-9.7 2.9-9.6 3.5-9.4 4-9.2 4.6-9 5.2-8.8 5.7-8.6 6.3-8.4 6.8-8.2 7.4-8 7.9-7.9 8.4-7.6 9.1-7.5 9.5.5.5 7.7-9.4 7.8-8.8 8-8.3 8.2-7.7 8.3-7.1 8.5-6.5 8.6-6 8.8-5.4 9-4.9 9.2-4.3 9.2-3.7 9.5-3.2 9.6-2.6 9.8-2.1zm3.4 4.8l.6 12.2 1-10.8zm0 0l5.6 1.6-4-.2zm2 1.8l.5 11.9 1-10.5zm0 0l5.4 1.6-3.9-.2zm2 1.8l.3 15.6 1.2-14.2zm0 0l6.9 2-5.4-.6zm1.9 1.8l.1 17.4 1.4-15.9zm0 0l7.6 2.3-6.1-.8zm2 1.9l0 16.5 1.4-15.1zm0 0l7.1 2.2-5.7-.8zm1.9 1.9l-.2 17.5 1.6-16.1zm0 0l7.5 2.4-6.1-1zm1.9 1.9l-.2 16.3 1.6-14.8zm0 0l7 2.3-5.6-.8zm1.8 1.9l-.4 18.4 1.9-16.9zm0 0l8 2.7-6.5-1.2zm1.9 2l-.6 18.6 2-17.1zm0 0l8 2.7-6.6-1.2zm1.9 1.9l-.8 19.4 2.2-17.8zm0 0l8.2 2.9-6.8-1.3zm1.8 2l-.7 16.6 2.1-15zm0 0l7.1 2.7-5.7-1.1zm1.8 2.1l-1.3 21.5 2.7-20zm0 0l9.1 3.3-7.7-1.8zm1.8 2l-1.2 19.1 2.6-17.5zm0 0l8.1 3.1-6.7-1.5zm1.8 2.1l-1.2 18.4 2.5-16.9zm0 0l7.8 3-6.5-1.5zm1.8 2.1l-1.6 20.2 2.9-18.7zm0 0l8.5 3.4-7.2-1.9zm1.7 2.1l-1.5 18.7 2.8-17.1zm0 0l7.9 3.2-6.6-1.6zm1.8 2.1l-1.6 18.1 2.9-16.5zm0 0l7.5 3.2-6.2-1.6zm1.7 2.2l-1.8 18.6 3.1-17zm0 0l7.7 3.3-6.4-1.7zm1.7 2.1l-1.4 15.2 2.7-13.5zm0 0l6.3 3-5-1.3zm1.7 2.3l-1.8 16.7 3-15.1zm0 0l6.9 3.2-5.7-1.6zm1.7 2.2l-1.7 15.6 2.9-14zm0 0l6.4 3.1-5.2-1.5zm1.6 2.2l-2 17.1 3.2-15.4zm0 0l7.1 3.4-5.9-1.7zm1.7 2.3l-2 16.1 3.2-14.4zm0 0l6.6 3.3-5.4-1.6zm1.6 2.3l-1.5 12.8 2.7-11.1zm0 0l5.3 2.8-4.1-1.1zm1.6 2.3l-1.5 12.6 2.7-10.9zm0 0l5.2 2.8-4-1.1zm1.6 2.4l-1.2 10.5 2.4-8.8zm0 0l4.4 2.5-3.2-.8zm1.6 2.3l-1.3 10.3 2.4-8.6zm0 0l4.3 2.5-3.2-.8zm1.6 2.4l-1.3 9.9 2.4-8.2zm0 0l4 2.5-2.9-.8zm1.5 2.4l-1 8.4 2.1-6.6zm0 0l3.5 2.3-2.4-.5zm1.6 2.5l-.6 5.8 1.6-4.1zm0 0l2.4 1.7-1.4 0zm1.5 2.4l.2 2.4.9-.6zm0 0l1.1 1.2 0 .6zm-56.4-65.3l4.5 3.9 4.5 4.1 4.4 4.2 4.3 4.3 4.3 4.5 4.1 4.5 4.1 4.7 4 4.8 4 4.9 3.8 5.1 3.8 5.1 3.7 5.3 3.6 5.4 3.5 5.6.6-.4-3.4-5.6-3.5-5.5-3.6-5.4-3.6-5.3-3.8-5.2-3.8-5-3.9-4.9-4-4.8-4.1-4.7-4.2-4.6-4.2-4.5-4.3-4.3-4.5-4.3-4.5-4.1zm-2.5 1.5l-1.2 10.5-.5-9.2zm0 0l-5 1.2 3.3.1zm-2.2 1.7l-1.2 14.5-.5-13.1zm0 0l-6.6 1.5 4.9-.1zm-2.2 1.8l-1.1 13.1-.6-11.7zm0 0l-6 1.5 4.3-.1zm-2.2 1.8l-1 14.9-.7-13.5zm0 0l-6.7 1.6 5-.2zm-2.2 1.8l-.8 16-.8-14.5zm0 0l-7.1 1.8 5.5-.3zm-2.1 1.9l-.7 19-1-17.5zm0 0l-8.4 2.1 6.7-.6zm-2.2 1.9l-.5 17.8-1.1-16.3zm0 0l-7.8 2.1 6.2-.6zm-2.1 1.9l-.3 18.5-1.3-17zm0 0l-8.1 2.3 6.5-.8zm-2.1 2l-.1 20.3-1.5-18.8zm0 0l-8.8 2.5 7.2-1zm-2.1 2l0 17.7-1.5-16.2zm0 0l-7.7 2.3 6.2-.8zm-2 2l.3 21.3-1.9-19.8zm0 0l-9.2 2.8 7.6-1.3zm-2.1 2l.3 18-1.8-16.4zm0 0l-7.8 2.6 6.3-1zm-2 2.1l.6 20.2-2.1-18.6zm0 0l-8.6 2.9 7.1-1.3zm-2 2.1l.6 18.6-2.1-17zm0 0l-8 2.8 6.5-1.2zm-2 2.2l.7 18.1-2.2-16.5zm0 0l-7.7 2.8 6.2-1.2zm-2 2.2l1 19.6-2.4-18zm0 0l-8.3 3.1 6.9-1.5zm-1.9 2.2l1.1 18.7-2.6-17.1zm0 0l-8 3 6.5-1.4zm-2 2.2l1.2 18-2.6-16.3zm0 0l-7.6 3.1 6.2-1.4zm-1.9 2.3l1.3 17.7-2.7-16.1zm0 0l-7.4 3.1 6-1.5zm-1.9 2.3l1.4 17.6-2.8-15.9zm0 0l-7.4 3.1 6-1.4zm-1.9 2.3l1.3 15.3-2.6-13.6zm0 0l-6.4 2.9 5.1-1.2zm-1.8 2.4l1.2 14.8-2.6-13.1zm0 0l-6.3 2.9 4.9-1.2zm-1.9 2.4l1.5 15.8-2.8-14.1zm0 0l-6.6 3.1 5.3-1.4zm-1.8 2.4l1.5 14.9-2.8-13.2zm0 0l-6.2 3 4.9-1.3zm-1.8 2.4l1.4 13.5-2.7-11.7zm0 0l-5.6 2.9 4.3-1.1zm-1.8 2.5l1.5 13.4-2.8-11.6zm0 0l-5.6 2.9 4.3-1.1zm-1.8 2.5l1.2 11.4-2.5-9.6zm0 0l-4.7 2.7 3.4-.9zm-1.8 2.6l1.2 10.5-2.4-8.7zm0 0l-4.4 2.5 3.2-.7zm-1.7 2.6l.7 7.6-1.9-5.8zm0 0l-3.2 2 2-.2zm-1.7 2.6l.5 6.4-1.7-4.6zm0 0l-2.8 1.9 1.6-.1zm-1.8 2.6l-.2 2.4-.9-.5zm0 0l-1.1 1.2 0 .7zm61.5-69.5l-5.1 4-4.9 4.1-4.9 4.4-4.8 4.4-4.7 4.6-4.6 4.8-4.5 5-4.4 5.1-4.3 5.2-4.2 5.4-4.1 5.6-4.1 5.7-3.9 5.9-3.8 6 .6.4 3.9-5.9 4.1-5.8 4.1-5.6 4.2-5.4 4.4-5.3 4.4-5.1 4.5-5 4.5-4.8 4.7-4.6 4.8-4.5 4.8-4.3 5-4.1 5-4 5.1-3.8z'/%3E%3Ccircle cx='148.8' cy='99.4' r='6.5'/%3E%3Ccircle cx='143.5' cy='106.3' r='3.7'/%3E%3Ccircle cx='149.6' cy='106.3' r='3.7'/%3E%3Ccircle cx='154.6' cy='106.3' r='3.7'/%3E%3C/svg%3E");
+  --synthwave-art-palm-2: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='259.6' height='236' viewBox='0 0 259.6 236' preserveAspectRatio='none'%3E%3Cpath d='M124.1 236.1l-1-7.3-.8-7.3.3-7.2.3-7.2.4-7.1.4-7 .6-7 .6-7 .6-6.9.8-6.8.8-6.8.8-6.7 1-6.7 1-6.6 1.1-6.5 1.1-6.5 1.2-6.5 1.3-6.4 1.4-6.3 1.4-6.3 1.5-6.2 1.5-6.2 1.7-6.1 1.6-6.1-4.2-1.3-1.9 6.1-1.8 6.1-1.7 6.2-1.7 6.3-1.5 6.3-1.5 6.4-1.5 6.4-1.4 6.5-1.3 6.5-1.2 6.6-1.2 6.7-1.1 6.7-1 6.8-.9 6.8-.9 6.9-.8 6.9-.8 7-.7 7.1-.6 7.1-.5 7.2-.5 7.2-.4 7.3-1.4 7.3-1.3 7.4z'/%3E%3Cpath d='M136.1 73.9l-7.9 9.7 5.1-10zm0 0l-5.1-3.5 2.3 3.2zm-3.6-.4l-10 13.7 7.2-13.9zm0 0l-6.6-4.5 3.8 4.3zm-3.6-.3l-10.1 14.9 7.4-15zm0 0l-7.1-4.5 4.4 4.4zm-3.5-.1l-10.8 17 8.1-17.1zm0 0l-8.1-4.7 5.4 4.6zm-3.5-.1l-9.8 16.4 7.1-16.3zm0 0l-7.9-4 5.2 4.1zm-3.4.2l-10 17.7 7.2-17.6zm0 0l-8.6-4 5.8 4.1zm-3.4.2l-10.5 20.2 7.7-19.9zm0 0l-9.7-4.1 6.9 4.4zm-3.5.4l-9.5 19.7 6.8-19.3zm0 0l-9.4-3.5 6.7 3.9zm-3.3.5l-9.8 21.9 7-21.4zm0 0l-10.5-3.4 7.7 3.9zm-3.4.6l-8.2 19.6 5.5-19zm0 0l-9.5-2.6 6.8 3.2zm-3.3.7l-7.9 20.5 5.2-19.7zm0 0l-9.9-2.2 7.2 3zm-3.3.9l-8.6 25.1 5.9-24.3zm0 0l-11.8-2.3 9.1 3.1zm-3.3 1l-7.4 23.3 4.8-22.3zm0 0l-11-1.6 8.4 2.6zm-3.2 1.2l-6.9 23.9 4.3-22.9zm0 0l-11.3-1.2 8.7 2.2zm-3.3 1.3l-6.5 25.4 4-24.3zm0 0l-11.8-.9 9.3 2zm-3.2 1.4l-5.3 22.6 2.8-21.4zm0 0l-10.6-.3 8.1 1.5zm-3.1 1.5l-4.4 20.4 1.9-19.1zm0 0l-9.6.2 7.1 1.1zm-3.2 1.7l-4.4 24.7 2-23.3zm0 0l-11.3.5 8.9.9zm-3.1 1.8l-3.6 22.9 1.3-21.4zm0 0l-10.5.9 8.2.6zm-3.1 1.9l-3 22.6.7-21zm0 0l-10.3 1.3 8 .3zm-3 2.1l-2.4 21.5.1-19.9zm0 0l-9.9 1.5 7.6.1zm-3.1 2.2l-1.9 22.6-.2-20.9zm0 0l-10.1 1.9 8-.2zm-3 2.3l-1.3 18.2-.8-16.4zm0 0l-8.2 1.9 6.1-.1zm-2.9 2.5l-1 19-1.1-17.2zm0 0l-8.6 2.2 6.5-.4zm-3 2.6l-.6 15.9-1.4-14.1zm0 0l-7.2 2.2 5.2-.4zm-2.9 2.7l-.3 15.4-1.7-13.5zm0 0l-6.9 2.3 4.9-.4zm-2.9 2.8l-.1 14.2-1.8-12.2zm0 0l-6.3 2.4 4.4-.4zm-2.8 3l-.1 11.4-1.8-9.4zm0 0l-5.2 2.2 3.3-.2zm-2.9 3.1l-.1 8.9-1.7-6.8zm0 0l-4 2 2.2.1zm-2.8 3.3l-.1 7.3-1.6-5.2zm0 0l-3.4 1.9 1.7.2zm-2.7 3.3l-.7 2.6-1-.4zm0 0l-1.5 1.3-.2.9zm101.1-45.2l-8.4-1.1-8.2-.4-8 .2-7.9 1-7.8 1.6-7.5 2.3-7.4 3-7.2 3.6-7.1 4.4-6.9 4.9-6.7 5.7-6.5 6.3-6.4 7-6.3 7.6.6.4 6.4-7.4 6.5-6.8 6.6-6.1 6.8-5.4 6.9-4.8 7-4 7.2-3.4 7.2-2.7 7.5-2.1 7.5-1.4 7.7-.7 7.8 0 7.9.6 8.1 1.2zm-4.4-1.3l-9.4 5.5 7.5-6.8zm0 0l-1.6-4.9-.3 3.6zm-2.6-1.7l-10.7 6.8 8.8-8.1zm0 0l-2-5.7.1 4.4zm-2.5-1.6l-12.1 8.3 10.1-9.5zm0 0l-2.6-6.4.6 5.2zm-2.6-1.5l-14.5 11 12.5-12.1zm0 0l-3.3-7.7 1.3 6.6zm-2.5-1.4l-12.7 10.1 10.6-11.1zm0 0l-3.4-6.7 1.3 5.7zm-2.5-1.2l-12.7 10.7 10.6-11.6zm0 0l-3.8-6.7 1.7 5.8zm-2.5-1.1l-12.7 11.5 10.6-12.3zm0 0l-4.3-6.6 2.2 5.8zm-2.4-1l-12.4 12.1 10.2-12.8zm0 0l-4.8-6.3 2.6 5.6zm-2.5-.8l-13 13.9 10.8-14.5zm0 0l-5.6-6.6 3.4 6zm-2.4-.7l-13.8 16 11.6-16.5zm0 0l-6.6-6.9 4.4 6.4zm-2.4-.5l-14.1 17.8 11.8-18.2zm0 0l-7.5-7 5.2 6.6zm-2.4-.4l-11.8 15.9 9.5-16.2zm0 0l-7.1-5.7 4.8 5.4zm-2.3-.3l-11.3 16.6 9-16.8zm0 0l-7.6-5.3 5.3 5.1zm-2.4-.2l-10.3 16.6 8-16.6zm0 0l-7.7-4.5 5.4 4.5zm-2.3 0l-9.6 16.9 7.3-16.8zm0 0l-8-4 5.7 4.1zm-2.3.1l-9.9 19.6 7.6-19.3zm0 0l-9.2-3.9 6.9 4.2zm-2.3.3l-8.4 18.4 6.1-18zm0 0l-8.8-3 6.5 3.4zm-2.3.4l-6.9 16.8 4.6-16.3zm0 0l-8.1-2.1 5.8 2.6zm-2.3.5l-5.8 15.8 3.6-15.2zm0 0l-7.7-1.5 5.5 2.1zm-2.2.7l-5.9 18.8 3.7-18.1zm0 0l-9-1.2 6.8 1.9zm-2.3.8l-4.9 18 2.8-17.1zm0 0l-8.5-.6 6.4 1.5zm-2.2.9l-4.1 17.9 2-16.9zm0 0l-8.4-.1 6.3 1.1zm-2.2 1.1l-3 14.5 1-13.4zm0 0l-6.9.4 4.9.7zm-2.2 1.2l-2.4 15 .5-13.8zm0 0l-7 .8 5.1.4zm-2.1 1.4l-2 15.4.1-14.1zm0 0l-7.2 1.1 5.3.2zm-2.2 1.5l-1.3 13.1-.5-11.7zm0 0l-6 1.3 4.2.1zm-2.1 1.6l-.9 12.9-.8-11.4zm0 0l-5.9 1.6 4.2-.1zm-2.1 1.8l-.6 9.3-1.1-7.7zm0 0l-4.3 1.5 2.6.1zm-2 1.9l-.4 9.4-1.3-7.7zm0 0l-4.3 1.7 2.6 0zm-2.1 2.1l-.4 5.8-1.2-4.1zm0 0l-2.8 1.4 1.2.3zm-2 2.2l-.6 2.4-.9-.7zm0 0l-1.4 1.1-.1.6zm74.3-4.3l-6.2-4.3-6-3.6-5.9-2.9-5.8-2.1-5.8-1.5-5.6-.7-5.4 0-5.4.7-5.2 1.5-5.1 2.2-4.9 2.8-4.8 3.6-4.7 4.3-4.5 4.9.5.5 4.6-4.8 4.7-4.1 4.8-3.3 4.9-2.7 5-1.9 5-1.3 5.2-.5 5.2.2 5.3.8 5.4 1.6 5.5 2.2 5.6 2.9 5.8 3.7 5.8 4.3zm-3.5-3.7l-13 1.9 11.9-3.9zm0 0l2.2-5.6-3.3 3.6zm-1.5-2.9l-14.6 2.5 13.5-4.4zm0 0l2.3-6.2-3.4 4.3zm-1.6-2.7l-16.7 3.4 15.6-5.3zm0 0l2.6-7.2-3.7 5.3zm-1.5-2.5l-16.2 3.6 15-5.6zm0 0l2.3-7.2-3.5 5.2zm-1.5-2.4l-19.2 4.9 18-6.8zm0 0l2.6-8.5-3.8 6.6zm-1.5-2.3l-18.8 5.4 17.5-7.2zm0 0l2.2-8.5-3.5 6.7zm-1.4-2.1l-17.4 5.4 16-7.2zm0 0l1.5-8-2.9 6.2zm-1.5-1.9l-20.8 7.5 19.4-9.2zm0 0l1.6-9.7-3 8zm-1.4-1.7l-17.9 6.9 16.4-8.6zm0 0l.7-8.7-2.2 7zm-1.5-1.7l-16.9 7.4 15.4-9zm0 0l.2-8.3-1.7 6.7zm-1.4-1.4l-16.1 7.8 14.5-9.3zm0 0l-.4-8.1-1.2 6.6zm-1.4-1.3l-17.7 9.8 16-11.2zm0 0l-1.2-9.1-.5 7.7zm-1.3-1.2l-15.9 9.9 14-11.2zm0 0l-2-8.2.1 6.9zm-1.4-1l-18.6 13.4 16.6-14.5zm0 0l-3.3-9.7 1.3 8.6zm-1.4-.8l-17.5 14.5 15.5-15.5zm0 0l-4.3-9.3 2.3 8.3zm-1.3-.7l-13.4 12.4 11.3-13.2zm0 0l-4.7-7 2.6 6.2zm-1.4-.6l-11.7 12.8 9.6-13.4zm0 0l-5.3-5.9 3.2 5.3zm-1.3-.4l-11.8 15.3 9.6-15.6zm0 0l-6.7-5.7 4.5 5.4zm-1.3-.2l-9.3 14.1 7-14.2zm0 0l-6.7-4.1 4.4 4zm-1.4-.1l-8.5 16.1 6.3-15.9zm0 0l-7.7-3.4 5.5 3.6zm-1.3 0l-7.4 17.4 5.2-16.9zm0 0l-8.3-2.3 6.1 2.8zm-1.4.3l-5 14.6 2.9-13.9zm0 0l-7.1-1 5 1.7zm-1.3.4l-3.8 14.9 1.7-14zm0 0l-7.2-.2 5.1 1.1zm-1.4.6l-2.8 16.1.9-15zm0 0l-7.5.5 5.6.6zm-1.3.7l-1.6 13.5-.2-12.1zm0 0l-6.3 1.2 4.5.2zm-1.3 1l-.9 12.1-.8-10.7zm0 0l-5.6 1.5 3.9-.1zm-1.3 1.1l-.2 12.5-1.4-10.9zm0 0l-5.6 1.9 4-.3zm-1.3 1.2l.2 10.8-1.7-9zm0 0l-4.8 2.1 3.3-.3zm-1.3 1.5l.5 9.1-1.9-7.3zm0 0l-4 2.1 2.6-.3zm-1.3 1.6l.4 6.6-1.7-4.7zm0 0l-2.8 1.9 1.5 0zm-1.2 1.8l-.3 2.4-.9-.5zm0 0l-1.2 1.2 0 .7zm45.3 22l-3.7-7-3.7-6.2-3.6-5.4-3.5-4.5-3.5-3.7-3.4-2.8-3.4-2-3.4-1.1-3.3-.2-3.2.6-3.1 1.5-2.9 2.4-2.8 3.2-2.7 4 .6.3 2.8-3.8 2.8-2.9 2.9-2.1 2.8-1.3 2.9-.4 2.8.4 2.9 1.1 3.1 2 3.1 2.7 3.2 3.6 3.2 4.5 3.4 5.3 3.4 6.2 3.5 6.9zm-2.8-4.7l-10.6-.9 10-1.3zm0 0l2.8-4-3.4 1.8zm-.9-3.2l-12.6-.6 11.9-1.5zm0 0l3.4-4.6-4.1 2.5zm-.9-2.9l-14.5-.5 13.8-1.7zm0 0l3.9-5.3-4.6 3.1zm-.9-2.9l-17.3 0 16.6-2.1zm0 0l4.6-6.1-5.3 4zm-.8-2.6l-17.4.2 16.6-2.3zm0 0l4.5-6.3-5.3 4.2zm-.9-2.5l-18.1.6 17.3-2.7zm0 0l4.6-6.7-5.4 4.6zm-.8-2.3l-20.3 1.2 19.5-3.3zm0 0l4.9-7.5-5.7 5.4zm-.9-2.2l-16.9 1.2 16.1-3.2zm0 0l3.9-6.5-4.7 4.5zm-.8-2l-20.1 2.2 19.2-4.2zm0 0l4.5-7.7-5.4 5.7zm-.8-1.8l-18.7 2.5 17.7-4.5zm0 0l3.8-7.5-4.8 5.5zm-.8-1.7l-20 3.5 19-5.4zm0 0l3.7-8.2-4.7 6.3zm-.8-1.5l-21.4 4.7 20.3-6.6zm0 0l3.6-9-4.7 7.1zm-.8-1.3l-17.9 4.6 16.7-6.5zm0 0l2.4-8-3.6 6.1zm-.7-1.2l-21.4 6.9 20-8.7zm0 0l2.1-9.7-3.5 7.9zm-.8-1.1l-16.1 6.2 14.7-7.8zm0 0l.7-7.8-2.1 6.2zm-.7-.9l-17.8 8.6 16.2-10.1zm0 0l-.3-8.9-1.3 7.4zm-.7-.7l-16.5 10 14.7-11.3zm0 0l-1.8-8.6 0 7.3zm-.7-.7l-13.7 10.5 11.7-11.5zm0 0l-3.2-7.2 1.2 6.2zm-.7-.5l-13 13.1 10.9-13.8zm0 0l-5.1-6.7 3 6zm-.7-.4l-10.4 14.1 8.2-14.3zm0 0l-6.4-4.9 4.2 4.7zm-.8-.2l-7.7 14.8 5.5-14.6zm0 0l-7.1-3 4.9 3.2zm-.8-.1l-5.6 16.3 3.5-15.6zm0 0l-7.8-1.2 5.7 1.9zm-.8.2l-2.8 13.1.8-12.1zm0 0l-6.3.3 4.3.7zm-.9.3l-1.3 14-.4-12.6zm0 0l-6.4 1.4 4.7 0zm-.8.6l0 14.6-1.6-13.1zm0 0l-6.4 2.1 4.8-.6zm-.8.7l.6 11.3-2-9.6zm0 0l-4.9 2.3 3.5-.6zm-.8.9l1.5 12.2-2.7-10.3zm0 0l-5 2.9 3.8-1zm-.8 1.1l1.4 9.1-2.5-7.1zm0 0l-3.7 2.6 2.6-.6zm-.7 1.3l1.6 8.5-2.6-6.5zm0 0l-3.4 2.6 2.4-.6zm-.8 1.5l1.1 5.8-2-3.8zm0 0l-2.2 2.1 1.3-.1zm-.7 1.6l.1 2.5-.9-.4zm0 0l-1 1.4.2.7zm26.7 29.5l-2.2-7.7-2.1-6.7-2.1-6-2.1-5.1-2-4.2-2-3.4-2-2.6-2.1-1.7-2.1-.8-2.1.2-1.8 1.1-1.7 2-1.6 2.7-1.6 3.6.7.3 1.6-3.5 1.7-2.5 1.6-1.7 1.5-.7 1.4 0 1.5.7 1.6 1.6 1.7 2.4 1.7 3.3 1.8 4.2 1.9 5 1.9 5.9 1.9 6.7 2 7.6zm-.6-4.4l9.8-1.5-9.5-.4zm0 0l-3.1-3.4 3.4 1.5zm.5-2.7l12.2-1.6-11.8-.3zm0 0l-3.8-4.1 4.2 2.2zm.6-2.7l13-1.4-12.6-.4zm0 0l-4.1-4.2 4.5 2.4zm.5-2.4l14.2-1.4-13.8-.5zm0 0l-4.3-4.7 4.7 2.8zm.5-2.4l15-1.2-14.5-.6zm0 0l-4.5-4.9 5 3.1zm.5-2.2l14.7-1-14.2-.8zm0 0l-4.3-4.9 4.8 3.1zm.6-2l17.9-.8-17.5-1zm0 0l-5.3-5.9 5.7 4.1zm.5-1.9l14.6-.6-14.1-1.2zm0 0l-4.2-5.1 4.7 3.3zm.5-1.8l18.7 0-18.2-1.8zm0 0l-5.2-6.3 5.7 4.5zm.5-1.6l18.9.4-18.3-2.2zm0 0l-5.1-6.6 5.7 4.8zm.4-1.4l17.3.7-16.6-2.5zm0 0l-4.3-6.3 5 4.5zm.5-1.4l18.7 1.5-18-3.2zm0 0l-4.5-6.9 5.2 5.2zm.5-1.2l18.1 2.1-17.3-3.8zm0 0l-4-7 4.8 5.3zm.4-1l17.6 2.8-16.7-4.5zm0 0l-3.4-7.1 4.3 5.4zm.5-.9l15.7 3.3-14.7-5zm0 0l-2.5-6.8 3.5 5.1zm.4-.8l15.3 4.5-14.2-6.1zm0 0l-1.6-7 2.7 5.4zm.4-.7l14.7 5.9-13.4-7.3zm0 0l-.5-7.1 1.8 5.7zm.4-.6l13.4 7.4-11.9-8.6zm0 0l1-6.8.5 5.6zm.4-.5l13.9 11.1-12.3-11.9zm0 0l3.3-7.3-1.7 6.5zm.3-.4l9.6 11.2-7.7-11.6zm0 0l4.9-4.7-3 4.3zm.5-.3l6.7 12.7-4.8-12.5zm0 0l6.1-2.6-4.2 2.8zm.5-.1l3.9 13.3-2.1-12.6zm0 0l6.4-.5-4.6 1.2zm.6 0l1.6 14.6-.1-13.5zm0 0l6.6 1.1-5.1 0zm.6.3l-.2 12.7 1.5-11.3zm0 0l5.5 2-4.2-.6zm.5.5l-1.3 12 2.4-10.5zm0 0l5 2.5-3.9-1zm.5.6l-1.7 10.2 2.7-8.5zm0 0l4.1 2.7-3.1-1zm.5.8l-2 9.2 2.9-7.5zm0 0l3.6 2.7-2.7-1zm.5 1l-1.9 7.6 2.6-5.9zm0 0l2.9 2.5-2.2-.8zm.5 1.1l-1.8 6.6 2.4-4.8zm0 0l2.4 2.4-1.8-.6zm.5 1.2l-1.5 5.2 2-3.4zm0 0l1.8 2.1-1.3-.3zm.4 1.4l-.3 2.3.8-.4zm0 0l.8 1.3-.3.6zm-14.1 27.1l1.2-6.7 1.2-5.9 1.1-5.2 1.2-4.5 1-3.7 1.1-2.9 1-2.2 1-1.3.7-.6.6-.1.9.5 1 1.4 1 2.2 1 2.9.7-.1-.9-3.1-1-2.3-1-1.7-1.2-1-1.5-.1-1.5.9-1.2 1.6-1.3 2.3-1.2 3-1.3 3.7-1.3 4.5-1.3 5.2-1.3 6-1.3 6.7zm1-4.5l9.2 1.4-8.2-3.1zm0 0l-1.3-4.2 2.3 2.5zm1.4-2.5l12.1 2.3-11.1-4zm0 0l-1.8-5.3 2.8 3.6zm1.4-2.3l13 2.8-11.9-4.5zm0 0l-1.8-5.8 2.9 4.1zm1.4-2.2l15.5 3.9-14.4-5.6zm0 0l-2-6.9 3.1 5.2zm1.4-2.1l13.9 3.8-12.8-5.4zm0 0l-1.6-6.4 2.7 4.8zm1.3-1.9l17 5.3-15.8-6.9zm0 0l-1.7-7.8 2.9 6.2zm1.4-1.8l14.8 4.9-13.6-6.5zm0 0l-1.1-7 2.3 5.4zm1.3-1.7l18.3 7.1-17-8.6zm0 0l-1.1-8.7 2.4 7.2zm1.3-1.5l16.9 7.1-15.5-8.6zm0 0l-.5-8.2 1.9 6.7zm1.3-1.4l14.2 6.4-12.7-7.8zm0 0l.2-7.1 1.3 5.7zm1.3-1.3l17.4 9.1-15.9-10.4zm0 0l.7-8.8.8 7.5zm1.3-1.1l14.7 8.4-13.1-9.7zm0 0l1.3-7.6.3 6.3zm1.3-1.1l14.6 9.5-13-10.6zm0 0l2-7.6-.4 6.5zm1.3-.8l13.1 9.5-11.4-10.5zm0 0l2.6-6.9-.9 5.9zm1.2-.8l15 12.6-13.2-13.4zm0 0l3.9-7.9-2.1 7.1zm1.2-.6l11.4 10.6-9.5-11.3zm0 0l4.1-5.9-2.2 5.2zm1.3-.5l12.4 13.7-10.5-14.2zm0 0l5.4-6.3-3.5 5.8zm1.2-.4l10.2 12.9-8.2-13.2zm0 0l5.7-4.9-3.7 4.6zm1.2-.2l9.6 14.4-7.6-14.5zm0 0l6.6-4.4-4.6 4.3zm1.3-.1l7.3 13.1-5.4-13zm0 0l6.2-3-4.3 3.1zm1.2 0l5.7 12.3-3.8-11.9zm0 0l6-1.9-4.1 2.3zm1.2.2l5.6 15.4-3.7-14.8zm0 0l7.4-1.5-5.5 2.1zm1.2.3l4 14-2.1-13.2zm0 0l6.8-.5-4.9 1.3zm1.3.5l2.6 11.7-.9-10.8zm0 0l5.6.2-3.9.7zm1.2.6l2 13.7-.4-12.6zm0 0l6.3.8-4.7.3zm1.2.8l1.1 12.4.4-11.2zm0 0l5.7 1.2-4.2 0zm1.2.9l.5 9.4.9-8.1zm0 0l4.3 1.4-2.9-.1zm1.2 1.1l.2 7.9 1.1-6.5zm0 0l3.6 1.4-2.3 0zm1.1 1.2l-.1 7.7 1.4-6.2zm0 0l3.5 1.6-2.2-.1zm1.2 1.3l-.1 5.4 1.3-3.8zm0 0l2.4 1.5-1.2.1zm1.1 1.5l.3 2.3.8-.7zm0 0l1.2 1.1-.1.5zm-39 20.8l3.2-6 3.2-5.3 3.1-4.6 3-3.9 2.9-3.1 2.9-2.4 2.7-1.8 2.7-1 2.6-.3 2.6.3 2.6 1 2.7 1.7 2.5 2.4 2.6 3.2.6-.4-2.5-3.3-2.6-2.7-2.7-1.9-2.8-1.3-2.9-.5-3 .3-3.1 1-3.1 1.7-3.2 2.5-3.2 3.2-3.2 3.9-3.3 4.6-3.3 5.4-3.4 6zm3-4l11.5 6.3-9.6-7.8zm0 0l1.4-6.1.5 4.6zm2.6-2l13.4 8.1-11.5-9.5zm0 0l1.8-7 .1 5.6zm2.6-1.8l13.8 8.9-11.8-10.2zm0 0l2.2-7.3-.2 6zm2.5-1.7l14.7 10.1-12.6-11.4zm0 0l2.8-7.7-.7 6.4zm2.6-1.6l14.1 10.4-12-11.5zm0 0l3.1-7.4-1 6.3zm2.5-1.4l13.7 10.7-11.5-11.7zm0 0l3.5-7.2-1.3 6.2zm2.5-1.2l13.6 11.4-11.4-12.4zm0 0l4-7.2-1.8 6.2zm2.5-1.1l16.7 15.4-14.5-16.3zm0 0l5.4-8.8-3.2 7.9zm2.5-1l13.8 13.5-11.6-14.3zm0 0l5.2-7.2-3 6.4zm2.4-.9l14.4 15.3-12.1-15.9zm0 0l6.1-7.3-3.8 6.7zm2.5-.7l13.4 15.5-11.1-16zm0 0l6.4-6.7-4.1 6.2zm2.4-.5l13.9 17.5-11.6-17.9zm0 0l7.5-6.9-5.2 6.5zm2.4-.4l12.9 17.6-10.5-17.9zm0 0l7.8-6.2-5.4 5.9zm2.3-.3l13.2 19.8-10.8-20zm0 0l8.9-6.1-6.5 5.9zm2.4-.2l10.9 18-8.5-18zm0 0l8.3-4.7-5.9 4.7zm2.4 0l9.7 17.8-7.4-17.6zm0 0l8.3-4-6 4.2zm2.3.2l9.5 19.4-7.1-19.1zm0 0l9.1-3.6-6.7 3.9zm2.3.3l8.6 19.8-6.3-19.4zm0 0l9.4-3-7.1 3.4zm2.3.4l7.8 20.6-5.5-20zm0 0l9.7-2.3-7.4 2.9zm2.3.6l5.8 17.1-3.6-16.3zm0 0l8.2-1.3-6 2.1zm2.2.7l5.7 19.5-3.4-18.6zm0 0l9.2-.9-6.9 1.8zm2.3.9l4.7 19.3-2.6-18.3zm0 0l9-.3-6.9 1.3zm2.2 1.1l3.8 18.3-1.7-17.2zm0 0l8.6.1-6.5 1zm2.2 1.1l2.6 13.8-.5-12.5zm0 0l6.6.7-4.5.6zm2.2 1.4l2 13.9 0-12.6zm0 0l6.5.9-4.5.4zm2.2 1.4l1.5 14.2.4-12.7zm0 0l6.5 1.3-4.6.2zm2.1 1.7l1.1 12.9.7-11.4zm0 0l6 1.5-4.2 0zm2.1 1.7l.8 9.3 1-7.7zm0 0l4.4 1.5-2.6.1zm2.1 1.9l.5 8.6 1.2-6.9zm0 0l4 1.6-2.3.1zm2.1 2.1l.4 6.9 1.2-5.1zm0 0l3.3 1.5-1.7.3zm2.1 2.2l.6 2.4.9-.6zm0 0l1.4 1.1.1.7zm-73.3 1.7l6-4.9 5.8-4 5.7-3.4 5.6-2.6 5.5-1.9 5.3-1.2 5.3-.4 5.2.3 5.1 1.1 5 1.8 4.9 2.5 4.9 3.3 4.8 4 4.7 4.9.5-.5-4.6-5-4.7-4.2-4.9-3.6-5-2.7-5.2-2.1-5.3-1.2-5.4-.5-5.5.2-5.7 1.1-5.8 1.7-5.9 2.6-6 3.3-6.1 4.1-6.2 4.8zm3.6-2.7l7.6 7.6-5.3-8.2zm0 0l3.7-3.7-1.4 3.1zm3-.8l9.1 10-6.8-10.5zm0 0l4.6-4.5-2.3 4zm2.9-.6l10.1 11.7-7.8-12.2zm0 0l5.4-5-3.1 4.5zm3-.6l11.5 14.6-9.2-15zm0 0l6.4-5.6-4.1 5.2zm2.9-.5l11.1 14.9-8.8-15.2zm0 0l6.7-5.3-4.4 5zm2.8-.3l10.8 15.2-8.4-15.4zm0 0l7-5-4.6 4.8zm2.9-.3l10.2 15.3-7.9-15.4zm0 0l7.1-4.5-4.8 4.4zm2.8-.1l10.2 16.4-7.8-16.4zm0 0l7.6-4.4-5.2 4.4zm2.8 0l10.9 18.9-8.5-18.8zm0 0l8.8-4.6-6.4 4.7zm2.8.1l9.9 18.3-7.5-18.1zm0 0l8.6-4-6.2 4.2zm2.8.2l8.7 17.2-6.4-16.9zm0 0l8.2-3.3-5.9 3.6zm2.7.4l9.7 21.1-7.4-20.8zm0 0l9.9-3.6-7.6 3.9zm2.7.4l8.6 20-6.3-19.5zm0 0l9.5-2.9-7.2 3.4zm2.8.5l8.6 22.4-6.4-21.8zm0 0l10.4-2.7-8.2 3.3zm2.6.7l7.2 20-4.9-19.3zm0 0l9.5-2-7.2 2.7zm2.7.8l6.6 20.3-4.4-19.6zm0 0l9.6-1.6-7.4 2.3zm2.6.9l5.7 19-3.5-18.2zm0 0l9.1-1.1-6.9 1.9zm2.6 1l5.3 19.7-3.1-18.8zm0 0l9.3-.7-7.1 1.6zm2.6 1.1l4.9 21-2.8-20zm0 0l9.8-.3-7.7 1.3zm2.6 1.2l4.2 20.8-2.1-19.7zm0 0l9.6.1-7.5 1zm2.5 1.4l3.4 18.4-1.3-17.3zm0 0l8.6.4-6.5.7zm2.6 1.4l2.6 16.7-.7-15.4zm0 0l7.7.8-5.8.5zm2.5 1.6l2 14.2-.1-12.9zm0 0l6.6 1-4.7.3zm2.4 1.7l1.9 16.6 0-15.2zm0 0l7.6 1.3-5.7.1zm2.5 1.8l1.3 13.8.5-12.3zm0 0l6.3 1.4-4.5.1zm2.4 1.9l1 12.6.8-11.1zm0 0l5.8 1.6-4-.1zm2.4 2.1l.8 10.4 1-8.9zm0 0l4.9 1.5-3.1 0zm2.4 2.1l.6 9.1 1.1-7.5zm0 0l4.3 1.6-2.6 0zm2.4 2.3l.4 8.3 1.2-6.7zm0 0l3.9 1.6-2.3 0zm2.3 2.4l.3 7 1.3-5.3zm0 0l3.3 1.5-1.7.2zm2.3 2.4l.6 2.4 1-.6zm0 0l1.4 1.1.2.7zm-83.4-22.2l6.7-2.1 6.6-1.5 6.5-1 6.4-.4 6.2.3 6.2.7 6 1.4 5.9 1.9 5.9 2.6 5.7 3.1 5.6 3.7 5.5 4.3 5.4 4.9 5.3 5.5.5-.5-5.2-5.7-5.3-5-5.5-4.5-5.6-3.9-5.7-3.3-5.9-2.8-6.1-2.2-6.1-1.5-6.4-1-6.4-.4-6.6.2-6.8.8-6.8 1.4-7 2zm4.4-.7l5.3 10.8-2.8-10.4zm0 0l5.7-1.5-3.2 1.9zm3.2.6l6.4 14.4-3.9-13.9zm0 0l7.2-1.9-4.7 2.4zm3.2.7l5.8 13.9-3.4-13.3zm0 0l6.9-1.6-4.5 2.2zm3.1.8l6.8 17.7-4.3-17.1zm0 0l8.6-1.9-6.1 2.5zm3.1.8l6.8 18.6-4.3-17.9zm0 0l9-1.7-6.5 2.4zm3.1.9l6.7 19.8-4.3-19zm0 0l9.4-1.5-7 2.3zm3.1 1l5.9 18.2-3.5-17.3zm0 0l8.7-1.1-6.3 2zm3 1.1l5.7 18.5-3.3-17.6zm0 0l8.9-.9-6.5 1.8zm3 1.2l6 21.4-3.6-20.5zm0 0l10.1-1-7.7 1.9zm3 1.2l5.3 19.8-2.9-18.8zm0 0l9.4-.6-7 1.6zm3 1.3l5.5 23.2-3.2-22.1zm0 0l10.8-.5-8.5 1.6zm2.9 1.4l4.8 21.2-2.5-20.1zm0 0l10-.2-7.7 1.3zm3 1.4l4.7 23.4-2.5-22.2zm0 0l10.7.1-8.5 1.1zm2.9 1.6l4.4 24.1-2.2-22.9zm0 0l11 .3-8.8.9zm2.8 1.6l3.9 23-1.7-21.7zm0 0l10.6.6-8.4.7zm2.9 1.7l3.4 22.2-1.3-20.9zm0 0l10.2.8-8.1.5zm2.8 1.7l2.8 19.9-.7-18.5zm0 0l9.1 1-7 .4zm2.8 1.9l2.5 20.3-.4-18.9zm0 0l9.3 1.2-7.2.2zm2.7 1.9l2.4 23.4-.3-22zm0 0l10.6 1.5-8.5-.1zm2.8 1.9l1.8 18.8.2-17.2zm0 0l8.5 1.6-6.5 0zm2.7 2.1l1.5 18.1.5-16.5zm0 0l8.2 1.7-6.2-.1zm2.7 2.1l1.2 18.4.7-16.7zm0 0l8.3 1.9-6.4-.2zm2.7 2.3l.9 17.7 1-16.1zm0 0l7.9 2-6-.4zm2.6 2.3l.7 17.7 1.2-16.1zm0 0l7.9 2.1-6-.5zm2.6 2.3l.5 14.5 1.4-12.7zm0 0l6.5 2.1-4.6-.3zm2.6 2.5l.3 15.7 1.5-14zm0 0l7 2.2-5.2-.5zm2.6 2.5l.3 11 1.4-9.2zm0 0l5 1.9-3.3-.1zm2.5 2.6l.1 11.8 1.7-10zm0 0l5.3 2.1-3.5-.3zm2.5 2.6l.2 9.4 1.5-7.5zm0 0l4.3 2-2.6-.1zm2.5 2.8l.2 7.4 1.5-5.5zm0 0l3.5 1.7-1.8.2zm2.5 2.8l.6 2.5 1-.6zm0 0l1.4 1.2.2.7zm-90-50.8l7.2 1.2 7.2 1.5 7 2 6.9 2.3 6.7 2.7 6.7 3.2 6.5 3.5 6.4 3.9 6.3 4.3 6.2 4.7 6 5 6 5.5 5.8 5.9 5.6 6.3.6-.4-5.6-6.5-5.7-6-5.8-5.7-6-5.3-6.1-4.9-6.3-4.5-6.4-4.1-6.5-3.7-6.7-3.4-6.8-2.9-7-2.6-7.1-2.1-7.3-1.8-7.4-1.4zm-3.3-.6l-3.2 8.6 1.4-8zm0 0l-4.4-.5 2.6 1.1zm-2.3.8l-4 12.4 2.2-11.8zm0 0l-6-.7 4.2 1.3zm-2.2.8l-4.3 14.1 2.5-13.4zm0 0l-6.8-.7 5 1.4zm-2.3.9l-3.5 12.1 1.8-11.4zm0 0l-5.9-.4 4.2 1.1zm-2.2.9l-4.1 15.8 2.4-15zm0 0l-7.4-.5 5.7 1.3zm-2.2 1l-3.4 13.4 1.7-12.6zm0 0l-6.4-.2 4.7 1zm-2.2 1l-3.3 14 1.6-13.2zm0 0l-6.6-.1 4.9.9zm-2.2 1.1l-3.7 17.6 2.1-16.8zm0 0l-8.1-.1 6.5.9zm-2.1 1.1l-3.4 17.7 1.7-16.8zm0 0l-8.2.1 6.5.8zm-2.2 1.1l-3.3 19.2 1.7-18.2zm0 0l-8.7.3 7.1.7zm-2.1 1.3l-2.9 17.8 1.3-16.9zm0 0l-8.1.4 6.5.5zm-2.1 1.2l-2.5 17.3.9-16.3zm0 0l-7.9.7 6.3.3zm-2.1 1.3l-2.2 16.2.7-15.1zm0 0l-7.4.8 5.9.3zm-2 1.4l-2.1 17.6.5-16.5zm0 0l-8 1 6.4.1zm-2.1 1.4l-1.9 19.4.4-18.3zm0 0l-8.7 1.2 7.2-.1zm-2 1.5l-1.6 17.5.1-16.4zm0 0l-7.9 1.3 6.4-.2zm-2 1.5l-1.3 18.3-.2-17.2zm0 0l-8.1 1.5 6.6-.4zm-2 1.6l-1 14.8-.5-13.7zm0 0l-6.7 1.4 5.2-.3zm-2 1.6l-.8 16.8-.6-15.6zm0 0l-7.4 1.7 6-.5zm-1.9 1.6l-.6 16.3-.9-15zm0 0l-7.2 1.8 5.7-.5zm-2 1.7l-.4 13-1-11.7zm0 0l-5.8 1.7 4.4-.4zm-1.9 1.8l-.2 15.3-1.2-14zm0 0l-6.7 2 5.3-.7zm-1.9 1.8l-.1 12.2-1.2-10.9zm0 0l-5.4 1.8 4.1-.5zm-1.9 1.9l0 11.6-1.3-10.3zm0 0l-5.1 1.8 3.8-.5zm-1.9 1.9l.1 10.4-1.3-9zm0 0l-4.5 1.7 3.3-.3zm-1.8 2l.2 11.2-1.5-9.9zm0 0l-4.9 1.9 3.6-.6zm-1.8 2l.1 8.8-1.4-7.4zm0 0l-3.9 1.7 2.6-.3zm-1.8 2l.3 9.5-1.6-8zm0 0l-4.2 1.9 2.9-.4zm-1.8 2.1l0 6.4-1.2-4.9zm0 0l-2.9 1.5 1.7 0zm-1.8 2.2l.1 5.8-1.3-4.3zm0 0l-2.6 1.5 1.4 0zm-1.8 2.2l-.3 2.2-.8-.7zm0 0l-1.1 1 0 .5zm63.7-47l-5.2 1.7-5.2 2-5.1 2.3-4.9 2.5-4.9 2.7-4.8 3.1-4.6 3.2-4.6 3.6-4.4 3.7-4.4 4.1-4.2 4.3-4.2 4.5-4.1 4.8-3.9 5 .5.5 4.1-5 4.1-4.6 4.3-4.4 4.3-4.2 4.4-3.9 4.5-3.6 4.6-3.4 4.6-3.1 4.8-2.9 4.8-2.6 5-2.3 5-2.1 5.1-1.8 5.2-1.6zm2.9 3.3l.9 9.4.4-8.4zm0 0l4.4 1-3.1 0zm1.7 1.3l.8 9.6.5-8.6zm0 0l4.4 1.1-3.1-.1zm1.6 1.3l.7 12.6.6-11.5zm0 0l5.7 1.4-4.4-.3zm1.7 1.4l.6 12.1.6-11zm0 0l5.4 1.4-4.2-.3zm1.6 1.4l.5 13.7.7-12.6zm0 0l6 1.6-4.8-.5zm1.6 1.4l.3 14 .9-12.9zm0 0l6.1 1.7-4.9-.6zm1.6 1.5l.2 16 1-14.9zm0 0l6.9 1.8-5.7-.7zm1.5 1.4l.2 14.5 1-13.3zm0 0l6.3 1.8-5.1-.6zm1.6 1.5l-.1 16.6 1.3-15.4zm0 0l7.1 2.1-5.9-.9zm1.5 1.5l0 13.6 1.2-12.4zm0 0l5.9 1.9-4.7-.7zm1.6 1.5l-.3 14.8 1.4-13.6zm0 0l6.3 2.1-5.2-.9zm1.5 1.6l-.5 16.2 1.6-15zm0 0l6.9 2.2-5.8-1zm1.5 1.6l-.6 15.9 1.7-14.7zm0 0l6.8 2.2-5.7-1zm1.5 1.5l-.8 16.8 1.9-15.5zm0 0l7.1 2.5-6-1.2zm1.5 1.7l-.7 14 1.8-12.8zm0 0l5.9 2.2-4.8-1zm1.4 1.6l-.9 16.3 2-15.1zm0 0l6.9 2.5-5.8-1.3zm1.5 1.6l-1.1 16 2.2-14.7zm0 0l6.7 2.6-5.6-1.3zm1.4 1.7l-.8 13 1.9-11.7zm0 0l5.5 2.3-4.4-1zm1.4 1.7l-.8 12.7 1.9-11.4zm0 0l5.4 2.3-4.3-1zm1.5 1.7l-1.2 13.9 2.2-12.6zm0 0l5.8 2.5-4.8-1.2zm1.4 1.8l-1.4 14.6 2.4-13.4zm0 0l6.1 2.6-5.1-1.4zm1.4 1.7l-1.3 12.9 2.3-11.6zm0 0l5.3 2.4-4.3-1.1zm1.3 1.8l-1.1 11.6 2.1-10.3zm0 0l4.9 2.3-3.9-1zm1.4 1.8l-1.1 11.2 2.1-9.9zm0 0l4.6 2.3-3.6-1zm1.3 1.8l-1.2 11.2 2.2-9.9zm0 0l4.7 2.3-3.7-1zm1.4 1.9l-1.1 9.6 2-8.3zm0 0l4 2.1-3.1-.8zm1.3 1.8l-1 8.8 1.9-7.4zm0 0l3.6 2-2.7-.6zm1.3 1.9l-.8 7.8 1.7-6.4zm0 0l3.3 1.9-2.4-.5zm1.3 1.9l-.8 7.1 1.7-5.7zm0 0l2.9 1.8-2-.4zm1.3 1.9l-.5 5.3 1.4-3.9zm0 0l2.2 1.5-1.3-.1zm1.3 2l.1 2.1.7-.7zm0 0l1 .9-.2.5zm-47.1-50.3l3.8 3 3.7 3 3.7 3.1 3.6 3.3 3.5 3.4 3.5 3.5 3.4 3.6 3.3 3.7 3.3 3.8 3.2 3.9 3.2 4.1 3 4.1 3.1 4.3 2.9 4.4.6-.4-2.9-4.5-2.9-4.3-3-4.3-3-4.1-3.2-4-3.2-4-3.2-3.8-3.4-3.7-3.4-3.6-3.5-3.5-3.6-3.4-3.6-3.3-3.7-3.1-3.8-3.1zm-1.9 1.1l-.8 9.6-.4-8.6zm0 0l-4.4 1 3.2 0zm-1.6 1.3l-.8 11.8-.5-10.7zm0 0l-5.3 1.2 4-.1zm-1.7 1.4l-.7 13-.5-12zm0 0l-5.8 1.3 4.6-.3zm-1.6 1.4l-.6 11.4-.6-10.4zm0 0l-5.1 1.3 3.9-.3zm-1.6 1.4l-.5 13.4-.7-12.3zm0 0l-6 1.5 4.8-.4zm-1.6 1.4l-.4 13.5-.8-12.4zm0 0l-6 1.6 4.8-.5zm-1.6 1.4l-.3 13.4-.9-12.2zm0 0l-5.9 1.7 4.7-.5zm-1.6 1.5l-.1 14.9-1.1-13.7zm0 0l-6.5 1.9 5.3-.7zm-1.6 1.5l.1 17.2-1.2-16zm0 0l-7.4 2.1 6.3-.9zm-1.5 1.5l.2 16.6-1.4-15.4zm0 0l-7.1 2.2 5.9-1zm-1.6 1.6l.2 13.8-1.3-12.7zm0 0l-5.9 1.9 4.8-.8zm-1.5 1.5l.4 14.5-1.5-13.3zm0 0l-6.2 2.1 5.1-.9zm-1.5 1.6l.5 15-1.6-13.8zm0 0l-6.4 2.2 5.3-1zm-1.5 1.6l.8 17.1-1.9-15.9zm0 0l-7.2 2.5 6.1-1.3zm-1.5 1.6l.8 15.2-1.9-14zm0 0l-6.4 2.4 5.3-1.2zm-1.5 1.7l.8 13.7-1.8-12.5zm0 0l-5.8 2.2 4.8-1zm-1.4 1.6l.9 15-2-13.7zm0 0l-6.4 2.5 5.3-1.2zm-1.5 1.7l.9 13.5-1.9-12.2zm0 0l-5.7 2.3 4.7-1zm-1.4 1.7l.9 12.4-1.9-11.1zm0 0l-5.2 2.2 4.2-.9zm-1.4 1.7l1.1 14-2.2-12.7zm0 0l-5.9 2.5 4.8-1.2zm-1.4 1.8l1.4 14.8-2.5-13.5zm0 0l-6.2 2.7 5.1-1.4zm-1.4 1.8l1.3 13.4-2.3-12.1zm0 0l-5.6 2.5 4.6-1.2zm-1.4 1.8l1.3 12.6-2.3-11.3zm0 0l-5.3 2.4 4.3-1.1zm-1.4 1.8l1 10.2-2-8.9zm0 0l-4.2 2.1 3.2-.8zm-1.3 1.8l1.1 10.6-2.1-9.2zm0 0l-4.4 2.3 3.4-.9zm-1.4 1.9l1.1 9.9-2-8.6zm0 0l-4.1 2.2 3.2-.9zm-1.3 1.9l1 9.2-1.9-7.9zm0 0l-3.8 2.1 2.9-.8zm-1.3 1.9l.8 7.5-1.7-6.2zm0 0l-3.2 1.8 2.3-.5zm-1.3 1.9l.5 5.9-1.4-4.5zm0 0l-2.5 1.6 1.6-.2zm-1.3 1.9l.5 5.4-1.4-4zm0 0l-2.3 1.5 1.4-.1zm-1.3 2l-.1 2.2-.8-.8zm0 0l-1 1 .1.4zm45.9-52.6l-3.8 3.1-3.8 3.2-3.6 3.3-3.6 3.4-3.5 3.5-3.4 3.6-3.4 3.8-3.3 3.8-3.2 4-3.1 4-3.1 4.2-3 4.3-3 4.4-2.8 4.5.6.4 2.9-4.4 3.1-4.3 3-4.2 3.2-4.1 3.2-4 3.3-3.8 3.4-3.8 3.4-3.6 3.5-3.5 3.6-3.4 3.6-3.3 3.7-3.2 3.7-3 3.8-3z'/%3E%3Ccircle cx='141.6' cy='75.7' r='5'/%3E%3Ccircle cx='137.6' cy='80.9' r='2.8'/%3E%3Ccircle cx='142.2' cy='80.9' r='2.8'/%3E%3Ccircle cx='146' cy='80.9' r='2.8'/%3E%3C/svg%3E");
+  --synthwave-art-palm-3: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='387.2' height='352' viewBox='0 0 387.2 352' preserveAspectRatio='none'%3E%3Cpath d='M172.8 352.3l-1.3-10.9-.9-10.9.7-10.7.9-10.7 1.1-10.5 1.2-10.5 1.4-10.4 1.6-10.3 1.7-10.3 2-10.1 2.1-10.1 2.3-10 2.4-10 2.6-9.8 2.8-9.8 3-9.6 3.2-9.7 3.3-9.5 3.5-9.4 3.7-9.4 3.8-9.3 4-9.2 4.2-9.1 4.4-9.1-6-3-4.6 9.1-4.4 9.1-4.3 9.3-4.1 9.3-4 9.4-3.7 9.5-3.6 9.6-3.4 9.7-3.2 9.8-3.1 9.8-2.9 10-2.7 10-2.5 10.1-2.4 10.2-2.2 10.3-2 10.4-1.8 10.5-1.7 10.5-1.4 10.7-1.3 10.7-1.2 10.8-.9 10.9-2.3 10.9-2.3 11.1z'/%3E%3Cpath d='M216.9 109l-13 12 9.8-13.1zm0 0l-5.3-6.6 2.1 5.5zm-4.2-1.5l-12.8 12.5 9.5-13.4zm0 0l-5.6-6.4 2.3 5.5zm-4.2-1.2l-13.6 14.2 10.3-15.1zm0 0l-6.4-6.8 3.1 5.9zm-4.2-1.1l-14.7 16.5 11.4-17.2zm0 0l-7.3-7.3 4 6.6zm-4.1-.9l-17.4 21.2 14.1-21.8zm0 0l-9.2-8.6 5.9 8zm-4.1-.8l-14.9 18.9 11.6-19.4zm0 0l-8.6-7.1 5.3 6.6zm-4-.6l-17.5 24.1 14.1-24.4zm0 0l-10.8-8.3 7.4 8zm-4.1-.4l-16.8 24.8 13.4-25zm0 0l-11.2-7.8 7.8 7.6zm-4-.3l-14.2 22 10.8-22zm0 0l-10.3-6.2 6.9 6.2zm-3.9 0l-15.4 25.8 12-25.8zm0 0l-12-6.7 8.6 6.7zm-4 0l-14.3 25.9 10.9-25.7zm0 0l-12.1-5.9 8.7 6.1zm-3.9.3l-13.4 26.1 10-25.8zm0 0l-12.3-5.3 8.9 5.6zm-3.9.4l-14.5 31.2 11.2-30.7zm0 0l-14.5-5.5 11.2 6zm-3.8.6l-10.7 24.1 7.4-23.5zm0 0l-11.6-3.6 8.3 4.2zm-3.8.7l-9.7 23.6 6.4-22.8zm0 0l-11.5-2.8 8.2 3.6zm-3.8.9l-11.1 31 7.8-30zm0 0l-14.6-3.1 11.3 4.1zm-3.8 1.1l-8.7 26.5 5.5-25.4zm0 0l-12.6-1.9 9.4 3zm-3.7 1.3l-7.4 24.5 4.2-23.3zm0 0l-11.7-1.2 8.5 2.4zm-3.7 1.4l-6.7 25 3.6-23.6zm0 0l-11.9-.7 8.8 2.1zm-3.7 1.6l-5.8 24.6 2.8-23.1zm0 0l-11.6-.1 8.6 1.6zm-3.6 1.8l-5.6 27.9 2.6-26.3zm0 0l-13 .3 10 1.3zm-3.6 1.9l-4 21.8 1.1-20zm0 0l-10.3.9 7.4.9zm-3.5 2.2l-3.4 20.7.5-18.9zm0 0l-9.8 1.1 6.9.7zm-3.6 2.3l-2.8 21.7.1-19.8zm0 0l-10.1 1.5 7.4.4zm-3.5 2.4l-2.2 20-.5-18zm0 0l-9.3 1.9 6.6.1zm-3.4 2.6l-1.8 20.4-.9-18.2zm0 0l-9.4 2.2 6.7 0zm-3.5 2.8l-1.2 17.7-1.3-15.4zm0 0l-8.1 2.3 5.6 0zm-3.4 3l-.9 13.6-1.5-11.3zm0 0l-6.3 2.2 3.9.1zm-3.3 3.2l-.8 10.8-1.6-8.5zm0 0l-5.2 2.1 2.8.2zm-3.4 3.3l-.6 9.3-1.7-6.9zm0 0l-4.4 2.1 2.1.3zm-3.2 3.5l-1 2.7-1.3-.2zm0 0l-1.8 1.4-.5 1.1zm120.3-30l-9.9-3.5-9.8-2.6-9.6-1.8-9.4-.9-9.2 0-9 1-8.8 1.8-8.6 2.6-8.4 3.6-8.2 4.4-8 5.3-7.8 6.2-7.6 7-7.4 7.9.5.5 7.5-7.7 7.7-6.8 7.9-5.9 8-5 8.2-4.1 8.3-3.3 8.5-2.3 8.6-1.5 8.7-.7 8.9.3 9.1 1 9.2 2 9.4 2.8 9.6 3.7zm-6.7-3.5l-16.4 7.8 13.8-10.1zm0 0l-1.2-8.5-1.4 6.2zm-3.6-3.2l-16.9 8.6 14.1-10.8zm0 0l-1.7-8.8-1.1 6.6zm-3.7-2.9l-21.7 12.3 18.9-14.5zm0 0l-2.3-11.3-.5 9.1zm-3.6-2.8l-22.7 13.9 19.8-15.9zm0 0l-3-11.8.1 9.8zm-3.6-2.5l-20.3 13.2 17.3-15.1zm0 0l-3.4-10.7.4 8.8zm-3.6-2.3l-23.6 16.8 20.6-18.6zm0 0l-4.5-12.4 1.5 10.6zm-3.5-2.1l-21.2 16.1 18.1-17.8zm0 0l-5-11.2 1.9 9.5zm-3.5-1.9l-20.1 16.3 16.9-17.8zm0 0l-5.6-10.5 2.4 9zm-3.5-1.6l-21.6 19.3 18.3-20.7zm0 0l-6.9-11.3 3.6 9.9zm-3.5-1.4l-21.1 20.5 17.8-21.7zm0 0l-7.7-11 4.4 9.8zm-3.4-1.2l-20.8 22 17.4-23zm0 0l-8.8-10.7 5.4 9.7zm-3.4-1l-21.3 24.8 17.9-25.6zm0 0l-10.3-10.7 6.9 9.9zm-3.4-.8l-21 27.2 17.5-27.8zm0 0l-11.6-10.4 8.1 9.8zm-3.3-.5l-20.3 28.9 16.8-29.3zm0 0l-12.7-9.7 9.2 9.3zm-3.3-.4l-18.8 29.8 15.2-29.9zm0 0l-13.4-8.5 9.8 8.4zm-3.3-.1l-17.1 30.4 13.5-30.2zm0 0l-14-7.3 10.4 7.5zm-3.3.2l-14.6 28.9 11-28.5zm0 0l-13.6-5.7 10 6.1zm-3.3.3l-11.4 25.1 7.9-24.5zm0 0l-12.1-3.8 8.6 4.4zm-3.2.6l-9.6 23.9 6.1-23zm0 0l-11.7-2.7 8.2 3.6zm-3.3.8l-9.1 26.9 5.8-25.8zm0 0l-12.8-2.1 9.5 3.2zm-3.2 1l-7.4 25.7 4.2-24.3zm0 0l-12.2-1 9 2.4zm-3.1 1.3l-6.3 25.7 3.1-24.1zm0 0l-12.2-.2 9 1.8zm-3.2 1.5l-4.3 20.7 1.2-18.9zm0 0l-9.9.6 6.8 1.2zm-3.1 1.8l-3.4 20.1.4-18.2zm0 0l-9.6 1.1 6.6.8zm-3.1 1.9l-2.8 23-.1-20.9zm0 0l-10.6 1.8 7.7.3zm-3.1 2.2l-1.8 19.5-.9-17.2zm0 0l-9 2.2 6.3.1zm-3 2.5l-1.2 17.8-1.5-15.5zm0 0l-8.2 2.4 5.5-.1zm-3 2.7l-.8 13.2-1.7-10.8zm0 0l-6.2 2.3 3.7.1zm-3 2.9l-.4 11.9-2-9.4zm0 0l-5.5 2.4 3.1.1zm-2.9 3.1l-.3 9.9-2.1-7.2zm0 0l-4.6 2.4 2.2.3zm-2.9 3.4l-1 2.8-1.3-.1zm0 0l-1.7 1.6-.6 1.1zm106.4 2.4l-8.8-7.8-8.6-6.6-8.5-5.5-8.3-4.3-8.2-3.1-8.1-1.8-7.8-.7-7.7.5-7.5 1.8-7.2 2.9-7.1 4.1-6.9 5.3-6.6 6.4-6.5 7.5.5.5 6.7-7.4 6.7-6.1 6.9-4.9 7-3.8 7.1-2.6 7.2-1.4 7.3-.2 7.5.9 7.5 2 7.7 3.2 7.9 4.3 8.1 5.5 8.2 6.7 8.4 7.8zm-6-4.2l-15.9 4.9 14-7.3zm0 0l.8-7.7-2.7 5.3zm-2.7-3.4l-16.9 5.7 14.9-8.1zm0 0l.6-8.2-2.6 5.8zm-2.7-3.2l-20.4 7.8 18.3-10.1zm0 0l.6-9.9-2.7 7.6zm-2.7-3l-20.6 8.5 18.4-10.7zm0 0l.2-10.2-2.4 8zm-2.7-2.8l-19 8.3 16.8-10.5zm0 0l-.3-9.5-1.9 7.3zm-2.6-2.6l-19.6 9.3 17.3-11.4zm0 0l-.8-9.9-1.5 7.8zm-2.7-2.4l-25.5 13.7 23.2-15.7zm0 0l-1.3-12.9-1 10.9zm-2.6-2.2l-20.2 11.4 17.8-13.3zm0 0l-1.9-10.4-.5 8.5zm-2.5-2l-20.7 12.8 18.1-14.6zm0 0l-2.7-10.8.1 9zm-2.6-1.8l-21.3 14.5 18.7-16.2zm0 0l-3.5-11.2.9 9.5zm-2.5-1.6l-23.2 17.5 20.5-19zm0 0l-4.8-12.2 2.1 10.7zm-2.5-1.4l-23.3 19.3 20.5-20.7zm0 0l-6-12.3 3.2 10.9zm-2.5-1.2l-20.2 18.3 17.3-19.5zm0 0l-6.4-10.6 3.5 9.4zm-2.5-1.1l-19.2 19.4 16.3-20.3zm0 0l-7.4-9.9 4.5 9zm-2.4-.8l-19.5 21.9 16.5-22.7zm0 0l-8.9-9.9 5.9 9.1zm-2.5-.6l-15.6 19.4 12.6-20zm0 0l-8.5-7.7 5.5 7.1zm-2.4-.5l-14.6 20.6 11.5-20.9zm0 0l-9.3-6.8 6.2 6.5zm-2.4-.2l-13.9 22.4 10.8-22.4zm0 0l-10.4-6.1 7.3 6.1zm-2.4-.1l-12.2 22.8 9.1-22.5zm0 0l-10.8-4.9 7.7 5.2zm-2.4.2l-8.9 18.9 5.9-18.4zm0 0l-9.3-3 6.3 3.5zm-2.4.4l-7.7 19.1 4.7-18.4zm0 0l-9.4-2.1 6.4 2.8zm-2.3.5l-6.4 18.8 3.5-17.7zm0 0l-9.3-1.1 6.4 2.2zm-2.4.8l-5.8 21.5 3-20.2zm0 0l-10.3-.5 7.5 1.8zm-2.3 1l-4.4 20.3 1.7-18.8zm0 0l-9.7.3 7 1.2zm-2.3 1.2l-3.4 20.4.8-18.7zm0 0l-9.6 1.1 7 .6zm-2.3 1.5l-2.2 17.8-.3-16zm0 0l-8.3 1.5 5.8.3zm-2.3 1.6l-1.4 14-1-12zm0 0l-6.6 1.8 4.2.2zm-2.3 1.9l-.8 13.9-1.4-11.8zm0 0l-6.4 2.1 4.2 0zm-2.2 2l-.4 12.2-1.7-9.9zm0 0l-5.5 2.3 3.4 0zm-2.2 2.3l-.4 7.8-1.6-5.5zm0 0l-3.7 2 1.7.3zm-2.2 2.5l-.7 2.7-1.2-.3zm0 0l-1.5 1.4-.4 1zm79.5 19.6l-6.5-8.2-6.4-7.3-6.4-6.1-6.2-5.1-6.1-4.1-6-3-5.9-1.8-5.8-.8-5.7.3-5.5 1.4-5.3 2.4-5.1 3.6-5 4.5-4.8 5.6.5.4 5-5.3 5-4.3 5.1-3.2 5.2-2.2 5.2-1.1 5.2 0 5.4.9 5.5 2 5.6 3 5.7 4.1 5.8 5.1 6 6.1 6.1 7.2 6.2 8.3zm-3.1-6.2l-12.8-1.9 12.1-1zm0 0l3.7-4.7-4.4 1.8zm-1-4.2l-15.4-1.9 14.8-1zm0 0l4.6-5.5-5.2 2.6zm-.9-4.1l-21.3-1.9 20.6-1zm0 0l6.4-7.1-7.1 4.2zm-.9-3.9l-18.2-1.6 17.4-1.3zm0 0l5.3-6.4-6.1 3.5zm-1-3.6l-23-1.4 22.3-1.5zm0 0l6.8-7.8-7.5 4.9zm-.9-3.5l-21.4-1 20.6-1.8zm0 0l6.1-7.4-6.9 4.6zm-.9-3.2l-22.1-.7 21.3-2.2zm0 0l6.2-7.8-7 4.9zm-.8-3l-27.4-.1 26.5-2.8zm0 0l7.5-9.5-8.4 6.6zm-.9-2.8l-24.1.2 23.1-3zm0 0l6.3-8.7-7.3 5.9zm-.9-2.6l-23.5.7 22.5-3.5zm0 0l5.9-8.7-6.9 5.9zm-.8-2.4l-25.8 1.6 24.7-4.4zm0 0l6.2-9.6-7.3 6.8zm-.9-2.2l-27.6 2.7 26.4-5.4zm0 0l6.3-10.5-7.5 7.8zm-.8-1.9l-26.2 3.4 24.9-6.1zm0 0l5.4-10.4-6.7 7.7zm-.8-1.8l-28.3 5.1 26.9-7.7zm0 0l5.3-11.6-6.7 9zm-.8-1.5l-24.4 5.4 22.9-8zm0 0l3.7-10.6-5.2 8zm-.8-1.4l-24.5 7.2 22.8-9.6zm0 0l2.8-11.1-4.5 8.7zm-.7-1.1l-24.7 9.4 22.8-11.7zm0 0l1.4-11.8-3.3 9.5zm-.7-1l-21.6 10.6 19.4-12.6zm0 0l-.7-10.9-1.5 8.9zm-.7-.9l-21 13.9 18.5-15.5zm0 0l-3.2-10.9.7 9.3zm-.7-.7l-16.9 15.2 14.2-16.3zm0 0l-5.6-8.8 2.9 7.7zm-.7-.5l-12.3 15.5 9.4-16zm0 0l-7.2-5.9 4.3 5.4zm-.8-.4l-8.7 16.8 5.8-16.5zm0 0l-8.3-3.2 5.4 3.5zm-.9-.2l-6.2 20.8 3.4-19.7zm0 0l-10-.9 7.2 2zm-.9.1l-2.9 20.1.4-18.4zm0 0l-9.3 1.3 6.8.4zm-1 .5l-.4 19.7-1.7-17.7zm0 0l-8.7 2.7 6.6-.7zm-.9.7l1.1 17-3-14.7zm0 0l-7.2 3.4 5.3-1.1zm-.9 1l1.9 14.7-3.5-12.2zm0 0l-6.1 3.6 4.5-1.1zm-.8 1.2l1.9 11.5-3.4-8.9zm0 0l-4.6 3.4 3.1-.8zm-.9 1.4l2.4 11.2-3.6-8.5zm0 0l-4.3 3.6 3.1-.9zm-.8 1.7l1.4 7.2-2.5-4.4zm0 0l-2.7 2.8 1.6 0zm-.8 1.9l0 2.8-1 0zm0 0l-1 1.8 0 1zm28.7 45.4l-2.3-10.4-2.3-9.3-2.3-8.2-2.2-7.1-2.2-6-2.1-4.8-2.1-3.8-2.2-2.8-2.2-1.6-2.4-.4-2.1 1-1.8 2.1-1.7 3-1.6 4.2.6.2 1.8-4 1.8-2.8 1.7-1.6 1.5-.5 1.4.4 1.5 1.4 1.7 2.5 1.8 3.7 1.9 4.8 1.9 5.9 2 7.1 2 8.1 2.1 9.3 2.1 10.4zm-.1-7l14.6-1.7-13.9-1.3zm0 0l-4.2-5.4 4.9 2.4zm1.1-4.4l18.6-1.5-17.9-1.4zm0 0l-5.4-6.6 6.1 3.7zm1-4.1l20-1.3-19.2-1.6zm0 0l-5.6-7 6.4 4.1zm1.1-3.9l19.8-1-19-1.9zm0 0l-5.5-7.1 6.3 4.2zm1.1-3.7l24.6-.6-23.8-2.3zm0 0l-6.9-8.6 7.7 5.7zm1-3.5l25.5-.1-24.6-2.8zm0 0l-6.9-9 7.8 6.1zm1-3.2l27.2.4-26.2-3.3zm0 0l-7.2-9.7 8.2 6.8zm1.1-3.1l22 .5-21-3.3zm0 0l-5.6-8.2 6.6 5.4zm1-2.8l26.8 1.5-25.8-4.3zm0 0l-6.6-9.9 7.6 7.1zm.9-2.6l29.4 2.6-28.2-5.4zm0 0l-6.9-11 8.1 8.2zm1-2.4l24.7 2.7-23.4-5.4zm0 0l-5.3-9.7 6.6 7zm1-2.1l24.2 3.3-22.9-6zm0 0l-4.8-9.9 6.1 7.2zm.9-2l28.7 5.5-27.2-8.1zm0 0l-5.1-11.8 6.6 9.2zm1-1.7l24.8 5.7-23.2-8.3zm0 0l-3.7-10.8 5.3 8.2zm.9-1.5l24.5 7.1-22.8-9.6zm0 0l-2.7-11.2 4.4 8.7zm.8-1.4l26.6 9.9-24.6-12.2zm0 0l-1.6-12.5 3.6 10.2zm.9-1.1l22.3 10.3-20.1-12.4zm0 0l.3-11.2 1.9 9.1zm.8-1l19.6 11.6-17.1-13.4zm0 0l2.2-10.1.3 8.3zm.9-.8l17.5 13.6-14.9-15zm0 0l4.3-9.2-1.7 7.8zm.8-.7l15.4 16.3-12.5-17.1zm0 0l6.7-7.8-3.8 7zm.9-.4l13.2 19.8-10.2-20zm0 0l9.2-6.1-6.2 5.9zm.9-.3l8.6 18.9-5.6-18.4zm0 0l9.3-2.8-6.3 3.3zm1-.1l5.8 21.3-3-20.1zm0 0l10.2-.6-7.4 1.8zm1.1.3l2.5 16.8 0-15.1zm0 0l7.9 1.2-5.4.5zm1 .5l.7 16.8 1.5-14.7zm0 0l7.6 2.4-5.4-.3zm1 .8l-.8 17.1 2.8-14.7zm0 0l7.4 3.3-5.4-.9zm1 1.1l-1.5 14.7 3.2-12.2zm0 0l6.2 3.5-4.5-1zm1 1.3l-2 12.8 3.5-10.1zm0 0l5.2 3.6-3.7-.9zm.9 1.6l-2.2 11.6 3.6-8.9zm0 0l4.6 3.6-3.2-.9zm1 1.8l-1.4 7.5 2.6-4.7zm0 0l2.9 2.8-1.7 0zm.9 2l0 2.8 1.1 0zm0 0l1 1.8.1 1zm-28.9 45.2l2.4-10.5 2.4-9.4 2.3-8.2 2.3-7.1 2.2-5.9 2.1-4.8 2.1-3.6 2-2.4 1.8-1.3 1.7-.3 1.8.7 1.9 1.8 2.1 3.1 2 4.3.6-.3-1.8-4.4-1.9-3.4-2.1-2.2-2.4-1.2-2.6.2-2.5 1.5-2.4 2.6-2.5 3.7-2.4 4.9-2.5 6-2.5 7.1-2.6 8.3-2.6 9.4-2.7 10.6zm2.4-6.9l15.4 3.6-13.6-6.2zm0 0l-1.4-7.3 3.2 4.7zm2.6-3.8l15.7 4-13.8-6.6zm0 0l-1.2-7.5 3.1 4.9zm2.6-3.5l17.3 5-15.3-7.6zm0 0l-1.2-8.3 3.2 5.7zm2.6-3.4l20.9 6.9-18.9-9.4zm0 0l-1.3-10 3.3 7.5zm2.6-3.1l24.4 9.1-22.3-11.6zm0 0l-1.3-11.8 3.4 9.3zm2.5-3l22.3 8.9-20.1-11.3zm0 0l-.6-10.9 2.8 8.5zm2.5-2.7l27.1 12.1-24.8-14.4zm0 0l-.3-13.3 2.6 11zm2.5-2.5l25.1 12.1-22.7-14.3zm0 0l.5-12.6 1.9 10.4zm2.5-2.3l23.9 12.5-21.5-14.6zm0 0l1.2-12.2 1.2 10.1zm2.4-2.1l26.4 15.3-23.8-17.3zm0 0l2.2-13.6.4 11.6zm2.4-1.9l22.3 13.9-19.6-15.8zm0 0l3-11.6-.3 9.7zm2.4-1.7l24.2 16.9-21.4-18.6zm0 0l4.2-12.7-1.4 11zm2.4-1.5l24.8 19.4-21.9-20.9zm0 0l5.5-13.1-2.6 11.6zm2.4-1.3l21.8 18.8-18.9-20.1zm0 0l6.3-11.5-3.4 10.2zm2.3-1.1l19.3 18.5-16.2-19.6zm0 0l7-10-3.9 8.9zm2.4-.9l16.7 18-13.6-18.8zm0 0l7.4-8.5-4.3 7.7zm2.3-.6l17.5 21.6-14.3-22.2zm0 0l9.3-8.7-6.1 8.1zm2.3-.5l14.1 19.7-10.9-20zm0 0l9.1-6.6-5.9 6.3zm2.3-.2l13.1 21.2-9.9-21.2zm0 0l10-5.7-6.8 5.7zm2.3-.1l11.8 22.5-8.6-22.2zm0 0l10.7-4.6-7.5 4.9zm2.2.2l11 24.8-7.8-24.2zm0 0l11.9-3.7-8.7 4.3zm2.3.4l8.4 22.6-5.3-21.7zm0 0l11-2.2-7.9 3.1zm2.3.6l6.4 21-3.4-19.8zm0 0l10.2-.9-7.2 2.1zm2.2.8l5.2 22-2.3-20.5zm0 0l10.5 0-7.6 1.5zm2.3 1.1l3.4 17.7-.7-16zm0 0l8.5.8-5.8.9zm2.2 1.3l2.4 16.8.2-14.9zm0 0l8 1.4-5.4.5zm2.2 1.5l1.6 16.3.9-14.2zm0 0l7.6 2-5.1.1zm2.2 1.8l.9 13.8 1.4-11.6zm0 0l6.4 2.1-4.1.1zm2.1 2l.5 10.5 1.8-8.2zm0 0l5 2.1-2.7.2zm2.2 2.2l.3 8.2 1.8-5.8zm0 0l3.8 2.1-1.7.3zm2.1 2.4l.8 2.8 1.2-.3zm0 0l1.6 1.5.4 1zm-73.1 29.5l5.9-9.2 5.9-8.1 5.7-6.9 5.7-5.9 5.5-4.7 5.3-3.6 5.3-2.5 5.1-1.5 5-.3 5 .7 4.9 1.8 4.9 2.9 4.8 4.1 4.8 5.2.5-.4-4.6-5.5-4.8-4.3-4.9-3.3-5.2-2.1-5.3-1.1-5.5.2-5.6 1.3-5.7 2.5-5.8 3.6-5.9 4.7-5.9 5.9-6.1 7-6.2 8.1-6.3 9.2zm4.6-5.9l17.2 10.3-14.2-12.3zm0 0l2.8-9 .2 7zm4.1-2.7l18.5 11.8-15.5-13.8zm0 0l3.3-9.8-.3 7.8zm4-2.6l18.4 12.4-15.3-14.3zm0 0l3.7-9.7-.6 7.8zm4-2.4l23.2 17.2-20.1-18.9zm0 0l5-12.2-1.9 10.5zm3.9-2.2l23.1 18.2-19.9-19.8zm0 0l5.7-12.1-2.5 10.5zm3.9-2l19.2 15.7-15.9-17.2zm0 0l5.6-10-2.3 8.5zm3.9-1.8l20.5 18.1-17.1-19.4zm0 0l6.6-10.7-3.2 9.4zm3.9-1.6l21.9 20.9-18.5-22.1zm0 0l7.8-11.4-4.4 10.2zm3.8-1.4l24.7 25.5-21.3-26.5zm0 0l9.7-12.7-6.3 11.7zm3.8-1.2l19.1 20.7-15.6-21.6zm0 0l8.6-9.7-5.1 8.8zm3.8-1l18 20.9-14.5-21.6zm0 0l9-8.9-5.5 8.2zm3.7-.8l18.7 23.6-15.1-24.2zm0 0l10.3-9.1-6.7 8.5zm3.7-.6l16.5 22.2-12.9-22.6zm0 0l10.1-7.7-6.5 7.3zm3.7-.4l17.2 25.6-13.6-25.8zm0 0l11.7-7.9-8.1 7.7zm3.6-.2l16.7 27-13.1-27zm0 0l12.5-7.4-8.9 7.4zm3.7 0l14.9 26.4-11.3-26.3zm0 0l12.4-6.2-8.8 6.3zm3.6.1l12.5 24.2-8.9-23.8zm0 0l11.6-4.7-8 5.1zm3.5.4l11 23.1-7.4-22.5zm0 0l11.3-3.7-7.7 4.3zm3.6.6l11.9 29-8.4-28.2zm0 0l13.8-3.8-10.3 4.6zm3.5.8l9.6 25.6-6.1-24.6zm0 0l12.4-2.5-8.9 3.5zm3.5 1l8.3 25.3-4.9-24.1zm0 0l12.2-1.7-8.8 2.9zm3.4 1.2l7.1 24.4-3.7-23zm0 0l11.8-.9-8.4 2.3zm3.5 1.4l6.2 24.7-3-23.2zm0 0l11.8-.3-8.6 1.8zm3.4 1.6l5.2 24.7-2-23zm0 0l11.7.4-8.5 1.3zm3.4 1.8l4.1 22.6-1.1-20.7zm0 0l10.7 1-7.7.9zm3.3 2l3.1 20.2-.1-18.2zm0 0l9.6 1.4-6.6.6zm3.3 2.3l2.3 16.3.6-14.2zm0 0l7.9 1.6-5 .5zm3.3 2.4l1.7 13.6 1.1-11.3zm0 0l6.6 1.8-3.8.5zm3.2 2.6l1.3 11.1 1.4-8.7zm0 0l5.5 2-2.8.4zm3.2 2.9l1.1 9.8 1.6-7.3zm0 0l4.9 2-2.2.5zm3.2 3l1.2 2.8 1.3-.2zm0 0l1.9 1.5.6 1.1zm-113.4 3.4l9.2-6.8 9-5.9 8.9-4.7 8.6-3.8 8.6-2.7 8.3-1.7 8.2-.6 8.1.3 7.9 1.4 7.8 2.4 7.6 3.5 7.6 4.5 7.4 5.6 7.2 6.7.5-.5-7.1-6.9-7.3-5.9-7.5-4.8-7.8-3.8-7.9-2.8-8.1-1.7-8.4-.6-8.6.4-8.7 1.5-8.9 2.5-9.1 3.7-9.3 4.6-9.4 5.8-9.6 6.7zm6.5-4.3l13.5 13.3-9.7-14.4zm0 0l6.4-6.7-2.6 5.6zm5-1.4l15.5 16.5-11.6-17.4zm0 0l7.6-7.6-3.7 6.7zm5-1.2l19 22.1-15-22.9zm0 0l9.8-9.4-5.8 8.6zm5-1l18.6 22.9-14.7-23.6zm0 0l10.3-9.1-6.4 8.4zm4.9-.8l19.9 26.1-15.9-26.7zm0 0l11.7-9.6-7.7 9zm4.9-.7l16.1 21.9-12.1-22.3zm0 0l10.3-7.4-6.3 7zm4.9-.4l19.3 28.9-15.3-29.2zm0 0l13.1-8.9-9.1 8.6zm4.8-.3l17.7 28-13.7-28.1zm0 0l13-7.8-9 7.7zm4.8-.1l16.9 28.7-12.9-28.6zm0 0l13.4-7.2-9.4 7.3zm4.7.2l18.2 33.3-14.2-33.1zm0 0l15.5-7.6-11.5 7.8zm4.7.3l17 33.4-13-33zm0 0l15.7-6.8-11.7 7.2zm4.7.5l16.7 35.7-12.8-35.1zm0 0l16.7-6.4-12.8 7zm4.6.7l15.1 34.5-11.2-33.8zm0 0l16.3-5.3-12.4 6zm4.6.8l14.5 36.5-10.6-35.6zm0 0l17.1-4.7-13.2 5.6zm4.6 1.1l11.8 31.8-8-30.7zm0 0l15.1-3.3-11.3 4.4zm4.5 1.3l11.1 32.9-7.3-31.7zm0 0l15.6-2.7-11.8 3.9zm4.5 1.4l10.5 34.8-6.8-33.4zm0 0l16.3-2.1-12.6 3.5zm4.4 1.7l8.7 31.1-5-29.6zm0 0l14.8-1.2-11.1 2.7zm4.4 1.8l7 27.6-3.4-25.9zm0 0l13.2-.4-9.6 2.1zm4.4 2.1l6.7 30.7-3.2-28.9zm0 0l14.4 0-10.9 1.8zm4.3 2.2l6.1 32.1-2.6-30.2zm0 0l14.9.6-11.4 1.3zm4.3 2.4l5.1 30.7-1.7-28.6zm0 0l14.2 1.2-10.8.9zm4.2 2.6l3.7 23.6-.3-21.4zm0 0l11.2 1.6-7.8.6zm4.2 2.8l3.1 24 .2-21.6zm0 0l11.2 2-7.9.4zm4.2 3l2.4 21.3.8-18.8zm0 0l10 2.2-6.8.3zm4.1 3.2l1.9 20.2 1.2-17.6zm0 0l9.4 2.5-6.3.1zm4.1 3.4l1.4 21.3 1.6-18.6zm0 0l9.8 2.8-6.8-.1zm4.1 3.6l1 16.1 1.9-13.4zm0 0l7.5 2.6-4.6.1zm4 3.8l.9 12.9 1.9-10.1zm0 0l6.1 2.5-3.3.3zm4 4l.8 9.4 1.9-6.6zm0 0l4.6 2.3-1.9.5zm3.9 4.1l1.2 3 1.5 0zm0 0l1.9 1.7.8 1.3zm-141.9-36.3l11.5-3.6 11.2-2.7 11-1.7 10.9-.8 10.6.2 10.5 1.3 10.3 2.1 10.1 3.2 9.9 4.2 9.8 5.2 9.6 6.1 9.4 7.2 9.2 8.2 9 9.1.5-.4-8.8-9.5-9.1-8.4-9.3-7.5-9.5-6.5-9.8-5.5-10-4.5-10.3-3.5-10.4-2.6-10.8-1.5-11-.6-11.2.5-11.4 1.5-11.6 2.4-11.9 3.5zm6.1-1.1l7.1 14.8-3.6-14.1zm0 0l7.8-1.9-4.3 2.6zm4.4.9l7.9 17.8-4.4-17zm0 0l9.1-2.2-5.6 3zm4.4 1l9.7 24.1-6.2-23.2zm0 0l11.8-2.7-8.3 3.6zm4.4 1.1l8.4 21.4-5-20.4zm0 0l10.6-2.1-7.2 3.1zm4.4 1.2l9.6 27.2-6.2-26.1zm0 0l13-2.4-9.6 3.5zm4.3 1.4l8.2 23.6-4.8-22.5zm0 0l11.5-1.8-8.1 2.9zm4.3 1.4l9.4 30.2-6.1-29zm0 0l14.2-2-10.9 3.2zm4.2 1.5l8.1 26.9-4.8-25.6zm0 0l12.8-1.4-9.5 2.7zm4.2 1.6l8.8 32.1-5.5-30.7zm0 0l15-1.4-11.7 2.8zm4.2 1.8l7.7 29.6-4.5-28.2zm0 0l13.9-.9-10.7 2.3zm4.1 1.8l6.7 26.8-3.5-25.3zm0 0l12.7-.4-9.5 1.9zm4.1 1.9l6.3 27.2-3.1-25.6zm0 0l12.9-.1-9.7 1.7zm4.1 2l6.8 33.7-3.7-32zm0 0l15.5.1-12.4 1.6zm4 2.2l5.9 31.2-2.8-29.5zm0 0l14.5.4-11.4 1.3zm4 2.2l5.3 30.5-2.2-28.7zm0 0l14.1.8-11 1zm4 2.4l4.6 28.9-1.6-27.1zm0 0l13.4 1.1-10.4.7zm3.9 2.4l4.4 31.4-1.4-29.5zm0 0l14.4 1.5-11.4.4zm3.9 2.6l3.7 28.9-.7-26.9zm0 0l13.2 1.7-10.2.3zm3.9 2.6l2.9 24.8 0-22.7zm0 0l11.4 1.9-8.5.2zm3.8 2.8l2.7 28.2.2-26.1zm0 0l12.8 2.2-9.9-.1zm3.8 2.8l2.2 25 .6-22.8zm0 0l11.4 2.4-8.6-.2zm3.8 3l1.8 27.6.9-25.4zm0 0l12.4 2.7-9.7-.5zm3.7 3l1.4 24.2 1.3-21.9zm0 0l10.9 2.8-8.2-.5zm3.7 3.2l1 24.1 1.6-21.7zm0 0l10.8 2.9-8.2-.5zm3.6 3.3l.9 18.6 1.7-16.2zm0 0l8.5 2.7-5.9-.3zm3.6 3.4l.6 20 2-17.6zm0 0l9 2.9-6.4-.5zm3.6 3.4l.4 17.5 2.1-15zm0 0l7.9 2.9-5.4-.4zm3.6 3.6l.2 16.1 2.2-13.5zm0 0l7.2 2.9-4.8-.3zm3.5 3.7l.2 13.3 2.2-10.7zm0 0l6.1 2.7-3.7-.1zm3.4 3.8l.5 9.1 1.9-6.5zm0 0l4.4 2.2-2 .4zm3.5 3.9l1 2.8 1.3-.2zm0 0l1.7 1.5.6 1.1zm-125.6-70.9l10.1 1.7 10 2.3 9.8 2.7 9.6 3.3 9.5 3.9 9.3 4.3 9.1 4.9 8.9 5.5 8.8 5.9 8.6 6.5 8.5 7.1 8.2 7.6 8.1 8.1 8 8.6.5-.4-7.8-8.9-7.9-8.3-8.1-7.8-8.4-7.3-8.5-6.8-8.7-6.3-8.9-5.7-9.1-5.2-9.4-4.7-9.5-4.1-9.7-3.6-9.9-3.1-10.1-2.6-10.3-2zm-4.2-.7l-4.5 13 2.2-12.2zm0 0l-6.5-.7 4.2 1.5zm-3 1l-4.7 14.6 2.4-13.7zm0 0l-7.2-.6 4.9 1.5zm-2.9 1.2l-4.8 16.1 2.5-15.2zm0 0l-7.8-.7 5.5 1.6zm-2.9 1.1l-5.2 19.1 2.9-18.1zm0 0l-9.1-.6 6.8 1.6zm-2.9 1.3l-5.3 20.9 3-19.9zm0 0l-9.8-.6 7.5 1.6zm-2.9 1.3l-4.4 18.1 2.2-17.1zm0 0l-8.6-.2 6.4 1.2zm-2.8 1.3l-4.1 17.8 1.9-16.7zm0 0l-8.4 0 6.2 1.1zm-2.8 1.4l-4.4 21.6 2.2-20.4zm0 0l-10 .1 7.8 1.1zm-2.8 1.5l-3.8 19.2 1.6-18zm0 0l-9 .4 6.8.8zm-2.8 1.6l-4.2 24.6 2.1-23.4zm0 0l-11.2.4 9.1.8zm-2.8 1.6l-3.4 21.8 1.4-20.6zm0 0l-10 .7 8 .5zm-2.7 1.6l-3.2 22.4 1.2-21.1zm0 0l-10.2.9 8.2.4zm-2.7 1.8l-3 24.1 1-22.8zm0 0l-10.9 1.1 8.9.2zm-2.7 1.7l-2.7 24.4.7-23zm0 0l-10.9 1.4 8.9 0zm-2.6 1.9l-2.1 19.6.1-18.2zm0 0l-8.9 1.4 6.9 0zm-2.6 1.9l-2 21.3 0-19.8zm0 0l-9.6 1.6 7.6-.1zm-2.7 2l-1.5 19.2-.4-17.7zm0 0l-8.6 1.7 6.7-.2zm-2.5 2l-1.4 20.5-.5-19zm0 0l-9.2 1.9 7.3-.4zm-2.6 2.1l-1 18.1-.9-16.5zm0 0l-8.1 1.9 6.2-.3zm-2.5 2.2l-.8 21.5-1.1-19.9zm0 0l-9.5 2.3 7.6-.7zm-2.5 2.2l-.6 18-1.3-16.4zm0 0l-8 2.2 6.1-.6zm-2.5 2.2l-.4 17.4-1.4-15.7zm0 0l-7.7 2.3 5.9-.6zm-2.5 2.4l-.1 18.8-1.7-17.1zm0 0l-8.2 2.5 6.4-.8zm-2.5 2.4l.1 17.3-1.8-15.6zm0 0l-7.5 2.5 5.8-.8zm-2.4 2.4l.1 14.2-1.8-12.4zm0 0l-6.2 2.4 4.5-.6zm-2.4 2.6l.2 13.6-1.8-11.8zm0 0l-6 2.3 4.4-.5zm-2.3 2.6l.2 12.7-1.9-10.9zm0 0l-5.6 2.3 3.9-.5zm-2.4 2.6l.1 9.9-1.7-8.1zm0 0l-4.4 2.1 2.8-.3zm-2.3 2.7l0 8.2-1.6-6.3zm0 0l-3.7 1.9 2.1 0zm-2.3 2.8l0 7.2-1.6-5.3zm0 0l-3.3 1.8 1.7.1zm-2.3 2.8l-.6 2.4-.9-.5zm0 0l-1.4 1.2-.1.7zm82.6-61.2l-6.8 2.3-6.7 2.7-6.6 3.1-6.4 3.3-6.3 3.6-6.2 4-6 4.3-5.9 4.6-5.8 4.9-5.6 5.2-5.5 5.5-5.4 5.8-5.3 6.2-5.1 6.4.5.5 5.3-6.3 5.4-6 5.4-5.7 5.7-5.4 5.7-5 5.8-4.7 6-4.4 6-4.1 6.2-3.7 6.3-3.5 6.4-3.1 6.5-2.8 6.7-2.5 6.7-2.1zm4.5 4.5l1.6 12.6.5-11.1zm0 0l6 1.3-3.9.2zm2.7 1.9l1.6 17 .4-15.4zm0 0l7.7 1.6-5.7 0zm2.5 2l1.6 18.6.4-17zm0 0l8.4 1.8-6.4-.2zm2.6 2.1l1.3 16.4.7-14.8zm0 0l7.5 1.7-5.5-.1zm2.6 2.1l1.2 21.9.7-20.3zm0 0l9.7 2.1-7.8-.5zm2.5 2.1l1.1 21.5.8-19.9zm0 0l9.5 2.2-7.6-.6zm2.5 2.1l.9 20.2 1-18.5zm0 0l9 2.2-7.1-.5zm2.5 2.2l.7 20 1.2-18.3zm0 0l8.9 2.3-7-.6zm2.5 2.2l.5 20 1.3-18.3zm0 0l8.8 2.4-7-.7zm2.4 2.2l.3 24.9 1.6-23.2zm0 0l10.8 2.9-8.9-1.2zm2.4 2.3l.1 25.4 1.8-23.7zm0 0l11 3.1-9.1-1.4zm2.4 2.3l0 22.2 1.9-20.4zm0 0l9.7 2.9-7.8-1.1zm2.4 2.3l-.1 21.1 1.9-19.3zm0 0l9.2 2.9-7.4-1.1zm2.4 2.4l-.3 20.2 2.1-18.4zm0 0l8.8 2.9-7-1.1zm2.3 2.4l-.5 22.2 2.3-20.4zm0 0l9.6 3.2-7.8-1.4zm2.3 2.4l-.6 21.2 2.4-19.3zm0 0l9.1 3.2-7.3-1.3zm2.3 2.5l-.6 19.2 2.4-17.4zm0 0l8.3 3-6.5-1.2zm2.3 2.5l-.9 20.2 2.6-18.3zm0 0l8.7 3.2-7-1.3zm2.3 2.5l-1.3 22.7 3-20.8zm0 0l9.6 3.7-7.9-1.8zm2.2 2.6l-.9 17.7 2.6-15.8zm0 0l7.6 3.1-5.9-1.2zm2.2 2.6l-1.2 18.8 2.9-16.9zm0 0l8 3.3-6.3-1.4zm2.2 2.6l-1.3 18.6 2.9-16.7zm0 0l7.9 3.4-6.3-1.5zm2.2 2.6l-1.1 16 2.7-14zm0 0l6.8 3.1-5.2-1.1zm2.2 2.7l-1.1 14.5 2.6-12.5zm0 0l6.1 3-4.6-1zm2.1 2.8l-1 13.5 2.6-11.5zm0 0l5.8 2.8-4.2-.8zm2.1 2.7l-1 12.8 2.5-10.8zm0 0l5.4 2.8-3.9-.8zm2.1 2.8l-1.3 14.1 2.8-12.1zm0 0l6 3.1-4.5-1.1zm2.1 2.8l-1.1 12 2.6-9.9zm0 0l5.1 2.8-3.6-.7zm2 2.9l-.7 9.6 2.2-7.5zm0 0l4.2 2.4-2.7-.3zm2.1 2.9l-.5 7.4 1.9-5.3zm0 0l3.2 2.1-1.8 0zm2 2.9l.4 2.5 1-.4zm0 0l1.3 1.3.1.8zm-74.4-75l6.1 4.3 5.9 4.5 5.8 4.7 5.7 4.8 5.6 5.1 5.5 5.1 5.4 5.4 5.3 5.5 5.1 5.7 5.1 5.9 5 6.1 4.9 6.2 4.7 6.4 4.7 6.5.6-.4-4.5-6.6-4.7-6.6-4.7-6.3-4.9-6.2-4.9-6-5.1-5.9-5.2-5.7-5.3-5.5-5.4-5.4-5.5-5.2-5.6-5-5.8-4.9-5.8-4.7-6-4.6zm-3 1.7l-1.4 15-.6-13.3zm0 0l-6.9 1.6 4.9.1zm-2.6 2.1l-1.3 15.2-.7-13.5zm0 0l-7 1.7 5 0zm-2.6 2.1l-1.2 17.2-.8-15.5zm0 0l-7.8 1.9 5.8-.2zm-2.6 2.2l-1 20.1-.9-18.4zm0 0l-8.9 2.2 7-.5zm-2.5 2.2l-.9 22.3-1.1-20.6zm0 0l-9.9 2.4 7.9-.7zm-2.5 2.2l-.8 19.1-1.2-17.4zm0 0l-8.6 2.3 6.6-.6zm-2.5 2.2l-.6 20.5-1.4-18.7zm0 0l-9.1 2.5 7.1-.7zm-2.5 2.3l-.5 19.4-1.4-17.6zm0 0l-8.6 2.5 6.7-.7zm-2.5 2.3l-.1 23.4-1.8-21.6zm0 0l-10.2 2.9 8.3-1.1zm-2.4 2.3l.1 26.2-2-24.3zm0 0l-11.3 3.3 9.4-1.4zm-2.5 2.4l.3 24-2.1-22.2zm0 0l-10.3 3.2 8.5-1.4zm-2.4 2.4l.3 21.3-2.1-19.4zm0 0l-9.2 3 7.4-1.1zm-2.3 2.4l.6 24.9-2.4-23zm0 0l-10.7 3.5 8.9-1.6zm-2.4 2.5l.8 24.4-2.6-22.5zm0 0l-10.4 3.5 8.6-1.6zm-2.3 2.5l.6 20.6-2.4-18.7zm0 0l-8.9 3.2 7.1-1.3zm-2.4 2.5l1.3 25.5-3-23.6zm0 0l-10.8 3.9 9.1-2zm-2.3 2.5l1.3 23.5-3-21.5zm0 0l-9.9 3.8 8.2-1.8zm-2.2 2.6l1.2 21.8-2.9-19.8zm0 0l-9.3 3.6 7.6-1.6zm-2.3 2.6l1.3 20.4-3-18.4zm0 0l-8.6 3.5 6.9-1.5zm-2.2 2.7l1.2 18.6-2.9-16.6zm0 0l-7.9 3.3 6.2-1.3zm-2.2 2.7l1.4 19.5-3.1-17.5zm0 0l-8.3 3.5 6.6-1.5zm-2.2 2.7l1.4 18.1-3.1-16.1zm0 0l-7.7 3.4 6-1.4zm-2.2 2.7l1.3 16.6-2.9-14.6zm0 0l-7 3.3 5.4-1.3zm-2.2 2.8l1.6 17.4-3.1-15.4zm0 0l-7.3 3.4 5.8-1.4zm-2.1 2.8l1.5 16.2-3.1-14.2zm0 0l-6.8 3.3 5.2-1.3zm-2.1 2.8l1.6 15.9-3.1-13.8zm0 0l-6.7 3.4 5.2-1.3zm-2.1 2.8l1.4 14.4-2.9-12.3zm0 0l-6 3.2 4.5-1.1zm-2.1 2.9l1 11.1-2.5-9zm0 0l-4.7 2.7 3.2-.6zm-2 2.9l.8 9.9-2.3-7.7zm0 0l-4.2 2.6 2.7-.4zm-2.1 3l.4 6.8-1.8-4.7zm0 0l-2.9 2.1 1.5 0zm-2 3l-.4 2.5-1-.4zm0 0l-1.2 1.3-.2.8zm72.3-80.5l-6 4.8-5.8 4.9-5.8 5.1-5.6 5.3-5.5 5.4-5.4 5.6-5.3 5.7-5.2 5.9-5 6.1-5 6.2-4.8 6.3-4.7 6.6-4.7 6.6-4.5 6.9.6.4 4.7-6.8 4.7-6.5 4.9-6.4 5-6.2 5.1-6 5.1-5.9 5.3-5.8 5.4-5.5 5.5-5.4 5.6-5.3 5.7-5.1 5.8-4.9 5.9-4.7 6.1-4.6z'/%3E%3Ccircle cx='223.5' cy='112.9' r='7.4'/%3E%3Ccircle cx='217.5' cy='120.7' r='4.2'/%3E%3Ccircle cx='224.4' cy='120.7' r='4.2'/%3E%3Ccircle cx='230.1' cy='120.7' r='4.2'/%3E%3C/svg%3E");
+  accent-color: var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-synthwave]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #1a0b3d; --panel: #110628; --border: #8a46d8;
+    --text: #e8dcff; --heading: #fdf4ff; --muted: #a78bd8; --accent: #2de2e6;
+    --accent-soft: #34156a; --chip: #34156a; --code: #230d4f;
+    --green: #6dfacb; --yellow: #ffe66d; --red: #ff5c7a;
+    --purple: #d9a8ff; --cyan: #8af3ff; --orange: #ffa36b;
+    --focus: #ff4fd8;
+    --ready-text: var(--green);
+    --blue-text: var(--accent);
+    --synthwave-on-accent: var(--panel);
+    --synthwave-pink: #ff3fa4; --synthwave-neon: #2de2e6; --synthwave-violet: #b42dff;
+    --synthwave-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cpath d='M0 .5h56M.5 0v56' fill='none' stroke='%232de2e6' stroke-opacity='.08'/%3E%3Ccircle cx='28' cy='22' r='1.1' fill='%23ff3fa4' fill-opacity='.5'/%3E%3Ccircle cx='44' cy='42' r='.8' fill='%23fff' fill-opacity='.4'/%3E%3C/svg%3E");
+    --synthwave-caption: "Night drive";
+    --synthwave-working: var(--accent);
+    --synthwave-card-edge: rgb(138 70 216 / .5); --synthwave-card-radius: 8px;
+    --synthwave-card-lift: 0 0 0 0 transparent;
+    --synthwave-active-bg: #1d0b47; --synthwave-active-lift: 0 0 14px -4px rgb(255 63 164 / .55), 0 0 22px -8px rgb(45 226 230 / .5);
+    --synthwave-meter-glow: drop-shadow(0 0 3px currentColor);
+    --synthwave-word-shadow: 0 0 10px rgb(255 63 164 / .45);
+    --synthwave-tube-glow: 0 0 6px rgb(255 63 164 / .7);
+    --synthwave-title-shadow: -1px 0 rgb(45 226 230 / .5), 1px 0 rgb(255 63 164 / .55), 0 0 16px rgb(255 63 164 / .26);
+    --synthwave-heading-shadow: 0 0 8px rgb(255 63 164 / .34);
+    --synthwave-rule: rgb(138 70 216 / .55);
+    --synthwave-sheet-edge: rgb(138 70 216 / .7); --synthwave-sheet-radius: 12px;
+    --synthwave-sheet-lift: 0 0 0 1px rgb(17 6 40 / .6), 0 0 40px -12px rgb(180 45 255 / .5);
+    --synthwave-sheet-lift-side: -20px 0 40px -28px rgb(180 45 255 / .5), 20px 0 40px -28px rgb(180 45 255 / .5);
+    --synthwave-sky: linear-gradient(180deg, #0c0424 0, #130837 34%, #1a0b3d 60%, #1b0b3f 100%);
+    --synthwave-stars: var(--synthwave-art-stars-near) 0 0 / 520px 520px, var(--synthwave-art-stars-far) 60px 30px / 340px 340px;
+    --synthwave-star-ink: #fff; --synthwave-star-rest: .8; --synthwave-twinkle: synthwave-twinkle;
+    --synthwave-haze: linear-gradient(0deg, rgb(214 62 150 / .62) 0, rgb(150 40 150 / .5) 9%, rgb(96 26 128 / .4) 26%, rgb(52 16 100 / .26) 52%, transparent 100%);
+    --synthwave-dots-fine: none;
+    --synthwave-dots-bold: none;
+    --synthwave-glow: radial-gradient(closest-side, rgb(255 110 150 / .34), rgb(255 63 164 / .15) 46%, transparent 72%);
+    --synthwave-sun: linear-gradient(#fff08a 0, #ffd65a 16%, #ff9d4f 34%, #ff5a8c 50%, #f03ab4 62%, #b42dff 80%);
+    --synthwave-sun-shadow: 0 0 0 0 transparent;
+    --synthwave-sun-still: var(--synthwave-art-sun-night);
+    --synthwave-cloud: radial-gradient(closest-side, rgb(255 176 188 / .72), rgb(255 110 170 / .32) 62%, transparent);
+    --synthwave-ridge: var(--synthwave-art-ridge-night);
+    --synthwave-range-left: var(--synthwave-art-range-left-night);
+    --synthwave-range-right: var(--synthwave-art-range-right-night);
+    --synthwave-range-shadow: none;
+    --synthwave-horizon-line: linear-gradient(90deg, rgb(255 63 164 / .2), var(--synthwave-pink) 22%, #ffe3f4 50%, var(--synthwave-pink) 78%, rgb(255 63 164 / .2));
+    --synthwave-horizon-ink: var(--synthwave-pink);
+    --synthwave-horizon-glow: 0 0 10px 1px rgb(255 63 164 / .75), 0 0 26px 2px rgb(255 63 164 / .35);
+    --synthwave-floor-paint: linear-gradient(#2a0d55 0, #170735 18%, #0d0424 52%, #0a0320 100%);
+    --synthwave-shine: radial-gradient(ellipse 22% 100% at 50% 0, rgb(255 120 170 / .55), rgb(255 63 164 / .2) 45%, transparent 78%), radial-gradient(ellipse 60% 46% at 50% 0, rgb(255 63 164 / .3), transparent 100%);
+    --synthwave-rays: var(--synthwave-art-rays-night);
+    --synthwave-line: rgb(255 63 164 / .74); --synthwave-line-glow: 0 0 5px rgb(255 63 164 / .5);
+    --synthwave-palm-ink: #08021a; --synthwave-palm-rim: rgb(255 63 164 / .5);
+    --synthwave-palm-rim-x: 1.2px; --synthwave-palm-rim-y: 0px; --synthwave-palm-rim-sided: 1;
+    --synthwave-night-only: block;
+    --synthwave-shelf:
+      radial-gradient(ellipse 34% 100% at 50% 0, rgb(255 120 170 / .5), rgb(255 63 164 / .16) 50%, transparent 80%) center top / 100% 44px no-repeat,
+      var(--synthwave-art-rays-night) center top / 1166px 36px no-repeat,
+      linear-gradient(#2a0d55 0, #170735 10px, #110628 44px);
+    --synthwave-shelf-glow: 0 -1px 10px rgb(255 63 164 / .6), 0 -8px 26px -8px rgb(255 63 164 / .4);
+  }
+}
+:root[data-synthwave][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1a0b3d; --panel: #110628; --border: #8a46d8;
+  --text: #e8dcff; --heading: #fdf4ff; --muted: #a78bd8; --accent: #2de2e6;
+  --accent-soft: #34156a; --chip: #34156a; --code: #230d4f;
+  --green: #6dfacb; --yellow: #ffe66d; --red: #ff5c7a;
+  --purple: #d9a8ff; --cyan: #8af3ff; --orange: #ffa36b;
+  --focus: #ff4fd8;
+  --ready-text: var(--green);
+  --blue-text: var(--accent);
+  --synthwave-on-accent: var(--panel);
+  --synthwave-pink: #ff3fa4; --synthwave-neon: #2de2e6; --synthwave-violet: #b42dff;
+  --synthwave-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cpath d='M0 .5h56M.5 0v56' fill='none' stroke='%232de2e6' stroke-opacity='.08'/%3E%3Ccircle cx='28' cy='22' r='1.1' fill='%23ff3fa4' fill-opacity='.5'/%3E%3Ccircle cx='44' cy='42' r='.8' fill='%23fff' fill-opacity='.4'/%3E%3C/svg%3E");
+  --synthwave-caption: "Night drive";
+  --synthwave-working: var(--accent);
+  --synthwave-card-edge: rgb(138 70 216 / .5); --synthwave-card-radius: 8px;
+  --synthwave-card-lift: 0 0 0 0 transparent;
+  --synthwave-active-bg: #1d0b47; --synthwave-active-lift: 0 0 14px -4px rgb(255 63 164 / .55), 0 0 22px -8px rgb(45 226 230 / .5);
+  --synthwave-meter-glow: drop-shadow(0 0 3px currentColor);
+  --synthwave-word-shadow: 0 0 10px rgb(255 63 164 / .45);
+  --synthwave-tube-glow: 0 0 6px rgb(255 63 164 / .7);
+  --synthwave-title-shadow: -1px 0 rgb(45 226 230 / .5), 1px 0 rgb(255 63 164 / .55), 0 0 16px rgb(255 63 164 / .26);
+  --synthwave-heading-shadow: 0 0 8px rgb(255 63 164 / .34);
+  --synthwave-rule: rgb(138 70 216 / .55);
+  --synthwave-sheet-edge: rgb(138 70 216 / .7); --synthwave-sheet-radius: 12px;
+  --synthwave-sheet-lift: 0 0 0 1px rgb(17 6 40 / .6), 0 0 40px -12px rgb(180 45 255 / .5);
+  --synthwave-sheet-lift-side: -20px 0 40px -28px rgb(180 45 255 / .5), 20px 0 40px -28px rgb(180 45 255 / .5);
+  --synthwave-sky: linear-gradient(180deg, #0c0424 0, #130837 34%, #1a0b3d 60%, #1b0b3f 100%);
+  --synthwave-stars: var(--synthwave-art-stars-near) 0 0 / 520px 520px, var(--synthwave-art-stars-far) 60px 30px / 340px 340px;
+  --synthwave-star-ink: #fff; --synthwave-star-rest: .8; --synthwave-twinkle: synthwave-twinkle;
+  --synthwave-haze: linear-gradient(0deg, rgb(214 62 150 / .62) 0, rgb(150 40 150 / .5) 9%, rgb(96 26 128 / .4) 26%, rgb(52 16 100 / .26) 52%, transparent 100%);
+  --synthwave-dots-fine: none;
+  --synthwave-dots-bold: none;
+  --synthwave-glow: radial-gradient(closest-side, rgb(255 110 150 / .34), rgb(255 63 164 / .15) 46%, transparent 72%);
+  --synthwave-sun: linear-gradient(#fff08a 0, #ffd65a 16%, #ff9d4f 34%, #ff5a8c 50%, #f03ab4 62%, #b42dff 80%);
+  --synthwave-sun-shadow: 0 0 0 0 transparent;
+  --synthwave-sun-still: var(--synthwave-art-sun-night);
+  --synthwave-cloud: radial-gradient(closest-side, rgb(255 176 188 / .72), rgb(255 110 170 / .32) 62%, transparent);
+  --synthwave-ridge: var(--synthwave-art-ridge-night);
+  --synthwave-range-left: var(--synthwave-art-range-left-night);
+  --synthwave-range-right: var(--synthwave-art-range-right-night);
+  --synthwave-range-shadow: none;
+  --synthwave-horizon-line: linear-gradient(90deg, rgb(255 63 164 / .2), var(--synthwave-pink) 22%, #ffe3f4 50%, var(--synthwave-pink) 78%, rgb(255 63 164 / .2));
+  --synthwave-horizon-ink: var(--synthwave-pink);
+  --synthwave-horizon-glow: 0 0 10px 1px rgb(255 63 164 / .75), 0 0 26px 2px rgb(255 63 164 / .35);
+  --synthwave-floor-paint: linear-gradient(#2a0d55 0, #170735 18%, #0d0424 52%, #0a0320 100%);
+  --synthwave-shine: radial-gradient(ellipse 22% 100% at 50% 0, rgb(255 120 170 / .55), rgb(255 63 164 / .2) 45%, transparent 78%), radial-gradient(ellipse 60% 46% at 50% 0, rgb(255 63 164 / .3), transparent 100%);
+  --synthwave-rays: var(--synthwave-art-rays-night);
+  --synthwave-line: rgb(255 63 164 / .74); --synthwave-line-glow: 0 0 5px rgb(255 63 164 / .5);
+  --synthwave-palm-ink: #08021a; --synthwave-palm-rim: rgb(255 63 164 / .5);
+  --synthwave-palm-rim-x: 1.2px; --synthwave-palm-rim-y: 0px; --synthwave-palm-rim-sided: 1;
+  --synthwave-night-only: block;
+  --synthwave-shelf:
+    radial-gradient(ellipse 34% 100% at 50% 0, rgb(255 120 170 / .5), rgb(255 63 164 / .16) 50%, transparent 80%) center top / 100% 44px no-repeat,
+    var(--synthwave-art-rays-night) center top / 1166px 36px no-repeat,
+    linear-gradient(#2a0d55 0, #170735 10px, #110628 44px);
+  --synthwave-shelf-glow: 0 -1px 10px rgb(255 63 164 / .6), 0 -8px 26px -8px rgb(255 63 164 / .4);
+}
+
+:root[data-synthwave] body {
+  font-family: var(--synthwave-font);
+  background-color: var(--bg);
+  background-image: var(--synthwave-pattern);
+}
+/* The window itself is the sky: one fall of colour from its top to its foot,
+   which the sidebar, a run's header and the transcript's margins all show.
+   The artifact pages load this file too and have no sidebar, so they keep
+   the pattern above. */
+:root[data-synthwave] body:has(> #run-sidebar) { background: var(--synthwave-sky); background-color: var(--bg); }
+/* The stars thin out toward the horizon. Two tiles of different sizes, so
+   the two never line up the same way twice across a window. */
+:root[data-synthwave] body:has(> #run-sidebar)::before {
+  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background: var(--synthwave-stars);
+  -webkit-mask-image: linear-gradient(#000 0, #000 46%, transparent 76%);
+  mask-image: linear-gradient(#000 0, #000 46%, transparent 76%);
+}
+/* Every other screen in main is for reading: with no run and no new-run
+   screen open (Settings, Activity, a plugin's page), main paints the plain
+   page over the sky. The shell's main only: the QA window has a main of its
+   own and no sky to cover. */
+:root[data-synthwave] body:has(> #run-sidebar) > main:not(:has(:is(#head, #new-view):not([hidden]))) { background: var(--bg); }
+/* Form controls take the UA's font rather than inheriting it. Zero
+   specificity so any author font-family wins, which keeps code, diffs and
+   terminals monospace. */
+:where(:root[data-synthwave]) :where(button, input, textarea, select) {
+  font-family: var(--synthwave-font);
+}
+/* The chrome's own headings are lettered like a title card. Headings inside
+   what you read keep a quieter glow, and none by day. */
+:root[data-synthwave] :is(h1, h2, h3) { text-shadow: var(--synthwave-heading-shadow); }
+:root[data-synthwave] :is(#head h2, .nc-title) {
+  font-style: italic; font-weight: 600;
+  text-shadow: var(--synthwave-title-shadow);
+}
+:root[data-synthwave] .chat-md :is(h1, h2, h3) { text-shadow: none; }
+:root[data-synthwave] ::selection {
+  background: color-mix(in srgb, var(--synthwave-pink) 30%, var(--panel));
+  color: var(--heading);
+}
+:root[data-synthwave] :is(:hover, :focus-within) { scrollbar-color: var(--border) transparent; }
+:root[data-synthwave] :is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: var(--border); }
+
+/* The sidebar is open sky with a neon tube down its edge, and each run is a
+   card on it. On a phone it is a drawer over the run, so it brings its own
+   page. */
+:root[data-synthwave] #run-sidebar {
+  border-right-color: transparent;
+  background: linear-gradient(var(--synthwave-pink), var(--synthwave-violet) 55%, var(--synthwave-neon)) right top / 1px 100% no-repeat border-box;
+}
+@media (max-width: 700px) {
+  :root[data-synthwave] #run-sidebar { background: var(--bg); }
+}
+/* The lockup: the wordmark leaning into the wind over a tube of light, and
+   the hour lettered under it. */
+:root[data-synthwave] #logo { gap: 9px; }
+:root[data-synthwave] .logo-word {
+  position: relative;
+  font: italic 700 15px/1 var(--synthwave-font); letter-spacing: .02em;
+  text-shadow: var(--synthwave-word-shadow);
+}
+:root[data-synthwave] .logo-slash { margin-right: 1px; color: var(--synthwave-pink); }
+:root[data-synthwave] .logo-word::before {
+  content: ""; position: absolute; left: -2px; top: 17px; width: 39px; height: 2px;
+  border-radius: 2px; transform: skewX(-24deg); pointer-events: none;
+  background: linear-gradient(90deg, var(--synthwave-pink), var(--synthwave-neon));
+  box-shadow: var(--synthwave-tube-glow);
+}
+:root[data-synthwave] .logo-word::after {
+  content: var(--synthwave-caption); content: var(--synthwave-caption) / "";
+  display: block; margin-top: 7px; white-space: nowrap;
+  font: normal 600 8.5px/1 var(--synthwave-font); letter-spacing: .2em; text-transform: uppercase;
+  color: var(--muted-strong); text-shadow: none;
+}
+@media (min-width: 701px) {
+  :root[data-synthwave] .link-switch { max-width: 5.5rem; }
+}
+:root[data-synthwave] { --run-row-inset: 10px; --run-row-gap: 6px; }
+:root[data-synthwave] #list .run {
+  padding: 7px 10px 8px;
+  border: 1px solid var(--synthwave-card-edge); border-radius: var(--synthwave-card-radius);
+  background: var(--panel);
+  box-shadow: var(--synthwave-card-lift);
+}
+:root[data-synthwave] #list .run:hover {
+  background: color-mix(in srgb, var(--chip) 55%, var(--panel));
+  border-color: color-mix(in srgb, var(--synthwave-pink) 55%, var(--synthwave-card-edge));
+}
+/* The open run is ringed in the tube's three colours. */
+:root[data-synthwave] #list .run.active {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--synthwave-active-bg) 0 0) padding-box,
+    linear-gradient(120deg, var(--synthwave-pink), var(--synthwave-violet) 50%, var(--synthwave-neon)) border-box;
+  box-shadow: var(--synthwave-active-lift);
+}
+/* The branch lines of nested runs cross the gap the cards now leave. */
+:root[data-synthwave] #list .run.fork-child { margin-left: 30px; }
+:root[data-synthwave] #list .run.fork-child::before { top: -7px; left: -14px; }
+:root[data-synthwave] #list .run.fork-child:not(.fork-last)::after { top: -7px; bottom: -7px; left: -14px; }
+:root[data-synthwave] .run-project {
+  font: 600 10px/1 var(--synthwave-font); letter-spacing: .11em; text-transform: uppercase;
+}
+/* A level meter stands at the head of every title: three bars in the run's
+   colour, and on a run whose agent is working they move, the middle bar to
+   its own beat. The title's two pseudo-elements draw it, because a nested
+   run's card already spends its own on the branch line. */
+:root[data-synthwave] .run .name {
+  position: relative; padding-left: 22px;
+  font-weight: 600; font-size: 13px;
+}
+:root[data-synthwave] .run .name::before, :root[data-synthwave] .run .name::after {
+  content: ""; position: absolute; top: 50%; height: 10px; margin-top: -5px;
+  transform-origin: 50% 100%; pointer-events: none;
+  color: var(--muted); filter: var(--synthwave-meter-glow);
+}
+:root[data-synthwave] .run .name::before {
+  left: 3px; width: 11px;
+  background:
+    linear-gradient(currentColor 0 0) left bottom / 2.7px 50% no-repeat,
+    linear-gradient(currentColor 0 0) right bottom / 2.7px 70% no-repeat;
+}
+:root[data-synthwave] .run .name::after { left: 7.15px; width: 2.7px; border-radius: 1px; background: currentColor; }
+:root[data-synthwave] .run:has(.state-working) .name { --synthwave-meter: var(--synthwave-working); }
+:root[data-synthwave] .run:has(.state-reviewing, .state-done) .name { --synthwave-meter: var(--purple); }
+:root[data-synthwave] .run:has(.state-ready) .name { --synthwave-meter: var(--green); }
+:root[data-synthwave] .run:has(.state-started, .state-waiting, .state-blocked) .name { --synthwave-meter: var(--orange); }
+:root[data-synthwave] .run:has(.state-cancelled) .name { --synthwave-meter: var(--red); }
+:root[data-synthwave] .run[data-unread] .name { --synthwave-meter: var(--synthwave-pink); }
+:root[data-synthwave] .run .name::before, :root[data-synthwave] .run .name::after { color: var(--synthwave-meter, var(--muted)); }
+:root[data-synthwave] #list .run[data-unread]:not(.active) { border-color: var(--synthwave-pink); }
+/* The meter says a session is live by moving, so the row's own dot goes.
+   The two beats start out of step, and far enough apart that a picture of
+   Orc, which holds every animation at one moment, catches the middle bar
+   high and the outer ones lower: a meter, not three dots. */
+:root[data-synthwave] .run .session-status.running { display: none; }
+:root[data-synthwave] .run:has(.session-status.running) .name::before { animation: synthwave-level 1.1s ease-in-out -.5s infinite alternate; }
+:root[data-synthwave] .run:has(.session-status.running) .name::after { animation: synthwave-level .8s ease-in-out -1.4s infinite alternate; }
+:root[data-synthwave] .run :is(.state-tag, .unread-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+  font: 600 10px/1.5 var(--synthwave-font); letter-spacing: .1em; text-transform: uppercase;
+}
+/* The Settled shelf is a horizon: finished runs go down behind it, and the
+   usage meters, the radio and the footer stand on the ground this side of
+   it. The shell's --settled-shelf-* tokens give it the line, the floor and,
+   by night, the light along it. The line is a border, so it takes the
+   horizon's one ink where the scene's own horizon is a gradient. */
+:root[data-synthwave] {
+  --settled-shelf-radius: 0;
+  --settled-shelf-border-width: 2px 0 0;
+  --settled-shelf-border-color: var(--synthwave-horizon-ink);
+  --settled-shelf-bg: var(--synthwave-shelf);
+  --settled-shelf-shadow: var(--synthwave-shelf-glow);
+  --settled-head-justify: center;
+}
+:root[data-synthwave] .settled-heading { background: none; }
+:root[data-synthwave] #settled-head {
+  font: 600 10px/1.2 var(--synthwave-font); letter-spacing: .2em; text-transform: uppercase;
+}
+:root[data-synthwave] :is(#sidebar-status, #sidebar-usage, #radio-now, #sidebar-footer) {
+  background: var(--panel);
+}
+
+/* The run's header and tab bar are open sky too, lettered like a tape's
+   inlay card. */
+:root[data-synthwave] #tabbar { border-bottom-color: var(--synthwave-rule); }
+:root[data-synthwave] #tabs button {
+  padding: 10px 12px 9px;
+  font: 600 11px/1.6 var(--synthwave-font); letter-spacing: .14em; text-transform: uppercase;
+}
+:root[data-synthwave] #tabs button.active { color: var(--heading); font-weight: 600; }
+/* The active tab is underlined by the tube, not filled. */
+:root[data-synthwave] #tabs .tab-indicator {
+  top: auto; bottom: 0; height: 2px;
+  border: 0; border-radius: 0;
+  background: linear-gradient(90deg, var(--synthwave-pink), var(--synthwave-neon));
+  box-shadow: var(--synthwave-tube-glow);
+}
+:root[data-synthwave] #run-times {
+  font: 600 10px/1.6 var(--synthwave-font); letter-spacing: .12em; text-transform: uppercase;
+}
+:root[data-synthwave] #run-panel-tabs button {
+  font: 600 11px/1.6 var(--synthwave-font); letter-spacing: .14em; text-transform: uppercase;
+}
+
+/* The transcript and its reply box share one solid sheet, with the hills
+   and the grid in the margins either side. 982px is the 832px lane plus the
+   room the shell keeps for message times, so the lane stays centred in the
+   sheet. The sheet is drawn on the transcript and the composer themselves,
+   each one end of it, and it runs off the window's foot. The shell paints
+   #content and .chat, which would hide the margins. */
+:root[data-synthwave] #content:has(> .chat) { background: none; }
+:root[data-synthwave] .chat { background: none; }
+@media not all and (max-width: 700px) {
+  :root[data-synthwave] .chat { --chat-pane: min(100cqw - 30px, 982px); }
+  :root[data-synthwave] .chat > :is(.chat-body, .chat-reviews, .chat-composer) {
+    border-inline: 1px solid var(--synthwave-sheet-edge);
+    background: var(--bg);
+    box-shadow: var(--synthwave-sheet-lift-side);
+  }
+  :root[data-synthwave] .chat > .chat-body {
+    margin-top: 12px;
+    border-top: 1px solid var(--synthwave-sheet-edge);
+    border-radius: var(--synthwave-sheet-radius) var(--synthwave-sheet-radius) 0 0;
+    box-shadow: var(--synthwave-sheet-lift);
+  }
+  /* The transcript is positioned, so its shadow would fall across the reply
+     box below it. Positioned as well, the lower pieces paint after it. */
+  :root[data-synthwave] .chat > :is(.chat-reviews, .chat-composer) { position: relative; }
+}
+@media (max-width: 700px) {
+  :root[data-synthwave] #content:has(> .chat), :root[data-synthwave] .chat { background: var(--bg); }
+}
+:root[data-synthwave] .chat-md th { background: var(--chip); }
+:root[data-synthwave] :is(.chat-fold, .chat-working, .chat-steps-toggle, .chat-files-title) { letter-spacing: .01em; }
+:root[data-synthwave] .chat-composer-info {
+  font: 600 10px/1.6 var(--synthwave-font); letter-spacing: .12em; text-transform: uppercase;
+}
+
+/* Controls whose own cursor already says drag, busy or unavailable keep it,
+   and text entry keeps the native I-beam. The sticky notes, the button
+   that hands them out and floating Gary drag by pointer events rather than
+   draggable, so they are named. The pointing hand's hotspot is its
+   fingertip. */
+:root[data-synthwave], :root[data-synthwave] body {
+  --orc-cursor-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%232de2e6'/%3E%3Cstop offset='1' stop-color='%23ff3fa4'/%3E%3C/linearGradient%3E%3Cg transform='translate(0 .5)'%3E%3Cg fill='none' stroke='%23fff' stroke-opacity='.9' stroke-width='3.6' stroke-linejoin='round'%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5'/%3E%3C/g%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z' fill='url(%23g)' stroke='%231a0b3d' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M14.5 13.5v3M19 14.25v2.75M23.5 15.25v2.5' fill='none' stroke='%231a0b3d' stroke-width='1.1' stroke-linecap='round' stroke-opacity='.55'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5' fill='%23ffe66d' stroke='%231a0b3d' stroke-width='1.5'/%3E%3C/g%3E%3C/svg%3E") 12 2, pointer;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%232de2e6'/%3E%3Cstop offset='1' stop-color='%23ff3fa4'/%3E%3C/linearGradient%3E%3Cpath d='M4 3v19l5-5 4 9 4-2-4-9h7z' fill='url(%23g)' stroke='%231a0b3d' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E") 4 3, auto;
+}
+:root[data-synthwave] :where(a[href], button, summary, label, select, [role="button"], [role="tab"], [role="option"], [role="menuitem"], orc-button, orc-icon-button, orc-theme-toggle):not(:disabled, [disabled], [aria-disabled="true"], [aria-busy="true"], .is-busy, [draggable="true"], .nc-handout, .nc-note, .gary) {
+  cursor: var(--orc-cursor-pointer);
+}
+:root[data-synthwave] :where(input:not([type="checkbox"], [type="radio"], [type="range"]), textarea, [contenteditable="true"], orc-input):not(:disabled, [disabled]) {
+  cursor: text;
+}
+
+/* Design-system primary buttons fill with --orc-green; inside synthwave mode
+   they turn neon cyan instead. Scoped to the button host so status chips
+   keep their green. */
+:root[data-synthwave] orc-button:is(:not([variant]), [variant="primary"]) {
+  --orc-green: var(--accent);
+  --orc-button-text: var(--synthwave-on-accent);
+}
+
+/* The gate pages pin these copy buttons to the swamp's day blue by hex rather
+   than by token, so they are named here. A finished #copy-answers keeps its
+   green. */
+:root[data-synthwave] body :is(#orc-copy, #copy-answers:not(.done)) {
+  background: var(--accent);
+  color: var(--synthwave-on-accent);
+}
+:root[data-synthwave] body :is(#orc-copy, #copy-answers:not(.done)):not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--heading));
+}
+
+/* The empty state's own small sun, holding still and cut off at the
+   horizon. */
+:root[data-synthwave] #empty::before {
+  content: ""; display: block; width: 120px; height: 81px; margin: 0 auto 8px;
+  background: var(--synthwave-sun-still) center / 100% 100% no-repeat;
+}
+:root[data-synthwave] #empty {
+  text-align: center;
+  font-style: italic; letter-spacing: .06em;
+  text-shadow: var(--synthwave-title-shadow);
+}
+/* Decorative text below uses the `content: "…" / ""` alternative so screen
+   readers skip it; the first declaration is the fallback for engines that
+   drop the second. */
+:root[data-synthwave] #cmdk-layout::before {
+  content: "▶ SYNTHWAVE MODE ◀"; content: "▶ SYNTHWAVE MODE ◀" / "";
+  padding: 2px 14px 4px;
+  font-size: 13px; font-weight: 700; font-style: italic; letter-spacing: .16em;
+  color: var(--heading);
+  text-shadow: var(--synthwave-word-shadow);
+  background:
+    linear-gradient(90deg, var(--synthwave-pink), var(--synthwave-violet), var(--synthwave-neon)) left bottom / 100% 2px no-repeat,
+    linear-gradient(90deg, color-mix(in srgb, var(--synthwave-violet) 26%, var(--panel)), color-mix(in srgb, var(--synthwave-pink) 26%, var(--panel)), color-mix(in srgb, #ffb347 30%, var(--panel)));
+}
+:root[data-synthwave] #cmdk-footer::after { content: " · stay rad 📼"; content: " · stay rad 📼" / ""; }
+
+/* The scene stands in a layer of its own behind the whole page, in the
+   part of the window main takes: nothing in it can lie over a card, a
+   sheet or a note, and it shows only where main is open sky.
+
+   frontend.js measures main and places the layer on it through
+   --synthwave-left and --synthwave-width. Everything is drawn for a main
+   area 1300px wide and a floor 210px deep, and it fits that drawing to the
+   layer through --synthwave-k, for breadth, and --synthwave-floor, the
+   horizon's height; the values here are the drawing's own. */
+#synthwave-set {
+  position: fixed; top: 0; bottom: 0; left: var(--synthwave-left, 0px); width: var(--synthwave-width, 100%);
+  z-index: -1; overflow: hidden; pointer-events: none;
+  --synthwave-k: 1; --synthwave-floor: 210px;
+}
+.synthwave-star, .synthwave-land > *, .synthwave-floor > * { position: absolute; }
+/* A few stars are drawn large enough to have points. By night, on the
+   new-run screen, they twinkle. */
+.synthwave-star {
+  left: var(--x); top: var(--y); width: 14px; height: 14px; scale: var(--s);
+  background: var(--synthwave-star-ink); opacity: var(--synthwave-star-rest);
+  -webkit-mask: var(--synthwave-art-spark) center / 100% 100% no-repeat;
+  mask: var(--synthwave-art-spark) center / 100% 100% no-repeat;
+}
+/* The land shows on two screens only. On the new-run screen it is the
+   whole sunset, moving. Beside a transcript it is the hills and the floor,
+   holding still. Anywhere else there is reading to do and it stays away:
+   answer mode stands in for the transcript and letters its hints straight
+   onto the page, so its card (.am-card) sends the land away too. */
+.synthwave-land { display: none; position: absolute; inset: 0; }
+:root[data-synthwave]:has(#new-view:not([hidden])) .synthwave-land,
+:root[data-synthwave]:has(#content > .chat):not(:has(#head[hidden], .am-card)) .synthwave-land { display: block; }
+:root[data-synthwave]:not(:has(#new-view:not([hidden]))) .synthwave-show { display: none; }
+.synthwave-haze { left: 0; right: 0; bottom: var(--synthwave-floor); height: min(560px, 100% - var(--synthwave-floor)); background: var(--synthwave-haze); }
+/* By day the haze is printed: two screens of dots, coarser toward the ground. */
+.synthwave-haze::before, .synthwave-haze::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; }
+.synthwave-haze::before {
+  height: 230px; background: var(--synthwave-dots-fine);
+  -webkit-mask-image: linear-gradient(transparent, #000 60%); mask-image: linear-gradient(transparent, #000 60%);
+}
+.synthwave-haze::after {
+  height: 110px; background: var(--synthwave-dots-bold);
+  -webkit-mask-image: linear-gradient(transparent, #000 70%); mask-image: linear-gradient(transparent, #000 70%);
+}
+.synthwave-glow {
+  left: 50%; bottom: calc(var(--synthwave-floor) - 334px * var(--synthwave-k));
+  width: calc(780px * var(--synthwave-k)); height: calc(780px * var(--synthwave-k)); margin-left: calc(-390px * var(--synthwave-k));
+  border-radius: 50%; background: var(--synthwave-glow);
+}
+/* The sun is its lit bands. Each is a window that slides down the disc and
+   closes up as it goes, over a picture of the whole sun that moves the
+   other way and so stands still: the gaps between them show the sky, and
+   only transforms move, which the compositor runs without a repaint
+   (tests/e2e/idle-animations.spec.js). A band ends each turn where the one
+   below it began, so the loop has no seam. Its foot is behind the floor. */
+.synthwave-sun {
+  left: 50%; bottom: calc(var(--synthwave-floor) - 104px * var(--synthwave-k));
+  width: 320px; height: 320px; margin-left: -160px;
+  border-radius: 50%; overflow: hidden;
+  transform-origin: 50% 100%; scale: var(--synthwave-k);
+  box-shadow: var(--synthwave-sun-shadow);
+}
+.synthwave-band { position: absolute; left: 0; right: 0; top: 0; overflow: hidden; transform-origin: 0 0; }
+.synthwave-band > i {
+  position: absolute; left: 0; top: 0; width: 320px; height: 320px; transform-origin: 0 0;
+  background: var(--synthwave-sun);
+}
+.synthwave-cloud {
+  display: var(--synthwave-night-only);
+  left: calc(50% + var(--x) * var(--synthwave-k)); bottom: calc(var(--synthwave-floor) + var(--y) * var(--synthwave-k));
+  width: calc(var(--w) * var(--synthwave-k)); height: var(--h);
+  border-radius: 50%; background: var(--synthwave-cloud);
+}
+.synthwave-ridge {
+  left: 50%; bottom: var(--synthwave-floor);
+  width: calc(2800px * var(--synthwave-k)); height: calc(100px * var(--synthwave-k)); margin-left: calc(-1400px * var(--synthwave-k));
+  background: var(--synthwave-ridge) center / 100% 100% no-repeat;
+}
+.synthwave-range {
+  bottom: var(--synthwave-floor); height: calc(190px * var(--synthwave-k));
+  background: center / 100% 100% no-repeat; filter: var(--synthwave-range-shadow);
+}
+.synthwave-range.synthwave-left { left: calc(-70px * var(--synthwave-k)); width: calc(620px * var(--synthwave-k)); background-image: var(--synthwave-range-left); }
+.synthwave-range.synthwave-right { right: calc(-70px * var(--synthwave-k)); width: calc(640px * var(--synthwave-k)); background-image: var(--synthwave-range-right); }
+.synthwave-horizon {
+  left: 0; right: 0; bottom: calc(var(--synthwave-floor) - 1px); height: 2px;
+  background: var(--synthwave-horizon-line); box-shadow: var(--synthwave-horizon-glow);
+}
+/* The floor is drawn 210px deep and squeezed to the horizon's height. Its
+   running lines are one picture, each a wedge that thins toward the
+   vanishing point, and its cross lines are pieces of their own: every one
+   slides from its place to the next one nearer and fades in out of the
+   distance, so the floor rolls toward you with nothing repainted. */
+.synthwave-floor {
+  left: 0; right: 0; bottom: 0; height: 210px; overflow: hidden;
+  transform-origin: 50% 100%; transform: scaleY(tan(atan2(var(--synthwave-floor), 210px)));
+  background: var(--synthwave-floor-paint);
+}
+.synthwave-shine { inset: 0; background: var(--synthwave-shine); }
+.synthwave-grid {
+  inset: 0;
+  -webkit-mask-image: linear-gradient(transparent 0, rgb(0 0 0 / .4) 14%, #000 40%);
+  mask-image: linear-gradient(transparent 0, rgb(0 0 0 / .4) 14%, #000 40%);
+}
+.synthwave-rays { position: absolute; inset: 0; background: var(--synthwave-rays) center top / calc(6800px * var(--synthwave-k)) 100% no-repeat; }
+.synthwave-line {
+  position: absolute; left: 0; right: 0; top: -.5px; height: 1px;
+  background: var(--synthwave-line); box-shadow: var(--synthwave-line-glow);
+}
+/* A hard line one pixel tall has two device pixels on a Retina screen, so it
+   rolls smoothly. Below that it has one, and on most frames of the roll it
+   falls between two rows and shows as a dim purple smear instead of pink.
+   There each line is a band two pixels tall: a pixel of the line's ink
+   between two soft edges. Some row always lands in the ink, so the line
+   keeps its pink wherever it is, and the glow follows the band. */
+@media (max-resolution: 1.99dppx), (-webkit-max-device-pixel-ratio: 1.99) {
+  .synthwave-line {
+    top: -1px; height: 2px;
+    background: linear-gradient(transparent, var(--synthwave-line) 25%, var(--synthwave-line) 75%, transparent);
+  }
+}
+/* A palm is one shape cut twice: once in ink, and once a step to the side
+   as the light on its edge by night, the misprinted shadow by day. */
+.synthwave-palm {
+  width: calc(var(--synthwave-w) * var(--synthwave-k)); height: calc(var(--synthwave-h) * var(--synthwave-k));
+  transform-origin: 50% 100%;
+}
+.synthwave-palm::before, .synthwave-palm::after {
+  content: ""; position: absolute; inset: 0;
+  -webkit-mask: var(--synthwave-cut) center / 100% 100% no-repeat; mask: var(--synthwave-cut) center / 100% 100% no-repeat;
+}
+.synthwave-palm::before {
+  background: var(--synthwave-palm-rim);
+  translate: calc(var(--synthwave-palm-rim-x) * (var(--synthwave-side) * var(--synthwave-palm-rim-sided) + 1 - var(--synthwave-palm-rim-sided))) var(--synthwave-palm-rim-y);
+}
+.synthwave-palm::after { background: var(--synthwave-palm-ink); }
+.synthwave-palm:nth-child(1 of .synthwave-palm) {
+  --synthwave-cut: var(--synthwave-art-palm-1); --synthwave-w: 341px; --synthwave-h: 310px; --synthwave-side: 1;
+  left: calc(-34px * var(--synthwave-k)); bottom: calc(var(--synthwave-floor) - 58px * var(--synthwave-k));
+}
+.synthwave-palm:nth-child(2 of .synthwave-palm) {
+  --synthwave-cut: var(--synthwave-art-palm-2); --synthwave-w: 259.6px; --synthwave-h: 236px; --synthwave-side: -1;
+  right: calc(150px * var(--synthwave-k)); bottom: calc(var(--synthwave-floor) - 26px * var(--synthwave-k));
+}
+.synthwave-palm:nth-child(3 of .synthwave-palm) {
+  --synthwave-cut: var(--synthwave-art-palm-3); --synthwave-w: 387.2px; --synthwave-h: 352px; --synthwave-side: -1;
+  right: calc(-70px * var(--synthwave-k)); bottom: calc(var(--synthwave-floor) - 96px * var(--synthwave-k));
+}
+.synthwave-meteor {
+  display: var(--synthwave-night-only);
+  left: 18%; top: 9%; width: 110px; height: 1.5px; border-radius: 2px; rotate: 24deg; opacity: 0;
+  background: linear-gradient(90deg, transparent, #fff);
+}
+/* Settings' Themes card paints this stylesheet in a small model of the shell:
+   a sidebar and the new-run screen but no tab bar, and no scenery layer
+   because nothing runs in it. There the sunset is two still drawings on the
+   main column: the sun between the hills, and the floor in front of them.
+   Both keep below the line under the composer, which is printed straight
+   onto the sky. */
+:root[data-synthwave] main:has(> #new-view):not(:has(> #tabbar))::before,
+:root[data-synthwave] main:has(> #new-view):not(:has(> #tabbar))::after {
+  content: ""; position: absolute; z-index: -1; inset: auto 0 0; pointer-events: none;
+}
+:root[data-synthwave] main:has(> #new-view):not(:has(> #tabbar))::before {
+  bottom: 50px; height: 150px;
+  background:
+    var(--synthwave-range-left) left -40px bottom / 248px 76px no-repeat,
+    var(--synthwave-range-right) right -40px bottom / 256px 76px no-repeat,
+    var(--synthwave-ridge) center bottom / 1120px 40px no-repeat,
+    var(--synthwave-sun-still) center bottom / 104px 70px no-repeat,
+    var(--synthwave-haze);
+}
+:root[data-synthwave] main:has(> #new-view):not(:has(> #tabbar))::after {
+  height: 50px; border-top: 1px solid var(--synthwave-pink);
+  background: var(--synthwave-rays) center top / 1620px 100% no-repeat, var(--synthwave-floor-paint);
+}
+/* The scene moves on the new-run screen only, where nobody is reading.
+   A band of the sun and a line of the floor rest where their turn starts,
+   and a star, a cloud and a palm rest in the middle of theirs, so with
+   animations off, and beside a transcript, the same picture is there and
+   holds still. */
+:root[data-synthwave]:has(#new-view:not([hidden])) .synthwave-star {
+  animation: var(--synthwave-twinkle) var(--dur) ease-in-out var(--delay) infinite alternate;
+}
+:root[data-synthwave]:has(#new-view:not([hidden])) .synthwave-band,
+:root[data-synthwave]:has(#new-view:not([hidden])) .synthwave-band > i { animation: var(--synthwave-turn) 7s linear infinite; }
+:root[data-synthwave]:has(#new-view:not([hidden])) .synthwave-line { animation: var(--synthwave-turn) 3.4s linear infinite; }
+:root[data-synthwave]:has(#new-view:not([hidden])) .synthwave-cloud { animation: synthwave-drift var(--dur) ease-in-out var(--delay) infinite alternate; }
+:root[data-synthwave]:has(#new-view:not([hidden])) .synthwave-palm { animation: synthwave-sway var(--dur) ease-in-out var(--delay) infinite alternate; }
+:root[data-synthwave]:has(#new-view:not([hidden])) .synthwave-meteor { animation: synthwave-meteor 23s linear infinite; }
+.synthwave-line:nth-child(1 of .synthwave-line) { transform: translateY(210px) scaleY(2.4); opacity: 1; --synthwave-turn: synthwave-line-1; }
+.synthwave-line:nth-child(2 of .synthwave-line) { transform: translateY(168px) scaleY(2.06); opacity: 1; --synthwave-turn: synthwave-line-2; }
+.synthwave-line:nth-child(3 of .synthwave-line) { transform: translateY(140px) scaleY(1.83); opacity: 1; --synthwave-turn: synthwave-line-3; }
+.synthwave-line:nth-child(4 of .synthwave-line) { transform: translateY(120px) scaleY(1.67); opacity: 1; --synthwave-turn: synthwave-line-4; }
+.synthwave-line:nth-child(5 of .synthwave-line) { transform: translateY(105px) scaleY(1.55); opacity: 1; --synthwave-turn: synthwave-line-5; }
+.synthwave-line:nth-child(6 of .synthwave-line) { transform: translateY(93.33px) scaleY(1.46); opacity: 1; --synthwave-turn: synthwave-line-6; }
+.synthwave-line:nth-child(7 of .synthwave-line) { transform: translateY(84px) scaleY(1.38); opacity: .957; --synthwave-turn: synthwave-line-7; }
+.synthwave-line:nth-child(8 of .synthwave-line) { transform: translateY(76.36px) scaleY(1.32); opacity: .791; --synthwave-turn: synthwave-line-8; }
+.synthwave-line:nth-child(9 of .synthwave-line) { transform: translateY(70px) scaleY(1.27); opacity: .652; --synthwave-turn: synthwave-line-9; }
+.synthwave-line:nth-child(10 of .synthwave-line) { transform: translateY(64.62px) scaleY(1.22); opacity: .535; --synthwave-turn: synthwave-line-10; }
+.synthwave-line:nth-child(11 of .synthwave-line) { transform: translateY(60px) scaleY(1.19); opacity: .435; --synthwave-turn: synthwave-line-11; }
+.synthwave-line:nth-child(12 of .synthwave-line) { transform: translateY(56px) scaleY(1.15); opacity: .348; --synthwave-turn: synthwave-line-12; }
+.synthwave-line:nth-child(13 of .synthwave-line) { transform: translateY(52.5px) scaleY(1.12); opacity: .272; --synthwave-turn: synthwave-line-13; }
+.synthwave-line:nth-child(14 of .synthwave-line) { transform: translateY(49.41px) scaleY(1.1); opacity: .205; --synthwave-turn: synthwave-line-14; }
+.synthwave-line:nth-child(15 of .synthwave-line) { transform: translateY(46.67px) scaleY(1.08); opacity: .145; --synthwave-turn: synthwave-line-15; }
+.synthwave-line:nth-child(16 of .synthwave-line) { transform: translateY(44.21px) scaleY(1.06); opacity: .092; --synthwave-turn: synthwave-line-16; }
+.synthwave-band:nth-child(1) { height: 134px; transform: translateY(0px) scaleY(.9075); --synthwave-turn: synthwave-band-1; }
+.synthwave-band:nth-child(1) > i { transform: scaleY(1.102) translateY(0px); --synthwave-turn: synthwave-band-1-sun; }
+.synthwave-band:nth-child(2) { height: 13px; transform: translateY(121.6px) scaleY(.9538); --synthwave-turn: synthwave-band-2; }
+.synthwave-band:nth-child(2) > i { transform: scaleY(1.0484) translateY(-121.6px); --synthwave-turn: synthwave-band-2-sun; }
+.synthwave-band:nth-child(3) { height: 12px; transform: translateY(136.4px) scaleY(.9667); --synthwave-turn: synthwave-band-3; }
+.synthwave-band:nth-child(3) > i { transform: scaleY(1.0345) translateY(-136.4px); --synthwave-turn: synthwave-band-3-sun; }
+.synthwave-band:nth-child(4) { height: 11px; transform: translateY(152.8px) scaleY(.9818); --synthwave-turn: synthwave-band-4; }
+.synthwave-band:nth-child(4) > i { transform: scaleY(1.0185) translateY(-152.8px); --synthwave-turn: synthwave-band-4-sun; }
+.synthwave-band:nth-child(5) { height: 11px; transform: translateY(170.8px) scaleY(.9091); --synthwave-turn: synthwave-band-5; }
+.synthwave-band:nth-child(5) > i { transform: scaleY(1.1) translateY(-170.8px); --synthwave-turn: synthwave-band-5-sun; }
+.synthwave-band:nth-child(6) { height: 10px; transform: translateY(190.4px) scaleY(.92); --synthwave-turn: synthwave-band-6; }
+.synthwave-band:nth-child(6) > i { transform: scaleY(1.087) translateY(-190.4px); --synthwave-turn: synthwave-band-6-sun; }
+.synthwave-band:nth-child(7) { height: 9px; transform: translateY(211.6px) scaleY(.9333); --synthwave-turn: synthwave-band-7; }
+.synthwave-band:nth-child(7) > i { transform: scaleY(1.0714) translateY(-211.6px); --synthwave-turn: synthwave-band-7-sun; }
+@keyframes synthwave-line-1 { 0% { transform: translateY(210px) scaleY(2.4); opacity: 1; } 25% { transform: translateY(224px) scaleY(2.51); opacity: 1; } 50% { transform: translateY(240px) scaleY(2.64); opacity: 1; } 75% { transform: translateY(258.46px) scaleY(2.79); opacity: 1; } 100% { transform: translateY(276.32px) scaleY(2.94); opacity: 1; } }
+@keyframes synthwave-line-2 { 0% { transform: translateY(168px) scaleY(2.06); opacity: 1; } 25% { transform: translateY(176.84px) scaleY(2.13); opacity: 1; } 50% { transform: translateY(186.67px) scaleY(2.21); opacity: 1; } 75% { transform: translateY(197.65px) scaleY(2.3); opacity: 1; } 100% { transform: translateY(210px) scaleY(2.4); opacity: 1; } }
+@keyframes synthwave-line-3 { 0% { transform: translateY(140px) scaleY(1.83); opacity: 1; } 25% { transform: translateY(146.09px) scaleY(1.88); opacity: 1; } 50% { transform: translateY(152.73px) scaleY(1.94); opacity: 1; } 75% { transform: translateY(160px) scaleY(2); opacity: 1; } 100% { transform: translateY(168px) scaleY(2.06); opacity: 1; } }
+@keyframes synthwave-line-4 { 0% { transform: translateY(120px) scaleY(1.67); opacity: 1; } 25% { transform: translateY(124.44px) scaleY(1.71); opacity: 1; } 50% { transform: translateY(129.23px) scaleY(1.75); opacity: 1; } 75% { transform: translateY(134.4px) scaleY(1.79); opacity: 1; } 100% { transform: translateY(140px) scaleY(1.83); opacity: 1; } }
+@keyframes synthwave-line-5 { 0% { transform: translateY(105px) scaleY(1.55); opacity: 1; } 25% { transform: translateY(108.39px) scaleY(1.58); opacity: 1; } 50% { transform: translateY(112px) scaleY(1.61); opacity: 1; } 75% { transform: translateY(115.86px) scaleY(1.64); opacity: 1; } 100% { transform: translateY(120px) scaleY(1.67); opacity: 1; } }
+@keyframes synthwave-line-6 { 0% { transform: translateY(93.33px) scaleY(1.46); opacity: 1; } 25% { transform: translateY(96px) scaleY(1.48); opacity: 1; } 50% { transform: translateY(98.82px) scaleY(1.5); opacity: 1; } 75% { transform: translateY(101.82px) scaleY(1.52); opacity: 1; } 100% { transform: translateY(105px) scaleY(1.55); opacity: 1; } }
+@keyframes synthwave-line-7 { 0% { transform: translateY(84px) scaleY(1.38); opacity: .957; } 25% { transform: translateY(86.15px) scaleY(1.4); opacity: 1; } 50% { transform: translateY(88.42px) scaleY(1.42); opacity: 1; } 75% { transform: translateY(90.81px) scaleY(1.44); opacity: 1; } 100% { transform: translateY(93.33px) scaleY(1.46); opacity: 1; } }
+@keyframes synthwave-line-8 { 0% { transform: translateY(76.36px) scaleY(1.32); opacity: .791; } 25% { transform: translateY(78.14px) scaleY(1.33); opacity: .829; } 50% { transform: translateY(80px) scaleY(1.35); opacity: .87; } 75% { transform: translateY(81.95px) scaleY(1.36); opacity: .912; } 100% { transform: translateY(84px) scaleY(1.38); opacity: .957; } }
+@keyframes synthwave-line-9 { 0% { transform: translateY(70px) scaleY(1.27); opacity: .652; } 25% { transform: translateY(71.49px) scaleY(1.28); opacity: .685; } 50% { transform: translateY(73.04px) scaleY(1.29); opacity: .718; } 75% { transform: translateY(74.67px) scaleY(1.3); opacity: .754; } 100% { transform: translateY(76.36px) scaleY(1.32); opacity: .791; } }
+@keyframes synthwave-line-10 { 0% { transform: translateY(64.62px) scaleY(1.22); opacity: .535; } 25% { transform: translateY(65.88px) scaleY(1.23); opacity: .563; } 50% { transform: translateY(67.2px) scaleY(1.24); opacity: .591; } 75% { transform: translateY(68.57px) scaleY(1.26); opacity: .621; } 100% { transform: translateY(70px) scaleY(1.27); opacity: .652; } }
+@keyframes synthwave-line-11 { 0% { transform: translateY(60px) scaleY(1.19); opacity: .435; } 25% { transform: translateY(61.09px) scaleY(1.19); opacity: .458; } 50% { transform: translateY(62.22px) scaleY(1.2); opacity: .483; } 75% { transform: translateY(63.4px) scaleY(1.21); opacity: .509; } 100% { transform: translateY(64.62px) scaleY(1.22); opacity: .535; } }
+@keyframes synthwave-line-12 { 0% { transform: translateY(56px) scaleY(1.15); opacity: .348; } 25% { transform: translateY(56.95px) scaleY(1.16); opacity: .368; } 50% { transform: translateY(57.93px) scaleY(1.17); opacity: .39; } 75% { transform: translateY(58.95px) scaleY(1.18); opacity: .412; } 100% { transform: translateY(60px) scaleY(1.19); opacity: .435; } }
+@keyframes synthwave-line-13 { 0% { transform: translateY(52.5px) scaleY(1.12); opacity: .272; } 25% { transform: translateY(53.33px) scaleY(1.13); opacity: .29; } 50% { transform: translateY(54.19px) scaleY(1.14); opacity: .309; } 75% { transform: translateY(55.08px) scaleY(1.15); opacity: .328; } 100% { transform: translateY(56px) scaleY(1.15); opacity: .348; } }
+@keyframes synthwave-line-14 { 0% { transform: translateY(49.41px) scaleY(1.1); opacity: .205; } 25% { transform: translateY(50.15px) scaleY(1.11); opacity: .221; } 50% { transform: translateY(50.91px) scaleY(1.11); opacity: .237; } 75% { transform: translateY(51.69px) scaleY(1.12); opacity: .254; } 100% { transform: translateY(52.5px) scaleY(1.12); opacity: .272; } }
+@keyframes synthwave-line-15 { 0% { transform: translateY(46.67px) scaleY(1.08); opacity: .145; } 25% { transform: translateY(47.32px) scaleY(1.08); opacity: .159; } 50% { transform: translateY(48px) scaleY(1.09); opacity: .174; } 75% { transform: translateY(48.7px) scaleY(1.09); opacity: .189; } 100% { transform: translateY(49.41px) scaleY(1.1); opacity: .205; } }
+@keyframes synthwave-line-16 { 0% { transform: translateY(44.21px) scaleY(1.06); opacity: .092; } 25% { transform: translateY(44.8px) scaleY(1.06); opacity: .104; } 50% { transform: translateY(45.41px) scaleY(1.07); opacity: .118; } 75% { transform: translateY(46.03px) scaleY(1.07); opacity: .131; } 100% { transform: translateY(46.67px) scaleY(1.08); opacity: .145; } }
+@keyframes synthwave-band-1 { 0% { transform: translateY(0px) scaleY(.9075); } 25% { transform: translateY(0px) scaleY(.9295); } 50% { transform: translateY(0px) scaleY(.9522); } 75% { transform: translateY(0px) scaleY(.9757); } 100% { transform: translateY(0px) scaleY(1); } }
+@keyframes synthwave-band-1-sun { 0% { transform: scaleY(1.102) translateY(0px); } 25% { transform: scaleY(1.0759) translateY(0px); } 50% { transform: scaleY(1.0502) translateY(0px); } 75% { transform: scaleY(1.0249) translateY(0px); } 100% { transform: scaleY(1) translateY(0px); } }
+@keyframes synthwave-band-2 { 0% { transform: translateY(121.6px) scaleY(.9538); } 25% { transform: translateY(125.15px) scaleY(.9385); } 50% { transform: translateY(128.8px) scaleY(.9231); } 75% { transform: translateY(132.55px) scaleY(.9077); } 100% { transform: translateY(136.4px) scaleY(.8923); } }
+@keyframes synthwave-band-2-sun { 0% { transform: scaleY(1.0484) translateY(-121.6px); } 25% { transform: scaleY(1.0656) translateY(-125.15px); } 50% { transform: scaleY(1.0833) translateY(-128.8px); } 75% { transform: scaleY(1.1017) translateY(-132.55px); } 100% { transform: scaleY(1.1207) translateY(-136.4px); } }
+@keyframes synthwave-band-3 { 0% { transform: translateY(136.4px) scaleY(.9667); } 25% { transform: translateY(140.35px) scaleY(.95); } 50% { transform: translateY(144.4px) scaleY(.9333); } 75% { transform: translateY(148.55px) scaleY(.9167); } 100% { transform: translateY(152.8px) scaleY(.9); } }
+@keyframes synthwave-band-3-sun { 0% { transform: scaleY(1.0345) translateY(-136.4px); } 25% { transform: scaleY(1.0526) translateY(-140.35px); } 50% { transform: scaleY(1.0714) translateY(-144.4px); } 75% { transform: scaleY(1.0909) translateY(-148.55px); } 100% { transform: scaleY(1.1111) translateY(-152.8px); } }
+@keyframes synthwave-band-4 { 0% { transform: translateY(152.8px) scaleY(.9818); } 25% { transform: translateY(157.15px) scaleY(.9636); } 50% { transform: translateY(161.6px) scaleY(.9455); } 75% { transform: translateY(166.15px) scaleY(.9273); } 100% { transform: translateY(170.8px) scaleY(.9091); } }
+@keyframes synthwave-band-4-sun { 0% { transform: scaleY(1.0185) translateY(-152.8px); } 25% { transform: scaleY(1.0377) translateY(-157.15px); } 50% { transform: scaleY(1.0577) translateY(-161.6px); } 75% { transform: scaleY(1.0784) translateY(-166.15px); } 100% { transform: scaleY(1.1) translateY(-170.8px); } }
+@keyframes synthwave-band-5 { 0% { transform: translateY(170.8px) scaleY(.9091); } 25% { transform: translateY(175.55px) scaleY(.8909); } 50% { transform: translateY(180.4px) scaleY(.8727); } 75% { transform: translateY(185.35px) scaleY(.8545); } 100% { transform: translateY(190.4px) scaleY(.8364); } }
+@keyframes synthwave-band-5-sun { 0% { transform: scaleY(1.1) translateY(-170.8px); } 25% { transform: scaleY(1.1224) translateY(-175.55px); } 50% { transform: scaleY(1.1458) translateY(-180.4px); } 75% { transform: scaleY(1.1702) translateY(-185.35px); } 100% { transform: scaleY(1.1957) translateY(-190.4px); } }
+@keyframes synthwave-band-6 { 0% { transform: translateY(190.4px) scaleY(.92); } 25% { transform: translateY(195.55px) scaleY(.9); } 50% { transform: translateY(200.8px) scaleY(.88); } 75% { transform: translateY(206.15px) scaleY(.86); } 100% { transform: translateY(211.6px) scaleY(.84); } }
+@keyframes synthwave-band-6-sun { 0% { transform: scaleY(1.087) translateY(-190.4px); } 25% { transform: scaleY(1.1111) translateY(-195.55px); } 50% { transform: scaleY(1.1364) translateY(-200.8px); } 75% { transform: scaleY(1.1628) translateY(-206.15px); } 100% { transform: scaleY(1.1905) translateY(-211.6px); } }
+@keyframes synthwave-band-7 { 0% { transform: translateY(211.6px) scaleY(.9333); } 25% { transform: translateY(217.15px) scaleY(.9111); } 50% { transform: translateY(222.8px) scaleY(.8889); } 75% { transform: translateY(228.55px) scaleY(.8667); } 100% { transform: translateY(234.4px) scaleY(.8444); } }
+@keyframes synthwave-band-7-sun { 0% { transform: scaleY(1.0714) translateY(-211.6px); } 25% { transform: scaleY(1.0976) translateY(-217.15px); } 50% { transform: scaleY(1.125) translateY(-222.8px); } 75% { transform: scaleY(1.1538) translateY(-228.55px); } 100% { transform: scaleY(1.1842) translateY(-234.4px); } }
+@keyframes synthwave-twinkle {
+  from { opacity: .2; transform: scale(.7); }
+  to { opacity: 1; transform: scale(1.08); }
+}
+@keyframes synthwave-drift {
+  from { transform: translateX(-26px); }
+  to { transform: translateX(30px); }
+}
+@keyframes synthwave-sway {
+  from { transform: rotate(-.7deg); }
+  to { transform: rotate(.9deg); }
+}
+@keyframes synthwave-meteor {
+  0%, 93% { opacity: 0; transform: translateX(0); }
+  94% { opacity: .9; }
+  98% { opacity: .7; }
+  100% { opacity: 0; transform: translateX(300px); }
+}
+@keyframes synthwave-level {
+  from { transform: scaleY(.35); }
+  to { transform: scaleY(1); }
+}
+
+/* A click strikes a tube: a ring of light and six short strokes of it thrown
+   out. They are drawn over the page for the half second they last. */
+#synthwave-scene {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+}
+.synthwave-zap {
+  position: fixed; left: var(--px); top: var(--py); translate: -50% -50%;
+}
+.synthwave-ring {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--synthwave-pink);
+  box-shadow: 0 0 8px var(--synthwave-pink), inset 0 0 6px var(--synthwave-neon);
+  animation: synthwave-ring .6s ease-out both;
+}
+.synthwave-spark {
+  width: 13px; height: 2px; border-radius: 2px; rotate: var(--tilt);
+  background: var(--glow); box-shadow: 0 0 6px var(--glow);
+  animation: synthwave-spark .7s ease-out both;
+}
+/* A held press's trail: shorter and shorter-lived, so a long drag stays
+   under frontend.js's cap. */
+.synthwave-spark.synthwave-trail { width: 8px; animation-duration: .5s; }
+/* The composers rise over the strokes, so nothing crosses what you type.
+   Project home's composer sits inside its view's own layer, so the whole view
+   rises there. Composer textareas stay out: the pickers in the composer's
+   footer open over them. */
+:root[data-synthwave] :is(#new-view, .newconv-prompt) { z-index: 1; }
+:root[data-synthwave] textarea:not(.newconv-prompt textarea) { position: relative; z-index: 1; }
+/* The side panel rises too, so a stroke never lies over a PR body's
+   screenshots. On a phone the panel is already a sheet over everything. */
+@media not all and (max-width: 900px) {
+  :root[data-synthwave] #run-diff { z-index: 1; }
+}
+@keyframes synthwave-ring {
+  from { transform: scale(.3); opacity: 1; }
+  to { transform: scale(4); opacity: 0; }
+}
+@keyframes synthwave-spark {
+  0% { translate: -50% -50%; scale: .4 1; opacity: 0; }
+  15% { opacity: 1; }
+  100% { translate: calc(-50% + var(--dx, 0px)) calc(-50% + var(--dy, -60px)); scale: 1.15 1; opacity: 0; }
+}
+/* A phone has no margins for scenery: the page is plain there. */
+@media (max-width: 700px) {
+  #synthwave-set { display: none; }
+  :root[data-synthwave] body:has(> #run-sidebar) { background: var(--bg); }
+  :root[data-synthwave] body:has(> #run-sidebar)::before { display: none; }
+}
+@media (forced-colors: active), print {
+  #synthwave-scene, #synthwave-set { display: none; }
+  :root[data-synthwave] body:has(> #run-sidebar)::before,
+  :root[data-synthwave] main:has(> #new-view):not(:has(> #tabbar))::before,
+  :root[data-synthwave] main:has(> #new-view):not(:has(> #tabbar))::after { display: none; }
+}
+
+/* Typing effects, drawn by frontend.js's synthwaveTyping into the shell's
+   typing layer. Each piece runs one animation and leaves when it ends.
+   Motion moves the translate property, so a piece's static rotate or
+   transform turns it in place rather than turning its path. */
+.synthwave-typed-ghost {
+  font: 800 15px var(--synthwave-font); color: transparent;
+  -webkit-text-stroke: 1px var(--synthwave-pink);
+  text-shadow: -2px 0 color-mix(in srgb, var(--synthwave-neon) 75%, transparent), 2px 0 color-mix(in srgb, var(--synthwave-pink) 60%, transparent);
+  animation: synthwave-typed-ghost .9s ease-out both;
+}
+.synthwave-typed-spark {
+  width: 11px; height: 2px; border-radius: 2px; rotate: var(--tilt);
+  background: var(--glow); box-shadow: 0 0 6px var(--glow);
+  animation: synthwave-typed-spark .5s ease-out both;
+}
+.synthwave-typed-scan {
+  width: 3px; height: 12px;
+  background: var(--synthwave-neon);
+  box-shadow: 0 0 8px 1px var(--synthwave-neon), -14px 0 18px -6px var(--synthwave-pink);
+  animation: synthwave-typed-scan .8s cubic-bezier(.5, 0, .5, 1) both;
+}
+.synthwave-typed-pixel {
+  width: 4px; height: 4px; background: var(--glow); box-shadow: 0 0 4px var(--glow);
+  animation: synthwave-typed-pixel .55s steps(5, end) both;
+}
+/* A paste drops in a cassette: a shell with two reels, drawn, and PLAY
+   blinking beside it. */
+.synthwave-typed-tape {
+  width: 30px; height: 19px; border: 1.5px solid var(--synthwave-neon); border-radius: 3px;
+  background:
+    radial-gradient(circle at 30% 54%, transparent 1.6px, var(--synthwave-pink) 1.9px 3.1px, transparent 3.4px),
+    radial-gradient(circle at 70% 54%, transparent 1.6px, var(--synthwave-pink) 1.9px 3.1px, transparent 3.4px),
+    linear-gradient(var(--synthwave-neon) 0 0) center 3px / 62% 1.5px no-repeat,
+    var(--panel);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--synthwave-neon) 70%, transparent);
+  animation: synthwave-typed-tape 1.6s ease-out both;
+}
+.synthwave-typed-play {
+  font: 800 11px/1 var(--synthwave-font); letter-spacing: .14em; color: var(--synthwave-neon);
+  text-shadow: 0 0 6px var(--synthwave-neon);
+  animation: synthwave-typed-play 1.6s steps(1, end) both;
+}
+@keyframes synthwave-typed-ghost {
+  0% { translate: -50% -100%; scale: .7; opacity: 0; }
+  15% { scale: 1.1; opacity: 1; }
+  100% { translate: calc(-50% + var(--drift)) calc(-100% - 30px); scale: 1.3; opacity: 0; }
+}
+@keyframes synthwave-typed-spark {
+  0% { translate: -50% -50%; opacity: 1; }
+  100% { translate: calc(-50% + var(--dx)) calc(-50% + var(--dy)); opacity: 0; }
+}
+@keyframes synthwave-typed-scan {
+  0% { translate: 0 -100%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { translate: calc(var(--w) - 100%) -100%; opacity: 0; }
+}
+@keyframes synthwave-typed-pixel {
+  0% { translate: -50% -100%; opacity: 1; }
+  100% { translate: calc(-50% + var(--dx)) calc(-100% + var(--dy) + 10px); opacity: 0; }
+}
+@keyframes synthwave-typed-tape {
+  0% { translate: -100% -80%; opacity: 0; }
+  25% { translate: calc(var(--w) * .12) -80%; opacity: 1; }
+  70% { translate: calc(var(--w) * .16) -80%; opacity: 1; }
+  100% { translate: calc(var(--w) * .2) -80%; opacity: 0; }
+}
+@keyframes synthwave-typed-play {
+  0%, 25% { translate: calc(var(--w) * .12 + 40px) -90%; opacity: 0; }
+  30%, 45%, 60% { translate: calc(var(--w) * .12 + 40px) -90%; opacity: 1; }
+  38%, 52% { opacity: .2; }
+  80%, 100% { translate: calc(var(--w) * .12 + 40px) -90%; opacity: 0; }
+}
+
+/* Typing heat (see index.html's --typing-heat): the border runs from its
+   resting colour through pink to neon. It holds steady, with no beat. */
+:root[data-synthwave] .newconv-prompt[data-typing-hot] { animation: none; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :root[data-synthwave] .newconv-prompt,
+  :root[data-synthwave] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    border-color: color-mix(in srgb,
+      color-mix(in oklab, var(--synthwave-pink), var(--synthwave-neon) clamp(0%, (var(--typing-heat) - .5) * 200%, 100%))
+        clamp(0%, var(--typing-heat) * 200%, 100%),
+      var(--typing-heat-rest));
+    --typing-glow:
+      0 0 calc(var(--typing-heat) * 8px) calc(var(--typing-heat) * 1px) color-mix(in srgb, var(--synthwave-neon) calc(var(--typing-heat) * 85%), transparent),
+      0 0 calc(var(--typing-heat) * 28px) calc(var(--typing-heat) * 4px) color-mix(in srgb, var(--synthwave-pink) calc(var(--typing-heat) * 45%), transparent);
+  }
+}
+
+/* The maximised terminal stage: a CRT bezel in neon. */
+:root[data-synthwave] #run-terminal.terminal-staged {
+  --stage-radius: 4px;
+  border: 2px solid var(--purple);
+  box-shadow: 0 0 0 1px var(--cyan), 0 0 24px color-mix(in srgb, var(--purple) 55%, transparent), 0 0 70px color-mix(in srgb, var(--cyan) 25%, transparent);
+}
+:root[data-synthwave] .terminal-staged #run-terminal-bar {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--purple) 22%, var(--panel)), color-mix(in srgb, var(--cyan) 14%, var(--panel)));
+  border-bottom: 1px solid var(--cyan);
+}
+:root[data-synthwave] .terminal-staged #run-terminal-title { text-transform: uppercase; letter-spacing: .08em; }
+
+:root[data-synthwave] {
+  --answer-mode-done: "◆"; --answer-mode-now: "◈"; --answer-mode-next: "◇";
+  --answer-mode-trim: linear-gradient(90deg, var(--synthwave-pink), var(--synthwave-violet), var(--synthwave-neon));
+  --answer-mode-trim-height: 4px;
+  --answer-mode-on-accent: var(--synthwave-on-accent);
+  --answer-mode-glow: color-mix(in srgb, var(--synthwave-pink) 18%, transparent);
+  --run-row-radius: var(--synthwave-card-radius);
+  --tab-radius: 6px;
+  --composer-radius: 12px;
+  --chat-bubble-radius: 10px;
+  --card-radius: 10px;
+  --dialog-radius: 12px;
+  /* The swamp's fireflies and mist have no place in this sky. */
+  --nc-firefly-gold: transparent; --nc-firefly-lime: transparent;
+  --nc-firefly-halo-gold: none; --nc-firefly-halo-lime: none;
+  --nc-firefly-alpha: 0; --nc-mist-alpha-low: 0; --nc-mist-alpha-high: 0;
+}
+
+:root[data-synthwave] [data-part="command-palette"],
+:root[data-synthwave] orc-dialog::part(dialog) {
+  border-radius: var(--dialog-radius);
+  border-color: color-mix(in srgb, var(--synthwave-neon) 45%, var(--border));
+  box-shadow: 0 0 24px color-mix(in srgb, var(--synthwave-pink) 22%, transparent);
+}
+:root[data-synthwave] .am-card::before { box-shadow: 0 0 14px var(--synthwave-pink), 0 0 26px var(--synthwave-neon); }
+:root[data-synthwave] .am-trail [data-state="done"] .am-glyph::before { color: var(--synthwave-pink); text-shadow: 0 0 8px var(--synthwave-pink); }
+:root[data-synthwave] .am-trail [data-state="now"] .am-glyph::before { color: var(--synthwave-neon); text-shadow: 0 0 10px var(--synthwave-neon); }
+:root[data-synthwave] .am-btn.primary { box-shadow: 0 0 18px color-mix(in srgb, var(--synthwave-neon) 55%, transparent); }
+
+/* Sticky notes. By night a pane of dark glass ruled like the grid, with the
+   project's colour as a neon tube round its rim and along its top. By day a
+   sheet of lined yellow paper under a strip of pink tape, with a hard
+   shadow. The --synthwave-note-* values are set on the note, where
+   --note-tint is known. */
+:root[data-synthwave] .nc-note {
+  --synthwave-note-paper: repeating-linear-gradient(180deg, transparent 0 21px, rgb(168 120 10 / .2) 21px 22px), #fff3c4;
+  --synthwave-note-edge: #a8780a; --synthwave-note-trim: 0 0 0 0 transparent;
+  --synthwave-note-radius: 3px;
+  --synthwave-note-shadow: drop-shadow(3px 3px 0 rgb(58 18 96 / .2));
+  --synthwave-note-shadow-raised: drop-shadow(5px 6px 0 rgb(58 18 96 / .24));
+  --synthwave-note-tape: linear-gradient(rgb(224 33 138 / .5) 0 0);
+  --synthwave-note-ink-glow: none;
+  --note-paper: var(--synthwave-note-paper);
+  --note-ink: var(--heading);
+  --note-edge: var(--synthwave-note-edge);
+  --note-edge-width: 1.5px;
+  --note-trim: var(--synthwave-note-trim);
+  --note-radius: var(--synthwave-note-radius);
+  --note-shadow: var(--synthwave-note-shadow);
+  --note-shadow-raised: var(--synthwave-note-shadow-raised);
+  --note-rule: transparent;
+  --note-lean: .45;
+  --note-fold: 0px;
+  --note-tape: var(--synthwave-note-tape);
+}
+:root[data-synthwave] .nc-note-tape { top: -6px; left: 50%; width: 28%; height: 12px; rotate: -2deg; clip-path: none; border-radius: 1px; }
+:root[data-synthwave] .nc-note-title { text-shadow: var(--synthwave-note-ink-glow); }
+:root[data-synthwave][data-theme="dark"] .nc-note {
+  --synthwave-note-paper:
+    linear-gradient(180deg, color-mix(in srgb, var(--note-tint) 22%, transparent), transparent 52px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--note-tint) 10%, transparent) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(180deg, transparent 0 21px, color-mix(in srgb, var(--note-tint) 12%, transparent) 21px 22px),
+    color-mix(in srgb, var(--note-tint) 7%, var(--panel));
+  --synthwave-note-edge: color-mix(in srgb, var(--note-tint) 78%, var(--heading));
+  --synthwave-note-trim: inset 0 0 14px color-mix(in srgb, var(--note-tint) 22%, transparent);
+  --synthwave-note-radius: 10px;
+  --synthwave-note-shadow: drop-shadow(0 0 4px color-mix(in srgb, var(--note-tint) 42%, transparent)) drop-shadow(0 10px 14px rgb(0 0 0 / .4));
+  --synthwave-note-shadow-raised: drop-shadow(0 0 11px color-mix(in srgb, var(--note-tint) 80%, transparent)) drop-shadow(0 18px 24px rgb(0 0 0 / .42));
+  --synthwave-note-tape: linear-gradient(90deg, transparent, var(--note-tint) 18% 82%, transparent);
+  --synthwave-note-ink-glow: 0 0 10px color-mix(in srgb, var(--note-tint) 34%, transparent);
+}
+:root[data-synthwave][data-theme="dark"] .nc-note-tape {
+  top: -1.5px; width: 44%; height: 3px; rotate: none; border-radius: 3px;
+  filter: drop-shadow(0 0 4px var(--note-tint));
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-synthwave]:not([data-theme="light"]) .nc-note {
+    --synthwave-note-paper:
+      linear-gradient(180deg, color-mix(in srgb, var(--note-tint) 22%, transparent), transparent 52px),
+      repeating-linear-gradient(90deg, color-mix(in srgb, var(--note-tint) 10%, transparent) 0 1px, transparent 1px 22px),
+      repeating-linear-gradient(180deg, transparent 0 21px, color-mix(in srgb, var(--note-tint) 12%, transparent) 21px 22px),
+      color-mix(in srgb, var(--note-tint) 7%, var(--panel));
+    --synthwave-note-edge: color-mix(in srgb, var(--note-tint) 78%, var(--heading));
+    --synthwave-note-trim: inset 0 0 14px color-mix(in srgb, var(--note-tint) 22%, transparent);
+    --synthwave-note-radius: 10px;
+    --synthwave-note-shadow: drop-shadow(0 0 4px color-mix(in srgb, var(--note-tint) 42%, transparent)) drop-shadow(0 10px 14px rgb(0 0 0 / .4));
+    --synthwave-note-shadow-raised: drop-shadow(0 0 11px color-mix(in srgb, var(--note-tint) 80%, transparent)) drop-shadow(0 18px 24px rgb(0 0 0 / .42));
+    --synthwave-note-tape: linear-gradient(90deg, transparent, var(--note-tint) 18% 82%, transparent);
+    --synthwave-note-ink-glow: 0 0 10px color-mix(in srgb, var(--note-tint) 34%, transparent);
+  }
+  :root[data-synthwave]:not([data-theme="light"]) .nc-note-tape {
+    top: -1.5px; width: 44%; height: 3px; rotate: none; border-radius: 3px;
+    filter: drop-shadow(0 0 4px var(--note-tint));
+  }
+}

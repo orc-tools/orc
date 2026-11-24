@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Read the user's vaults and propose additions to them.
+
+  orc-vault list [--json]
+  orc-vault show <vault> [--json]
+  orc-vault read <vault> <note>
+  orc-vault propose --vault <id> --file <note.md> --text <markdown, or - for stdin>
+                    [--reason <why>] [--run-dir <run folder>]
+
+A vault is a page the user builds in Orc, with notes behind it. A proposal
+waits for the user's approval on the vault's screen; once approved it is added
+to the note and the page takes it up. Nothing in a vault changes until they
+approve it.
+"""
+import argparse
+import json
+import os
+import pathlib
+import sys
+from datetime import datetime
+
+# Orc refuses packages that hold bytecode caches.
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import vault_store  # noqa: E402
+
+CONFIG_DIR = pathlib.Path(os.environ.get("ORC_HOME", "~/.orc")).expanduser()
+PAGE = "http://127.0.0.1:4173/#vaults/%s"
+
+
+def run_id(run_dir):
+    if run_dir is None:
+        return None
+    folder = pathlib.Path(run_dir).expanduser()
+    if not (folder / "meta.json").is_file() or not vault_store.RUN_ID.fullmatch(folder.name):
+        raise vault_store.invalid("--run-dir must be a run's folder, which holds its meta.json.")
+    return folder.name
+
+
+def size(value):
+    return "%d B" % value if value < 1024 else "%.1f KB" % (value / 1024)
+
+
+def day(mtime):
+    return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-vault", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    listing = commands.add_parser("list", help="every vault, with what it is for")
+    listing.add_argument("--json", action="store_true")
+    show = commands.add_parser("show", help="a vault's soul and notes")
+    show.add_argument("vault")
+    show.add_argument("--json", action="store_true")
+    read = commands.add_parser("read", help="print one note")
+    read.add_argument("vault")
+    read.add_argument("note")
+    propose = commands.add_parser("propose", help="propose an entry for the user to approve")
+    propose.add_argument("--vault", required=True)
+    propose.add_argument("--file", required=True, help="the note to add it to, such as wins.md")
+    propose.add_argument("--text", required=True, help="the Markdown to append, or - to read it from stdin")
+    propose.add_argument("--reason", help="one line on why it belongs there")
+    propose.add_argument("--run-dir", help="the run proposing it")
+    propose.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    store = vault_store.Store(CONFIG_DIR)
+    try:
+        if args.command == "list":
+            vaults = store.list()
+            if args.json:
+                print(json.dumps({"vaults": vaults}, indent=2, ensure_ascii=False))
+            elif not vaults:
+                print("No vaults yet. The user makes them on the Vaults screen: %s" % (PAGE % "").rstrip("/"))
+            for item in [] if args.json else vaults:
+                waiting = " %d proposal%s waiting." % (item["pending"], "" if item["pending"] == 1 else "s") if item["pending"] else ""
+                print("%s (%s): %s\n  %s, %d note%s.%s" % (item["slug"], item["name"], item["about"] or "No description yet.",
+                                                         item["path"], item["notes"], "" if item["notes"] == 1 else "s", waiting))
+        elif args.command == "show":
+            detail = store.detail(args.vault)
+            if args.json:
+                print(json.dumps(detail, indent=2, ensure_ascii=False))
+            else:
+                vault = detail["vault"]
+                print("%s (%s), %s\n" % (vault["slug"], vault["name"], vault["path"]))
+                print(detail["soul"]["text"].rstrip() or "(No SOUL.md.)")
+                print("\nPage: %s" % ("built, in page/ (read the notes, not the page)" if vault["page"]["exists"]
+                                      else "not built yet"))
+                for item in detail["settings"]["automations"]:
+                    print("- %s: %s%s" % (item["title"], item["label"].lower(), "" if item["enabled"] else " (off)"))
+                print("\nNotes, newest first:")
+                for note in detail["notes"]:
+                    print("- %s (%s, %s)" % (note["path"], size(note["size"]), day(note["mtime"])))
+                if not detail["notes"]:
+                    print("- none yet")
+        elif args.command == "read":
+            sys.stdout.write(store.read_note(args.vault, args.note)["text"])
+        else:
+            text = sys.stdin.read() if args.text == "-" else args.text
+            proposal = store.propose(args.vault, args.file, text, reason=args.reason, run_id=run_id(args.run_dir))
+            if args.json:
+                print(json.dumps(proposal, indent=2, ensure_ascii=False))
+            else:
+                print("Proposed an entry for %s/%s (proposal %s). It waits for the user's approval on the vault's "
+                      "screen: %s" % (args.vault, proposal["file"], proposal["id"], PAGE % args.vault))
+    except vault_store.VaultError as error:
+        print("orc-vault: %s" % error, file=sys.stderr)
+        return 1
+    except OSError as error:
+        print("orc-vault: %s" % error, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

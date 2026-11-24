@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""Select the test files that exercise a diff, or say the full suite is needed.
+
+Usage: bin/orc-test-select [--base REF] [--json] [--browser] [--] [path ...]
+
+Exit 0 prints the selection (possibly empty), exit 3 means run the full suite,
+exit 2 is a usage or git error. Rules live in tests/selection.json; see
+docs/test-selection.md.
+"""
+import argparse
+import functools
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+EXIT_SELECTED = 0
+EXIT_USAGE = 2
+EXIT_FULL_SUITE = 3
+
+SELECTION_FILE = 'tests/selection.json'
+TEST_GLOBS = {
+    'python': ['tests/test_*.py'],
+    'javascript': ['tests/test-*.js', 'tests/test-*.mjs', '*/devd/test/*.test.ts'],
+    'shell': ['hooks/*.test.sh'],
+    'browser': ['tests/e2e/*.spec.js'],
+}
+MIN_NAME_LENGTH = 4
+# Characters that continue a name, so a match next to one is part of a longer
+# name: `chat.js` must not match inside `orchestrator-chat.js`.
+NAME_CHAR = r'A-Za-z0-9_\-'
+# Tests spell a path as `ui/serve.py`, `ROOT / "ui" / "serve.py"` or
+# `join('ui', 'serve.py')`; all three should count as naming it.
+PATH_SEP = r"""(?:/|["']\s*[/,+]\s*["'])"""
+
+
+class UsageError(Exception):
+    pass
+
+
+@functools.lru_cache(maxsize=None)
+def glob_regex(pattern):
+    """`**` crosses directories, `*` and `?` stay within one path component."""
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith('**/', i):
+            out.append('(?:.*/)?')
+            i += 3
+        elif pattern.startswith('**', i):
+            out.append('.*')
+            i += 2
+        elif pattern[i] == '*':
+            out.append('[^/]*')
+            i += 1
+        elif pattern[i] == '?':
+            out.append('[^/]')
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile(''.join(out) + r'\Z')
+
+
+def matches_any(path, patterns):
+    return any(glob_regex(p).match(path) for p in patterns)
+
+
+def git(root, *args):
+    result = subprocess.run(['git', '-C', str(root), *args], capture_output=True)
+    if result.returncode != 0:
+        detail = result.stderr.decode(errors='replace').strip()
+        raise UsageError(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout.decode(errors='surrogateescape')
+
+
+def git_paths(root, *args):
+    return [p for p in git(root, *args, '-z').split('\0') if p]
+
+
+def repo_root():
+    script_dir = Path(__file__).resolve().parent
+    try:
+        return Path(git(script_dir, 'rev-parse', '--show-toplevel').strip())
+    except (UsageError, OSError):
+        return script_dir.parent
+
+
+def resolve_ref(root, ref):
+    result = subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', '--quiet',
+                             f'{ref}^{{commit}}'], capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def changed_from_git(root, base_ref):
+    if base_ref:
+        candidates = [base_ref]
+    elif os.environ.get('ORC_TEST_BASE'):
+        candidates = [os.environ['ORC_TEST_BASE']]
+    else:
+        candidates = ['origin/main', 'main']
+    base_commit = None
+    for ref in candidates:
+        base_commit = resolve_ref(root, ref)
+        if base_commit:
+            break
+    if not base_commit:
+        raise UsageError(f"cannot resolve base ref: {' or '.join(candidates)}")
+    merge_base = git(root, 'merge-base', base_commit, 'HEAD').strip()
+    # --no-renames lists both sides of a rename, so the old path's tests still run.
+    changed = set(git_paths(root, 'diff', '--name-only', '--no-renames', f'{merge_base}...HEAD'))
+    changed.update(git_paths(root, 'diff', '--name-only', '--no-renames', 'HEAD'))
+    changed.update(git_paths(root, 'ls-files', '--others', '--exclude-standard'))
+    return merge_base, changed
+
+
+def normalize(root, raw):
+    """Explicit paths are repo-relative; an absolute one must sit inside the repo."""
+    path = Path(raw)
+    if path.is_absolute():
+        try:
+            path = path.resolve().relative_to(root)
+        except ValueError:
+            raise UsageError(f'path is outside the repository: {raw}')
+    return path.as_posix()
+
+
+def load_config(root):
+    try:
+        config = json.loads((root / SELECTION_FILE).read_text())
+    except (OSError, ValueError) as error:
+        raise UsageError(f'cannot read {SELECTION_FILE}: {error}')
+    if not isinstance(config, dict) or not isinstance(config.get('rules', []), list):
+        raise UsageError(f'{SELECTION_FILE} must be an object with a rules list')
+    return config
+
+
+def layer_of(path):
+    for layer, patterns in TEST_GLOBS.items():
+        if matches_any(path, patterns):
+            return layer
+    return None
+
+
+def test_inventory(root):
+    found = {}
+    for layer, patterns in TEST_GLOBS.items():
+        for pattern in patterns:
+            for path in root.glob(pattern):
+                if path.is_file():
+                    found[path.relative_to(root).as_posix()] = layer
+    return dict(sorted(found.items()))
+
+
+class Needle:
+    def __init__(self, literal, pattern):
+        self.literal = literal
+        self.regex = re.compile(pattern)
+
+    def found_in(self, text):
+        return self.literal in text and self.regex.search(text) is not None
+
+
+def bounded(core, at_root=False):
+    left = NAME_CHAR + '.' + ('/' if at_root else '')
+    return f'(?<![{left}]){core}(?![{NAME_CHAR}])'
+
+
+def path_needle(parts):
+    core = PATH_SEP.join(re.escape(p) for p in parts)
+    return Needle(parts[-1], bounded(core, at_root=len(parts) == 1))
+
+
+def is_distinctive(name, generic):
+    return len(name) >= MIN_NAME_LENGTH and name not in generic
+
+
+def is_compound(name):
+    return re.search(r'[-_]', name.strip('_-')) is not None
+
+
+def stem_of(filename):
+    return filename.split('.', 1)[0] if not filename.startswith('.') else filename
+
+
+def needles_for(path, generic):
+    """Strings whose presence in a test's text means it names `path`."""
+    parts = path.split('/')
+    filename = parts[-1]
+    stem = stem_of(filename)
+    needles = [path_needle(parts)]
+    if len(parts) > 2:
+        needles.append(path_needle(parts[-2:]))
+    if is_distinctive(stem, generic):
+        needles.append(Needle(filename, bounded(re.escape(filename))))
+        # A one-word stem such as `radio` or `serve` is ordinary prose; only a
+        # compound name like `power_mode` or `orc-merge-main` is safe alone.
+        if is_compound(stem) and stem != filename:
+            needles.append(Needle(stem, bounded(re.escape(stem))))
+    elif len(parts) > 1:
+        parent = parts[-2].lstrip('.')
+        if is_distinctive(parent, generic) and is_compound(parent):
+            needles.append(Needle(parent, bounded(re.escape(parent))))
+    if is_distinctive(stem, generic) and re.search(r'\.(?:[cm]?js|ts)\Z', filename):
+        needles.append(Needle(stem, rf'''['"][^'"\s]*/{re.escape(stem)}(?:\.[cm]?js|\.ts)?['"]'''))
+    if filename.endswith('.py') and stem.isidentifier():
+        module = re.escape(stem)
+        for form in (rf'\bimport {module}\b', rf'\bfrom {module} import\b',
+                     rf'\bfrom ui import (?:[\w, ]+, )?{module}\b', rf'\bui\.{module}\b'):
+            needles.append(Needle(stem, form))
+    return needles
+
+
+def import_needles(path):
+    """A test module imported by other tests: `from test_x import ...`."""
+    stem = stem_of(path.rsplit('/', 1)[-1])
+    return [Needle(stem, rf'\bfrom {re.escape(stem)} import\b'),
+            Needle(stem, rf'\bimport {re.escape(stem)}\b')]
+
+
+def mirror_spellings(path, mirrors):
+    spellings = [path]
+    for canonical, mirror in mirrors:
+        if path.startswith(mirror):
+            spellings.append(canonical + path[len(mirror):])
+        elif path.startswith(canonical):
+            spellings.append(mirror + path[len(canonical):])
+    return spellings
+
+
+class Selection:
+    def __init__(self, inventory, browser):
+        self.inventory = inventory
+        self.browser = browser
+        self.reasons = {}
+
+    def add(self, path, reason):
+        """Record `path` for `reason`; return its layer, or None if it is no test.
+
+        A browser spec still reports its layer without --browser, so a
+        browser-only helper counts as mapped even when its specs are not run.
+        """
+        layer = self.inventory.get(path)
+        if layer and (layer != 'browser' or self.browser):
+            bucket = self.reasons.setdefault(path, [])
+            if reason not in bucket:
+                bucket.append(reason)
+        return layer
+
+
+CORE_LAYERS = {'python', 'javascript', 'shell'}
+
+
+def select(root, config, changed, browser):
+    inventory = test_inventory(root)
+    texts = {}
+
+    def text_of(path):
+        if path not in texts:
+            try:
+                texts[path] = (root / path).read_text(errors='replace')
+            except OSError:
+                texts[path] = ''
+        return texts[path]
+
+    generic = set(config.get('genericNames', []))
+    mirrors = [tuple(pair) for pair in config.get('mirrors', [])]
+    browser_default = config.get('browserDefault') or {}
+    selection = Selection(inventory, browser)
+    fallback_reasons = []
+    needs_smoke = False
+
+    def scan(needles, reason, layers):
+        return [selection.add(test, reason) for test, layer in inventory.items()
+                if layer in layers and any(n.found_in(text_of(test)) for n in needles)]
+
+    for path in changed:
+        if matches_any(path, config.get('ignore', [])):
+            continue
+        needs_smoke = True
+        if matches_any(path, config.get('fallback', [])):
+            fallback_reasons.append(f'shared infrastructure: {path}')
+            continue
+        hit_layers = []
+        stem = stem_of(path.rsplit('/', 1)[-1])
+        for rule in config.get('rules', []):
+            if not matches_any(path, rule.get('paths', [])):
+                continue
+            reason = f"{rule.get('why', 'rule')}: {path}"
+            patterns = [p.replace('{stem}', stem) for p in rule.get('tests', [])]
+            hit_layers += [selection.add(test, reason) for test in inventory
+                           if matches_any(test, patterns)]
+            if rule.get('mentions'):
+                needles = [Needle(m, re.escape(m)) for m in rule['mentions']]
+                hit_layers += scan(needles, reason, CORE_LAYERS)
+
+        if layer_of(path):
+            selection.add(path, 'changed')
+            if layer_of(path) == 'python':
+                scan(import_needles(path), f'imports {path}', CORE_LAYERS)
+            continue
+
+        browser_only = matches_any(path, config.get('browserOnly', []))
+        # A `ruleOnly` path shares its file names with code it has nothing to
+        # do with (a film's shot called terminal.js is not the terminal), so a
+        # scan for those names would select the other code's tests.
+        if not matches_any(path, config.get('ruleOnly', [])):
+            needles = [n for spelling in mirror_spellings(path, mirrors)
+                       for n in needles_for(spelling, generic)]
+            reason = f'references {path}'
+            hit_layers += scan(needles, reason, CORE_LAYERS)
+            if browser or browser_only:
+                hit_layers += scan(needles, reason, {'browser'})
+        has_spec = 'browser' in hit_layers
+        if browser and not has_spec and matches_any(path, browser_default.get('paths', [])):
+            selection.add(browser_default.get('test', ''),
+                          f'UI change with no mapped browser spec: {path}')
+        mapped = CORE_LAYERS.intersection(hit_layers) or (browser_only and has_spec)
+        if not mapped:
+            fallback_reasons.append(f'unmapped: {path}')
+
+    if needs_smoke:
+        for test in config.get('smoke', []):
+            selection.add(test, 'smoke')
+
+    tests = [{'path': path, 'layer': inventory[path], 'reasons': selection.reasons[path]}
+             for path in sorted(selection.reasons)]
+    return fallback_reasons, tests
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog='orc-test-select',
+        description='Select the test files that exercise the current diff.')
+    parser.add_argument('--base', help='compare against merge-base(REF, HEAD); '
+                        'default $ORC_TEST_BASE, else origin/main, else main')
+    parser.add_argument('--json', action='store_true', help='print one JSON object')
+    parser.add_argument('--browser', action='store_true',
+                        help='also select Playwright specs (tests/e2e/*.spec.js)')
+    parser.add_argument('paths', nargs='*', help='changed paths; skips git when given')
+    return parser.parse_args(argv)
+
+
+def main(argv):
+    args = parse_args(argv)
+    try:
+        root = repo_root()
+        config = load_config(root)
+        if args.paths:
+            base = None
+            changed = {normalize(root, p) for p in args.paths}
+        else:
+            base, changed = changed_from_git(root, args.base)
+    except UsageError as error:
+        print(f'orc-test-select: {error}', file=sys.stderr)
+        return EXIT_USAGE
+
+    changed = sorted(p for p in changed if p)
+    fallback_reasons, tests = select(root, config, changed, args.browser)
+    fallback = bool(fallback_reasons)
+
+    if args.json:
+        print(json.dumps({'schema': 1, 'base': base, 'changed': changed, 'fallback': fallback,
+                          'fallbackReasons': fallback_reasons, 'tests': tests}, indent=2))
+    if fallback:
+        for reason in fallback_reasons:
+            print(f'fallback: {reason}', file=sys.stderr)
+        print(f'orc-test-select: run the full suite ({len(fallback_reasons)} '
+              f'reason(s), {len(changed)} changed path(s))', file=sys.stderr)
+        return EXIT_FULL_SUITE
+    if not args.json:
+        for test in tests:
+            print(test['path'])
+    for test in tests:
+        print(f"{test['path']}: {'; '.join(test['reasons'])}", file=sys.stderr)
+    print(f'orc-test-select: {len(tests)} test file(s) for {len(changed)} changed path(s)',
+          file=sys.stderr)
+    return EXIT_SELECTED
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,48 @@
+{
+  "apiVersion": 2,
+  "id": "pocket",
+  "name": "Pocket",
+  "version": "1.0.0",
+  "description": "A see-through purple handheld: backlight on by night, clear plastic by day.",
+  "contributes": {
+    "frontend": "frontend.js",
+    "theme": {
+      "id": "pocket",
+      "label": "Pocket",
+      "description": "Batteries not included~",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "gary": "gary.png",
+      "sheila": "sheila.png",
+      "scene": "scene.bundle.js",
+      "radio": {
+        "style": "Mellow chiptune lo-fi from a handheld played under the covers",
+        "leads": [
+          "soft square-wave melodies",
+          "rounded triangle-wave bass",
+          "music-box arpeggios",
+          "warm electric piano",
+          "gentle pulse-wave chords",
+          "muted kalimba"
+        ],
+        "scenes": [
+          "a handheld glowing purple under a duvet at midnight",
+          "the back seat of a car on a long drive home",
+          "a save point by a quiet village at dusk",
+          "a title screen left running on a bedside table",
+          "a link cable between two friends on a school bus"
+        ],
+        "textures": [
+          "soft bit-crushed drums",
+          "button clicks and a low battery chirp",
+          "vinyl crackle under a tiny speaker",
+          "slow noise-channel shakers",
+          "a warm tape wobble"
+        ]
+      }
+    }
+  },
+  "build": {
+    "scene": "scene.js"
+  }
+}

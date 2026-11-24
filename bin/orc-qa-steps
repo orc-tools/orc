@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""orc-qa-steps publish --run-dir <run-dir> --input <steps.json|->
+
+Checks a run's QA steps and saves them as qa/steps.json, where the QA window
+reads them (ui/qa_steps.py has the shape; skills/_shared/qa-steps.md says how
+to write them), replacing any Review in Orc seeded from the pull request's QA
+section. A QA run, the one Review in Orc started for a pull request before it
+ran the review alone, then waits for you: its steps are ready to walk through."""
+import argparse
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "ui"))
+import qa_steps  # noqa: E402
+
+QA_ROUTE, QA_PHASE = "qa", "qa-hub"
+SETTLED = ("cancelled", "complete", "merged", "merged-to-parent")
+
+
+def fail(message):
+    print("orc-qa-steps: " + message, file=sys.stderr)
+    return 1
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="orc-qa-steps")
+    commands = parser.add_subparsers(dest="command", required=True)
+    publish = commands.add_parser("publish", help="check the steps and save them for the QA window")
+    publish.add_argument("--run-dir", required=True)
+    publish.add_argument("--input", required=True, help="steps JSON file, or - to read stdin")
+    args = parser.parse_args()
+    run_dir = Path(args.run_dir).expanduser().resolve()
+    meta_path = run_dir / "meta.json"
+    try:
+        meta = json.loads(meta_path.read_text())
+    except (OSError, ValueError) as error:
+        return fail("cannot read %s: %s" % (meta_path, error))
+    try:
+        raw = sys.stdin.read() if args.input == "-" else Path(args.input).expanduser().read_text()
+        raw = json.loads(raw)
+        if isinstance(raw, dict):
+            # Seeded steps are the server's (Review in Orc); published steps
+            # are typed and replace them.
+            raw.pop("seeded", None)
+        document = qa_steps.validate(raw)
+    except OSError as error:
+        return fail("cannot read the steps: %s" % error)
+    except ValueError as error:  # bad JSON, or steps that do not fit
+        return fail(str(error))
+    qa_steps.write_json(str(run_dir / qa_steps.STEPS_FILE), document)
+    if meta.get("route") == QA_ROUTE and meta.get("status") not in SETTLED:
+        # Read again: the app's start may have rewritten the file meanwhile.
+        meta = json.loads(meta_path.read_text())
+        meta.update(phase=QA_PHASE, status="awaiting-gate")
+        # The server titled the run after its pull request at launch.
+        meta.pop("titlePending", None)
+        fd, tmp = tempfile.mkstemp(dir=run_dir, prefix=".meta.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                json.dump(meta, handle, indent=2)
+                handle.write("\n")
+            os.replace(tmp, meta_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    kinds = [step["kind"] for step in document["steps"]]
+    edges = sum(step.get("group") == qa_steps.EDGE for step in document["steps"])
+    print(json.dumps({"ok": True, "steps": len(kinds), "edgeCases": edges, "source": document["source"],
+                      "kinds": {kind: kinds.count(kind) for kind in qa_steps.KINDS if kind in kinds},
+                      "window": "http://127.0.0.1:%s/qa/%s" % (os.environ.get("ORC_UI_PORT", "4173"), run_dir.name)},
+                     sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

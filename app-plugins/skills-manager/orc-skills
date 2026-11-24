@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Manage skills across Carbon, Codex, Shared (.agents) and Claude instances.
+
+  orc-skills list [--json]
+  orc-skills show <slug> [--json]
+  orc-skills add <source> [--skill <subdir-or-slug>] [--project <repo-id>] [--json]
+  orc-skills sync [<slug> | --all] [--prefer <store|newest|target-id>] [--json]
+  orc-skills check-updates [<slug>] [--json]
+  orc-skills update [<slug> | --all] [--json]
+  orc-skills remove <slug> --confirm [--json]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import sys
+
+# Orc refuses packages that hold bytecode caches.
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import skills_store  # noqa: E402
+
+
+def _resolve_store(home_arg: str | None) -> skills_store.Store:
+    if home_arg:
+        home = pathlib.Path(home_arg).expanduser().resolve()
+        config_dir = home / ".orc"
+    else:
+        home = pathlib.Path.home().resolve()
+        config_dir = pathlib.Path(os.environ.get("ORC_HOME", str(home / ".orc"))).expanduser().resolve()
+    return skills_store.Store(config_dir, home)
+
+
+def _print_list(snap: dict) -> None:
+    targets = snap["targets"]
+    summary = snap["summary"]
+    print(
+        "Targets (%d): %s"
+        % (
+            len(targets),
+            ", ".join(f"{t['shortLabel']} ({t['displayPath']})" for t in targets),
+        )
+    )
+    print(
+        "Skills: %d managed/discovered, %d synced, %d drifted, %d conflicts, %d updates available"
+        % (
+            summary["total"],
+            summary["synced"],
+            summary["drifted"],
+            summary["conflicts"],
+            summary["updatesAvailable"],
+        )
+    )
+    if not snap["skills"]:
+        print("No skills installed yet. Run `orc-skills add <url-or-repo>` or paste a link on #skills.")
+        return
+    for item in snap["skills"]:
+        badge = item["syncStatus"].upper()
+        upd = " [UPDATE AVAILABLE]" if item["source"].get("updateAvailable") else ""
+        present_labels = [inst["shortLabel"] for inst in item["instances"] if inst["state"] == "synced"]
+        missing_labels = [inst["shortLabel"] for inst in item["instances"] if inst["state"] in ("missing", "diverged", "broken")]
+        where = ", ".join(present_labels) or "none"
+        drift = f" (needs sync: {', '.join(missing_labels)})" if missing_labels else ""
+        print(f"- {item['slug']} [{badge}]{upd}: {item['description'] or 'No description'}")
+        print(f"    synced: {where}{drift}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="orc-skills",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--home", help="isolated home directory (defaults to ~)")
+    parser.add_argument("--json", action="store_true", help="emit JSON output")
+    sub_common = argparse.ArgumentParser(add_help=False)
+    sub_common.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    commands.add_parser("list", parents=[sub_common], help="list all skills and cross-instance sync health")
+
+    show = commands.add_parser("show", parents=[sub_common], help="inspect one skill and its per-instance status")
+    show.add_argument("slug")
+
+    add = commands.add_parser("add", parents=[sub_common], help="install a skill from a URL, owner/repo, CLI snippet or folder")
+    add.add_argument("source")
+    add.add_argument("--skill", action="append", dest="skills", help="specific skill slug or subdir in a multi-skill repo")
+    add.add_argument("--slug", help="override installed skill slug")
+    add.add_argument("--project", action="append", dest="projects", help="attach to project id (e.g. ~/Projects/app)")
+    add.add_argument("--project-only", action="store_true", help="scope only to the named project(s)")
+
+    sync = commands.add_parser("sync", parents=[sub_common], help="sync one skill or repair drift across all instances")
+    sync.add_argument("slug", nargs="?")
+    sync.add_argument("--all", action="store_true", dest="sync_all")
+    sync.add_argument("--prefer", help="store, newest, or a target id such as claude:.claude")
+
+    check = commands.add_parser("check-updates", parents=[sub_common], help="check upstream Git/URL sources for newer versions")
+    check.add_argument("slug", nargs="?")
+
+    update = commands.add_parser("update", parents=[sub_common], help="apply upstream updates to one skill or all skills with updates")
+    update.add_argument("slug", nargs="?")
+    update.add_argument("--all", action="store_true", dest="update_all")
+
+    remove = commands.add_parser("remove", parents=[sub_common], help="move a skill to ~/.orc/skills-manager/.trash and unlink it")
+    remove.add_argument("slug")
+    remove.add_argument("--confirm", action="store_true", required=True)
+
+    args = parser.parse_args(argv)
+    store = _resolve_store(args.home)
+
+    try:
+        if args.command == "list":
+            snap = store.snapshot()
+            if args.json:
+                print(json.dumps(snap, indent=2, ensure_ascii=False))
+            else:
+                _print_list(snap)
+            return 0
+
+        if args.command == "show":
+            detail = store.detail(args.slug)
+            if args.json:
+                print(json.dumps(detail, indent=2, ensure_ascii=False))
+            else:
+                skill = detail["skill"]
+                print(f"{skill['slug']} ({skill['name']}) — {skill['syncStatus']}")
+                if skill["description"]:
+                    print(skill["description"])
+                print("\nInstances:")
+                for inst in skill["instances"]:
+                    print(f"  - {inst['label']}: {inst['state']} ({inst['path']})")
+            return 0
+
+        if args.command == "add":
+            scope = "project" if args.project_only else "global"
+            result = store.install_from_input(
+                args.source,
+                selected_subdirs=args.skills,
+                slug_override=args.slug,
+                scope=scope,
+                projects=args.projects,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            elif result.get("status") == "choose_skills":
+                print(f"Multiple skills found in {args.source}. Re-run with --skill <slug>:")
+                for item in result["availableSkills"]:
+                    print(f"  - {item['slug']} ({item['subdir']}): {item['description']}")
+                return 2
+            else:
+                print("Installed and synced: %s" % ", ".join(result.get("installedSlugs") or []))
+            return 0
+
+        if args.command == "sync":
+            if args.sync_all or not args.slug:
+                strategy = "newest" if args.prefer == "newest" else "safe"
+                result = store.sync_all(strategy=strategy)
+                if args.json:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    report = result["syncReport"]
+                    print(
+                        "Synced %d skill(s)%s."
+                        % (
+                            len(report["synced"]),
+                            f"; {len(report['skippedConflicts'])} conflict(s) need --prefer" if report["skippedConflicts"] else "",
+                        )
+                    )
+            else:
+                result = store.sync_skill(args.slug, preferred_source=args.prefer)
+                if args.json:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Synced {args.slug} across configured harnesses.")
+            return 0
+
+        if args.command == "check-updates":
+            result = store.check_updates(slug=args.slug)
+            if args.json:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                ready = [s["slug"] for s in result["skills"] if s["source"].get("updateAvailable")]
+                print(
+                    "Checked %d source(s); %d update(s) ready%s."
+                    % (result.get("checkedCount", 0), len(ready), f": {', '.join(ready)}" if ready else "")
+                )
+            return 0
+
+        if args.command == "update":
+            if args.update_all or not args.slug:
+                result = store.update_all()
+                if args.json:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    updated = result["updateReport"]["updated"]
+                    print("Updated %d skill(s)%s." % (len(updated), f": {', '.join(updated)}" if updated else ""))
+            else:
+                result = store.update_skill(args.slug)
+                if args.json:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Updated {args.slug}.")
+            return 0
+
+        if args.command == "remove":
+            result = store.delete_skill(args.slug, confirm=args.confirm)
+            if args.json:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                print(f"Moved {args.slug} to ~/.orc/skills-manager/.trash and removed managed links.")
+            return 0
+
+    except skills_store.SkillsError as error:
+        print(f"orc-skills: {error}", file=sys.stderr)
+        return 1
+    except OSError as error:
+        print(f"orc-skills: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

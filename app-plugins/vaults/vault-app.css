@@ -1,0 +1,79 @@
+/* A vault on its own (vault-app.js): the page fills the screen between the
+   vault's name and the box. Colours come from Orc's design tokens. */
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--orc-bg);
+  color: var(--orc-text);
+  font-family: var(--orc-font-sans, system-ui, sans-serif);
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.vault-app {
+  --vault-tint: hsl(var(--vault-hue, 30) 70% 55%);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  height: 100dvh;
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+.vault-app-loading, .vault-app-error { margin: 24px 16px 8px; color: var(--orc-muted-strong); }
+.vault-app-error { color: var(--orc-red-text); }
+.vault-app-retry { margin: 0 16px; }
+
+.vault-app-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--orc-border); }
+.vault-app-dot { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--vault-tint); }
+.vault-app-title { flex: 1; min-width: 0; }
+.vault-app-title h1 { margin: 0; font-size: 17px; line-height: 1.3; color: var(--orc-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-app-title p { margin: 2px 0 0; font-size: 13px; color: var(--orc-muted-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-app-orc { flex: none; font-family: inherit; background: none; cursor: pointer; font-size: 13px; color: var(--orc-accent-text); text-decoration: none; padding: 6px 10px; border: 1px solid var(--orc-border); border-radius: var(--orc-radius-pill, 999px); }
+
+.vault-app-stage { position: relative; flex: 1; min-height: 0; background: var(--orc-panel); }
+.vault-app-stage.is-building { box-shadow: inset 0 0 0 2px var(--vault-tint); }
+.vault-app-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--orc-bg); }
+.vault-app-frame.is-loading { visibility: hidden; }
+.vault-app-empty { margin: 0; padding: 32px 16px; text-align: center; color: var(--orc-muted-strong); }
+
+.vault-app-bottom { flex: none; max-height: 40%; overflow-y: auto; border-top: 1px solid var(--orc-border); padding: 8px 16px 0; }
+.vault-app-bottom[hidden] { display: none; }
+.vault-app-box[hidden] { display: none; }
+.vault-app-box { flex: none; border-top: 1px solid var(--orc-border); padding: 8px 16px calc(10px + env(safe-area-inset-bottom)); }
+.vault-app-waiting h2 { margin: 4px 0 8px; font-size: 14px; color: var(--orc-heading); }
+.vault-app-waiting ul { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
+.vault-app-waiting li { padding: 10px 12px; border: 1px solid var(--orc-border); border-radius: var(--orc-radius-md, 10px); background: var(--orc-panel); }
+.vault-app-entry-file { margin: 0; font-size: 12px; color: var(--orc-muted-strong); font-family: var(--orc-font-mono, ui-monospace, monospace); }
+.vault-app-entry-text { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.vault-app-entry-reason { margin: 0 0 6px; font-size: 13px; color: var(--orc-muted-strong); }
+.vault-app-buttons { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+.vault-app-saids { display: grid; gap: 6px; margin-bottom: 8px; }
+.vault-app-waiting ul:last-child { margin-bottom: 8px; }
+.vault-app-said { position: relative; margin: 0; padding: 8px 32px 8px 12px; border-radius: var(--orc-radius-md, 10px); background: var(--orc-chip); font-size: 14px; overflow-wrap: anywhere; }
+.vault-app-said.is-error { color: var(--orc-red-text); }
+.vault-app-said.is-note { padding-right: 12px; color: var(--orc-muted-strong); }
+.vault-app-said button { margin-left: 6px; }
+.vault-app-said .vault-app-away { position: absolute; top: 4px; right: 4px; margin: 0; min-height: 0; padding: 2px 8px; border: 0; background: none; font-size: 18px; color: var(--orc-muted-strong); }
+.vault-app-pulse { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--vault-tint); animation: vault-app-pulse 1.2s ease-in-out infinite; }
+@keyframes vault-app-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .vault-app-pulse { animation: none; } }
+.vault-app-link { padding: 10px 12px; border: 1px solid var(--orc-border); border-radius: var(--orc-radius-md, 10px); }
+.vault-app-link p { margin: 0 0 6px; overflow-wrap: anywhere; }
+.vault-app-link label { display: block; margin-bottom: 8px; font-size: 14px; color: var(--orc-muted-strong); }
+
+.vault-app-ask { display: flex; gap: 8px; align-items: flex-end; }
+.vault-app-ask textarea {
+  flex: 1; min-width: 0; box-sizing: border-box; min-height: 44px; max-height: 30vh; resize: vertical;
+  padding: 10px 12px; font: inherit; font-size: 16px; color: var(--orc-text);
+  background: var(--orc-panel); border: 1px solid var(--orc-control-border, var(--orc-border)); border-radius: var(--orc-radius-md, 10px);
+}
+.vault-app-ask textarea:focus-visible { outline: 2px solid var(--vault-tint); outline-offset: 1px; }
+
+.vault-app button {
+  min-height: 44px; padding: 0 16px; font: inherit; font-size: 15px; cursor: pointer;
+  color: var(--orc-text); background: var(--orc-panel); border: 1px solid var(--orc-border); border-radius: var(--orc-radius-md, 10px);
+}
+.vault-app button.is-primary { color: var(--orc-bg); background: var(--orc-accent); border-color: var(--orc-accent); }
+.vault-app button.is-danger { color: var(--orc-red-text); }
+.vault-app button:disabled { opacity: .55; cursor: default; }
+.vault-app button:focus-visible, .vault-app-orc:focus-visible { outline: 2px solid var(--vault-tint); outline-offset: 2px; }

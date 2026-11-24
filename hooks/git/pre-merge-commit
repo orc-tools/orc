@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+"$(dirname "$0")/run-previous-hook" pre-merge-commit "$@"
+root="$(git rev-parse --show-toplevel)"
+if [ -f "$root/ui/distribution_policy.py" ]; then
+  python3 "$root/ui/distribution_policy.py"
+fi

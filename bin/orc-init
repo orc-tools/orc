@@ -1,0 +1,613 @@
+#!/usr/bin/env python3
+"""Safely bootstrap a project for Orc and print its downstream handoff."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ui'))
+from project_trust import ProjectTrustError as InitError, atomic_write_json, read_config, trust_project
+import project_settings
+
+
+SETUP_VERSION = 1
+IGNORE_FILE = ".DS_Store\n.env\n.env.*\n!.env.example\n!.env.sample\n*.log\n"
+# Shared agent context (AGENTS.md and CLAUDE.md) stays committed; only
+# per-developer, generated, and secret-bearing agent files are ignored.
+AGENT_IGNORE_HEADER = "# agent files (orc-init)\n"
+CLAUDE_LOCAL_SETTINGS = ".claude/settings.local.json\n"
+AGENT_IGNORE = AGENT_IGNORE_HEADER + CLAUDE_LOCAL_SETTINGS + (
+    "*.local.md\nAGENTS.override.md\n.mcp.json\n"
+    ".codex/\n.aider*\n.specstory/\n.impeccable/\n.orc/\n"
+)
+NO_ATTRIBUTION = {"commit": "", "pr": ""}
+# The solo engineering rules a personal project gets. Appended under its own
+# heading so an existing AGENTS.md keeps whatever it already said, and so the
+# heading doubles as the append-once marker.
+PERSONAL_RULES_HEADER = "## Personal project (orc-init)\n"
+PERSONAL_RULES = PERSONAL_RULES_HEADER + (
+    "\n- Do not preserve backward compatibility.\n"
+    "- Choose the simplest implementation that fully meets the current"
+    " requirements.\n"
+    "- Prefer established, well-maintained libraries over custom"
+    " implementations.\n"
+    "- Make architectural decisions for the long term. Do not accept a stopgap"
+    " that only works for now and is meant to be replaced later.\n"
+)
+SETTINGS = (
+    # First, because a yes shifts the defaults the later questions offer.
+    ("Personal project", "personalProject", False),
+    ("Worktrees", "worktree", True),
+    ("Agent attributions", "attribution", False),
+    ("Gitignore agent files", "gitignoreAgentFiles", True),
+)
+# Always written on a fresh entry, whatever the answer. Every opt-in setting
+# lives here: a missing key still means on for established projects, so an
+# off-by-default answer only sticks when the entry states it. The wizard
+# default and the missing-key default differ for `attribution`: setup asks
+# "allow?" with a no default, while an established entry without the key kept
+# its attributions.
+ALWAYS_PERSISTED = (
+    "personalProject", "worktree", "attribution", "gitignoreAgentFiles",
+)
+# What a yes to "Personal project" offers instead for the questions after it.
+# Only a fresh setup shifts: a rerun already defaults to the saved answer.
+PERSONAL_DEFAULTS = {"gitignoreAgentFiles": False}
+LIVE_SERVER_LABEL = "Live dev server"
+
+
+def home() -> Path:
+    return Path(os.environ.get("HOME", str(Path.home()))).resolve()
+
+
+def expand_path(raw: str) -> Path:
+    if raw == "~":
+        return home()
+    if raw.startswith("~/"):
+        return (home() / raw[2:]).resolve()
+    return Path(raw).resolve()
+
+
+def portable(path: Path) -> str:
+    path = path.resolve()
+    try:
+        relative = path.relative_to(home())
+    except ValueError:
+        return str(path)
+    return "~" if relative == Path(".") else "~/" + relative.as_posix()
+
+
+def run_git(target: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(target), *args],
+            text=True,
+            capture_output=True,
+        )
+    except OSError as exc:
+        raise InitError(f"could not run git: {exc}") from exc
+    if check and result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
+        raise InitError(f"git {' '.join(args)} failed: {detail}")
+    return result
+
+
+def git_root(path: Path) -> Path | None:
+    result = run_git(path, "rev-parse", "--show-toplevel", check=False)
+    if result.returncode:
+        return None
+    return Path(result.stdout.strip()).resolve()
+
+
+def main_repo(path: Path) -> Path:
+    result = run_git(
+        path, "rev-parse", "--path-format=absolute", "--git-common-dir",
+        check=False,
+    )
+    if result.returncode:
+        return path.resolve()
+    common = Path(result.stdout.strip()).resolve()
+    return common.parent if common.name == ".git" else path.resolve()
+
+
+def reject_ancestor_repository(target: Path) -> None:
+    probe = target if target.exists() else next(
+        (parent for parent in target.parents if parent.exists()), None
+    )
+    if probe is None:
+        return
+    root = git_root(probe)
+    if root is not None and (not target.exists() or root != target):
+        raise InitError(
+            f"target is inside the ancestor Git repository {root}; "
+            "initialize the repository root or choose a path outside it"
+        )
+
+
+def has_head(target: Path) -> bool:
+    return run_git(target, "rev-parse", "--verify", "HEAD", check=False).returncode == 0
+
+
+def bootstrap_marker(target: Path) -> Path:
+    result = run_git(target, "rev-parse", "--absolute-git-dir")
+    return Path(result.stdout.strip()) / "orc-init-created"
+
+
+def same_path(alias: str, target: Path) -> bool:
+    try:
+        return main_repo(expand_path(alias)) == target
+    except (OSError, RuntimeError):
+        return False
+
+
+def configured_entry(config: dict, target: Path) -> tuple[str, dict | None, list[str]]:
+    repos = config.get("repos", {})
+    if not isinstance(repos, dict):
+        raise InitError("config field 'repos' must be a JSON object")
+    key = portable(target)
+    aliases = [alias for alias in repos if same_path(alias, target)]
+    if not aliases:
+        return key, None, []
+    if any(not isinstance(repos[alias], dict) for alias in aliases):
+        raise InitError("matching config repository entries must be JSON objects")
+    merged: dict = {}
+    # The canonical spelling wins conflicts; other aliases fill missing fields.
+    for alias in sorted(aliases, key=lambda item: item != key):
+        for field, value in repos[alias].items():
+            merged.setdefault(field, value)
+    return key, merged, aliases
+
+
+def ask_boolean(label: str, default: bool) -> bool:
+    marker = "Y/n" if default else "y/N"
+    while True:
+        try:
+            answer = input(f"{label}? [{marker}] ").strip().lower()
+        except EOFError as exc:
+            raise InitError("interactive setup ended before all settings were answered") from exc
+        if not answer:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        print("Please answer yes or no.", file=sys.stderr)
+
+
+def detect_live_server(target: Path) -> dict:
+    """Ask the worktree helper whether this repo can serve a live branch.
+
+    Any failure is reported as unsupported — a dev server is a convenience, so
+    it never blocks project setup."""
+    helper = Path(__file__).resolve().parent / "orc-worktree"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(helper), "detect-server", "--repo", str(target)],
+            text=True, capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"supported": False, "reason": f"could not run orc-worktree: {exc}"}
+    if result.returncode:
+        try:
+            reason = json.loads(result.stderr).get("error")
+        except (json.JSONDecodeError, AttributeError):
+            reason = (result.stderr or result.stdout).strip().splitlines()
+            reason = reason[-1] if reason else "detection failed"
+        return {"supported": False, "reason": reason}
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"supported": False, "reason": "orc-worktree returned no detection"}
+
+
+def live_server_setting(
+    target: Path, use_defaults: bool, interactive: bool, default: bool = True,
+) -> dict | None:
+    """The `worktreeServer` config to save, or None to leave the key out.
+
+    Off is the absence of the key, so an unsupported repo and a declined offer
+    look the same in config — the difference is what we print here."""
+    detection = detect_live_server(target)
+    if not detection.get("supported"):
+        reason = detection.get("reason") or "no dev server detected"
+        print(f"{LIVE_SERVER_LABEL}: unsupported — {reason}")
+        for change in detection.get("changes") or []:
+            print(f"  {change}")
+        return None
+    detected = detection.get("detected") or {}
+    print(f"{LIVE_SERVER_LABEL} would run: {detected.get('command')}")
+    # Detection is only a suggestion: it is saved when someone says yes to
+    # it, here or in the project's settings, never on its own.
+    if use_defaults or not interactive:
+        print("  Turn it on in this project's settings, under Runs & workspace, to use it.")
+        return None
+    return detected if ask_boolean(LIVE_SERVER_LABEL, default) else None
+
+
+def fresh_settings(target: Path, use_defaults: bool, interactive: bool) -> dict:
+    if not use_defaults and not interactive:
+        raise InitError(
+            "new project configuration requires a TTY wizard or explicit --defaults"
+        )
+    # Ordered, not a comprehension: "Personal project" is asked first so the
+    # questions after it can be offered with its solo defaults instead.
+    answers: dict = {}
+    for label, key, default in SETTINGS:
+        if answers.get("personalProject"):
+            default = PERSONAL_DEFAULTS.get(key, default)
+        answers[key] = default if use_defaults else ask_boolean(label, default)
+    entry = persist_answers({}, answers)
+    # A dev server only ever runs inside a worktree, so don't offer one without.
+    if answers["worktree"]:
+        server = live_server_setting(target, use_defaults, interactive)
+        if server:
+            entry["worktreeServer"] = server
+    return entry
+
+
+def persist_answers(entry: dict, answers: dict) -> dict:
+    """Apply wizard answers to a config entry, keeping unrelated keys.
+
+    Same policy as a fresh entry: the always-persisted keys are written
+    whatever the answer, the rest only when they differ from the default — so
+    an answer returning to its default removes the key instead of pinning it."""
+    result = dict(entry)
+    result["setupVersion"] = SETUP_VERSION
+    for _, key, default in SETTINGS:
+        if key in ALWAYS_PERSISTED or answers[key] != default:
+            result[key] = answers[key]
+        else:
+            result.pop(key, None)
+    return result
+
+
+def updated_settings(target: Path, entry: dict, current: dict) -> dict:
+    """Re-ask every setting on a configured project, defaulting to its answer.
+
+    Pressing Enter through the wizard is a no-op review; anything the user
+    changes is saved. Only an interactive rerun without `--defaults` gets here,
+    so automation can never silently rewrite a configured project."""
+    answers = {key: ask_boolean(label, current[key]) for label, key, _ in SETTINGS}
+    result = persist_answers(entry, answers)
+    server = None
+    if answers["worktree"]:
+        server = live_server_setting(
+            target, False, True, default=isinstance(entry.get("worktreeServer"), dict)
+        )
+    if server:
+        result["worktreeServer"] = server
+    else:
+        result.pop("worktreeServer", None)
+    return result
+
+
+def apply_project_files(target: Path, entry: dict) -> None:
+    """Write the two settings that live in the project, not in Orc's config.
+
+    Runs after a fresh setup and after a rerun's wizard, so flipping either
+    answer actually rewrites the project instead of only recording it."""
+    if entry.get("personalProject"):
+        write_personal_rules(target)
+    if entry.get("gitignoreAgentFiles", True):
+        ignore_agent_files(target)
+    if entry.get("attribution", True):
+        allow_attribution(target)
+        return
+    suppress_attribution(target)
+    # Declining the block never publishes the personal file we just wrote;
+    # a no-op when the full block already covers it.
+    ignore_agent_files(target, AGENT_IGNORE_HEADER + CLAUDE_LOCAL_SETTINGS)
+
+
+def suppress_attribution(target: Path) -> None:
+    """Turn off Claude Code's commit/PR credit for this project.
+
+    It goes in `.claude/settings.local.json` — Claude Code's personal settings
+    file — so the choice never lands on teammates. Setup separately makes sure
+    git ignores it; this writes no other file, because Settings can call it on
+    an established project long after setup. Codex only exposes
+    `commit_attribution` in the global `~/.codex/config.toml`, which neither
+    setup nor Settings has any business rewriting."""
+    path = target / ".claude" / "settings.local.json"
+    settings = read_config(path)
+    if settings.get("attribution") == NO_ATTRIBUTION:
+        return
+    settings["attribution"] = dict(NO_ATTRIBUTION)
+    atomic_write_json(path, settings)
+
+
+def allow_attribution(target: Path) -> None:
+    """Undo `suppress_attribution`, leaving a hand-written value alone.
+
+    The ignore line stays: the file is personal either way."""
+    path = target / ".claude" / "settings.local.json"
+    settings = read_config(path)
+    if settings.get("attribution") != NO_ATTRIBUTION:
+        return
+    del settings["attribution"]
+    if settings:
+        atomic_write_json(path, settings)
+        return
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise InitError(f"cannot remove {path}: {exc}") from exc
+
+
+def write_personal_rules(target: Path) -> None:
+    """Append the solo engineering rules to the project's AGENTS.md once.
+
+    Same shape as `ignore_agent_files`: an existing file keeps everything it
+    already said, and the heading makes a rerun a no-op. Only a brand-new file
+    gets the title, so the rules never sit under a second h1."""
+    agents = target / "AGENTS.md"
+    try:
+        existing = agents.read_text(encoding="utf-8") if agents.exists() else ""
+    except (OSError, UnicodeError) as exc:
+        raise InitError(f"cannot read {agents}: {exc}") from exc
+    if PERSONAL_RULES_HEADER in existing:
+        return
+    if not existing:
+        block = "# AGENTS.md\n\n" + PERSONAL_RULES
+    else:
+        separator = "\n" if existing.endswith("\n") else "\n\n"
+        block = existing + separator + PERSONAL_RULES
+    try:
+        agents.write_text(block, encoding="utf-8")
+    except OSError as exc:
+        raise InitError(f"cannot write {agents}: {exc}") from exc
+
+
+def ignore_agent_files(target: Path, block: str = AGENT_IGNORE) -> None:
+    """Append the agent-ignore block once, keeping whatever is already there.
+
+    Runs before `bootstrap_git`, so an unborn repo still gets the base ignores
+    it would otherwise seed — and commits both in its initial commit."""
+    ignore = target / ".gitignore"
+    try:
+        if ignore.exists():
+            existing = ignore.read_text(encoding="utf-8")
+        else:
+            existing = "" if has_head(target) else IGNORE_FILE
+    except (OSError, UnicodeError) as exc:
+        raise InitError(f"cannot read {ignore}: {exc}") from exc
+    if AGENT_IGNORE_HEADER in existing:
+        return
+    separator = "" if not existing else ("\n" if existing.endswith("\n") else "\n\n")
+    try:
+        ignore.write_text(existing + separator + block, encoding="utf-8")
+    except OSError as exc:
+        raise InitError(f"cannot write {ignore}: {exc}") from exc
+
+
+def save_configuration(
+    target: Path, use_defaults: bool, interactive: bool,
+) -> tuple[bool, dict, bool]:
+    path = home() / ".orc" / "config.json"
+    config = read_config(path)
+    key, entry, aliases = configured_entry(config, target)
+    fresh = entry is None
+    reconfigured = False
+    if fresh:
+        entry = fresh_settings(target, use_defaults, interactive)
+    elif interactive and not use_defaults:
+        entry = updated_settings(target, entry, current_answers(config, target, entry))
+        reconfigured = True
+    # Before the first project lands, so a fresh install leads with Open PR.
+    project_settings.pin_default_ship_action(config)
+    repos = config.setdefault("repos", {})
+    for alias in aliases:
+        repos.pop(alias, None)
+    repos[key] = entry
+    atomic_write_json(path, config)
+    verified = read_config(path).get("repos", {}).get(key)
+    if verified != entry:
+        raise InitError(f"could not verify saved project configuration in {path}")
+    return fresh, entry, reconfigured
+
+
+def effective_settings(config: dict, target: Path, entry: dict) -> list[tuple[str, bool]]:
+    legacy_repos = config.get("worktree", {}).get("repos", {})
+    legacy_worktree = next(
+        (
+            value for alias, value in legacy_repos.items()
+            if isinstance(alias, str) and isinstance(value, bool) and same_path(alias, target)
+        ),
+        True,
+    ) if isinstance(legacy_repos, dict) else True
+    return [
+        (
+            label,
+            bool(entry.get(
+                key,
+                legacy_worktree if key == "worktree" else default,
+            )),
+        )
+        for label, key, default in SETTINGS
+    ]
+
+
+def current_answers(config: dict, target: Path, entry: dict) -> dict:
+    """The saved answer per setting key — the rerun wizard's defaults."""
+    return {
+        key: enabled
+        for (_, key, _), (_, enabled) in zip(SETTINGS, effective_settings(config, target, entry))
+    }
+
+
+def print_current_settings(target: Path) -> None:
+    config = read_config(home() / ".orc" / "config.json")
+    _, entry, _ = configured_entry(config, target)
+    if entry is None:
+        raise InitError("saved project configuration disappeared before display")
+    print("Current Orc settings:")
+    for label, enabled in effective_settings(config, target, entry):
+        print(f"  {label}: {'on' if enabled else 'off'}")
+    server = entry.get("worktreeServer")
+    command = server.get("command") if isinstance(server, dict) else None
+    print(f"  {LIVE_SERVER_LABEL}: {f'on — {command}' if command else 'off'}")
+    print("Change settings: http://127.0.0.1:4173/#settings")
+
+
+def confirm_commit(target: Path) -> bool:
+    return ask_boolean(f"Stage and commit all existing content in {target}", False)
+
+
+def bootstrap_git(
+    target: Path,
+    *,
+    created: bool,
+    originally_empty: bool,
+    commit_existing: bool,
+    interactive: bool,
+) -> bool:
+    if git_root(target) is None:
+        run_git(target, "init")
+    marker = bootstrap_marker(target)
+    if has_head(target):
+        try:
+            marker.unlink()
+        except FileNotFoundError:
+            pass
+        return False
+
+    ignore = target / ".gitignore"
+    if not ignore.exists():
+        try:
+            ignore.write_text(IGNORE_FILE, encoding="utf-8")
+        except OSError as exc:
+            raise InitError(f"cannot create {ignore}: {exc}") from exc
+
+    allowed = created or originally_empty or marker.exists() or commit_existing
+    if not allowed and interactive:
+        allowed = confirm_commit(target)
+    if not allowed:
+        print(
+            "Git repository initialized without an initial commit; existing content was "
+            "not staged. Rerun with --commit-existing to authorize it.",
+            file=sys.stderr,
+        )
+        return False
+
+    if created or originally_empty:
+        try:
+            marker.write_text("safe initial commit pending\n", encoding="utf-8")
+        except OSError as exc:
+            raise InitError(f"cannot record bootstrap state in {marker}: {exc}") from exc
+    run_git(target, "add", "--all")
+    run_git(target, "commit", "-m", "Initial commit")
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+    return True
+
+
+def detect_harness(override: str | None) -> str | None:
+    if override:
+        return override
+    if os.environ.get("CODEX_THREAD_ID"):
+        return "codex"
+    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        return "claude"
+    return None
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(
+        prog="orc-init",
+        description="Safely initialize a project for Orc.",
+    )
+    result.add_argument("path", nargs="?", default=".")
+    result.add_argument("--defaults", action="store_true")
+    result.add_argument("--commit-existing", action="store_true")
+    result.add_argument("--mode", choices=("orc",))
+    result.add_argument("--task")
+    result.add_argument("--harness", choices=("codex", "claude"))
+    result.add_argument("--no-trust", action="store_true",
+                        help="leave Claude and Codex project trust unchanged")
+    # Settings' Agent attributions toggle calls this so the switch actually
+    # rewrites the project, instead of only recording an answer.
+    result.add_argument("--set-attribution", choices=("on", "off"))
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parser().parse_args(argv)
+    if (arguments.mode is None) != (arguments.task is None):
+        parser().error("--mode and --task must be supplied together")
+    harness = detect_harness(arguments.harness)
+    if arguments.task is not None and harness is None:
+        parser().error(
+            "task handoff needs --harness codex or --harness claude"
+        )
+
+    target = expand_path(arguments.path)
+    if target.exists() and not target.is_dir():
+        raise InitError(f"target is not a directory: {target}")
+    if arguments.set_attribution:
+        if not target.is_dir():
+            raise InitError(f"no such project directory: {target}")
+        if arguments.set_attribution == "off":
+            suppress_attribution(target)
+        else:
+            allow_attribution(target)
+        print(f"Agent attributions {arguments.set_attribution}: {target}")
+        return 0
+    reject_ancestor_repository(target)
+    created = not target.exists()
+    originally_empty = target.is_dir() and not any(
+        entry.name != ".git" for entry in target.iterdir()
+    )
+    if created:
+        try:
+            target.mkdir(parents=True)
+        except OSError as exc:
+            raise InitError(f"cannot create target directory {target}: {exc}") from exc
+
+    interactive = sys.stdin.isatty()
+    fresh, entry, reconfigured = save_configuration(
+        main_repo(target), arguments.defaults, interactive
+    )
+    # A fresh setup and an answered rerun both write their project files; a
+    # non-interactive rerun stays a read-only settings review. They land before
+    # the bootstrap commit so a brand-new repo commits its ignores and a failed
+    # commit leaves no half-applied project.
+    if fresh or reconfigured:
+        apply_project_files(target, entry)
+    bootstrap_git(
+        target,
+        created=created,
+        originally_empty=originally_empty,
+        commit_existing=arguments.commit_existing,
+        interactive=interactive,
+    )
+    if not arguments.no_trust:
+        trust_project(target)
+        print(f"Trusted for Claude and Codex: {target}")
+    state = "configured" if fresh else ("settings updated" if reconfigured else "already configured")
+    print(f"Orc project {state}: {target}")
+    if not fresh:
+        print_current_settings(main_repo(target))
+    if arguments.task is None:
+        print(f"cd -- {shlex.quote(str(target))}")
+        print("Run Orc with a task when you are ready.")
+    else:
+        prefix = "$" if harness == "codex" else "/"
+        print(f"cd -- {shlex.quote(str(target))}")
+        print(f"{prefix}{arguments.mode} {shlex.quote(arguments.task)}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except InitError as exc:
+        print(f"orc-init: error: {exc}", file=sys.stderr)
+        raise SystemExit(1)

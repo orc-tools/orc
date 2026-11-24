@@ -1,0 +1,1279 @@
+#!/usr/bin/env python3
+"""Transactionally merge one Orc run branch into its local default branch."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ui"))
+from merge_queue import (  # noqa: E402
+    MergeQueue, MergeTransaction, ProtocolError as MergeError,
+    branch_checkout, lock_path, now, read_json, write_json,
+)
+import collision_radar  # noqa: E402
+import deploys  # noqa: E402
+import distribution_policy  # noqa: E402
+import release_version  # noqa: E402
+
+
+MERGE_STATUSES = {"merging", "merging-to-parent"}
+
+
+# ponytail: a caller inside a git hook leaks GIT_INDEX_FILE=.git/index etc.;
+# `git -C <worktree>` then reads them relative to the worktree, where .git is a
+# file, and dies with "index file open failed: Not a directory".
+#
+# ORC_DEFER_RUNTIME_CHECK stops Orc's reinstall hook from running install.sh
+# inside this merge, where it held the merge lock and the push for minutes;
+# start_desktop_update runs it once the merge is pushed.
+def git_env():
+    env = dict(os.environ, ORC_DEFER_RUNTIME_CHECK="1")
+    for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+        env.pop(name, None)
+    return env
+
+
+def run_git(repo, *args, check=True, timeout=None):
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args], text=True, capture_output=True,
+        timeout=timeout, env=git_env())
+    if check and result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise MergeError("git %s failed%s" % (
+            " ".join(args), ": " + detail if detail else ""))
+    return result
+
+
+def git_value(repo, *args):
+    return run_git(repo, *args).stdout.strip()
+
+
+def canonical_repo(path):
+    if not isinstance(path, str) or not path.strip():
+        raise MergeError("run has no repository path")
+    try:
+        return Path(git_value(Path(path).expanduser(), "rev-parse", "--show-toplevel")).resolve()
+    except MergeError as exc:
+        raise MergeError("not a Git checkout: %s" % path) from exc
+
+
+def git_common_dir(repo):
+    common = Path(git_value(repo, "rev-parse", "--git-common-dir"))
+    if not common.is_absolute():
+        common = repo / common
+    return common.resolve()
+
+
+def default_branch(repo):
+    result = run_git(repo, "symbolic-ref", "--quiet", "--short",
+                     "refs/remotes/origin/HEAD", check=False)
+    if result.returncode == 0 and "/" in result.stdout:
+        return result.stdout.strip().split("/", 1)[1]
+    for candidate in ("main", "master"):
+        result = run_git(
+            repo, "rev-parse", "--verify", "--quiet",
+            "refs/heads/%s" % candidate, check=False)
+        if result.returncode == 0:
+            return candidate
+    raise MergeError("cannot determine the default branch safely")
+
+
+def require_branch(repo, expected, label):
+    result = run_git(repo, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    actual = result.stdout.strip() if result.returncode == 0 else ""
+    if actual != expected:
+        raise MergeError("%s checkout must hold recorded branch %s" % (label, expected))
+
+
+def dirty_paths(repo, content_only=False):
+    # Path-scoped commits can leave hook-staged index entries over committed
+    # source content. Merging reads that branch ref; only the destination needs
+    # an index that matches HEAD.
+    if content_only:
+        return (run_git(repo, "diff", "--name-only", "HEAD").stdout.splitlines()
+                + run_git(repo, "ls-files", "--others",
+                          "--exclude-standard").stdout.splitlines())
+    return [line[3:] for line in run_git(repo, "status", "--porcelain").stdout.splitlines()
+            if line.strip()]
+
+
+def describe_paths(paths, limit=5):
+    shown = ", ".join(paths[:limit])
+    return shown + (" (+%d more)" % (len(paths) - limit) if len(paths) > limit else "")
+
+
+def require_no_git_operation(repo, label):
+    git_dir = Path(git_value(repo, "rev-parse", "--git-dir"))
+    if not git_dir.is_absolute():
+        git_dir = repo / git_dir
+    if any((git_dir / name).exists() for name in (
+            "MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD")):
+        raise MergeError("%s checkout has a Git operation in progress" % label)
+
+
+def require_clean(repo, label, content_only=False):
+    dirty = dirty_paths(repo, content_only)
+    if dirty:
+        raise MergeError("%s checkout is dirty: %s (%s)" % (label, repo, describe_paths(dirty)))
+    require_no_git_operation(repo, label)
+
+
+SET_ASIDE_RECORD = "orc-merge-set-aside.json"
+
+
+def set_aside_record(repo):
+    return git_common_dir(repo) / SET_ASIDE_RECORD
+
+
+def set_aside(checkout, run_id):
+    """Stash uncommitted work in the default checkout so a merge never waits on it.
+
+    Nothing in Orc commits that work, so a merge that waited for a clean
+    checkout waited for a person. The stash is named in a record beside the
+    repository so `restore_set_aside` puts it back, in this process or the
+    next one after a crash."""
+    require_no_git_operation(checkout, "default")
+    dirty = dirty_paths(checkout)
+    if not dirty:
+        return
+    record = set_aside_record(checkout)
+    if record.exists():
+        # An earlier stash never went back and new edits arrived since. Keep
+        # that stash rather than stack a second restore on top of it.
+        print("orc-merge-main: parked: %s" % parked_note(read_json(record)),
+              file=sys.stderr)
+        record.unlink()
+    message = "orc-merge: set aside for %s" % run_id
+    before = run_git(checkout, "rev-parse", "--verify", "--quiet", "refs/stash",
+                     check=False).stdout.strip()
+    run_git(checkout, "stash", "push", "--include-untracked", "--quiet",
+            "-m", message, check=False)
+    stash = run_git(checkout, "rev-parse", "--verify", "--quiet", "refs/stash",
+                    check=False).stdout.strip()
+    if not stash or stash == before:
+        return  # require_clean reports what Git could not stash
+    write_json(record, {"stash": stash, "runId": run_id, "checkout": str(checkout),
+                        "message": message, "paths": dirty[:50], "setAsideAt": now()})
+    print("orc-merge-main: set aside uncommitted files in %s for this merge: %s"
+          % (checkout, describe_paths(dirty)), file=sys.stderr)
+
+
+def parked_note(record):
+    return ("uncommitted work from %s is saved as stash %s (\"%s\") and was not "
+            "put back. Restore it with: git -C %s stash apply %s" % (
+                record.get("checkout"), str(record.get("stash"))[:12],
+                record.get("message"), record.get("checkout"), record.get("stash")))
+
+
+def stash_position(checkout, stash):
+    listed = run_git(checkout, "stash", "list", "--format=%H", check=False).stdout.split()
+    return listed.index(stash) if stash in listed else None
+
+
+def restore_set_aside(repo):
+    """Put set-aside work back on top of the merged default branch.
+
+    Leaves the stash in place, and says so, when it no longer applies: the
+    merge changed the same lines or added a file at the same path."""
+    try:
+        record_path = set_aside_record(repo)
+        if not record_path.exists():
+            return
+        record = read_json(record_path)
+        checkout, stash = Path(record["checkout"]), record["stash"]
+        if stash_position(checkout, stash) is None:
+            record_path.unlink()
+            return
+        try:
+            require_clean(checkout, "default")
+        except MergeError:
+            return  # a resolution is still using the checkout; the next run restores
+        untracked = [name for name in run_git(
+            checkout, "ls-tree", "-r", "-z", "--name-only", stash + "^3",
+            check=False).stdout.split("\0") if name]
+        applied = not any(os.path.lexists(checkout / name) for name in untracked)
+        if applied:
+            for flags in (["--index"], []):
+                applied = run_git(checkout, "stash", "apply", "--quiet", *flags, stash,
+                                  check=False).returncode == 0
+                if applied:
+                    break
+                # The checkout was clean, so this only undoes the failed apply.
+                run_git(checkout, "reset", "--hard", "--quiet", "HEAD")
+                for name in untracked:
+                    with contextlib.suppress(OSError):
+                        (checkout / name).unlink()
+        record_path.unlink()
+        if not applied:
+            print("orc-merge-main: parked: %s" % parked_note(record), file=sys.stderr)
+            return
+        run_git(checkout, "stash", "drop", "--quiet",
+                "stash@{%d}" % stash_position(checkout, stash), check=False)
+        print("orc-merge-main: put the set-aside files back in %s" % checkout,
+              file=sys.stderr)
+    except (MergeError, OSError, KeyError, ValueError) as exc:
+        print("orc-merge-main: set-aside files not restored: %s" % exc, file=sys.stderr)
+
+
+def require_run_checkout(repo, label, in_place):
+    """Leftover files in a separate run worktree never block the merge.
+
+    The merge reads the committed branch the delivery authority binds, so they
+    cannot reach the default branch, and teardown never force-removes a dirty
+    worktree, so they survive the merge. An in-place checkout is the default
+    checkout itself and stays strict."""
+    if in_place:
+        require_clean(repo, label, content_only=True)
+        return
+    require_no_git_operation(repo, label)
+    dirty = dirty_paths(repo, content_only=True)
+    if dirty:
+        print("orc-merge-main: %s checkout has uncommitted files the merge leaves "
+              "out: %s" % (label, describe_paths(dirty)), file=sys.stderr)
+
+
+def is_ancestor(repo, older, newer):
+    return run_git(
+        repo, "merge-base", "--is-ancestor", older, newer,
+        check=False).returncode == 0
+
+
+VERSION_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+ORC_REPO_MARKERS = (
+    ("bin", "orc-merge-main"),
+    ("skills", "orc", "SKILL.md"),
+    ("ui", "serve.py"),
+)
+
+
+def is_orc_repository(repo):
+    """Recognize an Orc source checkout without project configuration."""
+    root = Path(repo)
+    return all(root.joinpath(*parts).is_file() for parts in ORC_REPO_MARKERS)
+
+
+def latest_version(repo):
+    """Highest legacy v-tag: the starting point before VERSION existed."""
+    result = run_git(repo, "tag", "--list", "v*.*.*", check=False)
+    best = (0, 0, 0)
+    for line in result.stdout.splitlines():
+        match = VERSION_TAG_RE.match(line.strip())
+        if match:
+            best = max(best, tuple(int(part) for part in match.groups()))
+    return best
+
+
+def version_at(repo, rev):
+    result = run_git(repo, "show", "%s:%s" % (rev, release_version.VERSION_FILE),
+                     check=False)
+    return release_version.parse(result.stdout) if result.returncode == 0 else None
+
+
+def compute_release(repo, base, head):
+    """Next semver + changelog subjects from conventional commits in base..head."""
+    log = run_git(
+        repo, "log", "--no-merges", "--format=%s%x00%b%x1e",
+        "%s..%s" % (base, head), check=False)
+    commits = []
+    for entry in log.stdout.split("\x1e"):
+        subject, _, body = entry.strip("\n").partition("\x00")
+        if subject.strip():
+            commits.append((subject.strip(), body))
+    known = [v for v in (version_at(repo, base), version_at(repo, head)) if v]
+    current = max(known) if known else latest_version(repo)
+    version = release_version.next_version(
+        repo, current, release_version.release_level(commits))
+    return release_version.label(version), [subject for subject, _ in commits]
+
+
+def stage_release(repo, base, head, run_id):
+    """Write the merge's VERSION and changelog entry into the merge in progress.
+
+    They land in the merge commit itself, so a restart after the merge can
+    never leave main without its version."""
+    version, subjects = compute_release(repo, base, head)
+    root = Path(repo)
+    (root / release_version.VERSION_FILE).write_text(version[1:] + "\n")
+    changelog = root / release_version.CHANGELOG_FILE
+    text = changelog.read_text() if changelog.is_file() else ""
+    changelog.write_text(release_version.add_entry(text, release_version.render_entry(
+        version, release_version.today(), subjects, run_id)))
+    run_git(repo, "add", release_version.VERSION_FILE, release_version.CHANGELOG_FILE)
+    return version
+
+
+REMOTE_TIMEOUT = 15  # bound remote tag pushes so an offline merge never hangs
+
+
+def tag_release(repo, commit, version, run_id=None):
+    """Best-effort annotated tag for a release already on origin's main.
+
+    Tags are a convenience for browsing; VERSION and CHANGELOG.md are the
+    record, so a tag failure is reported and never fails delivery."""
+    try:
+        changelog = run_git(repo, "show", "%s:%s" % (
+            commit, release_version.CHANGELOG_FILE), check=False).stdout
+        entry = next((release for release in release_version.parse_changelog(changelog)
+                      if release["version"] == version), {})
+        lines = ["- %s" % change for change in entry.get("changes", [])]
+        run_line = "\nRun: %s\n" % run_id if run_id else ""
+        run_git(repo, "tag", "-a", version, "-m",
+                "%s\n%s\n%s\n" % (version, run_line, "\n".join(lines)), commit)
+        run_git(repo, "push", "origin", version, timeout=REMOTE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 — tagging must never break delivery
+        return "skipped: %s" % exc
+    return "pushed %s" % version
+
+
+def merge_commit_for(repo, source_head, target_head):
+    """The first default-branch commit that contains the run's head."""
+    commits = run_git(repo, "rev-list", "--ancestry-path", "--first-parent",
+                      "--reverse", "%s..%s" % (source_head, target_head),
+                      check=False).stdout.split()
+    return commits[0] if commits else target_head
+
+
+def record_release_version(meta_path, version):
+    """Best-effort link from a release back to its run."""
+    try:
+        meta = read_json(meta_path)
+        if meta.get("releaseVersion") == version:
+            return
+        meta["releaseVersion"] = version
+        write_json(meta_path, meta)
+    except Exception as exc:  # noqa: BLE001 — release metadata is non-critical
+        print("orc-merge-main: release version metadata skipped: %s" % exc,
+              file=sys.stderr)
+
+
+MAIN_PUSH_TIMEOUT = 60
+
+
+def unmerged_paths(repo):
+    return run_git(repo, "diff", "--name-only", "--diff-filter=U",
+                   check=False).stdout.splitlines()
+
+
+def sync_with_origin(repo, branch):
+    """Bring the local default branch level with origin before pushing it.
+
+    Merge, never rebase: fast-forward when only origin moved, else merge
+    origin into the branch. Returns a note on what happened, or None when
+    nothing did. A conflict this helper cannot settle aborts the merge and
+    raises, leaving the branch where it was."""
+    if run_git(repo, "remote", "get-url", "origin", check=False).returncode:
+        return None
+    remote = "refs/remotes/origin/%s" % branch
+    try:
+        fetched = run_git(repo, "fetch", "--quiet", "origin",
+                          "+refs/heads/%s:%s" % (branch, remote),
+                          check=False, timeout=MAIN_PUSH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "fetching origin timed out; merging onto local %s" % branch
+    if fetched.returncode:
+        detail = (fetched.stderr or fetched.stdout).strip()
+        if "couldn't find remote ref" in detail:
+            return None
+        return "could not fetch origin (%s); merging onto local %s" % (
+            detail.splitlines()[-1] if detail else "exit %d" % fetched.returncode,
+            branch)
+    head = git_value(repo, "rev-parse", "HEAD")
+    if is_ancestor(repo, remote, head):
+        return None
+    incoming = git_value(repo, "rev-list", "--count", "%s..%s" % (head, remote))
+    if is_ancestor(repo, head, remote):
+        run_git(repo, "merge", "--ff-only", "--quiet", remote)
+        return "fast-forwarded %s to origin (%s commits)" % (branch, incoming)
+    merged = run_git(repo, "merge", "--no-edit", remote, check=False)
+    if merged.returncode:
+        conflicts = unmerged_paths(repo)
+        run_git(repo, "merge", "--abort", check=False)
+        if git_value(repo, "rev-parse", "HEAD") != head:
+            raise MergeError("merging origin/%s failed and %s was not restored; "
+                             "inspect %s" % (branch, branch, repo))
+        detail = describe_paths(conflicts) if conflicts else \
+            (merged.stderr or merged.stdout).strip().splitlines()[-1]
+        raise MergeError(
+            "%s and origin/%s have both moved and conflict in %s. Nothing was "
+            "merged. Merge origin/%s into %s by hand and commit the resolution"
+            % (branch, branch, detail, branch, branch))
+    return "merged origin/%s into %s (%s commits)" % (branch, branch, incoming)
+
+
+def push_failure(result):
+    """The line that says why a push failed; git ends on a generic hint."""
+    lines = [line.strip() for line in
+             (result.stderr or result.stdout).strip().splitlines() if line.strip()]
+    for line in lines:
+        if "[rejected]" in line or "[remote rejected]" in line:
+            return line.lstrip("! ").strip()
+    for line in lines:
+        if line.startswith(("error:", "fatal:")):
+            return line
+    return lines[-1] if lines else "push to origin failed"
+
+
+def push_default_branch(target_repo):
+    """Push the merged default branch to origin. None on success, else why not.
+
+    This runs here rather than in orc-ui because an Orc install restarts
+    orc-ui and kills the server thread waiting on this helper. This process
+    survives that restart; the thread's own push would never run."""
+    try:
+        branch = default_branch(target_repo)
+    except MergeError as exc:
+        return str(exc)
+    if run_git(target_repo, "remote", "get-url", "origin",
+               check=False).returncode:
+        return "this repository has no origin remote"
+    try:
+        result = run_git(target_repo, "push", "origin",
+                         "refs/heads/%s:refs/heads/%s" % (branch, branch),
+                         check=False, timeout=MAIN_PUSH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "push to origin timed out"
+    if result.returncode:
+        return push_failure(result)
+    return None
+
+
+def push_after_origin_moved(runs_dir, target_repo, error):
+    """Origin moved while this merge ran: take its commits and push once more."""
+    try:
+        with merge_lock(runs_dir, target_repo):
+            branch = default_branch(target_repo)
+            checkout = default_checkout(target_repo, branch)
+            try:
+                set_aside(checkout, "origin sync")
+                require_clean(checkout, "default")
+                before = git_value(checkout, "rev-parse", "HEAD")
+                sync_with_origin(checkout, branch)
+                moved = git_value(checkout, "rev-parse", "HEAD") != before
+            finally:
+                restore_set_aside(target_repo)
+                cleanup_default_checkout(target_repo)
+    except MergeError as exc:
+        return "%s; %s, then push it to origin." % (error, exc)
+    return push_default_branch(target_repo) if moved else error
+
+
+def close_run_pane(runs_dir, run_id, *, push_pending=False):
+    return "headless session; no pane to close"
+
+
+def clear_post_merge_pending(runs_dir, run_id, *, settle=False, deploy=None, pushed=True):
+    """Drop finish_metadata's postMergePending after push and close scheduling.
+    `settle` (Yeet it, pushed) asks orc-ui's watcher to settle the run.
+    `deploy` names the Ship action that merged and pushed: once `pushed`, it
+    queues the project's Deploy after merge command, in the same write as
+    `settle` so the watcher never settles the run before its deploy shows.
+    A failed push leaves `deployOnPush` for the Push to origin retry.
+
+    Re-reads meta.json right before writing: other writers keep it live."""
+    meta_path = runs_dir / run_id / "meta.json"
+    try:
+        meta = read_json(meta_path)
+        changed = meta.pop("postMergePending", None) is not None
+        if settle and meta.get("settleAfterMerge") is not True:
+            meta["settleAfterMerge"] = True
+            changed = True
+        if deploy and pushed:
+            changed = meta.pop("deployOnPush", None) is not None or changed
+            changed = deploys.request(meta, deploy, os.environ.get("ORC_CONFIG_DIR")) or changed
+        elif deploy and deploys.command_for(meta, os.environ.get("ORC_CONFIG_DIR")):
+            meta["deployOnPush"] = deploy
+            changed = True
+        if changed:
+            write_json(meta_path, meta)
+    except (MergeError, OSError):
+        pass  # the UI's wrap-up window still closes on the clock
+
+
+def find_merge_blocker(runs_dir, run_id, target_repo):
+    for candidate_dir in sorted(runs_dir.iterdir(), key=lambda path: path.name):
+        if candidate_dir.name == run_id or candidate_dir.name.startswith(".") \
+                or not candidate_dir.is_dir():
+            continue
+        try:
+            meta = read_json(candidate_dir / "meta.json")
+            if meta.get("status") not in MERGE_STATUSES:
+                continue
+            repo = canonical_repo(meta.get("mainRepoPath") or meta.get("repoPath"))
+        except MergeError:
+            continue
+        if repo == target_repo:
+            return meta.get("title") or candidate_dir.name, candidate_dir.name
+    return None
+
+
+def desktop_update_after_merge(target):
+    helper = target / "ui" / "runtime_updates.py"
+    if not is_orc_repository(target) or not helper.is_file():
+        return None
+    try:
+        result = subprocess.run(
+            [sys.executable, str(helper), "status", "--repo", str(target)],
+            text=True, capture_output=True, timeout=30, env=git_env())
+        value = json.loads(result.stdout) if result.returncode == 0 else {}
+        if not isinstance(value, dict) or not value.get("state"):
+            raise ValueError("update status unavailable")
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        value = {"state": "unknown", "reason": str(error),
+                 "recovery": str(target / "install.sh") + " --skip-health-checks"}
+    if value["state"] != "current":
+        print("orc-merge-main: merge succeeded; desktop update %s: %s\nRetry: %s" % (
+            value["state"], value.get("reason", ""), value.get("recovery", "")), file=sys.stderr)
+    return value
+
+
+def default_branch_head(repo):
+    try:
+        return git_value(repo, "rev-parse", "--verify",
+                         "refs/heads/%s" % default_branch(repo))
+    except MergeError:
+        return None
+
+
+def start_desktop_update(repo, old_head):
+    """Run the reinstall hook git_env deferred, once, for everything since old_head.
+
+    Detached: the install restarts orc-ui, and orc-ui's background retry picks
+    up an install this never got to start."""
+    new_head = default_branch_head(repo)
+    if not old_head or not new_head or new_head == old_head:
+        return False
+    try:
+        hooks = Path(git_value(repo, "rev-parse", "--path-format=absolute",
+                               "--git-path", "hooks"))
+    except MergeError:
+        return False
+    check = hooks / "orc-reinstall-check"
+    if not os.access(check, os.X_OK):
+        return False
+    env = git_env()
+    env.pop("ORC_DEFER_RUNTIME_CHECK")
+    try:
+        subprocess.Popen([str(check), old_head, new_head], cwd=str(repo), env=env,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        print("orc-merge-main: desktop update not started: %s" % exc, file=sys.stderr)
+        return False
+    return True
+
+
+def validate_checkout_identity(meta):
+    target = canonical_repo(meta.get("mainRepoPath") or "")
+    configured_target = Path(meta.get("mainRepoPath", "")).expanduser().resolve()
+    if configured_target != target:
+        raise MergeError("mainRepoPath must name the exact default checkout")
+    common_dir = git_common_dir(target)
+    if common_dir.parent != target:
+        raise MergeError("mainRepoPath is not the primary checkout")
+    source = Path(meta.get("repoPath", "")).expanduser().resolve()
+    source_root = canonical_repo(str(source))
+    if source_root != source:
+        raise MergeError("repoPath must name the exact run checkout")
+    if git_common_dir(source) != common_dir:
+        raise MergeError("run checkout belongs to a different repository")
+    branch = meta.get("branch")
+    if not isinstance(branch, str) or not branch:
+        raise MergeError("run has no recorded branch")
+    target_branch = default_branch(target)
+    if branch == target_branch:
+        raise MergeError("refusing to merge default branch into itself")
+    in_place = source == target
+    if in_place:
+        current = git_value(source, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if current not in (branch, target_branch):
+            raise MergeError(
+                "in-place checkout must hold recorded branch %s or default branch %s"
+                % (branch, target_branch))
+    else:
+        require_branch(source, branch, "run")
+    return target, source, target_branch, branch, in_place
+
+
+def default_checkout(repo, branch):
+    checkout = branch_checkout(repo, branch, run_git)
+    if checkout is None:
+        checkout = git_common_dir(repo) / "orc-merge-checkout"
+        run_git(repo, "worktree", "add", "--quiet", str(checkout), branch)
+    require_branch(checkout, branch, "default")
+    return checkout
+
+
+def cleanup_default_checkout(repo):
+    checkout = git_common_dir(repo) / "orc-merge-checkout"
+    if checkout.exists():
+        # Without --force Git preserves dirty worktrees left for recovery.
+        result = run_git(repo, "worktree", "remove", str(checkout), check=False)
+        if result.returncode:
+            print("orc-merge-main: retained merge checkout at %s: %s" %
+                  (checkout, result.stderr.strip()), file=sys.stderr)
+
+
+def conflict_resolution_state(runs_dir, run_id):
+    meta = read_json(runs_dir / run_id / "meta.json")
+    if meta.get("runId") not in (None, run_id):
+        raise MergeError("run metadata identity does not match directory")
+    protocol = MergeQueue(runs_dir, meta.get("mainRepoPath"))
+    attempt = MergeTransaction(protocol, run_id)
+    attempt.require_resolution(meta)
+    target, source, target_branch, source_branch, in_place = validate_checkout_identity(meta)
+    require_run_checkout(source, "run", in_place)
+    source_head = git_value(source, "rev-parse", "refs/heads/%s" % source_branch)
+    return meta, attempt, target, source, target_branch, source_branch, source_head, in_place
+
+
+def merged_default_only(repo, old_head, new_head, target_head):
+    """True when the branch moved from old_head only by merging the default
+    branch in: every new first-parent commit is a merge whose other parents
+    the default branch already holds. That is a conflict resolution done on
+    the branch, with no new work beside it."""
+    if old_head == new_head or not is_ancestor(repo, old_head, new_head):
+        return False
+    span = "%s..%s" % (old_head, new_head)
+    if git_value(repo, "rev-list", "--first-parent", "--no-merges", span):
+        return False
+    for line in git_value(repo, "rev-list", "--first-parent", "--parents", span).splitlines():
+        if not all(is_ancestor(repo, parent, target_head) for parent in line.split()[2:]):
+            return False
+    return True
+
+
+def adopt_resolved_source(attempt, meta, repo, source_head, target_head):
+    if merged_default_only(repo, attempt.source_head, source_head, target_head):
+        attempt.adopt_source(meta, source_head)
+
+
+def claim_conflict_resolution(runs_dir, run_id):
+    (meta, attempt, target, source, target_branch,
+     source_branch, source_head, in_place) = conflict_resolution_state(runs_dir, run_id)
+    if in_place:
+        current = git_value(target, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if current != target_branch:
+            run_git(target, "checkout", "--quiet", target_branch)
+    target = default_checkout(target, target_branch)
+    # Stays set aside while the session resolves; the finishing or releasing
+    # call puts it back.
+    set_aside(target, run_id)
+    require_clean(target, "default")
+    target_head = git_value(target, "rev-parse", "HEAD")
+    adopt_resolved_source(attempt, meta, target, source_head, target_head)
+    result = attempt.resolution(
+        meta, source_branch, source_head, target_branch, target_head,
+        target_advanced=is_ancestor(target, attempt.target_head, target_head))
+    print("Resolve in default checkout: %s" % target)
+    return result
+
+
+def require_resolution_merge_commit(repo, attempt, merge_head):
+    parents = git_value(repo, "rev-list", "--parents", "-n", "1", merge_head).split()
+    if len(parents) != 3 or parents[1] != attempt.target_head \
+            or parents[2] != attempt.source_head:
+        raise MergeError(
+            "resolved conflict must finish as the recorded two-parent merge commit")
+
+
+def release_conflict_resolution(runs_dir, run_id):
+    (meta, attempt, target, source, target_branch,
+     source_branch, source_head, in_place) = conflict_resolution_state(runs_dir, run_id)
+    target = default_checkout(target, target_branch)
+    require_clean(target, "default")
+    result = attempt.resolution(meta, source_branch, source_head, target_branch,
+                                git_value(target, "rev-parse", "HEAD"), release=True)
+    restore_set_aside(target)
+    cleanup_default_checkout(target_repo_for(runs_dir, run_id))
+    return result
+
+
+def merge_main(runs_dir, run_id, claim_token, post_merge=False):
+    """Run the merge, restoring the run checkout if it aborts before claiming.
+
+    An in-place merge checks out the default branch before it validates the
+    queue claim, so a failure in between used to strand the checkout on main.
+    The recap then reads as having no new code and hides its delivery actions.
+    Once a merge journal is open the default branch is where recovery expects
+    to resume, so leave the checkout alone from that point on.
+    """
+    run_dir = runs_dir / run_id
+    repo = read_json(run_dir / "meta.json").get("repoPath")
+    before = None
+    if isinstance(repo, str) and repo.strip():
+        repo = Path(repo).expanduser()
+        before = run_git(repo, "symbolic-ref", "--quiet", "--short", "HEAD",
+                         check=False).stdout.strip() or None
+    try:
+        result = _merge_main(runs_dir, run_id, claim_token, post_merge)
+        restore_set_aside(target_repo_for(runs_dir, run_id))
+        cleanup_default_checkout(target_repo_for(runs_dir, run_id))
+        return result
+    except MergeError:
+        meta = read_json(run_dir / "meta.json")
+        attempt = MergeTransaction(MergeQueue(runs_dir, meta.get("mainRepoPath")), run_id)
+        restore_set_aside(target_repo_for(runs_dir, run_id))
+        if before and not attempt.open:
+            run_git(repo, "checkout", "--quiet", before, check=False)
+        cleanup_default_checkout(target_repo_for(runs_dir, run_id))
+        raise
+
+
+def _merge_main(runs_dir, run_id, claim_token, post_merge=False):
+    run_dir = runs_dir / run_id
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    if meta.get("runId") not in (None, run_id):
+        raise MergeError("run metadata identity does not match directory")
+    target, source, target_branch, source_branch, in_place = \
+        validate_checkout_identity(meta)
+    require_run_checkout(source, "run", in_place)
+    source_head = git_value(source, "rev-parse", "refs/heads/%s" % source_branch)
+    if in_place:
+        current = git_value(target, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if current != target_branch:
+            run_git(target, "checkout", "--quiet", target_branch)
+    primary = target
+    target = default_checkout(primary, target_branch)
+    protocol = MergeQueue(runs_dir, str(primary))
+    attempt = MergeTransaction(protocol, run_id)
+    if claim_token and attempt.resolving:
+        abort_abandoned_resolution(target, attempt)
+    if not in_place:
+        set_aside(target, run_id)
+    require_clean(target, "default")
+    # Origin refuses a push it has moved past, so catch up first. Only before a
+    # transaction pins the default head; the push retry covers a resumed merge.
+    if post_merge and not attempt.open and not attempt.terminal(meta):
+        blocker = find_merge_blocker(runs_dir, run_id, primary)
+        if blocker:
+            raise MergeError("merge blocked by %s (%s)" % blocker)
+        try:
+            synced = sync_with_origin(target, target_branch)
+        except MergeError as exc:
+            raise MergeError("%s, then retry the merge." % exc) from exc
+        if synced:
+            print("orc-merge-main: %s" % synced, file=sys.stderr)
+    target_head = git_value(target, "rev-parse", "HEAD")
+    if attempt.terminal(meta):
+        merge_commit = meta.get("mergeCommit")
+        if not merge_commit or not is_ancestor(target, merge_commit, target_head) \
+                or not is_ancestor(target, source_head, target_head):
+            raise MergeError("terminal run has inconsistent merge trace metadata")
+        return merge_commit, True
+
+    if attempt.resolving:
+        adopt_resolved_source(attempt, meta, target, source_head, target_head)
+    contained = is_ancestor(target, source_head, target_head)
+    if not attempt.open:
+        blocker = find_merge_blocker(runs_dir, run_id, primary)
+        if blocker:
+            raise MergeError("merge blocked by %s (%s)" % blocker)
+        build_base = meta.get("buildBaseCommit")
+        if not contained and (not build_base or not is_ancestor(target, build_base, source_head)):
+            repaired = run_git(target, "merge-base", target_branch, source_head,
+                               check=False).stdout.strip()
+            if not repaired:
+                raise MergeError("run has no valid buildBaseCommit for recorded branch")
+            meta["buildBaseCommit"] = repaired
+            write_json(meta_path, meta)
+    attempt.begin(meta, source_branch, source_head, target_branch, target_head,
+                  contained, claim_token)
+    if contained and attempt.resolving:
+        require_resolution_merge_commit(target, attempt, target_head)
+    warning = None
+    versioned = is_orc_repository(target)
+    if not contained:
+        try:
+            conflict_detail, warning = _merge_branch_with_rules(
+                target, primary, attempt.target_head, source_head,
+                versioned=versioned, run_id=run_id)
+        except distribution_policy.PolicyError as exc:
+            attempt.conflicted(str(exc))
+            raise MergeError(f"{exc}\nDefault branch restored and run escalated.") from exc
+        if conflict_detail is not None:
+            attempt.conflicted(conflict_detail)
+            raise MergeError("merge conflicted; default branch restored and run escalated")
+        if warning:
+            print(warning, file=sys.stderr)
+    target_head = git_value(target, "rev-parse", "HEAD")
+    attempt.git_merged(warning)
+    attempt.finish(target_head, post_merge=post_merge,
+                   desktop_update=desktop_update_after_merge(target))
+    if versioned:
+        # A retry after a restart finds the run already merged; the version is
+        # already in its merge commit, so only the run's link to it is missing.
+        version = version_at(target, merge_commit_for(target, source_head, target_head))
+        if version:
+            record_release_version(meta_path, release_version.label(version))
+    return target_head, contained
+
+
+def abort_abandoned_resolution(checkout, attempt):
+    """Clear the half-finished merge a resolution session left when it stopped.
+
+    Only orc-ui's recovery passes a claim token to a resolving run, and only
+    once that session is no longer working, so a live merge here has no owner.
+    Aborting returns the checkout to the recorded default head; the conflict
+    is then found again and handed back to the session."""
+    git_dir = Path(git_value(checkout, "rev-parse", "--absolute-git-dir"))
+    if not (git_dir / "MERGE_HEAD").exists():
+        return
+    run_git(checkout, "merge", "--abort", check=False)
+    if (git_dir / "MERGE_HEAD").exists() \
+            or git_value(checkout, "rev-parse", "HEAD") != attempt.target_head:
+        raise MergeError("could not clear the interrupted conflict resolution; "
+                         "inspect %s" % checkout)
+    print("orc-merge-main: cleared the interrupted conflict resolution in %s"
+          % checkout, file=sys.stderr)
+
+
+def commit_release(repo, base, source_head, run_id, check_policy):
+    """Write the release into the stopped merge and commit it. Returns hook output."""
+    try:
+        stage_release(repo, base, source_head, run_id)
+        if check_policy:
+            distribution_policy.check_tree(repo, git_value(repo, "write-tree"))
+        # --no-verify: the pre-commit hooks were written for hand commits; this
+        # commit must hold exactly the merge plus its release files.
+        result = run_git(repo, "commit", "--no-edit", "--no-verify")
+    except (MergeError, OSError, distribution_policy.PolicyError) as exc:
+        run_git(repo, "merge", "--abort", check=False)
+        unstage_release(repo, base)
+        if git_value(repo, "rev-parse", "HEAD") != base:
+            raise MergeError("merge commit failed and default HEAD was not restored; "
+                             "inspect %s" % repo) from exc
+        if isinstance(exc, distribution_policy.PolicyError):
+            raise
+        raise MergeError("merge commit failed; default branch restored: %s" % exc) from exc
+    return result.stderr.strip()
+
+
+def unstage_release(repo, base):
+    """Put VERSION and CHANGELOG.md back as `base` has them.
+
+    `git merge --abort` keeps edits the index never saw, so a release whose
+    `git add` failed stayed in the checkout, and every later merge set it
+    aside and put it back. The checkout was clean before the merge, so
+    nothing else lives in these files. They are written from Git's objects,
+    not checked out, because the lock that failed the add would fail that too."""
+    for name in (release_version.VERSION_FILE, release_version.CHANGELOG_FILE):
+        path = Path(repo) / name
+        blob = subprocess.run(["git", "-C", str(repo), "show", "%s:%s" % (base, name)],
+                              capture_output=True, env=git_env())
+        with contextlib.suppress(OSError):
+            if blob.returncode == 0:
+                path.write_bytes(blob.stdout)
+            elif not run_git(repo, "ls-tree", base, "--", name, check=False).stdout:
+                path.unlink(missing_ok=True)
+
+
+def target_repo_for(runs_dir, run_id):
+    meta = read_json(runs_dir / run_id / "meta.json")
+    return canonical_repo(meta.get("mainRepoPath") or "")
+
+
+def participant_repositories(meta):
+    """Non-primary repository participants, in recorded order.
+
+    A multi-repository run records every participant in `repositories[]`. The
+    primary one is already what `repoPath`, `branch`, the merge queue and the
+    merge journal describe, so it is excluded here and merged last by
+    `_merge_main` through its unchanged transactional path.
+    """
+    repositories = meta.get("repositories")
+    if not isinstance(repositories, list):
+        return []
+    primary = meta.get("primaryRepositoryId")
+    others = []
+    for entry in repositories:
+        if not isinstance(entry, dict) or entry.get("primary") is True:
+            continue
+        if entry.get("id") is not None and entry.get("id") == primary:
+            continue
+        others.append(entry)
+    return others
+
+
+def merge_participant(runs_dir, run_id, participant):
+    """Land one non-primary participant on that repository's default branch.
+
+    ponytail: no queue entry, no claim token, no journal. All three are keyed
+    to the run's single `mainRepoPath`, and representing N repositories in them
+    is a rewrite of the queue and its recovery contract. Recovery here is
+    simply running it again: a branch already contained in its default branch
+    is a no-op. A conflict aborts this repository and raises, so the caller
+    stops before the primary merges.
+    """
+    label = participant.get("id") or participant.get("mainRepoPath") or "participant"
+    target, source, target_branch, source_branch, in_place = \
+        validate_checkout_identity({
+            "mainRepoPath": participant.get("mainRepoPath"),
+            "repoPath": participant.get("repoPath"),
+            "branch": participant.get("branch"),
+        })
+    # Ordering is always primary lock -> participant lock, and merge_lock times
+    # out rather than blocking forever, so a crossed pair of runs fails with
+    # "another local merge operation is running" instead of deadlocking.
+    with merge_lock(runs_dir, target):
+        blocker = find_merge_blocker(runs_dir, run_id, target)
+        if blocker:
+            raise MergeError("participant %s blocked by %s (%s)" % (label, *blocker))
+        require_run_checkout(source, "participant %s run" % label, in_place)
+        source_head = git_value(source, "rev-parse", "refs/heads/%s" % source_branch)
+        if in_place:
+            current = git_value(target, "symbolic-ref", "--quiet", "--short", "HEAD")
+            if current != target_branch:
+                run_git(target, "checkout", "--quiet", target_branch)
+        primary = target
+        target = default_checkout(primary, target_branch)
+        if not in_place:
+            set_aside(target, run_id)
+        try:
+            return _merge_participant(target, primary, label, source_head)
+        finally:
+            restore_set_aside(primary)
+            cleanup_default_checkout(primary)
+
+
+def _abort_merge_cleanly(checkout, base_head, extra_paths=()):
+    run_git(checkout, "merge", "--abort", check=False)
+    for rel in extra_paths:
+        blob = subprocess.run(["git", "-C", str(checkout), "show", "%s:%s" % (base_head, rel)],
+                              capture_output=True, env=git_env())
+        path = Path(checkout) / rel
+        with contextlib.suppress(OSError):
+            if blob.returncode == 0:
+                path.write_bytes(blob.stdout)
+            elif not run_git(checkout, "ls-tree", base_head, "--", rel, check=False).stdout:
+                path.unlink(missing_ok=True)
+    run_git(checkout, "reset", "--hard", "--quiet", base_head, check=False)
+
+
+def _merge_branch_with_rules(target, primary, base_head, source_head, *, versioned=False, run_id=None):
+    """Run `git merge --no-ff` into `target`, regenerating per-project generated
+    files instead of merging them by hand when they conflict or both sides edit them."""
+    rules = collision_radar.repo_generated_rules(primary, config_dir=os.environ.get("ORC_CONFIG_DIR"))
+    both_changed = collision_radar.both_sides_changed_files(target, base_head, source_head) if rules else []
+    both_gen, _both_code, both_rules = collision_radar.partition_generated_paths(both_changed, rules)
+    check_policy = distribution_policy.has_policy(target, base_head, source_head)
+    hold_commit = versioned or bool(both_rules) or check_policy
+    result = run_git(target, "merge", "--no-ff",
+                     "--no-commit" if hold_commit else "--no-edit",
+                     source_head, check=False)
+    warning_parts = []
+    regenerated = []
+    if result.returncode:
+        conflicts = unmerged_paths(target)
+        unmerged_gen, unmerged_code, unmerged_rules = collision_radar.partition_generated_paths(conflicts, rules)
+        if conflicts and not unmerged_code and unmerged_rules:
+            triggered = list(unmerged_rules)
+            for rule in both_rules:
+                if rule not in triggered:
+                    triggered.append(rule)
+            ok, regenerated, regen_err = collision_radar.regenerate_in_checkout(
+                target, triggered, unmerged_gen, env=git_env())
+            if not ok:
+                _abort_merge_cleanly(target, base_head, unmerged_gen)
+                if git_value(target, "rev-parse", "HEAD") != base_head:
+                    raise MergeError("merge failed and default HEAD was not restored; inspect %s" % target)
+                return regen_err, None
+            if regenerated:
+                warning_parts.append("orc-merge-main: regenerated %s" % describe_paths(regenerated))
+            hold_commit = True
+        else:
+            run_git(target, "merge", "--abort", check=False)
+            if git_value(target, "rev-parse", "HEAD") != base_head:
+                raise MergeError("merge failed and default HEAD was not restored; inspect %s" % target)
+            shown = unmerged_code or conflicts
+            detail = ", ".join(shown) or (result.stderr or result.stdout).strip().splitlines()[-1]
+            return detail, None
+    else:
+        if result.stderr.strip():
+            warning_parts.append(result.stderr.strip())
+        if both_rules:
+            ok, regenerated, regen_err = collision_radar.regenerate_in_checkout(
+                target, both_rules, [], env=git_env())
+            if not ok:
+                _abort_merge_cleanly(target, base_head, both_gen)
+                if git_value(target, "rev-parse", "HEAD") != base_head:
+                    raise MergeError("merge failed and default HEAD was not restored; inspect %s" % target)
+                return regen_err, None
+            if regenerated:
+                warning_parts.append("orc-merge-main: regenerated %s" % describe_paths(regenerated))
+    try:
+        if versioned:
+            rel_warn = commit_release(target, base_head, source_head, run_id, check_policy)
+            if rel_warn:
+                warning_parts.append(rel_warn)
+        elif hold_commit:
+            if check_policy:
+                distribution_policy.check_tree(target, git_value(target, "write-tree"))
+            commit_res = run_git(target, "commit", "--no-edit", check=False)
+            if commit_res.returncode:
+                commit_res = run_git(target, "commit", "--allow-empty", "--no-edit", check=False)
+            if commit_res.returncode:
+                detail = (commit_res.stderr or commit_res.stdout).strip()
+                _abort_merge_cleanly(target, base_head, regenerated)
+                if git_value(target, "rev-parse", "HEAD") != base_head:
+                    raise MergeError("merge commit failed and default HEAD was not restored; inspect %s" % target)
+                raise MergeError("merge commit failed; default branch restored: %s" % detail)
+            if commit_res.stderr.strip():
+                warning_parts.append(commit_res.stderr.strip())
+    except distribution_policy.PolicyError as exc:
+        if not versioned:
+            _abort_merge_cleanly(target, base_head, regenerated)
+            if git_value(target, "rev-parse", "HEAD") != base_head:
+                raise MergeError("merge failed and default HEAD was not restored; inspect %s" % target) from exc
+        raise
+    return None, "\n".join(filter(None, warning_parts)) or None
+
+
+def regenerate_resolution_files(runs_dir, run_id):
+    """Regenerate configured generated files inside an active resolution checkout."""
+    (_meta, attempt, primary, _source, target_branch,
+     _source_branch, source_head, _in_place) = conflict_resolution_state(runs_dir, run_id)
+    if not attempt.resolving:
+        raise MergeError("claim conflict resolution first with --claim-resolution")
+    checkout = default_checkout(primary, target_branch)
+    rules = collision_radar.repo_generated_rules(primary, config_dir=os.environ.get("ORC_CONFIG_DIR"))
+    if not rules:
+        return []
+    conflicts = unmerged_paths(checkout)
+    unmerged_gen, _unmerged_code, unmerged_rules = collision_radar.partition_generated_paths(conflicts, rules)
+    both = collision_radar.both_sides_changed_files(checkout, attempt.target_head, source_head)
+    _both_gen, _both_code, both_rules = collision_radar.partition_generated_paths(both, rules)
+    triggered = list(unmerged_rules)
+    for rule in both_rules:
+        if rule not in triggered:
+            triggered.append(rule)
+    if not triggered:
+        return []
+    ok, regenerated, err = collision_radar.regenerate_in_checkout(
+        checkout, triggered, unmerged_gen, env=git_env())
+    if not ok:
+        raise MergeError(err or "generated file regeneration failed")
+    return regenerated
+
+
+def _merge_participant(target, primary, label, source_head):
+    require_clean(target, "participant %s default" % label)
+    target_head = git_value(target, "rev-parse", "HEAD")
+    if is_ancestor(target, source_head, target_head):
+        return {"id": label, "mergeCommit": target_head, "contained": True}
+    try:
+        conflict_detail, _warn = _merge_branch_with_rules(
+            target, primary, target_head, source_head, versioned=False)
+    except distribution_policy.PolicyError as exc:
+        raise MergeError(f"participant {label}: {exc}\nDefault branch restored.") from exc
+    if conflict_detail is not None:
+        if git_value(target, "rev-parse", "HEAD") != target_head:
+            raise MergeError(
+                "participant %s merge conflicted (%s) and its default branch "
+                "was not restored; inspect %s" % (label, conflict_detail, target))
+        raise MergeError("participant %s merge conflicted: %s" % (label, conflict_detail))
+    return {"id": label, "mergeCommit": git_value(target, "rev-parse", "HEAD"),
+            "contained": False}
+
+
+def merge_participants(runs_dir, run_id, only=None):
+    """Merge every non-primary participant, recording each landing as it happens.
+
+    Recorded one at a time so a later conflict still leaves an accurate trace of
+    what already landed — the whole dispatch fails, but nothing is silently
+    merged without a record. `only` narrows the pass to one participant id for
+    the Ship gate's per-repository Merge; the primary is never in this list.
+    """
+    meta_path = runs_dir / run_id / "meta.json"
+    participants = participant_repositories(read_json(meta_path))
+    if only is not None:
+        participants = [participant for participant in participants
+                        if participant.get("id") == only]
+        if not participants:
+            raise MergeError(
+                "--participant must name a non-primary participant of this run")
+    results = []
+    for participant in participants:
+        result = merge_participant(runs_dir, run_id, participant)
+        results.append(result)
+        # meta.json is live — other writers touch it, so re-read before writing.
+        meta = read_json(meta_path)
+        merges = [record for record in meta.get("participantMerges", [])
+                  if isinstance(record, dict) and record.get("id") != result["id"]]
+        merges.append({"id": result["id"], "mergeCommit": result["mergeCommit"],
+                       "mergedAt": now()})
+        meta["participantMerges"] = merges
+        write_json(meta_path, meta)
+    return results
+
+
+def print_completion_block(runs_dir, run_id, target, merge_head):
+    """Hand the agent the exact Completion block /orc-pr step 11 requires.
+
+    The final terminal message is the one stop with no question tool, so the
+    only thing that reliably gets the run link printed is having its text
+    already on screen. Cosmetic — never fails the merge.
+    """
+    port = os.environ.get("ORC_UI_PORT", "4173")
+    try:
+        branch = read_json(runs_dir / run_id / "meta.json").get("branch") or run_id
+        stamp = git_value(
+            target, "show", "-s", "--format=%cd", "--date=format:%H:%M",
+            merge_head)
+    except (MergeError, OSError):
+        return
+    print("")
+    print("final message must be these two lines (Completion block):")
+    print("[Open in Orc.app](http://127.0.0.1:%s/#%s)" % (port, run_id))
+    print("")
+    # `<status dot>` rather than the emoji itself: the template is a shape to
+    # copy, and a literal dot here would be a second green line on screen
+    # competing with the one the agent actually writes.
+    print("<status dot> Merged %s to main (%s) · %s — <one-line what changed>" % (
+        branch, merge_head[:7], stamp))
+
+
+MERGE_LOCK_WAIT_SECONDS = 30.0
+
+
+@contextlib.contextmanager
+def merge_lock(runs_dir, target_repo, timeout=MERGE_LOCK_WAIT_SECONDS):
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    with lock_path(runs_dir, target_repo).open("a+") as handle:
+        # Every other holder of this lock — orc-ui's run_mutation_lock on each
+        # running instance — takes it for milliseconds, so failing on the first
+        # collision turned routine contention into a dispatch error the queue
+        # then had to be nursed out of. Poll rather than a blocking LOCK_EX:
+        # flock has no timeout, and a merge that waits forever is worse than
+        # one that says the repository is busy.
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise MergeError(
+                        "another local merge operation is running") from exc
+                time.sleep(0.1)
+        yield
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-merge-main")
+    parser.add_argument("run_id")
+    parser.add_argument("--claim-token")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--claim-resolution", action="store_true")
+    action.add_argument("--release-resolution", action="store_true")
+    action.add_argument("--regenerate-generated", action="store_true",
+                        help="run per-project generated-file rules in an active conflict resolution")
+    action.add_argument("--participant", metavar="ID",
+                        help="land one non-primary participant repository only")
+    args = parser.parse_args(argv)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id):
+        parser.error("run_id is unsafe")
+    if args.claim_token and (args.claim_resolution or args.release_resolution
+                             or args.regenerate_generated or args.participant):
+        parser.error("--claim-token cannot be combined with resolution or "
+                     "participant operations")
+    runs_dir = Path(os.environ.get("ORC_RUNS_DIR", "~/.orc/runs")).expanduser().resolve()
+    target = old_head = None
+    try:
+        if read_json(runs_dir / args.run_id / "meta.json").get("lifecycleVersion") not in (3, 4):
+            raise MergeError("retired runs are read-only; start a fresh run")
+        target = target_repo_for(runs_dir, args.run_id)
+        # The participant path takes the primary lock too: lock order is always
+        # primary -> participant, and a crossed pair of runs must keep failing
+        # on the timeout rather than deadlocking.
+        with merge_lock(runs_dir, target):
+            old_head = default_branch_head(target)
+            if args.participant:
+                for landing in merge_participants(
+                        runs_dir, args.run_id, only=args.participant):
+                    print("merged participant %s at %s%s" % (
+                        landing["id"], landing["mergeCommit"],
+                        " (already merged)" if landing["contained"] else ""))
+                return 0
+            if args.claim_resolution:
+                tx = claim_conflict_resolution(runs_dir, args.run_id)
+                print("claimed conflict resolution for %s at %s" % (
+                    args.run_id, tx.source_head))
+                return 0
+            if args.release_resolution:
+                release_conflict_resolution(runs_dir, args.run_id)
+                print("released conflict resolution for %s" % args.run_id)
+                return 0
+            if args.regenerate_generated:
+                regenerated = regenerate_resolution_files(runs_dir, args.run_id)
+                print("regenerated files for %s: %s" % (
+                    args.run_id, ", ".join(regenerated) if regenerated else "none matched"))
+                return 0
+            consent = MergeQueue(runs_dir, target).consent(args.run_id)
+            push_after, close_after, settle_after = consent.push, consent.close, consent.settle
+            # Non-primary repositories first: a conflict there must stop the
+            # dispatch while the primary is still untouched.
+            for landing in merge_participants(runs_dir, args.run_id):
+                print("merged participant %s at %s%s" % (
+                    landing["id"], landing["mergeCommit"],
+                    " (already merged)" if landing["contained"] else ""))
+            merge_head, was_contained = merge_main(
+                runs_dir, args.run_id, args.claim_token, post_merge=push_after)
+    except MergeError as exc:
+        print("orc-merge-main: %s" % exc, file=sys.stderr)
+        if target:
+            start_desktop_update(target, old_head)
+        return 1
+    # Push before printing anything: a restarted orc-ui has closed our pipes.
+    # The merge is committed whatever the push does; a failed push leaves the
+    # merged Ship page's Push to origin button to retry.
+    push_error = push_default_branch(target) if push_after else None
+    if push_error:
+        push_error = push_after_origin_moved(runs_dir, target, push_error)
+    tag_result = None
+    if push_after and not push_error and not was_contained \
+            and is_orc_repository(target):
+        release = read_json(runs_dir / args.run_id / "meta.json").get("releaseVersion")
+        if isinstance(release, str) and release_version.parse(release):
+            tag_result = tag_release(target, merge_head, release, run_id=args.run_id)
+    # Keep Merge and push's consent through push failures so a later retry can finish it.
+    close_error = None
+    if close_after:
+        close_error = close_run_pane(runs_dir, args.run_id,
+                                    push_pending=push_error is not None)
+    if push_after:
+        # A failed push keeps the run listed: its Push to origin button retries.
+        clear_post_merge_pending(runs_dir, args.run_id,
+                                 settle=settle_after and push_error is None,
+                                 # A merge already on main still deploys when this push publishes it.
+                                 deploy="yeet" if settle_after else "merge-and-push",
+                                 pushed=push_error is None)
+    note =" (already merged; metadata verified)" if was_contained else ""
+    print("merged %s to main at %s%s" % (args.run_id, merge_head, note))
+    if push_after:
+        print("push after merge: %s" % (push_error or "pushed to origin"))
+    if settle_after and push_error is None:
+        print("settle after merge: queued")
+    if tag_result:
+        print("release tag: %s" % tag_result)
+    if close_after:
+        print("close after merge: %s" % (close_error or "headless session finished"))
+    print_completion_block(runs_dir, args.run_id, target, merge_head)
+    sys.stdout.flush()
+    start_desktop_update(target, old_head)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

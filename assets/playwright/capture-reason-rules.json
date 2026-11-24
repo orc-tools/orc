@@ -1,0 +1,5 @@
+{
+  "framingTerms": ["crop", "clip", "focus", "focused", "padding", "padded", "frame", "framing"],
+  "limitationTerms": ["cannot", "can't", "unable", "insufficient", "unsuitable", "fail", "lose", "omit", "hide", "miss", "cut off", "does not", "doesn't", "would not", "exclude", "span"],
+  "contextTerms": ["relationship", "context", "backdrop", "underlying", "distant", "multiple", "several", "across", "between", "surrounding", "whole", "shell", "layout", "edge", "overflow", "stack", "relative", "alongside", "both"]
+}

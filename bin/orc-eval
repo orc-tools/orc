@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def load(path):
+    return json.loads(Path(path).read_text())
+
+
+def write(path, value):
+    with Path(path).open('x') as stream:
+        stream.write(json.dumps(value, indent=2) + '\n')
+
+
+def curate(packet, finding_id, split, prompt, expected):
+    matches = [f for f in packet['findings'] if f['id'] == finding_id]
+    if len(matches) != 1 or split not in ('development', 'holdout') or not prompt.strip():
+        raise ValueError('select one unique finding, a valid split and a nonempty prompt')
+    source = {'pr': packet['pr'], 'finding': matches[0], 'packetSha256': digest(packet)}
+    return {'id': digest(source)[:24], 'split': split, 'prompt': prompt,
+            'expected': expected, 'source': source}
+
+
+def validate(cases, baseline, candidate):
+    if not cases or set(baseline) != {'model', 'instruction'} or set(candidate) != set(baseline):
+        raise ValueError('cases and model/instruction configurations are required')
+    if not all(isinstance(v, str) and v.strip() for v in [*baseline.values(), *candidate.values()]):
+        raise ValueError('model and instruction must be nonempty strings')
+    changed = [key for key in baseline if baseline[key] != candidate[key]]
+    if len(changed) != 1:
+        raise ValueError('change exactly one model or instruction')
+    ids, prompts = set(), set()
+    for case in cases:
+        if case['id'] in ids or digest(case['prompt']) in prompts:
+            raise ValueError('duplicate case or prompt across evaluation splits')
+        if case['split'] not in ('development', 'holdout'):
+            raise ValueError('invalid case split')
+        if not isinstance(case['expected'], str) or not isinstance(case['prompt'], str) or not case['prompt'].strip():
+            raise ValueError('prompt and expected output must be strings')
+        ids.add(case['id'])
+        prompts.add(digest(case['prompt']))
+    if {c['split'] for c in cases} != {'development', 'holdout'}:
+        raise ValueError('both development and holdout cases are required')
+    return changed[0]
+
+
+def compare(cases, baseline, candidate, adapter, trials=1, attempts=1, timeout=60):
+    changed = validate(cases, baseline, candidate)
+    if not 1 <= trials <= 100 or not 1 <= attempts <= 10 or not 0 < timeout <= 3600:
+        raise ValueError('trials 1..100, attempts 1..10 and timeout 0..3600 required')
+    executable = str(Path(adapter).resolve(strict=True))
+    rows = []
+    for case in cases:
+        for trial in range(trials):
+            arms = [('baseline', baseline), ('candidate', candidate)]
+            if trial % 2:
+                arms.reverse()
+            for arm, config in arms:
+                history = []
+                for attempt in range(attempts):
+                    request = {'prompt': case['prompt'], **config, 'trial': trial, 'attempt': attempt}
+                    started = time.monotonic()
+                    response, error = None, None
+                    try:
+                        with tempfile.TemporaryDirectory(prefix='orc-eval-') as cwd:
+                            done = subprocess.run([executable], input=json.dumps(request), text=True,
+                                                  capture_output=True, cwd=cwd, timeout=timeout)
+                        if done.returncode:
+                            raise ValueError('adapter exited %d: %s' % (done.returncode, done.stderr[:500]))
+                        response = json.loads(done.stdout)
+                        if not isinstance(response, dict) or not isinstance(response.get('output'), str):
+                            raise ValueError('adapter must return a string output')
+                        tokens = response.get('tokens')
+                        if tokens is not None and (type(tokens) is not int or tokens < 0):
+                            raise ValueError('tokens must be a nonnegative integer or absent')
+                    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                        error = str(exc)
+                        response = None
+                    correct = error is None and response['output'] == case['expected']
+                    history.append({'correct': correct, 'response': response, 'error': error,
+                                    'seconds': time.monotonic() - started})
+                    if correct:
+                        break
+                rows.append({'caseId': case['id'], 'split': case['split'], 'trial': trial,
+                             'arm': arm, 'correct': correct, 'attempts': history})
+    summaries = {}
+    for split in ('development', 'holdout'):
+        summaries[split] = {}
+        for arm in ('baseline', 'candidate'):
+            selected = [r for r in rows if r['split'] == split and r['arm'] == arm]
+            history = [a for r in selected for a in r['attempts']]
+            token_values = [(a['response'] or {}).get('tokens') for a in history]
+            summaries[split][arm] = {
+                'cases': len(selected), 'correct': sum(r['correct'] for r in selected),
+                'retries': sum(len(r['attempts']) - 1 for r in selected),
+                'seconds': sum(a['seconds'] for a in history),
+                'tokens': sum(token_values) if all(v is not None for v in token_values) else None}
+    return {'schemaVersion': 1, 'changed': changed, 'cases': cases,
+            'baseline': baseline, 'candidate': candidate,
+            'adapter': {'path': executable, 'sha256': hashlib.sha256(Path(executable).read_bytes()).hexdigest()},
+            'limits': {'trials': trials, 'attempts': attempts, 'timeout': timeout},
+            'results': rows, 'summary': summaries, 'adoption': 'requires-explicit-evidence-review'}
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Curate review findings and compare one workflow change locally.')
+    commands = parser.add_subparsers(dest='command', required=True)
+    c = commands.add_parser('curate')
+    c.add_argument('--packet', required=True)
+    c.add_argument('--finding', required=True)
+    c.add_argument('--split', choices=['development', 'holdout'], required=True)
+    c.add_argument('--prompt-file', required=True)
+    c.add_argument('--expected-file', required=True)
+    c.add_argument('--out', required=True)
+    c = commands.add_parser('compare')
+    c.add_argument('--case', action='append', required=True)
+    c.add_argument('--baseline', required=True)
+    c.add_argument('--candidate', required=True)
+    c.add_argument('--adapter', required=True)
+    c.add_argument('--trials', type=int, default=1)
+    c.add_argument('--attempts', type=int, default=1)
+    c.add_argument('--timeout', type=float, default=60)
+    c.add_argument('--out', required=True)
+    c = commands.add_parser('review')
+    c.add_argument('--evidence', required=True)
+    c.add_argument('--reviewer', required=True)
+    c.add_argument('--decision', choices=['accept', 'reject'], required=True)
+    c.add_argument('--reason', required=True)
+    c.add_argument('--out', required=True)
+    args = parser.parse_args()
+    try:
+        if args.command == 'curate':
+            result = curate(load(args.packet), args.finding, args.split,
+                            Path(args.prompt_file).read_text(), Path(args.expected_file).read_text())
+        elif args.command == 'compare':
+            result = compare([load(p) for p in args.case], load(args.baseline), load(args.candidate),
+                             args.adapter, args.trials, args.attempts, args.timeout)
+        else:
+            evidence = load(args.evidence)
+            if evidence.get('adoption') != 'requires-explicit-evidence-review' or not args.reason.strip() or not args.reviewer.strip():
+                raise ValueError('valid comparison evidence, named reviewer and reason required')
+            result = {'schemaVersion': 1, 'evidenceSha256': digest(evidence),
+                      'reviewer': args.reviewer, 'decision': args.decision, 'reason': args.reason,
+                      'workflowChanged': False}
+        write(args.out, result)
+        print(args.out)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        parser.exit(1, 'orc-eval: %s\n' % exc)
+
+
+if __name__ == '__main__':
+    main()

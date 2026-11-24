@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Rebuild tests/durations.txt from bin/test's timing records.
+
+Each Python test file gets the median of its last five passing runs that were
+not reused. A sharded file's shards are summed within each bin/test invocation
+first, and only invocations where every shard passed count. The header comment
+block, existing shard counts, and files with no records (at their old value)
+are kept; the table is written slowest-first.
+
+Usage: bin/orc-test-durations [--records PATH] [--durations PATH] [--dry-run]
+"""
+
+import argparse
+import json
+import os
+import re
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SAMPLES = 5
+JOB = re.compile(r"^tests/(test_[^/#]+\.py)(?:#(\d+)of(\d+))?$")
+
+
+def default_records():
+    if os.environ.get("ORC_TEST_RECORDS"):
+        return Path(os.environ["ORC_TEST_RECORDS"])
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return (ROOT / result.stdout.strip()).resolve() / "orc/test-records.jsonl"
+
+
+def read_records(path):
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and record.get("schema") == 1:
+                yield record
+
+
+def samples_by_file(records):
+    """Return {file: [seconds, ...]}, one sample per run, oldest first."""
+    # Each sample is (position of its first record, file, seconds), so a file
+    # that switched between whole and sharded runs keeps its true run order.
+    whole = []
+    sharded = {}
+    for position, record in enumerate(records):
+        if record.get("layer") != "python":
+            continue
+        match = JOB.match(str(record.get("job", "")))
+        if not match:
+            continue
+        name, index, count = match.groups()
+        status = record.get("status")
+        try:
+            seconds = float(record.get("seconds"))
+        except (TypeError, ValueError):
+            continue
+        if index is None:
+            if status == "pass":
+                whole.append((position, name, seconds))
+            continue
+        group = sharded.setdefault((name, record.get("invocation")), {
+            "position": position, "count": int(count), "seen": {}, "failed": False,
+        })
+        if status == "pass" and int(count) == group["count"]:
+            group["seen"][int(index)] = seconds
+        else:
+            group["failed"] = True
+    runs = list(whole)
+    for (name, _invocation), group in sharded.items():
+        if not group["failed"] and len(group["seen"]) == group["count"]:
+            runs.append((group["position"], name, sum(group["seen"].values())))
+    samples = {}
+    for _position, name, seconds in sorted(runs):
+        samples.setdefault(name, []).append(seconds)
+    return samples
+
+
+def parse_table(text):
+    lines = text.splitlines()
+    header = []
+    for line in lines:
+        if line.strip() and not line.lstrip().startswith("#"):
+            break
+        header.append(line)
+    table = {}
+    for line in lines[len(header):]:
+        fields = line.split()
+        if not fields or fields[0].startswith("#") or len(fields) < 2:
+            continue
+        try:
+            seconds = float(fields[0])
+        except ValueError:
+            continue
+        shards = fields[2] if len(fields) > 2 and fields[2].isdigit() else None
+        table.setdefault(fields[1], (seconds, shards))
+    return header, table
+
+
+def render(header, table, samples):
+    rows = dict(table)
+    for name, values in samples.items():
+        recent = values[-SAMPLES:]
+        shards = rows.get(name, (None, None))[1]
+        rows[name] = (statistics.median(recent), shards)
+    ordered = sorted(rows.items(), key=lambda item: (-item[1][0], item[0]))
+    body = []
+    for name, (seconds, shards) in ordered:
+        line = f"{seconds:.1f} {name}"
+        if shards:
+            line += f" {shards}"
+        body.append(line)
+    return "".join(line + "\n" for line in header + body)
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(
+        prog="bin/orc-test-durations",
+        description=__doc__.strip().split("\n\n")[0],
+    )
+    parser.add_argument("--records", type=Path,
+                        help="records file (default: ORC_TEST_RECORDS, else "
+                             "<git-common-dir>/orc/test-records.jsonl)")
+    parser.add_argument("--durations", type=Path,
+                        default=ROOT / "tests/durations.txt",
+                        help="table to rewrite (default: tests/durations.txt)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the new table instead of writing it")
+    args = parser.parse_args(argv)
+
+    records = args.records or default_records()
+    if records is None or not records.is_file():
+        print(f"ERROR no test records at {records}; run bin/test in a git "
+              "checkout first", file=sys.stderr)
+        return 2
+    try:
+        current = args.durations.read_text()
+    except OSError as error:
+        print(f"ERROR cannot read {args.durations}: {error}", file=sys.stderr)
+        return 2
+    header, table = parse_table(current)
+    output = render(header, table, samples_by_file(read_records(records)))
+    if args.dry_run:
+        sys.stdout.write(output)
+    else:
+        args.durations.write_text(output)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,16 @@
+@media (max-width: 700px) {
+  /* iOS 26 blurs a band up to about 38px deep below the status bar, over the
+     page and out of its reach. The shell's top controls sit 7px into the page,
+     so 32px more keeps them below that band. With no top inset there is no
+     blur and no extra gap. The Orc iOS app (ios/) switches that blur off and
+     marks the page, so there the controls sit right under the status bar. */
+  :root { --orc-safe-top: calc(env(safe-area-inset-top) + min(env(safe-area-inset-top), 32px)); }
+  :root.orc-ios-app { --orc-safe-top: env(safe-area-inset-top); }
+  body { box-sizing: border-box; padding-top: var(--orc-safe-top); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-bottom: env(safe-area-inset-bottom); }
+  #run-sidebar { padding-top: var(--orc-safe-top); padding-left: env(safe-area-inset-left); box-sizing: border-box; }
+  /* The footer keeps its buttons above the home indicator itself, so a theme
+     that paints the footer paints down to the screen's edge. */
+  #run-sidebar > #sidebar-footer { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+}
+
+.ticket-offline-link { color: var(--accent); min-height: 44px; display: inline-flex; align-items: center; font-size: 14px; margin-left: auto; }

@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Validate capture metadata for screenshots authored by current Orc QA runs."""
+
+import json
+import math
+import os
+import sys
+
+
+USAGE = "usage: orc-validate-shots --strict <shots-dir|manifest.json>"
+ALLOWED_METHODS = ("focused", "viewport", "full-page")
+STRATEGY_FIELDS = ("method", "target", "padding", "viewport", "setup")
+RULES_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+    "assets", "playwright", "capture-reason-rules.json",
+)
+with open(RULES_PATH, encoding="utf-8") as rules_file:
+    REASON_RULES = json.load(rules_file)
+
+
+def is_number(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def validate_bounds(value, field, where, errors):
+    if not isinstance(value, dict):
+        errors.append(f"{where}.{field} must be an object")
+        return False
+    valid = True
+    for dimension in ("x", "y", "width", "height"):
+        number = value.get(dimension)
+        if not is_number(number):
+            errors.append(f"{where}.{field}.{dimension} must be a finite number")
+            valid = False
+        elif dimension in ("width", "height") and number <= 0:
+            errors.append(f"{where}.{field}.{dimension} must be greater than zero")
+            valid = False
+    return valid
+
+
+def validate_viewport(value, where, errors):
+    if not isinstance(value, dict):
+        errors.append(f"{where}.viewport must be an object")
+        return
+    for dimension in ("width", "height"):
+        number = value.get(dimension)
+        if not is_number(number) or number <= 0:
+            errors.append(
+                f"{where}.viewport.{dimension} must be a finite number greater than zero"
+            )
+
+
+def invalid_exception_reason(reason):
+    if not isinstance(reason, str) or not reason.strip():
+        return True
+    normalized = reason.lower().replace("’", "'")
+    return any(
+        not any(term in normalized for term in REASON_RULES[field])
+        for field in ("framingTerms", "limitationTerms", "contextTerms")
+    )
+
+
+def validate_frame(frame, where, errors):
+    if not isinstance(frame, dict):
+        errors.append(f"{where} must be an object")
+        return
+
+    version = frame.get("captureVersion")
+    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
+        errors.append(f"{where}.captureVersion must equal 1")
+
+    method = frame.get("method")
+    if method not in ALLOWED_METHODS:
+        allowed = ", ".join(ALLOWED_METHODS)
+        errors.append(f"{where}.method must be one of: {allowed}")
+
+    target = frame.get("target")
+    if not isinstance(target, str) or not target.strip():
+        errors.append(f"{where}.target must be a non-empty string")
+
+    if "reason" not in frame:
+        errors.append(f"{where}.reason is required")
+    elif method == "focused":
+        reason = frame["reason"]
+        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
+            errors.append(f"{where}.reason must be null or a non-empty string")
+    elif method in ("viewport", "full-page") and invalid_exception_reason(frame["reason"]):
+        errors.append(
+            f"{where}.reason must explain why a padded crop cannot show the change"
+        )
+
+    if "padding" not in frame:
+        errors.append(f"{where}.padding is required")
+    elif method == "focused":
+        padding = frame["padding"]
+        if not is_number(padding) or padding < 0:
+            errors.append(f"{where}.padding must be a non-negative number")
+    elif frame["padding"] is not None:
+        errors.append(f"{where}.padding must be null for {method} captures")
+
+    target_valid = validate_bounds(frame.get("targetBounds"), "targetBounds", where, errors)
+    image_valid = validate_bounds(frame.get("imageBounds"), "imageBounds", where, errors)
+    validate_viewport(frame.get("viewport"), where, errors)
+
+    if "setup" in frame:
+        setup = frame["setup"]
+        if not isinstance(setup, str) or not setup.strip():
+            errors.append(f"{where}.setup must be a non-empty string when present")
+
+    if method == "viewport" and target_valid and image_valid:
+        target_bounds = frame["targetBounds"]
+        image_bounds = frame["imageBounds"]
+        visible_width = max(0, min(
+            target_bounds["x"] + target_bounds["width"],
+            image_bounds["x"] + image_bounds["width"],
+        ) - max(target_bounds["x"], image_bounds["x"]))
+        visible_height = max(0, min(
+            target_bounds["y"] + target_bounds["height"],
+            image_bounds["y"] + image_bounds["height"],
+        ) - max(target_bounds["y"], image_bounds["y"]))
+        ratio = (
+            visible_width
+            * visible_height
+            / (image_bounds["width"] * image_bounds["height"])
+        )
+        if ratio < 0.20:
+            errors.append(
+                f"{where}: target fills {ratio * 100:.1f}% of viewport; minimum is 20%"
+            )
+
+
+def validate_file_path(value, field, where, shots_dir, errors, nullable=False):
+    if value is None and nullable:
+        return
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{where}.{field} must be a non-empty relative path")
+        return
+
+    normalized = os.path.normpath(value)
+    candidate = os.path.realpath(os.path.join(shots_dir, normalized))
+    root = os.path.realpath(shots_dir)
+    try:
+        inside = os.path.commonpath((root, candidate)) == root
+    except ValueError:
+        inside = False
+    if os.path.isabs(value) or normalized == ".." or normalized.startswith("../") or not inside:
+        errors.append(f"{where}.{field} path must stay inside shots directory: {value}")
+        return
+    if not os.path.isfile(candidate):
+        errors.append(f"{where}.{field} file does not exist: {value}")
+
+
+def validate_entry(entry, index, shots_dir, errors):
+    where = f"entry[{index}]"
+    if not isinstance(entry, dict):
+        errors.append(f"{where} must be an object")
+        return
+
+    validate_file_path(entry.get("before"), "before", where, shots_dir, errors, nullable=True)
+    validate_file_path(entry.get("after"), "after", where, shots_dir, errors)
+    # The plan's mockup this flow was built to match, shown beside `after`.
+    if "mockup" in entry:
+        validate_file_path(entry.get("mockup"), "mockup", where, shots_dir, errors)
+
+    capture = entry.get("capture")
+    if not isinstance(capture, dict):
+        errors.append(f"{where}.capture must be an object")
+        return
+
+    before_path = entry.get("before")
+    before_capture = capture.get("before")
+    after_capture = capture.get("after")
+    if before_path is None:
+        if before_capture is not None:
+            errors.append(f"{where}.capture.before must be null when before is null")
+    else:
+        validate_frame(before_capture, f"{where}.capture.before", errors)
+    validate_frame(after_capture, f"{where}.capture.after", errors)
+
+    if before_path is not None and isinstance(before_capture, dict) and isinstance(after_capture, dict):
+        fields = STRATEGY_FIELDS
+        # `target` describes the view in prose a branch may reword; the stable
+        # view id says whether both sides framed the same thing.
+        if "view" in before_capture and "view" in after_capture:
+            fields = tuple("view" if field == "target" else field for field in STRATEGY_FIELDS)
+        for field in fields:
+            if before_capture.get(field) != after_capture.get(field):
+                errors.append(f"{where} before/after {field} must match")
+
+
+def validate_manifest(manifest, shots_dir, valid_labels=None):
+    """Collect every error. `valid_labels` receives the labels of clean entries.
+
+    A caller that only needs one usable after-state (Present's Ship card) reads
+    those labels, so one malformed sibling entry no longer hides good captures.
+    """
+    if not isinstance(manifest, list):
+        return ["manifest root must be an array"]
+    errors = []
+    labels = set()
+    for index, entry in enumerate(manifest):
+        entry_errors = []
+        label = entry.get("label") if isinstance(entry, dict) else None
+        if isinstance(entry, dict):
+            if not isinstance(label, str) or not label.strip():
+                entry_errors.append(f"entry[{index}].label must be a non-empty string")
+            elif label in labels:
+                entry_errors.append(f"entry[{index}].label must be unique: {label}")
+            else:
+                labels.add(label)
+        validate_entry(entry, index, shots_dir, entry_errors)
+        if not entry_errors and valid_labels is not None:
+            valid_labels.append(label)
+        errors.extend(entry_errors)
+    return errors
+
+
+def resolve_manifest_path(path):
+    if os.path.isdir(path):
+        return os.path.join(path, "manifest.json"), path
+    return path, os.path.dirname(os.path.abspath(path))
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) != 2 or argv[0] != "--strict":
+        print(USAGE, file=sys.stderr)
+        return 2
+
+    manifest_path, shots_dir = resolve_manifest_path(argv[1])
+    try:
+        with open(manifest_path, encoding="utf-8") as source:
+            manifest = json.load(source)
+    except FileNotFoundError:
+        print(f"orc-validate-shots: manifest not found: {manifest_path}", file=sys.stderr)
+        return 2
+    except (OSError, json.JSONDecodeError) as error:
+        kind = "invalid JSON" if isinstance(error, json.JSONDecodeError) else "cannot read manifest"
+        print(f"orc-validate-shots: {kind}: {manifest_path}: {error}", file=sys.stderr)
+        return 2
+
+    # legacy shape: some runs wrote {"shots": [...]} instead of a bare array
+    if isinstance(manifest, dict) and isinstance(manifest.get("shots"), list):
+        manifest = manifest["shots"]
+
+    valid_labels = []
+    errors = validate_manifest(manifest, shots_dir, valid_labels)
+    for error in errors:
+        print(f"orc-validate-shots: {error}", file=sys.stderr)
+    if not errors:
+        count = len(manifest)
+        noun = "capture" if count == 1 else "captures"
+        print(f"shots valid: {count} {noun}")
+    if valid_labels:
+        print("valid entries: " + ", ".join(valid_labels))
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

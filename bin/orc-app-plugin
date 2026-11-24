@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Install and manage trusted Orc application plugins (not harness plugins)."""
+
+import argparse
+import json
+from pathlib import Path
+import re
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ui'))
+from app_plugins import API_VERSION, HOST_THEME_IDS, IDENTIFIER, PluginError, Registry, trust
+import theme_surface
+
+
+def print_check(report):
+    """``orc-app-plugin check`` for a person: what the package is, what
+    stops it, and what is only a warning."""
+    if report['id']:
+        tier = ('no code: styles and pictures only' if report['trust'] == 'no-code'
+                else 'runs code: it runs with your permissions')
+        print('%s (%s) %s — %s' % (report['name'], report['id'], report['version'], tier))
+    for error in report['errors']:
+        print('  ✗ ' + error)
+    for warning in report['warnings']:
+        print('  ! ' + warning)
+    if report['errors']:
+        print('Not ready: fix the ✗ lines above.')
+    else:
+        print('Ready. Try it with: orc-app-plugin link ' + report['path'])
+
+
+def code_notice(result, identifier):
+    """One line on stderr when what was just installed runs code."""
+    row = next((row for row in result['plugins'] if row['id'] == identifier), None)
+    if row and row['trust'] == 'runs-code' and not row['bundled']:
+        print('orc-app-plugin: %s runs code with your permissions (scene, frontend or backend).'
+              ' Install only packages you trust.' % row['name'], file=sys.stderr)
+
+
+def scaffold_theme(folder, registry, *, identifier=None, name=None, description=None):
+    target = Path(folder).expanduser().resolve()
+    slug = identifier or re.sub(r'[^a-z0-9]+', '-', target.name.lower()).strip('-')
+    if slug and not slug[0].isalpha():
+        slug = 'theme-' + slug
+    if not slug or not IDENTIFIER.fullmatch(slug):
+        raise PluginError('Invalid theme id %r; pass --id <lowercase-id>' % (identifier or target.name))
+    if slug in HOST_THEME_IDS or slug in registry.catalog():
+        raise PluginError('Theme id %r is already reserved or bundled; pick another --id' % slug)
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        raise PluginError('Target folder already exists and is not empty: ' + str(target))
+    label = (name or slug.replace('-', ' ').title()).strip()
+    blurb = (description or ('Custom %s palette for Orc.' % label)).strip()
+    target.mkdir(parents=True, exist_ok=True)
+    manifest_data = {
+        'apiVersion': API_VERSION,
+        'id': slug,
+        'name': label,
+        'version': '0.1.0',
+        'description': blurb,
+        'contributes': {
+            'theme': {
+                'id': slug,
+                'label': label,
+                'description': blurb,
+                'css': 'theme.css',
+                'favicon': 'favicon.svg',
+                'announce': {
+                    'on': '%s mode on' % label,
+                    'off': '%s mode off' % label,
+                },
+            },
+        },
+    }
+    day = (
+        '  --bg: #f7f8f3;\n'
+        '  --panel: #ffffff;\n'
+        '  --border: #b5bda8;\n'
+        '  --text: #283024;\n'
+        '  --heading: #161d13;\n'
+        '  --muted: #5c6655;\n'
+        '  --accent: #25634d;\n'
+        '  --accent-soft: #dfece5;\n'
+        '  --chip: #e6ece2;\n'
+        '  --code: #eef2ea;\n'
+        '  --green: #2d6a31;\n'
+        '  --yellow: #7a580f;\n'
+        '  --red: #a62c38;\n'
+        '  --purple: #64458a;\n'
+        '  --cyan: #1b6468;\n'
+        '  --orange: #8c4a19;'
+    )
+    night = (
+        '  --bg: #151a16;\n'
+        '  --panel: #1c231e;\n'
+        '  --border: #3a473d;\n'
+        '  --text: #d7e0d6;\n'
+        '  --heading: #eff5ee;\n'
+        '  --muted: #8c998c;\n'
+        '  --accent: #7fd4b2;\n'
+        '  --accent-soft: #22332b;\n'
+        '  --chip: #242d26;\n'
+        '  --code: #1a211c;\n'
+        '  --green: #97cf84;\n'
+        '  --yellow: #dfbe6b;\n'
+        '  --red: #ef8d8d;\n'
+        '  --purple: #c3a6e3;\n'
+        '  --cyan: #84cbc7;\n'
+        '  --orange: #eba26c;'
+    )
+    css = (
+        '/* %s — Orc theme package (API 1). */\n'
+        ':root[data-%s] {\n'
+        '%s\n'
+        '  --run-row-radius: 10px;\n'
+        '  --tab-radius: 8px;\n'
+        '  --composer-radius: 14px;\n'
+        '  --chat-bubble-radius: 14px;\n'
+        '  --card-radius: 12px;\n'
+        '  --dialog-radius: 14px;\n'
+        '}\n\n'
+        ':root[data-%s][data-theme="dark"] {\n'
+        '%s\n'
+        '}\n\n'
+        '@media (prefers-color-scheme: dark) {\n'
+        '  :root[data-%s]:not([data-theme="light"]) {\n'
+        '%s\n'
+        '  }\n'
+        '}\n\n'
+        ':root[data-%s] [data-part="sidebar-head"] {\n'
+        '  border-bottom-color: var(--border);\n'
+        '}\n\n'
+        ':root[data-%s] orc-button::part(button) {\n'
+        '  letter-spacing: 0.01em;\n'
+        '}\n'
+    ) % (label, slug, day, slug, night, slug, night, slug, slug)
+    favicon = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">\n'
+        '  <rect width="64" height="64" rx="14" fill="#1c231e"/>\n'
+        '  <circle cx="32" cy="32" r="16" fill="#7fd4b2"/>\n'
+        '</svg>\n'
+    )
+    (target / 'orc-plugin.json').write_text(json.dumps(manifest_data, indent=2) + '\n')
+    (target / 'theme.css').write_text(css)
+    (target / 'favicon.svg').write_text(favicon)
+    return {
+        'id': slug,
+        'name': label,
+        'path': str(target),
+        'files': ['orc-plugin.json', 'theme.css', 'favicon.svg'],
+        'next': [
+            'orc-app-plugin check ' + str(target),
+            'orc-app-plugin link ' + str(target),
+            'orc-shot agent --theme ' + str(target),
+        ],
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--home', type=Path, default=Path.home(), help='isolated home (defaults to your home)')
+    parser.add_argument('--expected-revision', type=int)
+    commands = parser.add_subparsers(dest='action', required=True)
+    commands.add_parser('list')
+    rules = commands.add_parser('repository-rules', help='list enabled plugin rule files for a Git checkout')
+    rules.add_argument('--repo', required=True, type=Path)
+    guides = commands.add_parser('verification-guides', help='list enabled plugin guides to verifying changes in a Git checkout')
+    guides.add_argument('--repo', required=True, type=Path)
+    install = commands.add_parser('install')
+    install.add_argument('path', nargs='?')
+    install.add_argument('--git')
+    install.add_argument('--subdir')
+    install.add_argument('--ref', default='HEAD')
+    install.add_argument('--disabled', action='store_true')
+    install.add_argument('--adopt-legacy', type=Path)
+    link = commands.add_parser('link', help='use a theme folder in place while you work on it')
+    link.add_argument('path')
+    link.add_argument('--disabled', action='store_true')
+    check = commands.add_parser('check', help='check a package against what Orc promises themes')
+    check.add_argument('path')
+    check.add_argument('--json', action='store_true')
+    scaffold = commands.add_parser('new', help='scaffold a check-clean Orc theme package folder')
+    scaffold.add_argument('path')
+    scaffold.add_argument('--id', dest='theme_id', help='theme & package id (defaults to folder name)')
+    scaffold.add_argument('--name', help='display label (defaults to title-cased id)')
+    scaffold.add_argument('--description', help='short theme description')
+    bundled = commands.add_parser('add')
+    bundled.add_argument('id', help='bundled package id')
+    for action in ('enable', 'disable', 'remove'):
+        commands.add_parser(action).add_argument('id')
+    commands.add_parser('adopt', help='enable, once, bundled packages that took over core behaviour since setup')
+    setup = commands.add_parser('setup')
+    setup.add_argument('--plugins', default='', help='comma-separated optional bundled ids; empty means required only')
+    args = parser.parse_args()
+    if args.action == 'check':
+        report = theme_surface.check_package(args.path)
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print_check(report)
+        sys.exit(1 if report['errors'] else 0)
+    registry = Registry(args.home)
+    revision = args.expected_revision
+    try:
+        if args.action == 'list':
+            result = registry.list()
+        elif args.action == 'repository-rules':
+            result = [str(path) for path in registry.repository_rules(args.repo)]
+        elif args.action == 'verification-guides':
+            result = [str(row['path']) for row in registry.verification_guides(args.repo)]
+        elif args.action == 'new':
+            result = scaffold_theme(args.path, registry, identifier=args.theme_id,
+                                    name=args.name, description=args.description)
+        elif args.action == 'install':
+            options = {'enable': not args.disabled, 'expected_revision': revision, 'adopt_legacy': args.adopt_legacy}
+            if args.git and args.subdir and not args.path:
+                result = registry.install_git(args.git, args.subdir, args.ref, **options)
+            elif args.path and not args.git and not args.subdir:
+                result = registry.install(args.path, **options)
+            else:
+                parser.error('supply a local package path OR --git SOURCE --subdir PACKAGE')
+            code_notice(result, result.get('installedId'))
+        elif args.action == 'link':
+            result = registry.link(args.path, enable=not args.disabled, expected_revision=revision)
+            code_notice(result, result.get('installedId'))
+        elif args.action == 'add':
+            catalog = registry.catalog()
+            if args.id not in catalog:
+                raise PluginError('Unknown bundled plugin id')
+            result = registry.install(catalog[args.id][0], bundled=True, expected_revision=revision)
+        elif args.action in ('enable', 'disable'):
+            result = registry.set_enabled(args.id, args.action == 'enable', revision)
+        elif args.action == 'remove':
+            result = registry.uninstall(args.id, revision)
+        elif args.action == 'adopt':
+            result = registry.adopt_upgrades()
+        else:
+            result = registry.setup([item for item in args.plugins.split(',') if item], revision)
+        print(json.dumps(result, indent=2))
+    except (PluginError, OSError) as error:
+        parser.exit(1, 'orc-app-plugin: ' + str(error) + '\n')
+
+
+if __name__ == '__main__':
+    main()

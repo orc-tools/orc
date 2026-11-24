@@ -1,0 +1,568 @@
+/* Pocket mode: frontend.js sets data-pocket on <html> and this file dresses
+   Orc as a see-through purple handheld. The window is the clear shell, with
+   the circuit board showing through it: traces, gold pads and a screw at each
+   corner of the sidebar. The page is the screen, opaque inside a thin black
+   bezel with a power light. Runs are frosted tiles on the shell, each with a
+   status light, and the tabs and the chat's Send and Stop are the handheld's
+   buttons. By night the backlight is on; by day it is clear plastic in
+   daylight. Text keeps a normal typeface throughout.
+
+   The gate pages load this file too, inlined through string.Template, so keep
+   it free of the dollar sign. They have no sidebar, so the shell and the
+   bezel are scoped to the page that has one and a gate page gets the palette
+   alone.
+
+   Every block below out-specifies the swamp block it replaces. The day block
+   matches at night too, so both night blocks declare again everything it sets
+   per mode, and the rules below read those values instead of repeating
+   themselves per mode. tests/test_pocket_mode.py holds the palettes to the
+   swamp's contrast floors. */
+:root[data-pocket] {
+  color-scheme: light;
+  --bg: #f5f2fc; --panel: #fdfcff; --border: #c4b7e4;
+  --text: #33264f; --heading: #1a1030; --muted: #6f6090; --accent: #6a3fc0;
+  --accent-soft: #e4dbf8; --chip: #e9e3f7; --code: #ece7f8;
+  --green: #197a3c; --yellow: #8a5f00; --red: #c8283c;
+  --purple: #6a3fc0; --cyan: #0f6a7e; --orange: #a8500f;
+  --focus: #6a3fc0;
+  --ready-text: #197a3c;
+  --blue-text: #1763c9;
+  --pocket-on-accent: #ffffff;
+  --pocket-blue: #1763c9;
+  /* The shell: the plastic's colour, the tint laid over the board, and the
+     moulded edge round the window. */
+  --pocket-base: #b79cf2; --pocket-tint: rgb(150 110 255 / .18);
+  --pocket-board: var(--pocket-board-day);
+  --pocket-edge: inset 0 0 0 3px rgb(255 255 255 / .6), inset 0 0 70px rgb(90 40 200 / .35);
+  --pocket-seam: rgb(255 255 255 / .55);
+  /* A frosted tile on the shell. It is opaque, so the board never shows
+     under a run's name. */
+  --pocket-frost: #ffffff; --pocket-frost-line: #a48ddb; --pocket-frost-sel: #ffffff;
+  --pocket-sel-line: #6a3fc0;
+  --pocket-sel-glow: 0 0 0 2px rgb(106 63 192 / .4), 0 5px 16px rgb(70 30 160 / .4);
+  --pocket-led-glow: 0 0 0 2px rgb(26 16 48 / .1);
+  /* The screen's bezel and the light round it. */
+  --pocket-bezel: #17121f;
+  --pocket-screen-glow: 0 0 0 2px rgb(255 255 255 / .55), 0 10px 30px rgb(60 20 140 / .35);
+  /* The handheld's own buttons: translucent purple caps. */
+  --pocket-btn: #7a57dc; --pocket-btn-2: #5f3cc4;
+  --pocket-spark: #6a3fc0; --pocket-gold: #b8862a;
+  --pocket-sans: "Avenir Next", "Helvetica Neue", system-ui, sans-serif;
+  --orc-font-sans: var(--pocket-sans);
+  /* Avenir Next draws its capitals about 1px above a control's middle. A whole
+     pixel, so Chromium's snapping to whole pixels cannot round it away. */
+  --orc-font-sans-nudge: 1px;
+  --pocket-mono: "SF Mono", "JetBrains Mono", ui-monospace, "Menlo", monospace;
+  --orc-radius-sm: 8px; --orc-radius-md: 12px;
+  --pocket-board-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'%3E%3Cg fill='none' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M20 400L20 440L20 460L100 460L80 460' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='80' cy='460' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='80' cy='460' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M40 20L40 60L20 60L20 60' stroke='%236a3fd0' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='20' cy='60' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='60' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M40 460L80 460L20 460L20 460' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='20' cy='460' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='460' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M300 180L300 240L400 340L340 340' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='340' cy='340' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='340' cy='340' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M460 400L460 400L460 400L460 400L460 400' stroke='%236a3fd0' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='460' cy='400' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='400' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M200 400L200 420L280 420' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='280' cy='420' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='280' cy='420' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M460 120L460 120L460 200L460 180' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='460' cy='180' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='180' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M20 240L80 240L20 240L20 240' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='20' cy='240' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='240' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M220 460L220 460L240 440' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='240' cy='440' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='240' cy='440' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M360 420L260 420L320 360' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='320' cy='360' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='320' cy='360' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M380 20L440 20L440 40L460 40' stroke='%236a3fd0' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='460' cy='40' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='40' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M240 220L160 220L60 220L60 160L80 180' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='80' cy='180' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='80' cy='180' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M300 460L320 460L380 460' stroke='%236a3fd0' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='380' cy='460' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='380' cy='460' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M120 100L120 200L200 200L200 240L160 240' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='160' cy='240' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='160' cy='240' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M60 340L60 300L20 300' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='20' cy='300' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='300' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M140 80L140 20L220 20L260 60' stroke='%236a3fd0' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='260' cy='60' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='260' cy='60' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M20 140L120 140L220 240' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='220' cy='240' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='220' cy='240' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M180 60L280 160L360 240L280 240' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='280' cy='240' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='280' cy='240' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M160 440L120 440L120 460L140 440L180 440' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='180' cy='440' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='180' cy='440' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M120 460L120 460L200 380L200 320' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='200' cy='320' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='200' cy='320' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M360 440L360 400L440 400L440 360L460 360' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='460' cy='360' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='360' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M340 200L360 200L440 200L440 140L460 140' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='460' cy='140' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='140' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M200 420L200 440L280 440L220 440L320 440' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='320' cy='440' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='320' cy='440' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M20 340L20 340L20 240' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='20' cy='240' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='240' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M260 180L280 160L340 160L240 160' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='240' cy='160' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='240' cy='160' r='2' fill='%233a2470' stroke='none'/%3E%3Cpath d='M200 40L220 60L300 60' stroke='%236a3fd0' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='300' cy='60' r='5' fill='%23b8862a' opacity='.75' stroke='none'/%3E%3Ccircle cx='300' cy='60' r='2' fill='%233a2470' stroke='none'/%3E%3Cg opacity='.85' stroke='none'%3E%3Cg fill='%23b8862a'%3E%3Crect x='308' y='94' width='4' height='6'/%3E%3Crect x='308' y='130' width='4' height='6'/%3E%3Crect x='317' y='94' width='4' height='6'/%3E%3Crect x='317' y='130' width='4' height='6'/%3E%3Crect x='326' y='94' width='4' height='6'/%3E%3Crect x='326' y='130' width='4' height='6'/%3E%3Crect x='335' y='94' width='4' height='6'/%3E%3Crect x='335' y='130' width='4' height='6'/%3E%3Crect x='344' y='94' width='4' height='6'/%3E%3Crect x='344' y='130' width='4' height='6'/%3E%3C/g%3E%3Crect x='300' y='100' width='60' height='30' rx='3' fill='%233a2470'/%3E%3Ccircle cx='309' cy='109' r='3' fill='%236a3fd0' opacity='.6'/%3E%3C/g%3E%3Cg fill='%23b8862a' opacity='.7' stroke='none'%3E%3Ccircle cx='80' cy='400' r='3.5'/%3E%3Ccircle cx='100' cy='400' r='3.5'/%3E%3Ccircle cx='120' cy='400' r='3.5'/%3E%3Ccircle cx='140' cy='400' r='3.5'/%3E%3C/g%3E%3Cg fill='%234b2a9c' opacity='.5' stroke='none'%3E%3Crect x='78' y='412' width='64' height='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --pocket-board-night: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'%3E%3Cg fill='none' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M20 400L20 440L20 460L100 460L80 460' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='80' cy='460' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='80' cy='460' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M40 20L40 60L20 60L20 60' stroke='%239a6bff' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='20' cy='60' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='60' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M40 460L80 460L20 460L20 460' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='20' cy='460' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='460' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M300 180L300 240L400 340L340 340' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='340' cy='340' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='340' cy='340' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M460 400L460 400L460 400L460 400L460 400' stroke='%239a6bff' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='460' cy='400' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='400' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M200 400L200 420L280 420' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='280' cy='420' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='280' cy='420' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M460 120L460 120L460 200L460 180' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='460' cy='180' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='180' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M20 240L80 240L20 240L20 240' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='20' cy='240' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='240' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M220 460L220 460L240 440' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='240' cy='440' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='240' cy='440' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M360 420L260 420L320 360' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='320' cy='360' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='320' cy='360' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M380 20L440 20L440 40L460 40' stroke='%239a6bff' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='460' cy='40' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='40' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M240 220L160 220L60 220L60 160L80 180' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='80' cy='180' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='80' cy='180' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M300 460L320 460L380 460' stroke='%239a6bff' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='380' cy='460' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='380' cy='460' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M120 100L120 200L200 200L200 240L160 240' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='160' cy='240' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='160' cy='240' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M60 340L60 300L20 300' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='20' cy='300' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='300' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M140 80L140 20L220 20L260 60' stroke='%239a6bff' stroke-width='5' opacity='.55'/%3E%3Ccircle cx='260' cy='60' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='260' cy='60' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M20 140L120 140L220 240' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='220' cy='240' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='220' cy='240' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M180 60L280 160L360 240L280 240' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='280' cy='240' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='280' cy='240' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M160 440L120 440L120 460L140 440L180 440' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='180' cy='440' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='180' cy='440' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M120 460L120 460L200 380L200 320' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='200' cy='320' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='200' cy='320' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M360 440L360 400L440 400L440 360L460 360' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='460' cy='360' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='360' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M340 200L360 200L440 200L440 140L460 140' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='460' cy='140' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='460' cy='140' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M200 420L200 440L280 440L220 440L320 440' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='320' cy='440' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='320' cy='440' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M20 340L20 340L20 240' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='20' cy='240' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='20' cy='240' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M260 180L280 160L340 160L240 160' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='240' cy='160' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='240' cy='160' r='2' fill='%230d0620' stroke='none'/%3E%3Cpath d='M200 40L220 60L300 60' stroke='%239a6bff' stroke-width='2.5' opacity='.55'/%3E%3Ccircle cx='300' cy='60' r='5' fill='%23f0cf7a' opacity='.75' stroke='none'/%3E%3Ccircle cx='300' cy='60' r='2' fill='%230d0620' stroke='none'/%3E%3Cg opacity='.85' stroke='none'%3E%3Cg fill='%23f0cf7a'%3E%3Crect x='308' y='94' width='4' height='6'/%3E%3Crect x='308' y='130' width='4' height='6'/%3E%3Crect x='317' y='94' width='4' height='6'/%3E%3Crect x='317' y='130' width='4' height='6'/%3E%3Crect x='326' y='94' width='4' height='6'/%3E%3Crect x='326' y='130' width='4' height='6'/%3E%3Crect x='335' y='94' width='4' height='6'/%3E%3Crect x='335' y='130' width='4' height='6'/%3E%3Crect x='344' y='94' width='4' height='6'/%3E%3Crect x='344' y='130' width='4' height='6'/%3E%3C/g%3E%3Crect x='300' y='100' width='60' height='30' rx='3' fill='%230d0620'/%3E%3Ccircle cx='309' cy='109' r='3' fill='%239a6bff' opacity='.6'/%3E%3C/g%3E%3Cg fill='%23f0cf7a' opacity='.7' stroke='none'%3E%3Ccircle cx='80' cy='400' r='3.5'/%3E%3Ccircle cx='100' cy='400' r='3.5'/%3E%3Ccircle cx='120' cy='400' r='3.5'/%3E%3Ccircle cx='140' cy='400' r='3.5'/%3E%3C/g%3E%3Cg fill='%23cdb6ff' opacity='.5' stroke='none'%3E%3Crect x='78' y='412' width='64' height='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --pocket-screw: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22'%3E%3Ccircle cx='11' cy='11' r='11' fill='%230d0620' opacity='.8'/%3E%3Ccircle cx='11' cy='11' r='8' fill='%23b9b6c9' opacity='.9'/%3E%3Cpath d='M6 11h10M11 6v10' stroke='%234a4660' stroke-width='2.4'/%3E%3C/svg%3E");
+  /* What is printed on the bezel: the power light and the model's name. */
+  --pocket-power: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='12' viewBox='0 0 70 12'%3E%3Ccircle cx='6' cy='6' r='6' fill='%235cff8a' opacity='.22'/%3E%3Ccircle cx='6' cy='6' r='3.5' fill='%235cff8a'/%3E%3Ctext x='18' y='9.4' font-family='Avenir Next, Helvetica Neue, Arial, sans-serif' font-size='9.5' font-weight='700' letter-spacing='1.5' fill='%23b9b2c9'%3EPOWER%3C/text%3E%3C/svg%3E");
+  --pocket-model: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='170' height='12' viewBox='0 0 170 12'%3E%3Ctext x='170' y='9.4' text-anchor='end' font-family='Avenir Next, Helvetica Neue, Arial, sans-serif' font-size='9.5' font-weight='700' letter-spacing='1.5' fill='%23b9b2c9'%3EORC POCKET COLOUR%3C/text%3E%3C/svg%3E");
+  /* The slanted rubber pill beside Select and Start. */
+  --pocket-pill: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='18' viewBox='0 0 34 18'%3E%3Crect x='3' y='4.5' width='28' height='9' rx='4.5' fill='%235b5470' transform='rotate(-18 17 9)'/%3E%3C/svg%3E");
+  /* The window: two long glints on the plastic, a screw at each corner of
+     the sidebar, the tint, the board and the plastic itself. Fixed, so the
+     sidebar and the margins round the screen show one board. */
+  --pocket-shell:
+    linear-gradient(115deg, transparent 0 8%, rgb(255 255 255 / .16) 8% 11%, transparent 11% 13%, rgb(255 255 255 / .08) 13% 14%, transparent 14%) fixed,
+    linear-gradient(295deg, transparent 0 6%, rgb(255 255 255 / .09) 6% 9%, transparent 9%) fixed,
+    var(--pocket-screw) left 3px top 3px / 22px 22px no-repeat fixed,
+    var(--pocket-screw) left 275px top 3px / 22px 22px no-repeat fixed,
+    var(--pocket-screw) left 3px bottom 3px / 22px 22px no-repeat fixed,
+    var(--pocket-screw) left 275px bottom 3px / 22px 22px no-repeat fixed,
+    linear-gradient(var(--pocket-tint), var(--pocket-tint)) fixed,
+    var(--pocket-board) 0 0 / 480px 480px fixed,
+    var(--pocket-base);
+  accent-color: var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-pocket]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #100c1d; --panel: #1a1430; --border: #3a2e66;
+    --text: #d9cffa; --heading: #ffffff; --muted: #9d8cc8; --accent: #c2a6ff;
+    --accent-soft: #261c48; --chip: #1a1430; --code: #17112b;
+    --green: #6ee79a; --yellow: #ffd45e; --red: #ff7a8a;
+    --purple: #c9a8ff; --cyan: #6fd3e8; --orange: #ffa066;
+    --focus: #c9a8ff;
+    --ready-text: var(--green);
+    --blue-text: #6fb6ff;
+    --pocket-on-accent: #1a1030;
+    --pocket-blue: #6fb6ff;
+    --pocket-base: #1d0b3c; --pocket-tint: rgb(126 72 255 / .3);
+    --pocket-board: var(--pocket-board-night);
+    --pocket-edge: inset 0 0 0 3px rgb(255 255 255 / .22), inset 0 0 60px rgb(40 0 120 / .55);
+    --pocket-seam: rgb(255 255 255 / .22);
+    --pocket-frost: #160930; --pocket-frost-line: #54427f; --pocket-frost-sel: #2f1763;
+    --pocket-sel-line: #c9a8ff;
+    --pocket-sel-glow: 0 0 0 2px rgb(190 150 255 / .45), 0 0 22px rgb(160 110 255 / .55);
+    --pocket-led-glow: 0 0 9px currentColor;
+    --pocket-bezel: #08060e;
+    --pocket-screen-glow: 0 0 0 2px rgb(255 255 255 / .18), 0 10px 30px rgb(10 0 40 / .55), 0 0 34px rgb(150 110 255 / .3);
+    --pocket-btn: #5a3aa8; --pocket-btn-2: #3a2178;
+    --pocket-spark: #c9a8ff; --pocket-gold: #f0cf7a;
+  }
+}
+:root[data-pocket][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #100c1d; --panel: #1a1430; --border: #3a2e66;
+  --text: #d9cffa; --heading: #ffffff; --muted: #9d8cc8; --accent: #c2a6ff;
+  --accent-soft: #261c48; --chip: #1a1430; --code: #17112b;
+  --green: #6ee79a; --yellow: #ffd45e; --red: #ff7a8a;
+  --purple: #c9a8ff; --cyan: #6fd3e8; --orange: #ffa066;
+  --focus: #c9a8ff;
+  --ready-text: var(--green);
+  --blue-text: #6fb6ff;
+  --pocket-on-accent: #1a1030;
+  --pocket-blue: #6fb6ff;
+  --pocket-base: #1d0b3c; --pocket-tint: rgb(126 72 255 / .3);
+  --pocket-board: var(--pocket-board-night);
+  --pocket-edge: inset 0 0 0 3px rgb(255 255 255 / .22), inset 0 0 60px rgb(40 0 120 / .55);
+  --pocket-seam: rgb(255 255 255 / .22);
+  --pocket-frost: #160930; --pocket-frost-line: #54427f; --pocket-frost-sel: #2f1763;
+  --pocket-sel-line: #c9a8ff;
+  --pocket-sel-glow: 0 0 0 2px rgb(190 150 255 / .45), 0 0 22px rgb(160 110 255 / .55);
+  --pocket-led-glow: 0 0 9px currentColor;
+  --pocket-bezel: #08060e;
+  --pocket-screen-glow: 0 0 0 2px rgb(255 255 255 / .18), 0 10px 30px rgb(10 0 40 / .55), 0 0 34px rgb(150 110 255 / .3);
+  --pocket-btn: #5a3aa8; --pocket-btn-2: #3a2178;
+  --pocket-spark: #c9a8ff; --pocket-gold: #f0cf7a;
+}
+
+:root[data-pocket] body { font-family: var(--pocket-sans); }
+/* Form controls take the UA's font rather than inheriting it. Zero
+   specificity so any author font-family wins, which keeps code, diffs and
+   terminals monospace. */
+:where(:root[data-pocket]) :where(button, input, textarea, select) {
+  font-family: var(--pocket-sans);
+}
+:root[data-pocket] :is(h1, h2, h3) { font-family: var(--pocket-sans); }
+:root[data-pocket] ::selection {
+  background: color-mix(in srgb, var(--accent) 34%, var(--panel));
+  color: var(--heading);
+}
+:root[data-pocket] :is(:hover, :focus-within) { scrollbar-color: var(--border) transparent; }
+:root[data-pocket] :is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: var(--border); }
+
+/* The shell is the page that has the sidebar. Its body is the clear plastic,
+   and the sidebar is a window onto it. */
+:root[data-pocket] body:has(> #run-sidebar) {
+  background: var(--pocket-shell);
+  box-shadow: var(--pocket-edge);
+}
+:root[data-pocket] #run-sidebar {
+  background: none;
+  border-right: 2px solid var(--pocket-seam);
+}
+/* On a phone the sidebar is a sheet over the page, so it carries the shell
+   itself. */
+@media (max-width: 700px) {
+  :root[data-pocket] #run-sidebar { background: var(--pocket-shell); border-right: 0; }
+}
+
+/* The page is the screen. It is opaque, so nothing shows behind what you
+   read, and it sits in a black bezel that is thickest along the top, where
+   the power light and the model's name are printed. The bezel is the
+   element's border, drawn by a background layer under it, so the screen
+   needs no wrapper and its corners follow the bezel's. */
+:root[data-pocket] #run-sidebar ~ main { background: var(--bg); }
+@media not all and (max-width: 700px) {
+  :root[data-pocket] #run-sidebar ~ main {
+    margin: 14px 16px 14px 14px;
+    border: solid transparent; border-width: 30px 12px 12px;
+    border-radius: 18px / 36px 36px 18px 18px;
+    background:
+      linear-gradient(var(--bg), var(--bg)) padding-box,
+      var(--pocket-power) left 16px top 9px / 70px 12px no-repeat border-box,
+      var(--pocket-model) right 16px top 9px / 170px 12px no-repeat border-box,
+      linear-gradient(var(--pocket-bezel), var(--pocket-bezel)) border-box;
+    box-shadow: var(--pocket-screen-glow);
+  }
+}
+/* The side panel is a second, smaller screen beside the first. Its bezel is
+   a shadow, so the panel keeps the width it was dragged to. It rises over
+   the effects layer, so a spark never shows over a PR body. On a phone the
+   panel is already a sheet over everything. */
+@media not all and (max-width: 900px) {
+  :root[data-pocket] #run-diff {
+    z-index: 1;
+    margin: 24px 26px 24px 0; border-left: 0; border-radius: 6px;
+    box-shadow: 0 0 0 10px var(--pocket-bezel), 0 0 0 12px var(--pocket-seam), 0 10px 30px 8px rgb(30 10 90 / .4);
+  }
+}
+
+/* Everything in the sidebar is a frosted tile on the shell. */
+:root[data-pocket] :is(#sidebar-head, #search-wrap, #sidebar-status, #merge-selection-bar, #sidebar-usage, #radio-now, #sidebar-footer) {
+  border: 1px solid var(--pocket-frost-line); border-radius: 12px;
+  background: var(--pocket-frost);
+}
+:root[data-pocket] #sidebar-head { margin: 12px 12px 6px; padding: 7px 10px 7px 12px; }
+:root[data-pocket] #search-wrap { margin: 0 12px 8px; padding: 3px 4px; border-radius: 99px; }
+:root[data-pocket] #search-wrap orc-input { --orc-radius-sm: 99px; }
+:root[data-pocket] :is(#sidebar-status, #merge-selection-bar) { margin: 0 12px 6px; }
+:root[data-pocket] :is(#sidebar-usage, #radio-now, #sidebar-footer) { margin: 6px 12px 0; }
+:root[data-pocket] #sidebar-footer { margin-bottom: 12px; }
+/* A tile stops above a phone's home indicator, not under it. */
+@media (max-width: 700px) {
+  :root[data-pocket] #run-sidebar > #sidebar-footer { margin-bottom: max(12px, env(safe-area-inset-bottom)); padding-bottom: 6px; }
+}
+/* The wordmark, as it is printed under a handheld's screen. */
+:root[data-pocket] .logo-word { font: italic 800 19px/1 var(--pocket-sans); letter-spacing: .01em; }
+:root[data-pocket] .logo-slash { color: var(--purple); }
+:root[data-pocket] .logo-word::after {
+  content: "pocket"; content: "pocket" / "";
+  color: var(--purple);
+}
+
+/* A run is a tile with a status light beside its name. */
+/* The list sits on the board, where the screen's thumb colour is lost.
+   Setting scrollbar-color where ::-webkit-scrollbar works would swap the
+   slim bar for a wide native one. */
+:root[data-pocket] #list:is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: var(--pocket-sel-line); }
+@supports not selector(::-webkit-scrollbar) {
+  :root[data-pocket] #list:is(:hover, :focus-within) { scrollbar-color: var(--pocket-sel-line) transparent; }
+}
+:root[data-pocket] { --run-row-inset: 12px; --run-row-gap: 6px; }
+:root[data-pocket] #list .run {
+  padding: 7px 10px 7px;
+  border: 1px solid var(--pocket-frost-line); border-radius: 12px;
+  background: var(--pocket-frost);
+}
+:root[data-pocket] #list .run:hover { border-color: var(--pocket-sel-line); }
+/* The open run glows. */
+:root[data-pocket] #list .run.active {
+  border-color: var(--pocket-sel-line);
+  background: var(--pocket-frost-sel);
+  box-shadow: var(--pocket-sel-glow);
+}
+/* Anything else in the list (a group's heading, a note) gets a tile too,
+   so no text sits on the board. */
+:root[data-pocket] #list > :not(.run, .settled-heading, .settled-drawer) {
+  margin: 0 var(--run-row-end) var(--run-row-gap) var(--run-row-inset); border-radius: 12px;
+  background: var(--pocket-frost);
+}
+/* The branch lines of nested runs cross the gap the tiles now leave. */
+:root[data-pocket] #list .run.fork-child { margin-left: 32px; }
+:root[data-pocket] #list .run.fork-child::before { top: -7px; left: -14px; }
+:root[data-pocket] #list .run.fork-child:not(.fork-last)::after { top: -7px; bottom: -7px; left: -14px; }
+:root[data-pocket] .run-project {
+  font: 700 9.5px/1 var(--pocket-sans); letter-spacing: .15em; text-transform: uppercase;
+}
+:root[data-pocket] .run .name { font-weight: 600; font-size: 13px; }
+/* The light sits inside the title's own line: a row grouped under its project
+   has no project line, and nested runs already draw their branch on the
+   tile's two pseudo-elements. */
+:root[data-pocket] .run .name::before {
+  content: ""; display: inline-block; width: 8px; height: 8px; margin: 0 8px 1px 1px;
+  border-radius: 50%; color: var(--muted); background: currentColor;
+  box-shadow: var(--pocket-led-glow);
+}
+:root[data-pocket] .run:has(.state-working) .name::before { color: var(--pocket-blue); }
+:root[data-pocket] .run:has(.state-reviewing, .state-done) .name::before { color: var(--purple); }
+:root[data-pocket] .run:has(.state-ready) .name::before { color: var(--green); }
+:root[data-pocket] .run:has(.state-started, .state-waiting) .name::before { color: var(--orange); }
+:root[data-pocket] .run:has(.state-blocked) .name::before { color: var(--yellow); }
+:root[data-pocket] .run:has(.state-cancelled) .name::before { color: var(--red); }
+/* The light says a session is live by pulsing, so the row's own dot goes. */
+:root[data-pocket] .run .session-status.running { display: none; }
+:root[data-pocket] .run:has(.session-status.running) .name::before { animation: pocket-led 1.8s ease-in-out infinite; }
+:root[data-pocket] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+  font: 700 9.5px/1.6 var(--pocket-sans); letter-spacing: .12em; text-transform: uppercase;
+}
+/* The Settled shelf is one more tile, pinned to the foot of the list. The
+   shell's --settled-shelf-* tokens shape it closed and open alike. It is inset
+   as far as the runs, so it lines up with the tiles above it. */
+:root[data-pocket] {
+  --settled-shelf-radius: 12px;
+  --settled-shelf-border-width: 1px;
+  --settled-shelf-border-color: var(--pocket-frost-line);
+  --settled-shelf-bg: var(--pocket-frost);
+  --settled-shelf-shadow: none;
+}
+:root[data-pocket] #list > .settled-heading { margin-inline: 12px; padding: 5px 0 4px; }
+:root[data-pocket] #settled-head {
+  font: 700 9.5px/1.2 var(--pocket-sans); letter-spacing: .15em; text-transform: uppercase;
+}
+:root[data-pocket] #radio-now { padding-block: 6px; }
+
+/* The run's header and tabs are on the screen. The tabs are the shoulder
+   buttons: L leads the first and R ends the last. */
+:root[data-pocket] #tabs { gap: 6px; padding-block: 7px; }
+:root[data-pocket] #tabs button {
+  padding: 5px 11px; border: 1px solid var(--border); border-radius: 99px;
+  font: 700 10.5px/1.3 var(--pocket-sans); letter-spacing: .1em; text-transform: uppercase;
+}
+:root[data-pocket] #tabs button.active { border-color: transparent; color: #ffffff; font-weight: 700; }
+:root[data-pocket] #tabs button:first-of-type::before {
+  content: "L"; content: "L" / "";
+  margin-right: 7px; opacity: .7;
+}
+:root[data-pocket] #tabs button:last-of-type:not(:first-of-type)::after {
+  content: "R"; content: "R" / "";
+  margin-left: 7px; opacity: .7;
+}
+:root[data-pocket] #tabs .tab-indicator {
+  top: 7px; bottom: 7px;
+  border: 0; border-radius: 99px;
+  background: linear-gradient(180deg, var(--pocket-btn), var(--pocket-btn-2));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .35), inset 0 -2px 0 rgb(0 0 0 / .22);
+}
+:root[data-pocket] #run-panel-tabs button {
+  font: 700 10.5px/1.6 var(--pocket-sans); letter-spacing: .1em; text-transform: uppercase;
+}
+
+/* What you sent is a speech bubble in the handheld's purple. A shell
+   command keeps the shell's own bubble. */
+:root[data-pocket] .chat-row-user .chat-bubble:not(.is-shell) {
+  border: 0; border-radius: 16px 16px 4px 16px;
+  background: linear-gradient(180deg, #7c54e8, #6340cf);
+  color: #ffffff;
+}
+:root[data-pocket] .chat-row-user .chat-bubble:not(.is-shell) :is(.chat-md, a, code, strong, h1, h2, h3) { color: inherit; }
+:root[data-pocket] .chat-row-user .chat-bubble:not(.is-shell) .chat-md :not(pre) > code {
+  border-color: rgb(255 255 255 / .35); background: rgb(20 8 60 / .35);
+}
+:root[data-pocket] .chat-md :not(pre) > code {
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--heading);
+}
+:root[data-pocket] .chat-md th { background: var(--chip); }
+:root[data-pocket] .chat-md li::marker { color: var(--purple); }
+/* The composer is a shade off the screen it sits in, and the beam's cover is
+   painted to match. Under it are the handheld's small controls: Select and
+   Start, which are only printed on, and the round A and B that Send and Stop
+   wear. */
+:root[data-pocket] .chat .newconv-prompt { border-radius: 10px; background: var(--chip); }
+:root[data-pocket] .chat .nc-beam::after { background: linear-gradient(var(--chip) 0 0) padding-box; }
+:root[data-pocket] .chat-composer-info {
+  text-align: right;
+  font: 700 9.5px/1.6 var(--pocket-sans); letter-spacing: .15em; text-transform: uppercase;
+}
+:root[data-pocket] .chat-composer-info > span { font-size: inherit; }
+@media not all and (max-width: 900px) {
+  :root[data-pocket] .chat .newconv-prompt footer::before,
+  :root[data-pocket] .chat .newconv-prompt footer::after {
+    order: -1; flex: none; padding-left: 40px;
+    background: var(--pocket-pill) left center / 34px 18px no-repeat;
+    font: 700 9.5px/18px var(--pocket-sans); letter-spacing: .15em; text-transform: uppercase;
+    color: var(--muted-strong); pointer-events: none;
+  }
+  :root[data-pocket] .chat .newconv-prompt footer::before { content: "Select"; content: "Select" / ""; }
+  :root[data-pocket] .chat .newconv-prompt footer::after { content: "Start"; content: "Start" / ""; }
+}
+:root[data-pocket] :is(#chat-send, #chat-stop)::before {
+  display: inline-grid; place-items: center; flex: none;
+  width: 26px; height: 26px; margin-right: 6px; border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 28%, rgb(255 255 255 / .5), transparent 42%),
+    linear-gradient(180deg, var(--pocket-btn), var(--pocket-btn-2));
+  box-shadow: 0 3px 0 rgb(0 0 0 / .4);
+  font: 800 12px/1 var(--pocket-sans); letter-spacing: 0; color: #ffffff;
+  vertical-align: middle; pointer-events: none;
+}
+:root[data-pocket] #chat-send::before { content: "A"; content: "A" / ""; }
+:root[data-pocket] #chat-stop::before { content: "B"; content: "B" / ""; }
+
+/* Design-system primary buttons fill with --orc-green; here they are the
+   handheld's purple. Scoped to the button host so status chips keep their
+   own green. */
+:root[data-pocket] orc-button:is(:not([variant]), [variant="primary"]) {
+  --orc-green: var(--pocket-btn-2);
+  --orc-button-text: #ffffff;
+}
+:root[data-pocket] orc-button { --orc-button-radius: 99px; }
+
+/* The gate pages pin these copy buttons to the swamp's day blue by hex rather
+   than by token, so they are named here. A finished #copy-answers keeps its
+   green. */
+:root[data-pocket] body :is(#orc-copy, #copy-answers:not(.done)) {
+  background: var(--accent);
+  color: var(--pocket-on-accent);
+}
+:root[data-pocket] body :is(#orc-copy, #copy-answers:not(.done)):not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--heading));
+}
+
+/* Decorative text below uses the `content: "…" / ""` alternative so screen
+   readers skip it; the first declaration is the fallback for engines that
+   drop the second. */
+:root[data-pocket] #empty::before {
+  content: "▶ PRESS START"; content: "▶ PRESS START" / "";
+  display: block; margin-bottom: 10px; text-align: center;
+  font: 800 15px/1 var(--pocket-sans); letter-spacing: .2em; color: var(--purple);
+  animation: pocket-blink 1.2s steps(1) infinite;
+}
+:root[data-pocket] #cmdk-layout::before {
+  content: "ORC POCKET  ·  SELECT A MOVE"; content: "ORC POCKET  ·  SELECT A MOVE" / "";
+  padding: 0 14px;
+  font: 700 10.5px var(--pocket-sans); letter-spacing: .18em; color: #ffffff;
+  background: linear-gradient(180deg, var(--pocket-btn), var(--pocket-btn-2));
+}
+:root[data-pocket] #cmdk-footer::after { content: " · A to confirm"; content: " · A to confirm" / ""; }
+
+/* The effects layer: sparks from a click and the trail of a held press. It
+   lies over the page, and the composers and panels below rise over it. */
+#pocket-fx {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+}
+/* The composers rise over the effects, so nothing shows under what you type.
+   Project home's composer sits inside its view's own layer, so the whole view
+   rises there. Composer textareas stay out: the pickers in the composer's
+   footer open over them. */
+:root[data-pocket] :is(#new-view, .newconv-prompt) { z-index: 1; }
+:root[data-pocket] textarea:not(.newconv-prompt textarea) { position: relative; z-index: 1; }
+:root[data-pocket] .factory-roster { z-index: 1; }
+
+/* A click is a button press: a ring where it landed and square sparks that
+   jump off along the board's grid, straight or at 45 degrees. */
+.pocket-spark {
+  position: fixed; left: var(--px); top: var(--py);
+  width: 5px; height: 5px;
+  background: var(--pocket-gold);
+  box-shadow: 0 0 6px var(--pocket-gold);
+  animation: pocket-spark .5s steps(5) var(--delay, 0s) both;
+}
+.pocket-spark:nth-child(odd) { background: var(--pocket-spark); box-shadow: 0 0 6px var(--pocket-spark); }
+.pocket-spark.pocket-press {
+  width: 22px; height: 22px; border-radius: 50%; background: none;
+  border: 2px solid var(--pocket-spark);
+  box-shadow: none;
+  animation: pocket-press .4s ease-out both;
+}
+/* A held press leaves solder dots behind it: smaller and shorter-lived, so a
+   long drag stays under frontend.js's cap. */
+.pocket-spark.pocket-trail { width: 4px; height: 4px; border-radius: 50%; animation-duration: .45s; }
+@keyframes pocket-led {
+  50% { opacity: .4; }
+}
+@keyframes pocket-blink {
+  50% { opacity: 0; }
+}
+@keyframes pocket-spark {
+  0% { translate: -50% -50%; opacity: 1; }
+  100% { translate: calc(-50% + var(--dx, 0px)) calc(-50% + var(--dy, 0px)); opacity: 0; }
+}
+@keyframes pocket-press {
+  from { translate: -50% -50%; scale: .3; opacity: .9; }
+  to { translate: -50% -50%; scale: 1.6; opacity: 0; }
+}
+@media (forced-colors: active), print {
+  #pocket-fx { display: none; }
+}
+
+/* Typing effects, drawn by frontend.js's pocketTyping into the shell's typing
+   layer. Each piece runs one animation and leaves when it ends. */
+.pocket-typed-pixel {
+  width: 5px; height: 5px;
+  background: var(--accent);
+  animation: pocket-typed-pixel .5s steps(5) var(--delay, 0s) both;
+}
+.pocket-typed-gold { background: var(--pocket-gold); }
+.pocket-typed-ring {
+  width: var(--size, 10px); height: var(--size, 10px);
+  border: 2px solid var(--accent);
+  animation: pocket-typed-ring .6s steps(6) both;
+}
+.pocket-typed-miss {
+  font: 800 10px var(--pocket-sans); letter-spacing: .12em; color: var(--red);
+  animation: pocket-typed-fall .7s steps(7) both;
+}
+.pocket-typed-say {
+  padding: 3px 9px; border-radius: 99px;
+  font: 800 11px var(--pocket-sans); letter-spacing: .12em; text-transform: uppercase;
+  color: #ffffff; background: linear-gradient(180deg, var(--pocket-btn), var(--pocket-btn-2));
+  box-shadow: 0 3px 0 rgb(0 0 0 / .35);
+  animation: pocket-typed-say 1.5s ease-out both;
+}
+@keyframes pocket-typed-pixel {
+  from { translate: -50% -50%; opacity: 1; }
+  to { translate: calc(-50% + var(--dx)) calc(-50% + var(--dy)); opacity: 0; }
+}
+@keyframes pocket-typed-ring {
+  from { translate: calc(-50% + var(--dx, 0px)) -50%; scale: .4; opacity: 1; }
+  to { translate: calc(-50% + var(--dx, 0px)) -90%; scale: 1.6; opacity: 0; }
+}
+@keyframes pocket-typed-fall {
+  0% { translate: -50% -110%; opacity: 0; }
+  20% { opacity: 1; }
+  100% { translate: -50% 10%; opacity: 0; }
+}
+@keyframes pocket-typed-say {
+  0% { translate: 0 -40%; scale: .4; opacity: 0; }
+  14% { translate: 0 -110%; scale: 1.12; opacity: 1; }
+  22% { scale: 1; }
+  80% { translate: 0 -110%; opacity: 1; }
+  100% { translate: 0 -160%; opacity: 0; }
+}
+
+/* Typing heat (see index.html's --typing-heat): fast typing turns the
+   backlight up, the composer's edge running from rest through the
+   handheld's purple to white. It holds steady, with no beat. */
+:root[data-pocket] .newconv-prompt[data-typing-hot] { animation: none; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :root[data-pocket] .newconv-prompt,
+  :root[data-pocket] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    --pocket-heat-hot: color-mix(in oklab, var(--pocket-btn), #ffffff clamp(0%, (var(--typing-heat) - .6) * 180%, 100%));
+    border-color: color-mix(in srgb, var(--pocket-heat-hot) clamp(0%, var(--typing-heat) * 200%, 100%), var(--typing-heat-rest));
+    --typing-glow:
+      0 0 calc(var(--typing-heat) * 6px) calc(var(--typing-heat) * 1px) color-mix(in srgb, var(--pocket-heat-hot) calc(var(--typing-heat) * 75%), transparent),
+      0 0 calc(var(--typing-heat) * 26px) calc(var(--typing-heat) * 3px) color-mix(in srgb, var(--pocket-btn) calc(var(--typing-heat) * 45%), transparent);
+  }
+}
+
+/* The maximised terminal stage: the handheld's own screen, in the bezel.
+   terminal.js switches it on over it. */
+:root[data-pocket] #run-terminal.terminal-staged {
+  --stage-radius: 10px;
+  border: 0;
+  box-shadow: 0 0 0 12px var(--pocket-bezel), 0 0 0 14px var(--pocket-seam), 0 0 50px 10px rgb(126 72 255 / .45), 0 30px 90px rgb(10 0 40 / .6);
+}
+:root[data-pocket] .terminal-staged #run-terminal-bar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+:root[data-pocket] {
+  --answer-mode-done: "✓"; --answer-mode-now: "▶"; --answer-mode-next: "·";
+  --answer-mode-heading-font: var(--pocket-sans);
+  --answer-mode-trim: linear-gradient(90deg, var(--pocket-btn), var(--pocket-btn-2));
+  --answer-mode-trim-height: 4px;
+  --answer-mode-on-accent: var(--pocket-on-accent);
+  --answer-mode-radius: 14px;
+  --answer-mode-glow: rgb(126 72 255 / .35);
+  /* The new-run screen's fireflies are loose pixels in the board's gold and
+     the handheld's purple, and its mist is the backlight. */
+  --nc-firefly-gold: var(--pocket-gold); --nc-firefly-lime: var(--pocket-spark);
+  --nc-mist-moss: var(--pocket-btn-2); --nc-mist-haze: var(--pocket-btn);
+}
+
+/* Sticky notes: a game cartridge. The shell is plastic in the project's
+   colour, the writing is on its label, and the grip is moulded along the
+   foot. */
+:root[data-pocket] .nc-note {
+  --note-paper:
+    linear-gradient(135deg, rgb(255 255 255 / .32), transparent 34%),
+    repeating-linear-gradient(90deg, rgb(0 0 0 / .2) 0 2px, transparent 2px 6px) 50% calc(100% - 4px) / 38% 5px no-repeat,
+    linear-gradient(color-mix(in srgb, var(--note-tint) 7%, var(--panel)), color-mix(in srgb, var(--note-tint) 7%, var(--panel))) 8px 38px / calc(100% - 16px) calc(100% - 51px) no-repeat,
+    linear-gradient(165deg, color-mix(in srgb, var(--note-tint) 52%, var(--panel)), color-mix(in srgb, var(--note-tint) 34%, var(--panel)));
+  --note-edge: color-mix(in srgb, var(--note-tint) 55%, var(--pocket-bezel));
+  --note-edge-width: 1.5px;
+  --note-trim: inset 0 2px 0 rgb(255 255 255 / .4), inset 0 -3px 0 rgb(0 0 0 / .14);
+  --note-radius: 6px 6px 14px 14px;
+  --note-shadow: drop-shadow(0 2px 0 color-mix(in srgb, var(--note-tint) 40%, var(--pocket-bezel))) drop-shadow(0 8px 12px rgb(40 14 100 / .3));
+  --note-shadow-raised: drop-shadow(0 2px 0 color-mix(in srgb, var(--note-tint) 40%, var(--pocket-bezel))) drop-shadow(0 17px 20px rgb(40 14 100 / .38));
+  --note-rule: color-mix(in srgb, var(--note-tint) 14%, transparent);
+  --note-lean: .5;
+  --note-fold: 0px;
+  --note-tape: none;
+}
+:root[data-pocket] .nc-note-paper { padding-bottom: 20px; }
+:root[data-pocket] .nc-note-head { margin-bottom: 10px; }
+:root[data-pocket] .nc-note-curl { bottom: 2px; }
+
+/* The hidden sidebar's strip keeps its buttons clear of the corner screws. */
+@media (min-width: 701px) {
+  :root[data-pocket][data-sidebar-collapsed] #run-sidebar #sidebar-head { padding-top: 28px; }
+  :root[data-pocket][data-sidebar-collapsed] #run-sidebar #sidebar-footer { padding-bottom: 28px; }
+}

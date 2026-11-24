@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Settle an answered Clarification without a raw `rm`.
+
+    orc-clarification-done --run-dir <run-dir> --brief <brief.md|->
+
+Publishes the immutable inputs/clarification-brief.md (the same bytes again
+are a no-op) and removes clarification-questions.json from the run root and
+from clarification/. Phase and status are left for the route's next step,
+such as `orc-worktree start-minimal --source ...`.
+"""
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+import clarification_files  # noqa: E402
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-clarification-done", description=__doc__.split("\n")[0])
+    parser.add_argument("--run-dir", required=True, type=Path)
+    parser.add_argument("--brief", required=True,
+                        help="the brief folding in the answers, or - for stdin")
+    args = parser.parse_args(argv)
+    run_dir = args.run_dir.expanduser().resolve()
+    if not (run_dir / "meta.json").is_file():
+        print("orc-clarification-done: %s has no meta.json" % run_dir, file=sys.stderr)
+        return 1
+    try:
+        payload = (sys.stdin.buffer.read() if args.brief == "-"
+                   else Path(args.brief).expanduser().read_bytes())
+        written = clarification_files.publish_brief(run_dir, payload)
+        removed = clarification_files.remove_questions(run_dir)
+    except (OSError, clarification_files.ClarificationError) as exc:
+        print("orc-clarification-done: %s" % exc, file=sys.stderr)
+        return 1
+    print(json.dumps({"brief": str(clarification_files.BRIEF), "written": written,
+                      "removed": removed}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

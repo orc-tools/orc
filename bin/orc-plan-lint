@@ -1,0 +1,426 @@
+#!/usr/bin/env python3
+"""Validate Orc plan source and question-form readiness without dependencies."""
+
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import re
+import sys
+from typing import Iterable
+
+
+REQUIRED_BUILD_SECTIONS = ("Destination", "Scope lock", "Approach", "Build contract")
+REQUIRED_TICKET_BUILD_SECTIONS = (
+    "Destination", "Scope lock", "Tickets", "Approach", "Build contract"
+)
+PLAN_V3_MARKER = "<!-- plan-contract-version: 3 -->"
+SUPPORTING_BUDGETS = {
+    "UI acceptance states": 4,
+    "ADR-worthy decisions": 4,
+    "Operational constraints": 4,
+}
+PLACEHOLDER = re.compile(r"\b(?:TBD|TODO|FIXME|figure out later)\b|\?{3,}", re.IGNORECASE)
+IN_ITEM = re.compile(r"^- \*\*(In-\d+)\*\*\s+[—-]\s+\S")
+MILESTONE = re.compile(r"^\d+\. \*\*([^*]+)\*\*\s+[—-]\s+(.+)$")
+TICKET = re.compile(r"^(Ticket-\d+)\s+—\s+(\S(?:.*\S)?)$")
+SCOPE_ID = re.compile(r"In-\d+")
+TICKET_ID = re.compile(r"Ticket-\d+")
+PR_BOUNDARY = re.compile(
+    r"^(?:(?:a|one|the)\s+)?(?:pr|pull request)(?:\s+boundary)?$", re.IGNORECASE
+)
+ROUTE_MECHANIC = re.compile(
+    r"`[^`]+`|(?:^|\s)(?:[\w.-]+/)+[\w.-]+|\b(?:file|function|class|method|schema column)\b",
+    re.IGNORECASE,
+)
+
+
+def top_sections(lines: list[str]) -> list[tuple[str, int, int]]:
+    starts: list[tuple[str, int]] = []
+    for index, line in enumerate(lines):
+        match = re.match(r"^## (.+?)\s*$", line)
+        if match:
+            starts.append((match.group(1), index))
+    return [
+        (title, start, starts[position + 1][1] if position + 1 < len(starts) else len(lines))
+        for position, (title, start) in enumerate(starts)
+    ]
+
+
+def section_lines(lines: list[str], sections: list[tuple[str, int, int]], title: str) -> list[str]:
+    for name, start, end in sections:
+        if name == title:
+            return lines[start + 1:end]
+    return []
+
+
+def content_lines(lines: Iterable[str]) -> list[str]:
+    return [line for line in lines if line.strip() and not line.lstrip().startswith("<!--")]
+
+
+def logical_line_count(lines: list[str]) -> int:
+    """Charm-kit column-zero div blocks count as one contract line."""
+    count = 0
+    in_visual = False
+    for line in lines:
+        if not in_visual and re.match(r'^<div class="(?:callout|compare|snippet|before-after)', line):
+            count += 1
+            in_visual = True
+            continue
+        if in_visual:
+            if line == "</div>":
+                in_visual = False
+            continue
+        count += 1
+    return count
+
+
+def table_rows(lines: list[str]) -> tuple[list[str], list[list[str]]]:
+    table = [line.strip() for line in lines if line.strip().startswith("|")]
+    if not table:
+        return [], []
+
+    def cells(line: str) -> list[str]:
+        return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+    header = cells(table[0])
+    rows = []
+    for line in table[1:]:
+        row = cells(line)
+        if row and all(re.fullmatch(r":?-{3,}:?", cell) for cell in row):
+            continue
+        rows.append(row)
+    return header, rows
+
+
+def comma_separated_ids(value: str, pattern: re.Pattern[str]) -> list[str] | None:
+    """Parse a canonical comma-separated ID list without accepting prose."""
+    ids = [item.strip() for item in value.split(",")]
+    if not ids or any(not pattern.fullmatch(item) for item in ids):
+        return None
+    return ids
+
+
+def has_dependency_cycle(graph: dict[str, list[str]]) -> bool:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(ticket_id: str) -> bool:
+        if ticket_id in visiting:
+            return True
+        if ticket_id in visited:
+            return False
+        visiting.add(ticket_id)
+        if any(blocker in graph and visit(blocker) for blocker in graph[ticket_id]):
+            return True
+        visiting.remove(ticket_id)
+        visited.add(ticket_id)
+        return False
+
+    return any(visit(ticket_id) for ticket_id in graph)
+
+
+def lint_plan(path: Path, max_lines: int, final: bool) -> list[str]:
+    errors: list[str] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"cannot read plan: {exc}"]
+    lines = text.splitlines()
+    line_count = logical_line_count(lines)
+    if line_count > max_lines:
+        errors.append(f"line budget exceeded: {line_count} > {max_lines}")
+    if not lines or not re.match(r"^# [^#].+", lines[0]):
+        errors.append("plan must start with one h1 title")
+    if len(lines) < 2 or not lines[1].startswith("TL;DR: "):
+        errors.append("TL;DR must immediately follow the h1")
+    elif not lines[1][len("TL;DR: "):].strip():
+        errors.append("TL;DR must state what ships and the chosen approach")
+
+    sections = top_sections(lines)
+    names = [name for name, _, _ in sections]
+    v3_marker_count = sum(line.strip() == PLAN_V3_MARKER for line in lines)
+    ticket_contract = v3_marker_count > 0
+    if v3_marker_count > 1:
+        errors.append("v3 plan must contain exactly one plan-contract-version: 3 marker")
+    decision_map = (
+        "Decisions" in names and "Approach" not in names and not ticket_contract
+    )
+    if decision_map:
+        required = ("Destination", "Scope lock", "Decisions")
+    elif ticket_contract:
+        required = REQUIRED_TICKET_BUILD_SECTIONS
+    else:
+        required = REQUIRED_BUILD_SECTIONS
+    missing = [name for name in required if name not in names]
+    if missing:
+        errors.append("missing required section(s): " + ", ".join(missing))
+    present_positions = [names.index(name) for name in required if name in names]
+    if present_positions != sorted(present_positions) or (
+        not missing and names[:len(required)] != list(required)
+    ):
+        errors.append("required section order: " + " → ".join(required))
+    if final and decision_map:
+        errors.append("final plan must be a build plan, not a decision map")
+
+    destination = content_lines(section_lines(lines, sections, "Destination"))
+    if not destination:
+        errors.append("Destination must state the completed outcome")
+    elif len(destination) > 2:
+        errors.append("Destination supports at most 2 content lines")
+
+    scope_lines = section_lines(lines, sections, "Scope lock")
+    in_index = next((i for i, line in enumerate(scope_lines) if line.strip() == "### In"), None)
+    out_index = next((i for i, line in enumerate(scope_lines) if line.strip() == "### Out"), None)
+    in_ids: list[str] = []
+    if in_index is None or out_index is None or in_index >= out_index:
+        errors.append("Scope lock must contain ordered ### In and ### Out lists")
+    else:
+        in_rows = content_lines(scope_lines[in_index + 1:out_index])
+        out_rows = content_lines(scope_lines[out_index + 1:])
+        for row in in_rows:
+            match = IN_ITEM.match(row)
+            if not match:
+                errors.append("Scope In items must be one-line bullets with stable **In-N** IDs")
+            else:
+                in_ids.append(match.group(1))
+        if not in_rows:
+            errors.append("Scope lock needs at least one In item")
+        if not out_rows or any(not row.startswith("- ") for row in out_rows):
+            errors.append("Scope lock needs one-line Out bullets")
+        duplicates = sorted(item for item, count in Counter(in_ids).items() if count > 1)
+        if duplicates:
+            errors.append("Scope In IDs must be unique: " + ", ".join(duplicates))
+
+    if ticket_contract:
+        ticket_header, ticket_rows = table_rows(section_lines(lines, sections, "Tickets"))
+        expected_ticket_header = [
+            "Ticket", "Repository", "Scope", "Blocked by", "Review boundary"
+        ]
+        if ticket_header != expected_ticket_header:
+            errors.append(
+                "Tickets header must be: Ticket | Repository | Scope | Blocked by | Review boundary"
+            )
+        ticket_ids: list[str] = []
+        ticket_scopes: list[str] = []
+        blocker_graph: dict[str, list[str]] = {}
+        pending_blockers: list[tuple[str, list[str]]] = []
+        for row_number, row in enumerate(ticket_rows, 1):
+            if len(row) != 5:
+                errors.append("Tickets rows must contain exactly 5 cells")
+                continue
+            ticket, repository, scope, blocked_by, review_boundary = row
+            ticket_match = TICKET.fullmatch(ticket)
+            if not ticket_match:
+                errors.append(
+                    f"Tickets row {row_number} needs a stable Ticket-N ID and title"
+                )
+                row_ticket_id = ""
+            else:
+                row_ticket_id = ticket_match.group(1)
+                ticket_ids.append(row_ticket_id)
+
+            if (not repository or re.search(
+                r",|;|<br\s*/?>|\s+(?:and|\+|&|/)\s+", repository, re.IGNORECASE
+            )):
+                errors.append(
+                    f"{row_ticket_id or f'Tickets row {row_number}'} must name exactly one Repository"
+                )
+
+            scopes = comma_separated_ids(scope, SCOPE_ID)
+            if scopes is None:
+                errors.append(
+                    f"{row_ticket_id or f'Tickets row {row_number}'} Ticket Scope must contain only In-N IDs"
+                )
+            else:
+                ticket_scopes.extend(scopes)
+
+            if blocked_by in {"—", "-", "None"}:
+                blockers: list[str] = []
+            else:
+                parsed_blockers = comma_separated_ids(blocked_by, TICKET_ID)
+                if parsed_blockers is None:
+                    errors.append(
+                        f"{row_ticket_id or f'Tickets row {row_number}'} Blocked by must contain Ticket-N IDs or —"
+                    )
+                    blockers = []
+                else:
+                    blockers = parsed_blockers
+                    if len(blockers) != len(set(blockers)):
+                        errors.append(
+                            f"{row_ticket_id or f'Tickets row {row_number}'} Blocked by repeats a Ticket-N ID"
+                        )
+            if row_ticket_id:
+                blocker_graph[row_ticket_id] = blockers
+                pending_blockers.append((row_ticket_id, blockers))
+
+            if not review_boundary:
+                errors.append(
+                    f"{row_ticket_id or f'Tickets row {row_number}'} Review boundary must be concrete"
+                )
+            elif PR_BOUNDARY.fullmatch(review_boundary.strip()):
+                errors.append(
+                    f"{row_ticket_id or f'Tickets row {row_number}'} Review boundary must not equal a PR"
+                )
+
+        if not ticket_rows:
+            errors.append("Tickets needs at least one repository-local ticket")
+        duplicate_tickets = sorted(
+            ticket_id for ticket_id, count in Counter(ticket_ids).items() if count > 1
+        )
+        if duplicate_tickets:
+            errors.append("Ticket IDs must be unique: " + ", ".join(duplicate_tickets))
+        known_tickets = set(ticket_ids)
+        for _, blockers in pending_blockers:
+            for blocker in blockers:
+                if blocker not in known_tickets:
+                    errors.append(f"Tickets references unknown blocker: {blocker}")
+        if not duplicate_tickets and has_dependency_cycle(blocker_graph):
+            errors.append("Tickets blockers must form a DAG")
+
+        scope_counts = Counter(ticket_scopes)
+        for scope_id in sorted(set(in_ids) | set(ticket_scopes)):
+            if scope_counts[scope_id] != 1 or scope_id not in in_ids:
+                errors.append(
+                    f"{scope_id} must map exactly once from Scope lock to Tickets"
+                )
+
+    milestone_labels: list[str] = []
+    if not decision_map:
+        approach = content_lines(section_lines(lines, sections, "Approach"))
+        if not 3 <= len(approach) <= 5:
+            errors.append(f"Approach must contain 3–5 one-line milestones; found {len(approach)}")
+        for row in approach:
+            match = MILESTONE.match(row)
+            if not match:
+                errors.append("Approach milestones must be numbered one-line **2–4 word labels** with one outcome")
+                continue
+            label, outcome = match.groups()
+            if not 2 <= len(label.split()) <= 4:
+                errors.append(f"Approach label must contain 2–4 words: {label}")
+            milestone_labels.append(label.casefold())
+            if ROUTE_MECHANIC.search(outcome):
+                errors.append(f"Approach must stay route-only; move mechanics from milestone: {label}")
+
+        header, rows = table_rows(section_lines(lines, sections, "Build contract"))
+        expected_header = ["Scope", "Milestone", "Reuse/constraint", "Done when"]
+        if header != expected_header:
+            errors.append("Build contract header must be: Scope | Milestone | Reuse/constraint | Done when")
+        mapped_ids: list[str] = []
+        for row in rows:
+            if len(row) != 4:
+                errors.append("Build contract rows must contain exactly 4 cells")
+                continue
+            scope, milestone, reuse, proof = row
+            mapped_ids.append(scope)
+            if milestone.casefold() not in milestone_labels:
+                errors.append(f"Build contract references unknown Approach milestone: {milestone or '(empty)'}")
+            if not reuse:
+                errors.append(f"{scope or 'Build contract row'} Reuse/constraint must be concrete")
+            if not proof:
+                errors.append(f"{scope or 'Build contract row'} Done when must be concrete")
+        counts = Counter(mapped_ids)
+        for scope_id in sorted(set(in_ids) | set(mapped_ids)):
+            if counts[scope_id] != 1 or scope_id not in in_ids:
+                errors.append(f"{scope_id} must map exactly once from Scope lock to Build contract")
+
+    if "Implementation notes" in names:
+        errors.append("Implementation notes is obsolete; use Build contract rows")
+
+    for title, budget in SUPPORTING_BUDGETS.items():
+        if title not in names:
+            continue
+        rows = content_lines(section_lines(lines, sections, title))
+        if len(rows) > budget:
+            errors.append(f"{title} supports at most {budget} one-line items")
+
+    if "Locked decisions" in names:
+        locked_header, locked_rows = table_rows(section_lines(lines, sections, "Locked decisions"))
+        if locked_header != ["Decision", "Provenance"]:
+            errors.append("Locked decisions header must be: Decision | Provenance")
+        if not locked_rows or any(len(row) != 2 or not all(row) for row in locked_rows):
+            errors.append("Locked decisions must pair each decision with provenance")
+
+    if PLACEHOLDER.search(text):
+        errors.append("plan contains a placeholder")
+    return errors
+
+
+def lint_questions(path: Path) -> list[str]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"cannot read questions: {exc}"]
+    errors: list[str] = []
+    if data.get("prefix") != "Plan":
+        errors.append("plan questions prefix must be Plan")
+    questions = data.get("questions")
+    if not isinstance(questions, list) or not 1 <= len(questions) <= 4:
+        errors.append("plan question file must contain 1–4 questions")
+        return errors
+    for index, question in enumerate(questions, 1):
+        if not isinstance(question, dict):
+            errors.append(f"question {index} must be an object")
+            continue
+        if question.get("type") not in {"single", "multi"}:
+            errors.append(f"question {index} type must be single or multi")
+        if not str(question.get("context", "")).strip():
+            errors.append(f"question {index} needs nonempty context")
+        options = question.get("options")
+        if not isinstance(options, list) or len(options) < 2:
+            errors.append(f"question {index} needs at least 2 options")
+            continue
+        recommended = sum(
+            option.get("recommended") is True
+            for option in options
+            if isinstance(option, dict)
+        )
+        if recommended != 1:
+            errors.append(f"question {index} must have exactly one recommended option")
+        if any(not isinstance(option, dict) or not str(option.get("label", "")).strip() for option in options):
+            errors.append(f"question {index} options need labels")
+        if any(not isinstance(option, dict)
+               or not str(option.get("tradeoff", "")).strip()
+               for option in options):
+            errors.append(f"question {index} options need nonempty tradeoff")
+        if any(not isinstance(option, dict)
+               or not str(option.get("buildConsequence", "")).strip()
+               for option in options):
+            errors.append(
+                f"question {index} options need nonempty buildConsequence")
+    return errors
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("plan", type=Path)
+    parser.add_argument("--questions", type=Path, help="question form to validate")
+    parser.add_argument("--final", action="store_true", help="require question-free build readiness")
+    parser.add_argument("--max-lines", type=int, default=60)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.max_lines < 1:
+        print("plan lint: --max-lines must be positive", file=sys.stderr)
+        return 2
+    errors = lint_plan(args.plan, args.max_lines, args.final)
+    sibling_questions = args.plan.with_name("plan-questions.json")
+    question_path = args.questions or (sibling_questions if sibling_questions.exists() else None)
+    if args.final and question_path is not None and question_path.exists():
+        errors.append(f"final plan still has open questions: {question_path}")
+    elif question_path is not None:
+        errors.extend(lint_questions(question_path))
+    if errors:
+        for error in errors:
+            print(f"plan lint: {error}", file=sys.stderr)
+        return 1
+    print("plan lint: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

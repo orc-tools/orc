@@ -1,0 +1,19 @@
+{
+  "repos": {},
+  "worktree": {
+    "autoTeardownOnMerge": true
+  },
+  "assets": {
+    "enabled": false,
+    "bucket": "",
+    "accountId": "",
+    "publicBaseUrl": "",
+    "accessKeyId": "",
+    "secretAccessKey": ""
+  },
+  "ui": {
+    "offerFastMode": false,
+    "prPoll": true,
+    "projectOrder": []
+  }
+}

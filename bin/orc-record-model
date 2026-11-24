@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""orc-record-model <run-dir> <phase> <role> <model> <source> — append one
+subagent-model record to a run's meta.json (subagentModels[<phase>]).
+See skills/_shared/handoff.md for the resolution ladder this feeds."""
+
+import json
+import os
+import sys
+import tempfile
+
+SOURCES = {"self-report", "requested", "inherited"}
+
+
+def main() -> int:
+    if len(sys.argv) != 6:
+        print("usage: orc-record-model <run-dir> <phase> <role> <model> <source>",
+              file=sys.stderr)
+        return 2
+
+    run_dir, phase, role, model, source = sys.argv[1:]
+
+    if not phase or not role or not model:
+        print("orc-record-model: phase, role, and model must be non-empty",
+              file=sys.stderr)
+        return 1
+
+    if source not in SOURCES:
+        print(f"orc-record-model: source must be one of {sorted(SOURCES)}, got: {source}",
+              file=sys.stderr)
+        return 1
+
+    meta_path = os.path.join(run_dir, "meta.json")
+    try:
+        with open(meta_path) as handle:
+            meta = json.load(handle)
+    except (OSError, ValueError) as exc:
+        print(f"orc-record-model: cannot read {meta_path}: {exc}", file=sys.stderr)
+        return 1
+
+    subagent_models = meta.setdefault("subagentModels", {})
+    subagent_models.setdefault(phase, []).append(
+        {"role": role, "model": model, "source": source})
+
+    fd, tmp = tempfile.mkstemp(dir=run_dir, prefix=".meta.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(meta, handle, indent=2)
+            handle.write("\n")
+        os.replace(tmp, meta_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+    print(f"recorded: {phase}/{role} -> {model} ({source})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

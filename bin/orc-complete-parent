@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Record that a branchless parent has no remaining work after child delivery."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'ui'))
+import run_relationships
+
+
+def read_meta(path):
+    meta = json.loads(path.read_text())
+    if not isinstance(meta, dict):
+        raise ValueError(f'invalid metadata: {path}')
+    return meta
+
+
+def complete(run_dir, summary, *, confirmed_close=False):
+    if not confirmed_close:
+        raise ValueError('parent closure requires an explicit user request and --confirmed-close')
+    path = run_dir / 'meta.json'
+    meta = read_meta(path)
+    identity = os.path.realpath(os.path.expanduser(meta.get('mainRepoPath') or 'unknown'))
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:16]
+    # Use the UI's repository lock so a gate answer or child launch cannot race completion.
+    with (run_dir.parent / f'.merge-parent-{digest}.lock').open('a+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        meta = read_meta(path)
+        if meta.get('status') == 'complete' and meta.get('parentCompletion'):
+            return meta
+        if (meta.get('lifecycleVersion') != 4 or meta.get('route') != 'minimal-shell'
+                or meta.get('phase') != 'plan'
+                or meta.get('status') not in ('running', 'escalated')):
+            raise ValueError('only an active branchless minimal-shell parent can complete')
+        fields = ('branch', 'worktree', 'buildBaseCommit', 'repositories',
+                  'repositoriesVersion', 'prUrl', 'prUrls', 'delivery', 'outcome',
+                  'orchestrationWorker')
+        artifacts = ('inputs/build-spec', 'plan.mdx', 'diff.patch', 'pr-body.md',
+                     'delivery-authority.json', 'verification-receipt.json')
+        if (meta.get('orchestration') is True or any(key in meta for key in fields)
+                or any((run_dir / p).exists() for p in artifacts)):
+            raise ValueError('parent has its own work or delivery authority; use its existing workflow')
+        if any(row.get('state') != 'launched'
+               for row in meta.get('forkLaunches', []) if isinstance(row, dict)):
+            raise ValueError('parent has an unfinished child launch')
+        runs = {}
+        for child_path in run_dir.parent.glob('*/meta.json'):
+            try:
+                runs[child_path.parent.name] = read_meta(child_path)
+            except (OSError, ValueError):
+                continue
+        store = run_relationships.read_store(str(run_dir.parent.parent))
+        edges = run_relationships.compatibility_view(runs, store)['children']
+        children = [row.get('childRunId') for row in edges
+                    if row['sourceRunId'] == run_dir.name]
+        if not children or any(not child for child in children):
+            raise ValueError('parent needs recorded, fully launched children')
+        for child in children:
+            record = runs.get(child, {})
+            if record.get('phase') != 'done' or record.get('status') != 'merged':
+                raise ValueError(f'child {child} is missing or not merged')
+        meta.update(phase='done', status='complete', parentCompletion={
+            'schemaVersion': 1, 'summary': summary, 'manuallyClosed': True,
+            'children': sorted(set(children)), 'completedAt': run_relationships.utc_now()})
+        fd, temporary = tempfile.mkstemp(prefix='.meta.', dir=run_dir)
+        try:
+            with os.fdopen(fd, 'w') as handle:
+                json.dump(meta, handle, indent=2)
+                handle.write('\n')
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        return meta
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--run-dir', type=Path, required=True)
+    parser.add_argument('--summary', required=True,
+                        help='attestation that all requested work is done and no question remains')
+    parser.add_argument('--confirmed-close', action='store_true',
+                        help='the user explicitly requested closing this parent session')
+    args = parser.parse_args()
+    try:
+        if not args.summary.strip():
+            raise ValueError('completion summary must not be empty')
+        result = complete(args.run_dir.expanduser().resolve(), args.summary.strip(), confirmed_close=args.confirmed_close)
+    except (OSError, ValueError, TypeError) as exc:
+        print(f'ERROR {exc}', file=sys.stderr)
+        return 1
+    print(json.dumps({'runId': result['runId'], 'status': result['status']}))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

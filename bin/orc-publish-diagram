@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Publish or replace a run's living diagram, diagram.md.
+
+The side panel's Diagram tab polls this file, so it is written to a sibling
+temporary file and moved into place: a poll never reads half a diagram. The
+helper writes nothing else, so an answered question run stays one.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import re
+import sys
+import tempfile
+
+
+# Orc UI caches these runs' file lists, so a new diagram would never appear.
+SETTLED = {"merged", "merged-to-parent", "cancelled"}
+MERMAID_FENCE = re.compile(r"^\s*(```|~~~)\s*mermaid\b", re.MULTILINE)
+
+
+def publish(run_dir: pathlib.Path, text: bytes) -> pathlib.Path:
+    meta_path = run_dir / "meta.json"
+    if not meta_path.is_file():
+        raise RuntimeError(f"{run_dir} is not a run directory")
+    status = json.loads(meta_path.read_text(encoding="utf-8")).get("status")
+    if status in SETTLED:
+        raise RuntimeError(f"run is {status}; a settled run's diagram is final")
+    try:
+        body = text.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("diagram must be UTF-8 Markdown") from exc
+    if not body.strip():
+        raise RuntimeError("diagram is empty")
+    if not MERMAID_FENCE.search(body):
+        raise RuntimeError("diagram needs at least one ```mermaid block")
+    target = run_dir / "diagram.md"
+    fd, temporary = tempfile.mkstemp(prefix=".diagram.", suffix=".md", dir=run_dir)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, target)
+    except BaseException:
+        pathlib.Path(temporary).unlink(missing_ok=True)
+        raise
+    return target
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--file", required=True,
+                        help="UTF-8 Markdown file, or - to read stdin")
+    args = parser.parse_args()
+    try:
+        if args.file == "-":
+            text = sys.stdin.buffer.read()
+        else:
+            source = pathlib.Path(args.file).expanduser()
+            if source.is_symlink() or not source.is_file():
+                raise RuntimeError("diagram input must be a regular non-symlink file")
+            text = source.read_bytes()
+        target = publish(pathlib.Path(args.run_dir).expanduser().resolve(), text)
+    except Exception as exc:
+        print(f"orc-publish-diagram: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({"path": str(target), "size": target.stat().st_size}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

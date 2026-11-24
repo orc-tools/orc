@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+"$(dirname "$0")/run-previous-hook" post-merge "$@"
+# $1=1 for a squash merge, which has no second side to reconcile.
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+if [ "${1:-0}" != "1" ] && [ -f "$root/ui/release_version.py" ]; then
+  python3 "$root/ui/release_version.py" reconcile-merged \
+    || echo "orc: VERSION reconcile failed; run python3 ui/release_version.py bump before pushing main" >&2
+fi
+exec "$(dirname "$0")/orc-reinstall-check" ORIG_HEAD HEAD

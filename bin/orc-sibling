@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Open a sibling run in another repository instead of building it here.
+
+    orc-sibling --run-dir <run-dir> --repo <name-or-path> --task "<what it builds>"
+                [--model <model>] [--effort <effort>]
+
+A run that finds mid-build that its change also needs another repository
+calls this rather than adding that repository to itself. Orc opens a run in
+the named configured project (its folder name, such as `serverless`, or its
+path) with the task and this run's context, in this run's group: under the
+plan when this run is one of a plan's steps, otherwise under this run. Each
+run builds its own repository and opens its own PR. The two can then ask and
+tell each other what they need with `orc-note`. It prints the new run's id
+and its link.
+"""
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import run_dir_args  # noqa: E402
+
+
+def port():
+    return int(os.environ.get("ORC_UI_PORT") or 4173)
+
+
+def post(run_id, payload):
+    url = "http://127.0.0.1:%d/runs/%s/sibling" % (port(), urllib.parse.quote(run_id, safe=""))
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read()).get("error") or str(exc)
+        except (ValueError, AttributeError):
+            detail = str(exc)
+        raise ValueError(detail) from exc
+    except urllib.error.URLError as exc:
+        raise ValueError("Orc could not be reached: %s" % exc.reason) from exc
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-sibling")
+    parser.add_argument("--run-dir")
+    parser.add_argument("--run-id")
+    parser.add_argument("--repo", required=True,
+                        help="the configured project the sibling builds in: folder name or path")
+    parser.add_argument("--task", required=True, help="what the sibling builds there")
+    parser.add_argument("--model")
+    parser.add_argument("--effort")
+    args = parser.parse_args(argv)
+    run_dir, status = run_dir_args.resolve(args, "orc-sibling")
+    if status == "cancelled":
+        raise SystemExit("orc-sibling: run is cancelled and cannot open a sibling")
+    run_id = Path(run_dir).name
+    payload = {"repo": args.repo, "task": args.task}
+    for key, value in (("model", args.model), ("effort", args.effort)):
+        if value:
+            payload[key] = value
+    try:
+        reply = post(run_id, payload)
+    except ValueError as exc:
+        raise SystemExit("orc-sibling: %s" % exc)
+    child = reply.get("childRunId")
+    print("Opened sibling run %s in %s. It builds that repository and opens its own PR; "
+          "do not build its part here. Ask or tell it with `orc-note ask|tell --to %s`."
+          % (child, args.repo, args.repo))
+    if child:
+        print("http://127.0.0.1:%d/#%s" % (port(), child))
+
+
+if __name__ == "__main__":
+    main()

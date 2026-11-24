@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e3e5e4" id="pwa-theme-color">
+<meta name="color-scheme" content="light dark">
+<title>Offline tickets · Orc</title>
+<link rel="stylesheet" href="/vendor/orc-ds.tokens.css">
+<style>
+:root { color-scheme: light dark; --bg: #e3e5e4; --panel: #eceeec; --text: #38423c; --border: #a8b0aa; --accent: #2d6983; }
+@media (prefers-color-scheme: dark) { :root { --bg: #1a1c20; --panel: #16181b; --text: #c7cfca; --border: #3b4540; --accent: #78a9c2; } }
+:root[data-theme="light"] { color-scheme: light; --bg: #e3e5e4; --panel: #eceeec; --text: #38423c; --border: #a8b0aa; --accent: #2d6983; }
+:root[data-theme="dark"] { color-scheme: dark; --bg: #1a1c20; --panel: #16181b; --text: #c7cfca; --border: #3b4540; --accent: #78a9c2; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; display: block; padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; }
+main { width: min(100%, 640px); margin: 24px auto; }
+img { border-radius: 14px; }
+h1 { font-size: 24px; margin: 20px 0 8px; }
+p { margin: 0 0 24px; }
+button { font: inherit; font-weight: 600; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; min-height: 44px; padding: 10px 20px; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+a { color: var(--accent); }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+header a { margin-left: auto; min-height: 44px; display: flex; align-items: center; }
+header img { width: 40px; height: 40px; }
+h1 { font-size: 24px; margin: 0 0 8px; }
+h2 { font-size: 18px; margin: 32px 0 12px; }
+label, .field-label { display: block; font-weight: 600; margin: 16px 0 8px; }
+textarea { width: 100%; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-height: 180px; resize: vertical; }
+textarea:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.actions { display: flex; gap: 12px; align-items: center; margin: 16px 0; flex-wrap: wrap; }
+button[type="submit"] { background: var(--accent); color: var(--panel); }
+button:disabled { opacity: .6; cursor: default; }
+#device-status, #composer-status { margin: 12px 0; }
+#queue { list-style: none; padding: 0; margin: 0; }
+#queue li { border-top: 1px solid var(--border); padding: 16px 0; }
+.ticket-summary { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
+.ticket-state { font-weight: 600; }
+.note { font-size: 14px; }
+[hidden] { display: none !important; }
+</style>
+<script>
+try { const mode = localStorage.getItem('orcTheme'); if (mode === 'dark' || mode === 'light') document.documentElement.dataset.theme = mode; } catch {}
+function syncOfflineTheme() {
+  const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.getElementById('pwa-theme-color').content = dark ? '#1a1c20' : '#e3e5e4';
+}
+syncOfflineTheme();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncOfflineTheme);
+</script>
+<script type="module" src="/vendor/orc-ds.min.js"></script>
+<script type="module" src="/offline-ticket-page.js"></script>
+</head><body><main>
+<header><img src="/pwa/icon-180.png" alt=""><strong>Orc</strong><a href="/#new">Back to Orc</a></header>
+<h1>Tickets on this device</h1>
+<p>Write tickets here while your Mac is unavailable. They sync to Orc when you reconnect and this app is open.</p>
+<p id="device-status" role="status">Opening local drafts…</p>
+<form id="offline-ticket-form">
+<label for="offline-body">What needs doing?</label>
+<textarea id="offline-body" placeholder="Describe the work…" required aria-describedby="composer-status" disabled></textarea>
+<div class="actions"><button type="submit" id="save-local-ticket" disabled>Save on this device</button><button type="button" id="sync-tickets">Sync now</button></div>
+<p id="composer-status" role="status">Loading…</p>
+</form>
+<h2>Saved tickets</h2>
+<ul id="queue" aria-label="Tickets saved on this device"></ul>
+<p class="note">Waiting tickets stay in this browser until they sync. Clearing this site's data removes local drafts.</p>
+</main></body></html>

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+# A merge finished by hand after a conflict commits here, never through post-merge.
+if [ -f "$root/ui/release_version.py" ]; then
+  python3 "$root/ui/release_version.py" reconcile-merge
+fi
+"$(dirname "$0")/run-previous-hook" pre-commit "$@"
+if [ -f "$root/ui/distribution_policy.py" ] && git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  python3 "$root/ui/distribution_policy.py"
+fi

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Local commits can add/delete/rename skill folders or change installer-owned
+# files. Existing skill content is already live through the symlinks.
+"$(dirname "$0")/run-previous-hook" post-commit "$@"
+exec "$(dirname "$0")/orc-reinstall-check" HEAD^ HEAD

@@ -1,0 +1,850 @@
+#!/usr/bin/env bash
+# orc-ui — manage the orc run viewer daemon.
+# Usage: orc-ui [start|stop|restart|open [--gate] [--title <title>] [<run-id>/<file>]|status|app]
+#        orc-ui preview <worktree>
+#        orc-ui preview open <worktree>
+#        orc-ui preview {status|stop} <worktree-or-preview-id>
+set -euo pipefail
+
+# launchd omits the directories where users install Claude and Codex.
+# Tests set ORC_UI_EXTRA_PATH to keep this computer's own tools out of reach.
+export PATH="$PATH:${ORC_UI_EXTRA_PATH-$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin}"
+
+# Orc's Python needs 3.11 (tomllib). Started from Finder, PATH begins with
+# /usr/bin, whose python3 is macOS's 3.9, and the viewer dies on import while
+# Orc.app shows an empty window. Use the first python3 on PATH that is new
+# enough, then a versioned python3.1x, then the same search on the PATH an
+# interactive login shell sets (pyenv, mise and asdf add themselves in
+# ~/.zshrc). /usr/bin/python3 is never run on macOS: it is 3.9 at best, and
+# without the Command Line Tools it opens an install prompt.
+python_ok() { "$1" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; }
+python_in() {
+  local IFS=: dir candidate
+  for dir in $1; do
+    candidate="$dir/python3"
+    [ -n "$dir" ] && [ -x "$candidate" ] || continue
+    [ "$candidate" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && continue
+    python_ok "$candidate" && { printf '%s\n' "$candidate"; return 0; }
+  done
+  for dir in $1; do
+    for candidate in "$dir"/python3.[1-9][0-9]; do
+      [ -n "$dir" ] && [ -x "$candidate" ] || continue
+      python_ok "$candidate" && { printf '%s\n' "$candidate"; return 0; }
+    done
+  done
+  return 1
+}
+# PATH as an interactive login shell sets it, or nothing after 5 seconds.
+login_shell_path() {
+  local out pid
+  out="$(mktemp "${TMPDIR:-/tmp}/orc-ui-login-path.XXXXXX")" || return 0
+  "${SHELL:-/bin/zsh}" -lic 'printf "\n__ORC_LOGIN_PATH__=%s\n" "$PATH"' </dev/null >"$out" 2>/dev/null &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 \
+           21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 \
+           41 42 43 44 45 46 47 48 49 50; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  # Profiles can print their own lines, so only the marked one counts.
+  sed -n 's/^__ORC_LOGIN_PATH__=//p' "$out" | tail -n 1
+  command rm -f "$out"
+}
+find_python() {
+  if [ -n "${ORC_PYTHON:-}" ]; then
+    python_ok "$ORC_PYTHON" && { printf '%s\n' "$ORC_PYTHON"; return 0; }
+    echo "orc-ui: ORC_PYTHON=$ORC_PYTHON is not Python 3.11 or newer; point it at one, or unset it to let Orc look" >&2
+    return 1
+  fi
+  python_in "$PATH" || python_in "$(login_shell_path)" || {
+    echo "orc-ui: Orc needs Python 3.11 or newer and found none on PATH or in your login shell (macOS's own /usr/bin/python3 is 3.9). Install one with 'brew install python', or set ORC_PYTHON to its path, then open Orc again." >&2
+    return 1
+  }
+}
+ORC_PYTHON="$(find_python)" || exit 69
+export ORC_PYTHON
+# Every python3 below, and the viewer and what it starts, use that one.
+python3() { "$ORC_PYTHON" "$@"; }
+
+# Tests set ORC_UI_DEFAULT_PORT to drive the default instance on a free port.
+DEFAULT_PORT="${ORC_UI_DEFAULT_PORT:-4173}"
+PORT="${ORC_UI_PORT:-$DEFAULT_PORT}"
+# Python and curl read 04173 as 4173, which every string comparison below
+# would take for another port.
+for port in "$DEFAULT_PORT" "$PORT"; do
+  case "$port" in
+    [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]) ;;
+    *) port=0 ;;
+  esac
+  if [ "$port" -gt 65535 ] || [ "$port" -lt 1 ]; then
+    echo "orc-ui: refusing: '${ORC_UI_PORT:-$DEFAULT_PORT}' is not a port; give a decimal from 1 to 65535 without leading zeros" >&2
+    exit 64
+  fi
+done
+URL="http://127.0.0.1:$PORT/"
+SCRIPT_ROOT="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
+open_url() {
+  if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+    "$SCRIPT_ROOT/ui/windows_host.py" "$1"
+  elif command -v open >/dev/null 2>&1; then
+    open "$1"
+  else
+    echo "link: $1"
+  fi
+}
+if [ -n "${WSL_DISTRO_NAME:-}" ]; then export BROWSER="${BROWSER:-$SCRIPT_ROOT/ui/windows_host.py}"; fi
+RUNTIME_HOME="$HOME/.orc/runtime"
+RUNTIME_CURRENT="$RUNTIME_HOME/current"
+DEFAULT_INSTANCE=0
+if [ "$PORT" = "$DEFAULT_PORT" ] && [ -z "${ORC_UI_STATE_DIR:-}" ]; then DEFAULT_INSTANCE=1; fi
+
+# The path with every link resolved, existing or not.
+canonical() { python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+
+case "${1:-open}" in
+  start|stop|restart)
+    if [ "$DEFAULT_INSTANCE" = 1 ] && [ -n "${ORC_RUNS_DIR:-}" ] \
+        && [ "$(canonical "$ORC_RUNS_DIR")" != "$(canonical "$HOME/.orc/runs")" ]; then
+      echo "orc-ui: refusing to $1 the viewer on port $PORT with ORC_RUNS_DIR=$ORC_RUNS_DIR: it serves $HOME/.orc/runs; unset ORC_RUNS_DIR or use another ORC_UI_PORT" >&2
+      exit 64
+    fi
+    ;;
+esac
+
+# The installed wrapper enters through runtime/current. Direct source-tree
+# execution remains useful for tests/bootstrap, but an installed default always
+# takes its UI bytes from the promoted immutable release.
+if [ "$DEFAULT_INSTANCE" = 1 ] && [ -f "$RUNTIME_CURRENT/ui/serve.py" ]; then
+  SERVE="$(realpath "$RUNTIME_CURRENT/ui/serve.py")"
+else
+  SERVE="${ORC_UI_SERVE:-$SCRIPT_ROOT/ui/serve.py}"
+fi
+if [ -n "${ORC_UI_STATE_DIR:-}" ]; then
+  STATE_DIR="$ORC_UI_STATE_DIR"
+elif [ "$DEFAULT_INSTANCE" = 1 ]; then
+  STATE_DIR="$HOME/.orc"
+else
+  STATE_DIR="$HOME/.orc/ui-instances/port-$PORT"
+fi
+
+# A test suite once restarted the user's viewer on 4173 with its own temporary
+# ORC_RUNS_DIR and blanked their run list. bin/test exports ORC_TEST_REAL_HOME,
+# so a test can only drive a viewer of its own: its own HOME, port, state and
+# runs. Preview exports a state dir under the real ~/.orc that headless turns
+# inherit, so a test that only swaps HOME and port is not enough.
+if [ -n "${ORC_TEST_REAL_HOME:-}" ]; then
+  real_orc="$(canonical "$ORC_TEST_REAL_HOME/.orc")"
+  if [ "$(canonical "$HOME")" = "$(canonical "$ORC_TEST_REAL_HOME")" ]; then
+    echo "orc-ui: refusing to run under the test suite with the real HOME ($HOME); give the test its own HOME and ORC_UI_PORT" >&2
+    exit 64
+  fi
+  if [ "$PORT" = 4173 ] && [ "${1:-open}" != preview ]; then
+    echo "orc-ui: refusing to run under the test suite against the live viewer on port 4173; give the test its own HOME and ORC_UI_PORT" >&2
+    exit 64
+  fi
+  for dir in "$STATE_DIR" ${ORC_RUNS_DIR:+"$ORC_RUNS_DIR"}; do
+    case "$(canonical "$dir")/" in
+      "$real_orc"/*)
+        echo "orc-ui: refusing to run under the test suite with $dir, inside the real $ORC_TEST_REAL_HOME/.orc; unset ORC_UI_STATE_DIR and ORC_RUNS_DIR or point them at the test's own HOME" >&2
+        exit 64
+        ;;
+    esac
+  done
+fi
+PIDFILE="$STATE_DIR/ui.pid"
+LOGFILE="$STATE_DIR/ui.log"
+START_LOCK="$STATE_DIR/start.lock"
+OWNERFILE="$STATE_DIR/owner"
+if [ "$DEFAULT_INSTANCE" = 1 ]; then FALLBACK_KIND=default; else FALLBACK_KIND=isolated; fi
+INSTANCE_KIND="${ORC_UI_INSTANCE_KIND:-$FALLBACK_KIND}"
+if [ -n "${ORC_UI_INSTANCE_ID:-}" ]; then
+  INSTANCE_ID="$ORC_UI_INSTANCE_ID"
+elif [ "$DEFAULT_INSTANCE" = 1 ]; then
+  INSTANCE_ID=default
+else
+  INSTANCE_ID="port-$PORT"
+fi
+
+up() { curl -sf --max-time 2 "$URL" >/dev/null 2>&1; }
+
+# Orc.app connected to the daemon (SSE subscriber)?
+app_connected() { curl -sf --max-time 2 "${URL}api/app" 2>/dev/null | grep -q '"connected": *true'; }
+
+# A PR merged on GitHub reaches the default runtime only once the primary
+# checkout pulls it, so a bare open could show a release that predates it.
+# Pull and promote first; "$0" enters through runtime/current, so the start
+# that follows serves whatever this promoted.
+refresh_default_runtime() {
+  repo="$(python3 - "$HOME/.orc/runtime/version.json" <<'PY' 2>/dev/null || true
+import json, os, sys
+repo = json.load(open(sys.argv[1])).get("repo")
+print(os.path.expanduser(repo) if isinstance(repo, str) else "")
+PY
+)"
+  [ -n "$repo" ] || return 0
+  before="$(realpath "$RUNTIME_CURRENT" 2>/dev/null || true)"
+  was_connected=false
+  if app_connected; then was_connected=true; fi
+  python3 "$SCRIPT_ROOT/ui/runtime_updates.py" refresh --repo "$repo" || true
+  [ "$(realpath "$RUNTIME_CURRENT" 2>/dev/null || true)" != "$before" ] || return 0
+  # The promotion restarted the daemon. Orc.app reconnects on a 2s retry, and a
+  # navigate sent before it does falls through to a browser tab.
+  [ "$was_connected" = true ] || return 0
+  attempt=0
+  until app_connected || [ "$attempt" -ge 25 ]; do
+    attempt=$((attempt + 1))
+    sleep 0.2
+  done
+}
+
+daemon_matches_launcher() {
+  [ -f "$PIDFILE" ] || return 1
+  pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  case "$pid" in *[!0-9]*|'') return 1 ;; esac
+  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  case "$command" in
+    *"$SERVE $PORT"*) ;;
+    *) return 1 ;;
+  esac
+  [ "$(cat "$OWNERFILE" 2>/dev/null || true)" = "$SERVE|$PORT|$INSTANCE_ID" ]
+}
+
+release_start_lock() {
+  [ -d "$START_LOCK" ] || return 0
+  owner="$(cat "$START_LOCK/pid" 2>/dev/null || true)"
+  [ "$owner" = "$$" ] || return 0
+  command rm -f "$START_LOCK/pid"
+  rmdir "$START_LOCK" 2>/dev/null || true
+}
+
+acquire_start_lock() {
+  mkdir -p "$STATE_DIR"
+  attempt=0
+  while ! mkdir "$START_LOCK" 2>/dev/null; do
+    owner="$(cat "$START_LOCK/pid" 2>/dev/null || true)"
+    case "$owner" in
+      *[!0-9]*|'')
+        # Allow an acquiring process time to write its owner before treating an
+        # empty lock as abandoned. rmdir remains safe if that write wins.
+        if [ "$attempt" -ge 20 ]; then rmdir "$START_LOCK" 2>/dev/null || true; fi
+        ;;
+      *)
+        if ! kill -0 "$owner" 2>/dev/null; then
+          command rm -f "$START_LOCK/pid"
+          rmdir "$START_LOCK" 2>/dev/null || true
+        fi
+        ;;
+    esac
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 200 ]; then
+      echo "failed to acquire viewer startup lock: $START_LOCK" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+  echo "$$" >"$START_LOCK/pid"
+  trap release_start_lock EXIT
+}
+
+unknown_listener() {
+  up || return 1
+  daemon_matches_launcher && return 1
+  return 0
+}
+
+clear_stale_state() {
+  if ! daemon_matches_launcher; then command rm -f "$PIDFILE" "$OWNERFILE"; fi
+}
+
+# A promotion changes SERVE's immutable release path while retaining the same
+# logical default instance. Reconciliation may retire that one recorded prior
+# release, but only after its owner record and live command agree exactly.
+retire_recorded_default_release() {
+  [ "$DEFAULT_INSTANCE" = 1 ] || return 1
+  retire_recorded_pid && return 0
+  # The recorded pid can die without the daemon dying with it — a launcher that
+  # is killed mid-start, or a second start that loses the port race — leaving an
+  # orphan from an old release serving 4173 to every client, Orc.app included.
+  port_pid="$(default_release_listener)" || return 1
+  kill "$port_pid"
+  command rm -f "$PIDFILE" "$OWNERFILE"
+}
+
+retire_recorded_pid() {
+  local releases
+  record="$(cat "$OWNERFILE" 2>/dev/null || true)"
+  old_serve="${record%%|*}"
+  remainder="${record#*|}"
+  old_port="${remainder%%|*}"
+  old_id="${remainder#*|}"
+  releases="$(canonical "$RUNTIME_HOME/releases")"
+  case "$old_serve" in "$releases/"*/ui/serve.py) ;; *) return 1 ;; esac
+  [ "$old_port" = "$DEFAULT_PORT" ] && [ "$old_id" = default ] || return 1
+  old_pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  case "$old_pid" in *[!0-9]*|'') return 1 ;; esac
+  case "$(ps -p "$old_pid" -o command= 2>/dev/null || true)" in
+    *"$old_serve $DEFAULT_PORT"*) ;;
+    *) return 1 ;;
+  esac
+  kill "$old_pid"
+  command rm -f "$PIDFILE" "$OWNERFILE"
+}
+
+# Only an orc release's own serve.py qualifies, never anything else that holds
+# 4173 — the same test that guards the recorded pid.
+default_release_listener() {
+  local releases
+  [ "$DEFAULT_INSTANCE" = 1 ] || return 1
+  listener="$(lsof -ti "tcp:$DEFAULT_PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+  case "$listener" in *[!0-9]*|'') return 1 ;; esac
+  releases="$(canonical "$RUNTIME_HOME/releases")"
+  case "$(ps -p "$listener" -o command= 2>/dev/null || true)" in
+    *"$releases/"*"/ui/serve.py $DEFAULT_PORT"*) echo "$listener" ;;
+    *) return 1 ;;
+  esac
+}
+
+preview_id() {
+  python3 - "$1" <<'PY'
+import hashlib, os, re, sys
+p = os.path.realpath(sys.argv[1])
+name = re.sub(r"[^a-z0-9]+", "-", os.path.basename(p).lower()).strip("-") or "preview"
+print("%s-%s" % (name[:32], hashlib.sha256(p.encode()).hexdigest()[:10]))
+PY
+}
+
+preview_port() {
+  python3 - "$1" <<'PY'
+import hashlib, socket, sys
+start = 4300 + int(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:6], 16) % 2000
+for port in list(range(start, 6300)) + list(range(4300, start)):
+    with socket.socket() as s:
+        try: s.bind(("127.0.0.1", port))
+        except OSError: continue
+        print(port); break
+else: raise SystemExit("no preview port available")
+PY
+}
+
+preview_state_dir_for() {
+  target="$1"
+  previews_dir="$HOME/.orc/previews"
+  case "$target" in
+    */*) ;;
+    *)
+      if [ -d "$previews_dir/$target" ] && [ -f "$previews_dir/$target/worktree" ]; then
+        printf '%s\n' "$previews_dir/$target"
+        return 0
+      fi
+      ;;
+  esac
+  original_path="$(python3 - "$target" <<'PY'
+import os, sys
+print(os.path.realpath(os.path.abspath(os.path.expanduser(sys.argv[1]))))
+PY
+)"
+  original_id="$(preview_id "$original_path")"
+  if [ -d "$previews_dir/$original_id" ]; then
+    printf '%s\n' "$previews_dir/$original_id"
+    return 0
+  fi
+  return 1
+}
+
+preview_command() {
+  action="${2:-}"
+  target="${3:-}"
+  if [ "$action" = --help ] || [ "$action" = -h ] || [ "$target" = --help ] || [ "$target" = -h ]; then
+    echo "usage: orc-ui preview <worktree> | orc-ui preview open <worktree> | orc-ui preview {status|stop} <worktree-or-preview-id>"
+    exit 0
+  fi
+  if [ "$action" != open ] && [ "$action" != status ] && [ "$action" != stop ]; then
+    target="$action"; action=start
+  fi
+  [ -n "$target" ] || {
+    echo "usage: orc-ui preview <worktree> | orc-ui preview open <worktree> | orc-ui preview {status|stop} <worktree-or-preview-id>" >&2
+    exit 2
+  }
+  if [ "$action" = start ] || [ "$action" = open ]; then
+    worktree="$(cd "$target" 2>/dev/null && pwd -P)" || { echo "preview worktree not found: $target" >&2; exit 1; }
+    [ -f "$worktree/ui/serve.py" ] || { echo "not an Orc checkout: $worktree" >&2; exit 1; }
+    preview_id="$(preview_id "$worktree")"
+    preview_state_dir="$HOME/.orc/previews/$preview_id"
+    mkdir -p "$preview_state_dir"
+    if [ -f "$preview_state_dir/port" ]; then
+      preview_port="$(cat "$preview_state_dir/port")"
+    else
+      preview_port="$(preview_port "$worktree")"
+      printf '%s\n' "$preview_port" >"$preview_state_dir/port"
+    fi
+    printf '%s\n' "$worktree" >"$preview_state_dir/worktree"
+  else
+    preview_state_dir="$(preview_state_dir_for "$target")" || {
+      echo "preview not found: $target" >&2
+      exit 1
+    }
+    preview_id="$(basename "$preview_state_dir")"
+    worktree="$(cat "$preview_state_dir/worktree" 2>/dev/null || true)"
+    preview_port="$(cat "$preview_state_dir/port" 2>/dev/null || true)"
+    [ -n "$worktree" ] && [ -n "$preview_port" ] || {
+      echo "preview state is incomplete: $preview_state_dir" >&2
+      exit 1
+    }
+  fi
+  export ORC_UI_PORT="$preview_port" ORC_UI_STATE_DIR="$preview_state_dir" ORC_UI_SERVE="$worktree/ui/serve.py"
+  export ORC_UI_INSTANCE_KIND=preview ORC_UI_INSTANCE_ID="$preview_id" ORC_UI_PREVIEW_ROOT="$worktree"
+  case "$action" in
+    start)
+      "$0" start >/dev/null
+      echo "preview $preview_id: http://127.0.0.1:$preview_port/ ($worktree)"
+      ;;
+    open)
+      "$0" start >/dev/null
+      open_url "http://127.0.0.1:$preview_port/"
+      echo "preview $preview_id: http://127.0.0.1:$preview_port/ ($worktree)"
+      ;;
+    status) "$0" status ;;
+    stop) "$0" stop ;;
+  esac
+}
+
+# Opening a gate may be the only event that parks a run for user input.
+# The caller turns warnings into a "gate NOT opened" report, so a rejected
+# state change cannot claim the gate is ready.
+mark_gate_awaiting() {
+  python3 - "$1" "$SCRIPT_ROOT/bin/orc-delivery-authority" "$SCRIPT_ROOT/ui" "${2:-}" <<'PY' 2>/dev/null || true
+import json, os, subprocess, sys
+sys.path.insert(0, sys.argv[3])
+from run_relationships import retired_lifecycle
+frag = sys.argv[1]
+authority_helper = sys.argv[2]
+clean_title = sys.argv[4].strip() if len(sys.argv) > 4 else ""
+run_id = frag.split("/", 1)[0]
+if not run_id or run_id.startswith("."):
+    sys.exit(0)
+runs_root = os.environ.get("ORC_RUNS_DIR") or os.path.expanduser("~/.orc/runs")
+path = os.path.join(runs_root, run_id, "meta.json")
+try:
+    with open(path) as f:
+        meta = json.load(f)
+except (OSError, ValueError):
+    sys.exit(0)
+if not isinstance(meta, dict):
+    sys.exit(0)
+if retired_lifecycle(meta):
+    print("WARN: %s is read-only history — gate not opened; start a fresh run" % run_id)
+    sys.exit(0)
+# A question form must be one Send accepts. Check it with Send's own rules
+# before the user sees it, so the agent fixes the form instead of the user
+# finding out after answering every question.
+from question_sets import gate_form_error
+form_error = (None if meta.get("route") == "local-review" else gate_form_error(
+    os.path.dirname(path), os.path.basename(frag), meta.get("mode")))
+if form_error:
+    print("WARN: %s — %s; fix the questions file and open the gate again"
+          % (run_id, form_error))
+    sys.exit(0)
+if clean_title:
+    meta["title"] = clean_title
+    meta.pop("titlePending", None)
+
+
+def save():
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(meta, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+# The gate path names the final phase, so derive it instead of trusting a
+# separate phase write the caller may never have made.
+# A local review's recap page shares the name but is never a final landing.
+review = meta.get("route") == "local-review"
+recap = os.path.basename(frag) == "recap.html" and not review
+present = os.path.basename(frag) == "present.html"
+pr_result = os.path.basename(frag) == "pr-body.md" and meta.get("lifecycleVersion") == 4
+ship_page = os.path.basename(frag) == "ship.html" or pr_result
+mvp_page = os.path.basename(frag) == "mvp.html"
+marker = meta.get("mvpCheckpointVersion")
+mvp = (mvp_page and meta.get("mode") == "gated"
+       and type(marker) is int and marker in (1, 2))
+if mvp_page and not mvp:
+    print("WARN: %s has no gated MVP checkpoint marker — gate not opened" % run_id)
+    sys.exit(0)
+ship = ship_page and meta.get("lifecycleVersion") in (3, 4)
+if ship_page and not ship:
+    print("WARN: %s has no supported lifecycle — Ship gate not opened" % run_id)
+    sys.exit(0)
+if pr_result:
+    body_path = os.path.join(os.path.dirname(path), "pr-body.md")
+    if not os.path.isfile(body_path) or not os.path.getsize(body_path):
+        print("WARN: %s has no PR body — gate not opened" % run_id)
+        sys.exit(0)
+if ship:
+    if meta.get("lifecycleVersion") == 4:
+        checked = subprocess.run(
+            [authority_helper, "validate", "--run-dir", os.path.dirname(path)],
+            capture_output=True, text=True)
+        if checked.returncode != 0:
+            print("WARN: %s has no live delivery authority — Ship gate not opened" % run_id)
+            sys.exit(0)
+    else:
+        receipt_path = os.path.join(os.path.dirname(path), "verification-receipt.json")
+        try:
+            with open(receipt_path) as f:
+                receipt = json.load(f)
+        except (OSError, ValueError):
+            receipt = {}
+        if (not isinstance(receipt, dict)
+                or receipt.get("schemaVersion") != 1
+                or receipt.get("lifecycleVersion") != 3
+                or receipt.get("status") != "pass"
+                or not isinstance(receipt.get("handsOn"), dict)):
+            print("WARN: %s has no passing live verification receipt — Ship gate not opened" % run_id)
+            sys.exit(0)
+landing_phase = ("ship" if ship else "present" if present else "recap" if recap
+                 else "mvp" if mvp else None)
+if (landing_phase and meta.get("phase") != landing_phase
+        and (landing_phase != "mvp"
+             or meta.get("status") in ("running", "awaiting-gate"))):
+    meta["phase"] = landing_phase
+    save()
+st = meta.get("status")
+# The PR feedback round is the one gate that opens on a *finished* run: its
+# Push comments & commits button (fixes unpushed), or its Push comments retry
+# (pushed, replies unposted), needs awaiting-gate to be live (claim_run_status).
+# prFeedback is its authority, not phase -- so this never rewrites phase or
+# gatedPhases, because the run really is done (skills/orc-pr, "PR feedback
+# round").
+# The round's questions, one Answer mode step per new comment, open the same
+# way before it changes anything: `prFeedback.state` is `awaiting-answers` and
+# the questions file is on disk.
+if os.path.basename(frag) in ("pr-comments.html", "pr-review-questions.json"):
+    feedback = meta.get("prFeedback")
+    feedback = feedback if isinstance(feedback, dict) else {}
+    state = feedback.get("state")
+    run_dir = os.path.dirname(path)
+    replies_pending = (state == "pushed"
+                       and feedback.get("repliesFile") == "pr-replies.json"
+                       and not feedback.get("repliesPostedAt")
+                       and os.path.isfile(os.path.join(run_dir, "pr-replies.json")))
+    asking = (os.path.basename(frag) == "pr-review-questions.json"
+              and state == "awaiting-answers"
+              and os.path.isfile(os.path.join(run_dir, "pr-review-questions.json")))
+    if os.path.basename(frag) == "pr-review-questions.json" and not asking:
+        print("WARN: %s has no review questions waiting (prFeedback.state is "
+              "not awaiting-answers) — not flipped to awaiting-gate" % run_id)
+    elif not asking and state != "awaiting-push" and not replies_pending:
+        print("WARN: %s has no unpushed fixes or unposted replies in its PR "
+              "feedback round — not flipped to awaiting-gate" % run_id)
+    elif st == "awaiting-gate":
+        pass  # already at the round's gate = idempotent no-op
+    elif st in ("running", "complete"):
+        meta["status"] = "awaiting-gate"
+        save()
+    else:
+        print("WARN: %s is status=%s — not flipped to awaiting-gate; "
+              "the round's button will not render" % (run_id, st))
+    sys.exit(0)
+# orc-ship-hold parked a Ship-ready run at escalated while a reopened decision
+# is settled. Reopening Ship (its authority already validated above) is the
+# release. A merge-conflict escalation never releases here. A run that feedback
+# already woke to running may still carry the hold, so every Ship open that
+# lands at awaiting-gate clears it.
+if (st == "escalated" and ship and meta.get("phase") == "ship"
+        and isinstance(meta.get("shipHold"), dict)
+        and not isinstance(meta.get("mergeConflict"), dict)):
+    st = "running"
+# orc-escalate parked the run on a blocker; opening the next gate means it
+# is cleared. Only its own record releases here, never a merge conflict.
+if (st == "escalated" and isinstance(meta.get("escalation"), dict)
+        and not isinstance(meta.get("mergeConflict"), dict)
+        and not isinstance(meta.get("shipHold"), dict)):
+    meta.pop("escalation")
+    st = "running"
+if st != "running":
+    if st == "escalated":
+        print("WARN: %s is status=escalated — not flipped to awaiting-gate; run "
+              "`orc-escalate --run-dir <run-dir> --clear` once the blocker is gone" % run_id)
+    elif st != "awaiting-gate":  # already at a gate = legit idempotent no-op
+        print("WARN: %s is status=%s — not flipped to awaiting-gate; "
+              "recap actions will not render" % (run_id, st))
+    elif ship and "shipHold" in meta:
+        meta.pop("shipHold")
+        save()
+    elif clean_title:
+        save()
+    sys.exit(0)
+if os.path.basename(frag) == "clarification.html" and not review:
+    meta["phase"] = "clarification"
+    if meta.get("lifecycleVersion") is None:
+        meta["lifecycleVersion"] = 4
+        meta.setdefault("mode", "quick")
+        meta.setdefault("route", "minimal-shell")
+        meta.setdefault("gatedPhases", ["ship"])
+elif os.path.basename(frag) == "planning.html" and not review:
+    meta["route"] = "planning-session"
+    meta["mode"] = "gated"
+    meta["phase"] = "planning"
+    meta.setdefault("planReveal", {"version": 1})
+    if not isinstance(meta.get("planning"), dict):
+        meta["planning"] = {"state": "grilling", "round": 1}
+# Quick runs mark only at their final landing -- EXCEPT their real form
+# gates: the mini-Grilling/Clarification decision stop and the mandatory
+# lifecycle-v3 Plan approval. Without this the form renders locked
+# (page_locked -> "This gate has passed"). Keep in step with serve.py's
+# QUICK_FORM_PHASES.
+quick_form_gate = meta.get("phase") == {
+    "grilling.html": "grilling", "clarification.html": "clarification",
+    "plan.html": "plan"}.get(os.path.basename(frag))
+if (meta.get("mode") == "quick"
+        and meta.get("phase") not in ("present", "recap", "ship")
+        and not landing_phase and not quick_form_gate):
+    sys.exit(0)  # deliberate skip — quick runs mark only at final landing
+meta["status"] = "awaiting-gate"
+if ship:
+    meta.pop("shipHold", None)
+    # The first time the run reached Ship. The daily run audit times runs to
+    # it, and a reopen after a rebase or CI fix must not move it.
+    if not meta.get("shipReadyAt"):
+        from datetime import datetime, timezone
+        meta["shipReadyAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# Record which gates were opened: the UI's activityLabel uses gatedPhases to
+# tell "Reviewing" apart from "Applying review fixes" once status is running
+# again. Derived from the page like the recap rule above.
+gate_phase = {
+    "grilling.html": "grilling", "clarification.html": "clarification",
+    "plan.html": "plan", "review.html": "review",
+    "qa-review.html": "qa", "mvp.html": "mvp",
+    "recap.html": "recap", "present.html": "present", "ship.html": "ship",
+}.get(os.path.basename(frag)) if not review else None
+gate_phase = gate_phase or meta.get("phase")
+if gate_phase:
+    gated = meta.get("gatedPhases")
+    if not isinstance(gated, list):
+        gated = []
+    if gate_phase not in gated:
+        gated.append(gate_phase)
+        meta["gatedPhases"] = gated
+save()
+PY
+}
+
+case "${1:-open}" in
+  preview)
+    preview_command "$@"
+    ;;
+  start)
+    if up && daemon_matches_launcher; then
+      echo "already up: $URL"
+      exit 0
+    fi
+    acquire_start_lock
+    # Another cold launcher may have won while this process waited. Recheck
+    # under the lock before stopping anything or creating a second daemon.
+    if up && daemon_matches_launcher; then
+      echo "already up: $URL"
+      exit 0
+    fi
+    # A release viewer this launcher no longer owns is the same default
+    # instance on older bytes. Orc.app runs start on launch, so refusing it
+    # would pin the app to that release however often it is reopened.
+    if unknown_listener; then
+      retire_recorded_default_release || {
+        echo "refusing to replace unknown listener on 127.0.0.1:$PORT" >&2
+        exit 1
+      }
+      for _ in 1 2 3 4 5 6 7 8 9 10; do up || break; sleep 0.1; done
+    fi
+    clear_stale_state
+    mkdir -p "$STATE_DIR"
+    printf '%s\n' "$SERVE|$PORT|$INSTANCE_ID" >"$OWNERFILE"
+    # The viewer's own scripts run as python3 from PATH; when that is not the
+    # interpreter chosen above, a link in front of PATH makes it so.
+    daemon_path="$PATH"
+    if [ "$(type -P python3 || true)" != "$ORC_PYTHON" ]; then
+      mkdir -p "$STATE_DIR/python-bin"
+      ln -sfn "$ORC_PYTHON" "$STATE_DIR/python-bin/python3"
+      daemon_path="$STATE_DIR/python-bin:$PATH"
+    fi
+    # no setsid on macOS — detach via python (execv keeps the pid, so $! stays valid)
+    PATH="$daemon_path" nohup "$ORC_PYTHON" -c 'import os,sys; os.setsid(); os.execv(sys.executable, [sys.executable] + sys.argv[1:])' \
+      "$SERVE" "$PORT" >"$LOGFILE" 2>&1 &
+    echo $! >"$PIDFILE"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      up && daemon_matches_launcher && break
+      sleep 0.2
+    done
+    if up && daemon_matches_launcher; then
+      echo "started: $URL"
+    else
+      echo "failed to start — see $LOGFILE" >&2
+      # Orc.app shows these lines in place of an empty window.
+      tail -n 8 "$LOGFILE" >&2 2>/dev/null || true
+      exit 1
+    fi
+    ;;
+  stop)
+    live=0
+    if daemon_matches_launcher; then
+      owned_pid="$(cat "$PIDFILE")"
+      if kill "$owned_pid" 2>/dev/null; then live=1; fi
+    elif up; then
+      retire_recorded_default_release || {
+        echo "refusing to stop unknown listener on 127.0.0.1:$PORT" >&2
+        exit 1
+      }
+      live=1
+    fi
+    command rm -f "$PIDFILE" "$OWNERFILE"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do up || break; sleep 0.1; done
+    [ "$live" = 1 ] && echo "stopped" || echo "not running (no live pid)"
+    ;;
+  _reconcile-installed)
+    # The installer probes with the outgoing launcher, which cannot see a
+    # viewer it no longer owns: an orphan whose recorded pid died, or one an
+    # interrupted promotion left on an older release. Every later probe would
+    # miss it the same way, so a release viewer on the port counts as running.
+    if [ "${2:-false}" = true ] || { up && default_release_listener >/dev/null; }; then
+      if daemon_matches_launcher; then "$0" restart; else "$0" start; fi
+    fi
+    ;;
+  restart)
+    "$0" stop
+    "$0" start
+    ;;
+  open)
+    gate=0
+    gate_title=""
+    has_title=0
+    frag=""
+    if [ "$#" -gt 0 ]; then shift; fi
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --gate)
+          gate=1
+          shift
+          ;;
+        --title)
+          [ "$#" -ge 2 ] || { echo "orc-ui: --title requires a value" >&2; exit 2; }
+          gate_title="$2"
+          has_title=1
+          shift 2
+          ;;
+        --title=*)
+          gate_title="${1#--title=}"
+          has_title=1
+          shift
+          ;;
+        *)
+          frag="$1"
+          shift
+          ;;
+      esac
+    done
+    if [ "$has_title" = 1 ]; then
+      python3 -c 'import sys; t = sys.argv[1].strip(); sys.exit(0 if 0 < len(t) <= 80 else 1)' "$gate_title" || {
+        echo "orc-ui: --title must be a non-empty string of at most 80 characters" >&2
+        exit 2
+      }
+    fi
+    if [ "$gate" = 1 ]; then
+      # A gate never auto-opens: prove the page renders, mark the run
+      # awaiting-gate, and keep the daemon up so the printed deep link works.
+      # The user opens the link.
+      "$0" start >/dev/null 2>&1 || true
+      if [ -n "$frag" ]; then
+        # "ready" must mean the page renders, not "meta.json was marked" — a
+        # stale daemon 404s pages that exist in the current checkout. Fetch the
+        # served path (runs/…); the bare hash route redirects and proves nothing.
+        # 200-only: the pending-loader page also 200s and counts as rendering.
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${URL}runs/$frag" 2>/dev/null || echo 000)"
+        if [ "$code" != 200 ]; then
+          echo "WARN: ${URL}runs/$frag returned HTTP $code — page does not render" >&2
+          echo "link (gate NOT opened): $URL${frag:+#$frag}"
+          exit 1
+        fi
+      fi
+      warn=""
+      [ -n "$frag" ] && warn="$(mark_gate_awaiting "$frag" "$gate_title")"
+      if [ -n "$warn" ]; then
+        echo "$warn" >&2
+        echo "link (gate NOT opened): $URL${frag:+#$frag}"
+      else
+        echo "gate ready — open: $URL${frag:+#$frag}"
+      fi
+      exit 0
+    fi
+    if [ "$DEFAULT_INSTANCE" = 1 ]; then refresh_default_runtime; fi
+    "$0" start
+    if [ "$INSTANCE_KIND" = preview ]; then
+      open_url "$URL${frag:+#$frag}"
+      exit 0
+    fi
+    # Orc.app running (SSE subscriber)? Route the fragment to the app instead
+    # of the browser — serve.py answers 409 when no app is connected.
+    foreground=false
+    if [ -z "${CODEX_THREAD_ID:-}" ] && [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] \
+       && [ -t 0 ] && [ -t 1 ] \
+       && python3 -c 'import os,sys; sys.exit(os.tcgetpgrp(0) != os.getpgrp())'; then
+      foreground=true
+    fi
+    if curl -sf --max-time 2 -X POST -H 'Content-Type: application/json' \
+         -d "{\"fragment\":$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$frag"),\"auto\":false,\"foreground\":$foreground}" \
+         "${URL}api/navigate" >/dev/null 2>&1; then
+      # macOS 14+ can refuse the app's own activate() while another app is
+      # frontmost. A LaunchServices request from the user's terminal is not
+      # refused, and reopening the running app shows its window.
+      if [ "$foreground" = true ] && [ "$(uname)" = Darwin ] && command -v open >/dev/null 2>&1; then
+        open -b com.orc.app || true
+      fi
+      exit 0
+    fi
+    if [ "$foreground" = true ]; then
+      if [ -n "$frag" ]; then
+        open_url "$URL#$frag"
+      else
+        open_url "$URL"
+      fi
+    else
+      echo "link: $URL${frag:+#$frag}"
+    fi
+    ;;
+  status)
+    if daemon_matches_launcher; then
+      if up; then
+        echo "up: $URL ($INSTANCE_KIND $INSTANCE_ID)"
+      elif [ "$INSTANCE_KIND" = preview ] && [ ! -f "$SERVE" ]; then
+        echo "up: $URL ($INSTANCE_KIND $INSTANCE_ID; source worktree removed)"
+      else
+        echo "unresponsive: $URL ($INSTANCE_KIND $INSTANCE_ID)" >&2; exit 2
+      fi
+    elif up; then
+      echo "unknown listener: $URL" >&2; exit 2
+    else
+      clear_stale_state; echo "down"; exit 1
+    fi
+    ;;
+  app)
+    if [ "$INSTANCE_KIND" = preview ]; then
+      echo "not connected (preview has no app handoff)"
+      exit 1
+    fi
+    if app_connected; then
+      echo "connected"
+    else
+      echo "not connected"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "usage: orc-ui [start|stop|restart|open [<run-id>/<file>]|status|app|preview <worktree>|preview open <worktree>|preview {status|stop} <worktree-or-preview-id>]" >&2
+    exit 2
+    ;;
+esac

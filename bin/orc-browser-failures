@@ -1,0 +1,826 @@
+#!/usr/bin/env python3
+"""Check and maintain the list of browser specs known to fail or flake on main.
+
+Usage:
+  orc-browser-failures [list] [--json] [--file PATH] [--records PATH]
+  orc-browser-failures check [--json] [--file PATH] [--records PATH] [--] <target>...
+  orc-browser-failures check-report <report.json> [--changed-base REF] [--failed-run] [--json]
+  orc-browser-failures add <spec> --kind <fail|flake> --reason <text> [--test <title> ...]
+  orc-browser-failures remove <spec> [--file PATH]
+  orc-browser-failures sync [--dry-run] [--json] [--file PATH] [--records PATH]
+
+Exit 0 when listed/matched, exit 1 when an unlisted or branch-modified failure
+remains, exit 2 on usage or schema errors.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+EXIT_OK = 0
+EXIT_UNLISTED = 1
+EXIT_USAGE = 2
+
+SCHEMA_VERSION = 1
+CLEAR_STREAK = 3
+KINDS = ("fail", "flake")
+DEFAULT_REL_FILE = "tests/known-browser-failures.json"
+DEFAULT_ABOUT = (
+    "Browser specs known to fail or flake on main; bin/orc-browser-failures and "
+    "bin/test check failures against this list instead of rerunning Playwright at "
+    "the base commit."
+)
+LINE_COL_SUFFIX = re.compile(r"(?::\d+){1,2}$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+class UsageError(Exception):
+    pass
+
+
+def git_env() -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    return env
+
+
+def resolve_repo(explicit: str | None) -> tuple[Path, Path | None]:
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        if not candidate.is_dir():
+            raise UsageError(f"repository directory not found: {explicit}")
+        proc = subprocess.run(
+            ["git", "-C", str(candidate), "rev-parse", "--path-format=absolute",
+             "--show-toplevel", "--git-common-dir"],
+            text=True, capture_output=True, env=git_env(),
+        )
+        if proc.returncode == 0:
+            lines = proc.stdout.splitlines()
+            if len(lines) >= 2:
+                return Path(lines[0]), Path(lines[1])
+        return candidate, None
+
+    proc = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+        text=True, capture_output=True, env=git_env(),
+    )
+    if proc.returncode == 0:
+        lines = proc.stdout.splitlines()
+        if len(lines) >= 2:
+            return Path(lines[0]), Path(lines[1])
+    return Path(__file__).resolve().parents[1], None
+
+
+def resolve_list_path(root: Path, explicit: str | None) -> tuple[Path, bool]:
+    raw = explicit or os.environ.get("ORC_KNOWN_BROWSER_FAILURES")
+    if raw:
+        return Path(raw).expanduser().resolve(), True
+    return root / DEFAULT_REL_FILE, False
+
+
+def resolve_records_path(common: Path | None, explicit: str | None, disabled: bool) -> Path | None:
+    if disabled:
+        return None
+    raw = explicit or os.environ.get("ORC_TEST_RECORDS")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    if common is not None:
+        return common / "orc" / "test-records.jsonl"
+    return None
+
+
+def normalize_spec_path(raw: str, root: Path | None = None) -> str:
+    text = raw.strip().replace("\\", "/")
+    text = LINE_COL_SUFFIX.sub("", text).strip()
+    if not text:
+        raise UsageError("empty browser spec path")
+    if root is not None and text.startswith("/"):
+        try:
+            rel = Path(text).resolve().relative_to(root.resolve())
+            text = rel.as_posix()
+        except ValueError:
+            pass
+    while text.startswith("./"):
+        text = text[2:]
+    text = re.sub(r"/+", "/", text)
+    if "/" not in text and text.endswith(".spec.js"):
+        text = f"tests/e2e/{text}"
+    if not text.endswith(".spec.js") or text.startswith("/") or ".." in text.split("/"):
+        raise UsageError(f"invalid browser spec path: {raw}")
+    return text
+
+
+def parse_target(raw: str, root: Path | None = None) -> tuple[str, str | None]:
+    text = raw.strip()
+    if not text:
+        raise UsageError("empty check target")
+    if " › " in text:
+        parts = [part.strip() for part in text.split(" › ") if part.strip()]
+        spec = normalize_spec_path(parts[0], root=root)
+        title = " › ".join(parts[1:]) if len(parts) > 1 else None
+        return spec, title or None
+    if "::" in text:
+        left, right = text.split("::", 1)
+        spec = normalize_spec_path(left, root=root)
+        title = right.strip() or None
+        return spec, title
+    return normalize_spec_path(text, root=root), None
+
+
+def validate_entry(raw: object, index: int) -> dict:
+    label = f"specs[{index}]"
+    if not isinstance(raw, dict):
+        raise UsageError(f"{label} must be an object")
+    spec_raw = raw.get("spec")
+    if not isinstance(spec_raw, str):
+        raise UsageError(f"{label}.spec must be a string")
+    spec = normalize_spec_path(spec_raw)
+    kind = raw.get("kind")
+    if kind not in KINDS:
+        raise UsageError(f"{label}.kind must be 'fail' or 'flake'")
+    reason = raw.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise UsageError(f"{label}.reason must be a non-empty string")
+    recorded_at = raw.get("recordedAt")
+    if not isinstance(recorded_at, str) or not DATE_RE.match(recorded_at):
+        raise UsageError(f"{label}.recordedAt must be YYYY-MM-DD")
+    entry = {
+        "spec": spec,
+        "kind": kind,
+        "reason": reason.strip(),
+        "recordedAt": recorded_at,
+    }
+    if "tests" in raw and raw["tests"] is not None:
+        tests = raw["tests"]
+        if not isinstance(tests, list) or any(not isinstance(t, str) or not t.strip() for t in tests):
+            raise UsageError(f"{label}.tests must be a list of non-empty strings")
+        cleaned = sorted(dict.fromkeys(t.strip() for t in tests))
+        if cleaned:
+            entry["tests"] = cleaned
+    return entry
+
+
+def load_list_file(path: Path, required: bool) -> dict:
+    if not path.exists():
+        if required:
+            raise UsageError(f"known browser failures file not found: {path}")
+        return {"schema": SCHEMA_VERSION, "about": DEFAULT_ABOUT, "specs": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise UsageError(f"cannot read {path}: {error}") from error
+    if not isinstance(data, dict) or data.get("schema") != SCHEMA_VERSION:
+        raise UsageError(f"{path}: unsupported schema (expected {SCHEMA_VERSION})")
+    specs_raw = data.get("specs")
+    if not isinstance(specs_raw, list):
+        raise UsageError(f"{path}: specs must be a list")
+    seen: set[str] = set()
+    specs = []
+    for index, item in enumerate(specs_raw):
+        entry = validate_entry(item, index)
+        if entry["spec"] in seen:
+            raise UsageError(f"{path}: duplicate spec {entry['spec']}")
+        seen.add(entry["spec"])
+        specs.append(entry)
+    specs.sort(key=lambda item: item["spec"])
+    about = data.get("about") if isinstance(data.get("about"), str) and data["about"].strip() else DEFAULT_ABOUT
+    return {"schema": SCHEMA_VERSION, "about": about, "specs": specs}
+
+
+def write_list_file(path: Path, data: dict) -> None:
+    payload = {
+        "schema": SCHEMA_VERSION,
+        "about": data.get("about") or DEFAULT_ABOUT,
+        "specs": sorted(data["specs"], key=lambda item: item["spec"]),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".known-browser-failures.", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def main_commits(root: Path) -> set[str]:
+    for ref in ("refs/remotes/origin/main", "refs/heads/main"):
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-list", "--max-count=300", ref],
+            text=True, capture_output=True, env=git_env(),
+        )
+        if proc.returncode == 0:
+            return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    return set()
+
+
+def read_clean_main_history(root: Path, records_path: Path | None) -> tuple[dict[str, dict], dict[str, int]]:
+    """Return (active_observed_by_spec, clean_pass_streak_by_spec) from clean-main browser records."""
+    if records_path is None or not records_path.is_file():
+        return {}, {}
+    commits = main_commits(root)
+    if not commits:
+        return {}, {}
+    observed: dict[str, dict] = {}
+    streaks: dict[str, int] = {}
+    with open(records_path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if '"browser"' not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if (not isinstance(record, dict)
+                    or record.get("schema") != 1
+                    or record.get("layer") != "browser"
+                    or record.get("clean") is not True
+                    or record.get("head") not in commits):
+                continue
+            recorded_day = str(record.get("recordedAt") or "")[:10]
+            if not DATE_RE.match(recorded_day):
+                recorded_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            head = str(record.get("head"))
+            bad_by_spec: dict[str, tuple[str, set[str]]] = {}
+            for field, kind in (("failedTests", "fail"), ("flakyTests", "flake")):
+                items = record.get(field)
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if not isinstance(item, dict) or not isinstance(item.get("spec"), str):
+                        continue
+                    try:
+                        spec = normalize_spec_path(item["spec"], root=root)
+                    except UsageError:
+                        continue
+                    prev_kind, titles = bad_by_spec.get(spec, (kind, set()))
+                    merged_kind = "fail" if "fail" in (prev_kind, kind) else "flake"
+                    title = item.get("title")
+                    if isinstance(title, str) and title.strip():
+                        titles.add(title.strip())
+                    bad_by_spec[spec] = (merged_kind, titles)
+
+            for spec, (kind, titles) in bad_by_spec.items():
+                streaks[spec] = 0
+                prev = observed.get(spec)
+                merged_titles = set(prev.get("tests", [])) if prev else set()
+                merged_titles.update(titles)
+                merged_kind = "fail" if (prev and prev["kind"] == "fail") or kind == "fail" else kind
+                entry = {
+                    "spec": spec,
+                    "kind": merged_kind,
+                    "reason": f"Observed {merged_kind} on clean main ({head[:12]})",
+                    "recordedAt": recorded_day,
+                    "source": "records",
+                    "head": head,
+                }
+                if merged_titles:
+                    entry["tests"] = sorted(merged_titles)
+                observed[spec] = entry
+
+            passed_specs = record.get("passedSpecs")
+            if isinstance(passed_specs, list):
+                for raw_spec in passed_specs:
+                    if not isinstance(raw_spec, str):
+                        continue
+                    try:
+                        spec = normalize_spec_path(raw_spec, root=root)
+                    except UsageError:
+                        continue
+                    if spec in bad_by_spec:
+                        continue
+                    streaks[spec] = streaks.get(spec, 0) + 1
+                    if streaks[spec] >= CLEAR_STREAK:
+                        observed.pop(spec, None)
+    return observed, streaks
+
+
+def merged_entries(tracked: list[dict], observed: dict[str, dict]) -> dict[str, dict]:
+    by_spec: dict[str, dict] = {}
+    for entry in tracked:
+        by_spec[entry["spec"]] = {**entry, "source": "tracked"}
+    for spec, entry in observed.items():
+        if spec not in by_spec:
+            by_spec[spec] = dict(entry)
+    return dict(sorted(by_spec.items()))
+
+
+def title_matches(wanted_list: list[str], candidate_titles: list[str]) -> bool:
+    candidates = [t.strip() for t in candidate_titles if t and t.strip()]
+    if not candidates:
+        return False
+    for listed in wanted_list:
+        for cand in candidates:
+            if cand == listed or cand.endswith(" › " + listed):
+                return True
+    return False
+
+
+def match_failure(entries: dict[str, dict], spec: str, titles: list[str]) -> tuple[str, dict | None]:
+    """Return ('known' | 'partial' | 'unlisted', entry)."""
+    entry = entries.get(spec)
+    if entry is None:
+        return "unlisted", None
+    listed_tests = entry.get("tests")
+    if not listed_tests:
+        return "known", entry
+    cleaned = [t.strip() for t in titles if t and t.strip()]
+    if not cleaned:
+        return "partial", entry
+    if title_matches(listed_tests, cleaned):
+        return "known", entry
+    if any(listed.endswith(" › " + cand) for listed in listed_tests for cand in cleaned):
+        return "partial", entry
+    return "unlisted", entry
+
+
+def changed_specs_since(root: Path, base_ref: str | None) -> set[str]:
+    if not base_ref:
+        return set()
+    resolved_ref = base_ref
+    if base_ref == "auto":
+        resolved_ref = os.environ.get("ORC_TEST_BASE") or ""
+        if not resolved_ref:
+            for candidate in ("origin/main", "main", "HEAD"):
+                probe = subprocess.run(
+                    ["git", "-C", str(root), "rev-parse", "--verify", f"{candidate}^{{commit}}"],
+                    text=True, capture_output=True, env=git_env(),
+                )
+                if probe.returncode == 0:
+                    resolved_ref = candidate
+                    break
+        if not resolved_ref:
+            return set()
+    else:
+        verify = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--verify", f"{resolved_ref}^{{commit}}"],
+            text=True, capture_output=True, env=git_env(),
+        )
+        if verify.returncode != 0:
+            raise UsageError(f"cannot resolve --changed-base ref: {base_ref}")
+    mb = subprocess.run(
+        ["git", "-C", str(root), "merge-base", resolved_ref, "HEAD"],
+        text=True, capture_output=True, env=git_env(),
+    )
+    compare = mb.stdout.strip() if mb.returncode == 0 and mb.stdout.strip() else resolved_ref
+    diff = subprocess.run(
+        ["git", "-C", str(root), "diff", "--name-only", compare, "--", "tests/e2e"],
+        text=True, capture_output=True, env=git_env(),
+    )
+    others = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "--", "tests/e2e"],
+        text=True, capture_output=True, env=git_env(),
+    )
+    specs: set[str] = set()
+    for out in (diff.stdout if diff.returncode == 0 else "",
+                others.stdout if others.returncode == 0 else ""):
+        for line in out.splitlines():
+            line = line.strip()
+            if line.endswith(".spec.js"):
+                try:
+                    specs.add(normalize_spec_path(line, root=root))
+                except UsageError:
+                    pass
+    return specs
+
+
+def parse_playwright_report(report_path: Path, root: Path) -> dict:
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise UsageError(f"cannot read Playwright JSON report {report_path}: {error}") from error
+    if not isinstance(report, dict):
+        raise UsageError(f"invalid Playwright JSON report {report_path}")
+
+    config = report.get("config") if isinstance(report.get("config"), dict) else {}
+    test_root = Path(config["rootDir"]).resolve() if isinstance(config.get("rootDir"), str) else root / "tests/e2e"
+
+    total_tests = 0
+    all_specs: set[str] = set()
+    bad_specs: set[str] = set()
+    failed_tests: list[dict] = []
+    flaky_tests: list[dict] = []
+
+    def resolve_spec(raw_file: str | None) -> str | None:
+        if not raw_file:
+            return None
+        candidate = Path(raw_file)
+        if not candidate.is_absolute():
+            joined = (test_root / candidate).resolve()
+            if joined.exists() or str(joined).startswith(str(root.resolve()) + os.sep):
+                candidate = joined
+        try:
+            return normalize_spec_path(str(candidate), root=root)
+        except UsageError:
+            try:
+                return normalize_spec_path(raw_file, root=root)
+            except UsageError:
+                return None
+
+    def walk_suite(suite: dict, ancestors: list[str], inherited_file: str | None) -> None:
+        nonlocal total_tests
+        suite_file = suite.get("file") if isinstance(suite.get("file"), str) else inherited_file
+        title = suite.get("title") if isinstance(suite.get("title"), str) else ""
+        next_ancestors = list(ancestors)
+        if title and title != suite_file and not title.endswith(".spec.js"):
+            next_ancestors.append(title)
+
+        for spec_obj in suite.get("specs") or []:
+            if not isinstance(spec_obj, dict):
+                continue
+            spec_path = resolve_spec(spec_obj.get("file") if isinstance(spec_obj.get("file"), str) else suite_file)
+            if not spec_path:
+                continue
+            all_specs.add(spec_path)
+            leaf_title = str(spec_obj.get("title") or "").strip()
+            full_parts = [*next_ancestors, leaf_title] if leaf_title else list(next_ancestors)
+            full_title = " › ".join(part for part in full_parts if part)
+            tests = spec_obj.get("tests") or []
+            if not tests:
+                continue
+            for test_obj in tests:
+                if not isinstance(test_obj, dict):
+                    continue
+                total_tests += 1
+                status = test_obj.get("status")
+                results = test_obj.get("results") or []
+                result_statuses = {r.get("status") for r in results if isinstance(r, dict)}
+                if status == "unexpected" or (
+                    status not in ("expected", "flaky", "skipped")
+                    and bool(result_statuses & {"failed", "timedOut", "interrupted"})
+                ):
+                    bad_specs.add(spec_path)
+                    failed_tests.append({
+                        "spec": spec_path,
+                        "title": full_title or leaf_title,
+                        "leafTitle": leaf_title,
+                    })
+                elif status == "flaky":
+                    bad_specs.add(spec_path)
+                    flaky_tests.append({
+                        "spec": spec_path,
+                        "title": full_title or leaf_title,
+                        "leafTitle": leaf_title,
+                    })
+
+        for child in suite.get("suites") or []:
+            if isinstance(child, dict):
+                walk_suite(child, next_ancestors, suite_file)
+
+    for top_suite in report.get("suites") or []:
+        if isinstance(top_suite, dict):
+            walk_suite(top_suite, [], None)
+
+    errors = report.get("errors") if isinstance(report.get("errors"), list) else []
+    passed_specs = sorted(all_specs - bad_specs)
+    return {
+        "totalTests": total_tests,
+        "passedSpecs": passed_specs,
+        "failedTests": failed_tests,
+        "flakyTests": flaky_tests,
+        "runnerErrors": len(errors),
+    }
+
+
+def cmd_list(args: argparse.Namespace, root: Path, common: Path | None) -> int:
+    list_path, required = resolve_list_path(root, args.file)
+    records_path = resolve_records_path(common, args.records, args.no_records)
+    tracked = load_list_file(list_path, required=required)
+    observed, _ = read_clean_main_history(root, records_path)
+    entries = list(merged_entries(tracked["specs"], observed).values())
+    if args.json:
+        print(json.dumps({"schema": SCHEMA_VERSION, "file": str(list_path), "specs": entries}, indent=2))
+        return EXIT_OK
+    if not entries:
+        print("No known main browser failures.")
+        return EXIT_OK
+    for entry in entries:
+        scope = f" [{', '.join(entry['tests'])}]" if entry.get("tests") else ""
+        print(f"{entry['spec']}{scope} ({entry['kind']}, {entry['source']}, {entry['recordedAt']}): {entry['reason']}")
+    return EXIT_OK
+
+
+def cmd_check(args: argparse.Namespace, root: Path, common: Path | None) -> int:
+    if not args.targets:
+        raise UsageError("check requires at least one spec or 'spec › title' target")
+    list_path, required = resolve_list_path(root, args.file)
+    records_path = resolve_records_path(common, args.records, args.no_records)
+    tracked = load_list_file(list_path, required=required)
+    observed, _ = read_clean_main_history(root, records_path)
+    entries = merged_entries(tracked["specs"], observed)
+
+    results = []
+    all_known = True
+    for raw in args.targets:
+        spec, title = parse_target(raw, root=root)
+        verdict, entry = match_failure(entries, spec, [title] if title else [])
+        known = verdict == "known"
+        if not known:
+            all_known = False
+        row = {
+            "target": raw,
+            "spec": spec,
+            "title": title,
+            "status": verdict,
+            "known": known,
+            "entry": entry,
+        }
+        results.append(row)
+
+    if args.json:
+        print(json.dumps({"schema": SCHEMA_VERSION, "allKnown": all_known, "results": results}, indent=2))
+    else:
+        for row in results:
+            label = f"{row['spec']} › {row['title']}" if row["title"] else row["spec"]
+            entry = row["entry"]
+            if row["status"] == "known" and entry:
+                print(f"KNOWN MAIN FAILURE {label} ({entry['kind']}: {entry['reason']})")
+            elif row["status"] == "partial" and entry:
+                listed = "; ".join(entry.get("tests") or [])
+                print(f"PARTIAL {label} — only specific tests are listed on main: {listed} "
+                      "(pass 'spec › title' to check a test)")
+            else:
+                print(f"UNLISTED {label}")
+    return EXIT_OK if all_known else EXIT_UNLISTED
+
+
+def cmd_check_report(args: argparse.Namespace, root: Path, common: Path | None) -> int:
+    list_path, required = resolve_list_path(root, args.file)
+    records_path = resolve_records_path(common, args.records, args.no_records)
+    tracked = load_list_file(list_path, required=required)
+    observed, _ = read_clean_main_history(root, records_path)
+    entries = merged_entries(tracked["specs"], observed)
+    parsed = parse_playwright_report(Path(args.report), root=root)
+    modified_specs = changed_specs_since(root, args.changed_base)
+
+    known_failures = []
+    unlisted_failures = []
+    for item in parsed["failedTests"]:
+        spec = item["spec"]
+        title = item["title"]
+        if spec in modified_specs:
+            unlisted_failures.append({
+                "spec": spec,
+                "title": title,
+                "reason": "spec modified against base",
+            })
+            continue
+        verdict, entry = match_failure(entries, spec, [title])
+        if verdict == "known" and entry is not None:
+            known_failures.append({
+                "spec": spec,
+                "title": title,
+                "kind": entry["kind"],
+                "reason": entry["reason"],
+                "source": entry["source"],
+            })
+        else:
+            unlisted_failures.append({
+                "spec": spec,
+                "title": title,
+                "reason": "unlisted on main",
+            })
+
+    all_known = (
+        parsed["runnerErrors"] == 0
+        and parsed["totalTests"] > 0
+        and len(unlisted_failures) == 0
+        and (not args.failed_run or len(parsed["failedTests"]) > 0)
+    )
+    summary = {
+        "schema": SCHEMA_VERSION,
+        "totalTests": parsed["totalTests"],
+        "passedSpecs": parsed["passedSpecs"],
+        "failedTests": [{"spec": f["spec"], "title": f["title"]} for f in parsed["failedTests"]],
+        "flakyTests": [{"spec": f["spec"], "title": f["title"]} for f in parsed["flakyTests"]],
+        "knownFailures": known_failures,
+        "unlistedFailures": unlisted_failures,
+        "runnerErrors": parsed["runnerErrors"],
+        "allKnown": all_known,
+    }
+    if args.summary_out:
+        Path(args.summary_out).write_text(json.dumps(summary) + "\n", encoding="utf-8")
+    if args.json:
+        print(json.dumps(summary, indent=2))
+    elif not args.quiet:
+        for item in known_failures:
+            print(f"KNOWN MAIN FAILURE {item['spec']} › {item['title']} ({item['kind']}: {item['reason']})")
+        for item in unlisted_failures:
+            print(f"UNLISTED FAILURE {item['spec']} › {item['title']} ({item['reason']})")
+        if parsed["runnerErrors"]:
+            print(f"RUNNER ERRORS {parsed['runnerErrors']} global error(s) in Playwright report")
+        elif args.failed_run and not parsed["failedTests"]:
+            print("RUNNER FAILURE Playwright exited non-zero with no failed test cases recorded")
+    return EXIT_OK if all_known else EXIT_UNLISTED
+
+
+def cmd_add(args: argparse.Namespace, root: Path) -> int:
+    list_path, required = resolve_list_path(root, args.file)
+    data = load_list_file(list_path, required=False if not required else list_path.exists())
+    spec = normalize_spec_path(args.spec, root=root)
+    if not args.allow_missing and not (root / spec).is_file():
+        raise UsageError(f"spec file does not exist: {spec} (pass --allow-missing to record anyway)")
+    recorded_at = args.recorded_at or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    raw_entry = {
+        "spec": spec,
+        "kind": args.kind,
+        "reason": args.reason,
+        "recordedAt": recorded_at,
+    }
+    if args.tests:
+        raw_entry["tests"] = args.tests
+    entry = validate_entry(raw_entry, 0)
+    kept = [item for item in data["specs"] if item["spec"] != spec]
+    kept.append(entry)
+    data["specs"] = sorted(kept, key=lambda item: item["spec"])
+    write_list_file(list_path, data)
+    if args.json:
+        print(json.dumps({"schema": SCHEMA_VERSION, "file": str(list_path), "entry": entry}, indent=2))
+    else:
+        print(f"Recorded {spec} ({entry['kind']}) in {list_path}")
+    return EXIT_OK
+
+
+def cmd_remove(args: argparse.Namespace, root: Path) -> int:
+    list_path, required = resolve_list_path(root, args.file)
+    data = load_list_file(list_path, required=required)
+    spec = normalize_spec_path(args.spec, root=root)
+    before = len(data["specs"])
+    data["specs"] = [item for item in data["specs"] if item["spec"] != spec]
+    removed = len(data["specs"]) < before
+    if removed or list_path.exists():
+        write_list_file(list_path, data)
+    if args.json:
+        print(json.dumps({"schema": SCHEMA_VERSION, "file": str(list_path), "spec": spec, "removed": removed}, indent=2))
+    else:
+        print(f"{'Removed' if removed else 'Not present'}: {spec}")
+    return EXIT_OK
+
+
+def cmd_sync(args: argparse.Namespace, root: Path, common: Path | None) -> int:
+    list_path, required = resolve_list_path(root, args.file)
+    records_path = resolve_records_path(common, args.records, False)
+    data = load_list_file(list_path, required=required and list_path.exists())
+    observed, streaks = read_clean_main_history(root, records_path)
+
+    existing = {item["spec"]: item for item in data["specs"]}
+    added: list[str] = []
+    removed: list[str] = []
+    next_specs: list[dict] = []
+
+    for spec, item in existing.items():
+        if spec not in observed and streaks.get(spec, 0) >= CLEAR_STREAK:
+            removed.append(spec)
+            continue
+        next_specs.append(item)
+
+    kept_names = {item["spec"] for item in next_specs}
+    for spec, obs in sorted(observed.items()):
+        if spec in kept_names:
+            continue
+        new_entry = {
+            "spec": obs["spec"],
+            "kind": obs["kind"],
+            "reason": obs["reason"],
+            "recordedAt": obs["recordedAt"],
+        }
+        if obs.get("tests"):
+            new_entry["tests"] = obs["tests"]
+        next_specs.append(validate_entry(new_entry, 0))
+        added.append(spec)
+
+    next_specs.sort(key=lambda item: item["spec"])
+    data["specs"] = next_specs
+    if not args.dry_run and (added or removed or list_path.exists()):
+        write_list_file(list_path, data)
+
+    payload = {
+        "schema": SCHEMA_VERSION,
+        "file": str(list_path),
+        "dryRun": args.dry_run,
+        "added": added,
+        "removed": removed,
+        "specs": next_specs,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"sync: +{len(added)} -{len(removed)} ({len(next_specs)} active)")
+    return EXIT_OK
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="orc-browser-failures",
+        description="Check and maintain the list of browser specs that fail or flake on main.",
+    )
+    parser.add_argument("--repo", help="repository checkout path (defaults to current git checkout)")
+    sub = parser.add_subparsers(dest="command")
+
+    def add_shared_read_flags(target: argparse.ArgumentParser) -> None:
+        target.add_argument("--file", help=f"known-failures JSON path (default {DEFAULT_REL_FILE})")
+        target.add_argument("--records", help="test-records.jsonl path")
+        target.add_argument("--no-records", action="store_true", help="ignore clean-main test-records.jsonl")
+        target.add_argument("--json", action="store_true", help="print JSON output")
+
+    p_list = sub.add_parser("list", help="list known main browser failures and flakes")
+    add_shared_read_flags(p_list)
+
+    p_check = sub.add_parser("check", help="check whether failing specs/tests are known on main")
+    add_shared_read_flags(p_check)
+    p_check.add_argument("targets", nargs="*", help="spec path or 'spec › test title'")
+
+    p_report = sub.add_parser("check-report", help="check a Playwright JSON report against known main failures")
+    add_shared_read_flags(p_report)
+    p_report.add_argument("--changed-base", help="git base ref; modified specs in diff are never waived")
+    p_report.add_argument("--failed-run", action="store_true",
+                          help="require at least one parsed test failure (rejects global/abort exits)")
+    p_report.add_argument("--quiet", action="store_true",
+                          help="suppress human-readable stdout lines")
+    p_report.add_argument("--summary-out", help="also write compact JSON summary to PATH")
+    p_report.add_argument("report", help="Playwright JSON report path")
+
+    p_add = sub.add_parser("add", help="record a known main browser failure or flake")
+    p_add.add_argument("--file", help=f"known-failures JSON path (default {DEFAULT_REL_FILE})")
+    p_add.add_argument("--kind", choices=KINDS, required=True, help="fail or flake")
+    p_add.add_argument("--reason", required=True, help="why the spec fails or flakes on main")
+    p_add.add_argument("--test", dest="tests", action="append", help="specific failing test title (repeatable)")
+    p_add.add_argument("--recorded-at", help="YYYY-MM-DD date (defaults to today UTC)")
+    p_add.add_argument("--allow-missing", action="store_true", help="allow recording a spec path not on disk")
+    p_add.add_argument("--json", action="store_true", help="print JSON output")
+    p_add.add_argument("spec", help="browser spec path (e.g. tests/e2e/foo.spec.js)")
+
+    p_remove = sub.add_parser("remove", help="remove a spec from the known failures list")
+    p_remove.add_argument("--file", help=f"known-failures JSON path (default {DEFAULT_REL_FILE})")
+    p_remove.add_argument("--json", action="store_true", help="print JSON output")
+    p_remove.add_argument("spec", help="browser spec path")
+
+    p_sync = sub.add_parser("sync", help="sync known failures list with clean-main test-records.jsonl")
+    p_sync.add_argument("--file", help=f"known-failures JSON path (default {DEFAULT_REL_FILE})")
+    p_sync.add_argument("--records", help="test-records.jsonl path")
+    p_sync.add_argument("--dry-run", action="store_true", help="report changes without writing")
+    p_sync.add_argument("--json", action="store_true", help="print JSON output")
+    return parser
+
+
+def normalize_argv(argv: list[str]) -> list[str]:
+    known_commands = {"list", "check", "check-report", "add", "remove", "sync"}
+    idx = 0
+    while idx < len(argv):
+        tok = argv[idx]
+        if tok == "--repo" and idx + 1 < len(argv):
+            idx += 2
+            continue
+        if tok.startswith("--repo="):
+            idx += 1
+            continue
+        break
+    if idx >= len(argv):
+        return [*argv, "list"]
+    if argv[idx] in ("-h", "--help") or argv[idx] in known_commands:
+        return list(argv)
+    if argv[idx].startswith("-"):
+        return [*argv[:idx], "list", *argv[idx:]]
+    return list(argv)
+
+
+def main(argv: list[str]) -> int:
+    argv = normalize_argv(argv)
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        root, common = resolve_repo(args.repo)
+        cmd = args.command or "list"
+        if cmd == "list":
+            return cmd_list(args, root, common)
+        if cmd == "check":
+            return cmd_check(args, root, common)
+        if cmd == "check-report":
+            return cmd_check_report(args, root, common)
+        if cmd == "add":
+            return cmd_add(args, root)
+        if cmd == "remove":
+            return cmd_remove(args, root)
+        if cmd == "sync":
+            return cmd_sync(args, root, common)
+        raise UsageError(f"unknown command: {cmd}")
+    except UsageError as error:
+        print(f"orc-browser-failures: {error}", file=sys.stderr)
+        return EXIT_USAGE
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Follow one run's local-main merge from the terminal until it settles.
+
+The merge itself runs inside orc-ui's server thread (dispatch_merge_queue_for_run
+-> bin/orc-merge-main), which made it invisible to the session that asked for
+it. This polls the state orc-ui already derives -- `GET
+/api/runs/<id>/merge-queue` plus the run's meta.json -- and prints each change
+once, with periodic progress while unchanged, so a terminal shows queued
+position, retry failures, merge start, conflict, and landing.
+
+Exit: 0 merged, 1 conflicted/failed/withdrawn, 2 timed out.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+
+POLL_SECONDS = 2
+PROGRESS_SECONDS = 15
+DEFAULT_TIMEOUT = 900
+# Consecutive failed polls before calling orc-ui offline: ~6s, longer than the
+# restart an install-relevant merge triggers.
+OFFLINE_POLLS = 3
+MERGE_LOG = "merge-main.log"
+# A session told only that the resolution "has been sent" resolved the
+# conflict in its run branch and reopened the Ship gate, which left the merge
+# slot claimed and every later run waiting.
+END_TURN = ("end this turn now: the resolution arrives as your next message "
+            "with its steps. Until then do not resolve the conflict, merge the "
+            "default branch into the run branch, edit meta.json or reopen the "
+            "Ship gate, and do not ask the user to do anything")
+# orc-ui claims a fresh conflict within about a second. Reading it before
+# that printed the manual command to a session orc-ui was about to message.
+CONFLICT_SETTLE_POLLS = 3
+RESOLVE_GUIDE = Path(__file__).resolve().parents[1] / "skills/_shared/resolve-conflicts.md"
+# Queue states that will never progress on their own; the detail is the reason.
+STUCK_STATES = ("blocked-conflict", "recovery-blocked", "delivery-unavailable",
+                "unavailable")
+
+
+def read_meta(runs_dir: Path, run_id: str) -> dict:
+    try:
+        value = json.loads((runs_dir / run_id / "meta.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def read_queue(base_url: str, run_id: str):
+    """Queue state from orc-ui, or None when the server cannot answer.
+
+    The header is how orc-ui learns a session is watching this merge itself,
+    so it can skip its own post-merge notice. Proof of a live watcher, rather
+    than of a paste it hopes something acted on."""
+    url = "%s/api/runs/%s/merge-queue" % (base_url, run_id)
+    request = urllib.request.Request(url, headers={"X-Orc-Merge-Watch": "1"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            value = json.loads(response.read())
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def tail_log(runs_dir: Path, run_id: str, lines: int = 12) -> str:
+    try:
+        text = (runs_dir / run_id / MERGE_LOG).read_text()
+    except OSError:
+        return ""
+    return "\n".join(text.strip().splitlines()[-lines:])
+
+
+def parked_notes(runs_dir: Path, run_id: str) -> list:
+    """Stashes the merge helper could not put back; the session must say so."""
+    try:
+        text = (runs_dir / run_id / MERGE_LOG).read_text()
+    except OSError:
+        return []
+    return [line for line in text.splitlines()
+            if line.startswith("orc-merge-main: parked: ")]
+
+
+def describe(queue: dict) -> str:
+    """One line for a non-terminal queue state, or "" when there is nothing new."""
+    state, detail = queue.get("state"), queue.get("detail") or ""
+    position, total = queue.get("position"), queue.get("total")
+    if state in ("waiting", "waiting-conflict"):
+        return "queued %s/%s — %s" % (position, total, detail)
+    if state == "ready":
+        return "queued %s/%s — ready, waiting for orc-ui to start it" % (
+            position, total)
+    if state == "retry-waiting":
+        parts = [detail or "Waiting to retry automatically"]
+        if queue.get("lastFailure"):
+            parts.append("last attempt: %s" % queue["lastFailure"])
+        if queue.get("mergeBlocker"):
+            parts.append("waiting on: %s" % queue["mergeBlocker"])
+        return " — ".join(parts)
+    if state == "active":
+        return "merging to main…"
+    if state == "blocked-active-merge":
+        return "waiting — %s" % detail
+    return detail or str(state)
+
+
+def watch(runs_dir: Path, run_id: str, base_url: str, timeout: float,
+          poll: float, out) -> int:
+    def say(line):
+        print(line, file=out, flush=True)
+
+    started = time.monotonic()
+    deadline = started + timeout
+    last_progress = started
+    say("watching merge for %s; progress every %ds while waiting" % (
+        run_id, PROGRESS_SECONDS))
+    last = None
+    settle_polls = 0
+    misses = 0
+    warned_offline = False
+    while True:
+        meta = read_meta(runs_dir, run_id)
+        if not meta:
+            say("orc-merge-watch: no run %s" % run_id)
+            return 1
+        branch = meta.get("branch") or run_id
+        if meta.get("status") == "merged":
+            # orc-merge-main marks the run merged, then pushes and tags before
+            # orc-ui sends its own notice. Poll once even now, or a watcher
+            # that starts in that gap leaves the session told twice.
+            read_queue(base_url, run_id)
+            commit = (meta.get("mergeCommit") or "")[:7]
+            # No status emoji: the green dot belongs to the agent's own final
+            # line, and a landing echoed next to it reads as a second verdict.
+            say("merged %s to main%s" % (branch, " (%s)" % commit if commit else ""))
+            for note in parked_notes(runs_dir, run_id):
+                say(note)
+                say("report that stash to the user; do not discard it")
+            return 0
+        conflict = meta.get("mergeConflict")
+        if (meta.get("status") in ("escalated", "merging")
+                and isinstance(conflict, dict)
+                and conflict.get("target") == "main"):
+            # orc-ui claims the resolution (escalated -> merging) and sends
+            # "resolve merge conflicts" to this very session within a second
+            # of the conflict, so the watcher rarely sees escalated at all.
+            # That message waits for this command's turn to end: keep polling
+            # and the resolution sits queued until the timeout.
+            handed_over = (meta.get("status") == "merging"
+                           or conflict.get("resolutionPending") is True)
+            if not handed_over and settle_polls < CONFLICT_SETTLE_POLLS:
+                settle_polls += 1
+                time.sleep(poll)
+                continue
+            say("🔴 merge conflict on %s — %s" % (
+                branch, conflict.get("detail") or "conflicted"))
+            log = tail_log(runs_dir, run_id)
+            if log:
+                say(log)
+            if meta.get("status") == "merging":
+                say("orc-ui has sent the conflict resolution to this session")
+            elif conflict.get("resolutionPending") is True:
+                say("orc-ui sends the conflict resolution to this session once "
+                    "the merge ahead finishes; no approval needed")
+            else:
+                say("orc-ui is not sending this resolution, and the merge is "
+                    "already approved, so resolve it in this turn without "
+                    "asking. Follow %s, starting with: orc-merge-main %s "
+                    "--claim-resolution" % (RESOLVE_GUIDE, run_id))
+                return 1
+            say(END_TURN)
+            return 1
+
+        queue = read_queue(base_url, run_id)
+        now = time.monotonic()
+        if queue is None:
+            # Merging to main promotes the runtime, and that promotion restarts
+            # orc-ui -- the port is legitimately down for a few seconds in the
+            # exact window this watcher polls. Only a sustained outage is news.
+            misses += 1
+            if misses >= OFFLINE_POLLS and not warned_offline:
+                say("orc-merge-watch: orc-ui unreachable at %s — watching run "
+                    "metadata only" % base_url)
+                warned_offline = True
+                last_progress = now
+        else:
+            if warned_offline:
+                say("orc-merge-watch: orc-ui reachable again at %s" % base_url)
+                warned_offline = False
+                last_progress = now
+            misses = 0
+            state = queue.get("state")
+            if not queue.get("queued") and state != "unavailable":
+                # Not queued while the run is not merged: withdrawn, released
+                # after a failure, or never enqueued. Terminal either way --
+                # waiting for a merge nothing is going to start is the exact
+                # silence this watcher exists to end.
+                say("⚪️ %s is not in the merge queue (removed, released, or "
+                    "never queued)" % branch)
+                return 1
+            line = describe(queue)
+            if line and line != last:
+                say(line)
+                last = line
+                last_progress = now
+            if state in STUCK_STATES:
+                log = tail_log(runs_dir, run_id)
+                if log:
+                    say(log)
+                return 1
+
+        if now >= deadline:
+            say("orc-merge-watch: still %s after %ds — giving up watching; the "
+                "merge itself is unaffected" % (last or "waiting", int(timeout)))
+            return 2
+        if now - last_progress >= PROGRESS_SECONDS:
+            progress = ("orc-ui unreachable; watching run metadata" if queue is None
+                        else last or "waiting for merge state")
+            say("still %s (%ds elapsed)" % (progress, int(now - started)))
+            last_progress = now
+        time.sleep(poll)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-merge-watch")
+    parser.add_argument("run_id")
+    args = parser.parse_args(argv)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id):
+        parser.error("run_id is unsafe")
+    runs_dir = Path(os.environ.get("ORC_RUNS_DIR", "~/.orc/runs")).expanduser().resolve()
+    port = os.environ.get("ORC_UI_PORT", "4173")
+    return watch(runs_dir, args.run_id, "http://127.0.0.1:%s" % port,
+                 DEFAULT_TIMEOUT, POLL_SECONDS, sys.stdout)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

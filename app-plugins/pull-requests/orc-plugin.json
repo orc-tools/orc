@@ -1,0 +1,13 @@
+{
+  "apiVersion": 1,
+  "id": "pull-requests",
+  "name": "Pull requests",
+  "version": "1.0.0",
+  "description": "Your pull requests, review queue, Slack review links and local review checkouts.",
+  "icon": "icon.png",
+  "adoptOnUpgrade": true,
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py"
+  }
+}

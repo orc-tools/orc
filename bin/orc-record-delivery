@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""Settle a run's metadata after control finishes it outside a gate helper.
+
+The Ship gate's buttons, /orc-pr and orc-merge-main each move a delivered run
+to phase=done. A delivery control performs itself on direct user instruction
+(`git push`, `gh pr create`, `gh pr merge`), or an operational/already-landed
+task that finishes with no repository diff, has no such step, so the run stays
+active and orc-ui keeps showing it as Working or Your turn. Control calls this
+helper right after the work succeeds:
+
+    orc-record-delivery --run-dir <run-dir> --pr-url <url> [--pr-url <url>]
+    orc-record-delivery --run-dir <run-dir> --merged [--pr-url <url>]
+    orc-record-delivery --run-dir <run-dir> --no-diff --summary <text> [--title <title>]
+
+An opened or pushed PR lands at phase=done,status=complete, where orc-ui's PR
+poller flips it to merged once GitHub merges it. A merged delivery lands at
+phase=done,status=merged. A completed no-diff task lands at
+phase=done,status=complete with noDiffCompletion recorded. Re-running with the
+same arguments changes nothing.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "ui"))
+from delivery_record import DeliveryError, REFUSED_STATUSES, meta_lock, now, read_meta, settle, write_meta
+import run_relationships  # noqa: E402
+
+
+PR_URL = re.compile(r"https://github\.com/[^/]+/[^/]+/pull/\d+/?")
+MAX_SUMMARY_CHARS = 240
+NON_BUILD_ROUTES = {"planning-session", "local-review", "evals", "meeting-prep", "qa", "orchestration-worker"}
+NO_DIFF_FORBIDDEN_FIELDS = (
+    "prUrl", "prUrls", "delivery", "broughtToMainAt", "mergeCommit", "mergedAt",
+)
+NO_DIFF_FORBIDDEN_ARTIFACTS = (
+    "diff.patch", "delivery-authority.json", "verification-receipt.json",
+    "pr-body.md", "ship/ship.mdx", "recap/recap.mdx",
+)
+
+
+def has_artifact_content(run_dir, rel_path):
+    path = run_dir / rel_path
+    try:
+        return bool(path.read_bytes().strip())
+    except OSError:
+        return False
+
+
+def has_child_runs(run_dir, meta, config_dir):
+    if any(isinstance(row, dict) for row in (meta.get("forks") or [])):
+        return True
+    if any(isinstance(row, dict) for row in (meta.get("forkLaunches") or [])):
+        return True
+    try:
+        store = run_relationships.read_store(str(config_dir))
+    except (OSError, ValueError) as exc:
+        raise DeliveryError("cannot read run relationships: %s" % exc) from exc
+    return any(
+        isinstance(row, dict) and row.get("sourceRunId") == run_dir.name
+        for row in store.get("children", [])
+    )
+
+
+def git_env():
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith("GIT_"):
+            env.pop(key, None)
+    return env
+
+
+def run_git(repo, *args):
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True, text=True, check=False, env=git_env(),
+    )
+
+
+def default_branch_for(repo, meta):
+    for key in ("defaultBranch", "baseBranch"):
+        val = meta.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    sym = run_git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if sym.returncode == 0 and "/" in sym.stdout.strip():
+        return sym.stdout.strip().split("/", 1)[1]
+    for candidate in ("main", "master"):
+        if run_git(repo, "show-ref", "--verify", "--quiet", "refs/heads/%s" % candidate).returncode == 0:
+            return candidate
+    return None
+
+
+def cleanup_untouched_branches(run_dir, meta):
+    if (meta.get("repositoriesVersion") == 1
+            and isinstance(meta.get("repositories"), list) and meta["repositories"]):
+        participants = [item for item in meta["repositories"] if isinstance(item, dict)]
+    elif any(meta.get(key) for key in ("branch", "worktree", "buildBaseCommit")):
+        participants = [meta]
+    else:
+        return meta
+
+    checked = []
+    for item in participants:
+        if not any(item.get(key) for key in ("branch", "worktree", "buildBaseCommit")):
+            continue
+        repo_path = item.get("repoPath") or item.get("mainRepoPath")
+        main_repo = item.get("mainRepoPath") or repo_path
+        base_commit = item.get("buildBaseCommit")
+        branch = item.get("branch")
+        if (not isinstance(repo_path, str) or not os.path.isdir(repo_path)
+                or not isinstance(base_commit, str) or not base_commit.strip()):
+            raise DeliveryError("branch metadata is incomplete; cannot verify empty diff")
+        head = run_git(repo_path, "rev-parse", "--verify", "HEAD")
+        if head.returncode != 0 or head.stdout.strip() != base_commit.strip():
+            raise DeliveryError(
+                "branch %s has commits ahead of base; finish Ship instead of --no-diff"
+                % (branch or repo_path))
+        dirty = run_git(repo_path, "status", "--porcelain")
+        if dirty.returncode != 0 or dirty.stdout.strip():
+            raise DeliveryError(
+                "checkout %s has uncommitted changes; finish Ship instead of --no-diff"
+                % repo_path)
+        checked.append((item.get("id"), main_repo, branch, item.get("worktree")))
+
+    worktree_bin = pathlib.Path(__file__).resolve().parent / "orc-worktree"
+    for repo_id, _main_repo, _branch, wt in checked:
+        if isinstance(wt, dict) and wt.get("enabled") is True:
+            cmd = [str(worktree_bin), "teardown-generic", "--run-dir", str(run_dir)]
+            if isinstance(repo_id, str) and repo_id.strip():
+                cmd.extend(["--repo-id", repo_id.strip()])
+            res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if res.returncode != 0:
+                detail = (res.stderr or res.stdout).strip() or "worktree teardown failed"
+                raise DeliveryError("cannot tear down unused worktree: %s" % detail)
+
+    meta = read_meta(run_dir / "meta.json")
+    for _repo_id, main_repo, branch, _wt in checked:
+        if not isinstance(main_repo, str) or not os.path.isdir(main_repo) or not isinstance(branch, str) or not branch.strip():
+            continue
+        cur = run_git(main_repo, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if cur.returncode == 0 and cur.stdout.strip() == branch.strip():
+            target = default_branch_for(main_repo, meta)
+            if target and target != branch.strip() and not run_git(main_repo, "status", "--porcelain").stdout.strip():
+                run_git(main_repo, "checkout", target)
+        cur_after = run_git(main_repo, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if cur_after.returncode != 0 or cur_after.stdout.strip() != branch.strip():
+            run_git(main_repo, "branch", "-d", branch.strip())
+
+    if isinstance(meta.get("mainRepoPath"), str) and meta["mainRepoPath"].strip():
+        meta["repoPath"] = meta["mainRepoPath"]
+    for key in ("branch", "buildBaseCommit", "worktree", "repositories",
+                "repositoriesVersion", "primaryRepositoryId", "shipHold"):
+        meta.pop(key, None)
+    build_spec = run_dir / "inputs" / "build-spec"
+    if build_spec.exists() and not build_spec.is_symlink():
+        shutil.rmtree(build_spec, ignore_errors=True)
+    return meta
+
+
+def settle_no_diff(run_dir, meta, summary, config_dir, title=None):
+    if meta.get("outcome") == "question":
+        raise DeliveryError("answered question runs have nothing to deliver")
+    if meta.get("outcome"):
+        raise DeliveryError("runs with outcome=%s use their own completion helper" % meta.get("outcome"))
+    if meta.get("route") in NON_BUILD_ROUTES or meta.get("orchestration") is True:
+        raise DeliveryError("route %s uses its own completion workflow" % (meta.get("route") or "orchestration"))
+    if run_relationships.retired_lifecycle(meta):
+        raise DeliveryError("retired runs are read-only; start a fresh run")
+    if title is not None:
+        meta["title"] = title
+        meta.pop("titlePending", None)
+    if meta.get("titlePending") is True:
+        raise DeliveryError("pass --title <title> or refine meta.json title and remove titlePending before settling")
+    status = meta.get("status")
+    if status in REFUSED_STATUSES or status == "merged":
+        raise DeliveryError("run is %s; --no-diff completion cannot be recorded" % status)
+    if status == "awaiting-gate":
+        raise DeliveryError("run is waiting at a gate; resolve the gate instead of recording --no-diff")
+    if status == "complete" and not isinstance(meta.get("noDiffCompletion"), dict):
+        raise DeliveryError("run is already complete; --no-diff cannot overwrite an existing delivery")
+    if meta.get("pendingQuestion") or (run_dir / ".claude-question.json").exists():
+        raise DeliveryError("run has a pending question; answer it before settling")
+    for field in NO_DIFF_FORBIDDEN_FIELDS:
+        if meta.get(field):
+            raise DeliveryError("run already carries %s; use PR or merge delivery instead" % field)
+    for rel in NO_DIFF_FORBIDDEN_ARTIFACTS:
+        if has_artifact_content(run_dir, rel):
+            raise DeliveryError("run has %s; finish delivery instead of --no-diff" % rel)
+    if has_child_runs(run_dir, meta, config_dir):
+        raise DeliveryError("run has child runs; use orc-complete-parent when all children have merged")
+
+    meta = cleanup_untouched_branches(run_dir, meta)
+    if meta.get("lifecycleVersion") is None:
+        meta["lifecycleVersion"] = 4
+        if not meta.get("gatedPhases"):
+            meta["mode"] = "quick"
+    meta.setdefault("route", "minimal-shell")
+    existing = meta.get("noDiffCompletion")
+    completed_at = (
+        existing["completedAt"]
+        if isinstance(existing, dict)
+        and existing.get("summary") == summary
+        and isinstance(existing.get("completedAt"), str)
+        else now()
+    )
+    meta["phase"] = "done"
+    meta["status"] = "complete"
+    meta["noDiffCompletion"] = {
+        "schemaVersion": 1,
+        "summary": summary,
+        "completedAt": completed_at,
+    }
+    return meta
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-record-delivery")
+    parser.add_argument("--run-dir", required=True, type=pathlib.Path)
+    parser.add_argument("--pr-url", action="append", default=[],
+                        help="a PR this delivery opened or pushed; repeat per repo")
+    parser.add_argument("--merged", action="store_true",
+                        help="the delivery merged the branch")
+    parser.add_argument("--no-diff", action="store_true",
+                        help="the task finished with no repository diff, branch, or PR")
+    parser.add_argument("--summary",
+                        help="one-line summary of what completed (required with --no-diff)")
+    parser.add_argument("--title",
+                        help="optional <=80 char title to record before settling")
+    args = parser.parse_args(argv)
+
+    clean_title = None
+    if args.title is not None:
+        clean_title = " ".join(args.title.split())
+        if not clean_title or len(clean_title) > 80:
+            parser.error("--title must be a non-empty string of at most 80 characters")
+
+    if args.no_diff:
+        if args.pr_url or args.merged:
+            parser.error("--no-diff cannot be combined with --pr-url or --merged")
+        clean_summary = " ".join((args.summary or "").split())
+        if not clean_summary:
+            parser.error("--no-diff requires a non-empty --summary")
+        if len(clean_summary) > MAX_SUMMARY_CHARS:
+            parser.error("--summary must be %d characters or fewer" % MAX_SUMMARY_CHARS)
+    else:
+        if args.summary is not None:
+            parser.error("--summary requires --no-diff")
+        for url in args.pr_url:
+            if not PR_URL.fullmatch(url):
+                parser.error("not a GitHub pull request URL: %s" % url)
+        if not args.pr_url and not args.merged:
+            parser.error("pass --pr-url, --merged, or --no-diff --summary <text>")
+    pr_urls = list(dict.fromkeys(args.pr_url))
+
+    run_dir = args.run_dir.expanduser().resolve()
+    meta_path = run_dir / "meta.json"
+    config_dir = pathlib.Path(os.environ.get("ORC_HOME") or run_dir.parent.parent)
+    try:
+        with meta_lock(run_dir.parent, read_meta(meta_path)):
+            current = read_meta(meta_path)
+            if args.no_diff:
+                meta = settle_no_diff(run_dir, current, clean_summary, config_dir, title=clean_title)
+            else:
+                if clean_title is not None:
+                    current["title"] = clean_title
+                    current.pop("titlePending", None)
+                meta = settle(current, pr_urls, args.merged)
+            write_meta(meta_path, meta)
+    except DeliveryError as exc:
+        print("orc-record-delivery: %s" % exc, file=sys.stderr)
+        return 1
+
+    run_id = meta.get("runId") or run_dir.name
+    print("recorded: %s phase=done status=%s" % (run_id, meta["status"]))
+    print("[Open in Orc.app](http://127.0.0.1:%s/#%s)"
+          % (os.environ.get("ORC_UI_PORT", "4173"), run_id))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

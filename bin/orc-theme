@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Check or synchronize Orc's embedded theme declarations."""
+
+import argparse
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "app-plugins" / "swamp" / "tokens.json"
+CANONICAL = ROOT / "skills" / "_shared" / "orc-theme.md"
+TARGETS = {
+    ROOT / "app-plugins" / "swamp" / "theme.css": ("day", "night", "night"),
+    CANONICAL: ("day", "night", "night", "day"),
+    ROOT / "docs" / "deck" / "index.html": ("night",),
+}
+RAW_TARGETS = tuple(TARGETS) + (
+    ROOT / "DESIGN.md",
+)
+
+
+def previous_palettes(current):
+    result = subprocess.run(
+        ["git", "show", "HEAD:app-plugins/swamp/tokens.json"], cwd=ROOT,
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode:
+        return current
+    return json.loads(result.stdout)
+
+
+def replace_raw_tokens(source, previous, current):
+    replacements = {}
+    for theme in ("day", "night"):
+        for name, old in previous[theme].items():
+            new = current[theme][name]
+            existing = replacements.get(old.lower())
+            if existing is not None and existing != new:
+                raise ValueError("shared old token %s now has ambiguous replacements" % old)
+            replacements[old.lower()] = new
+    pattern = re.compile("|".join(re.escape(value) for value in
+                                  sorted(replacements, key=len, reverse=True)), re.IGNORECASE)
+    return pattern.sub(lambda match: replacements[match.group(0).lower()], source)
+
+
+def replace_css_blocks(source, palettes, themes):
+    names = tuple(palettes["day"])
+    blocks = []
+    for match in re.finditer(r"\{([^{}]*)\}", source, re.DOTALL):
+        body = match.group(1)
+        if all(re.search(r"--%s:\s*#[0-9a-fA-F]{6}" % re.escape(name), body)
+               for name in names):
+            blocks.append(match)
+    if len(blocks) != len(themes):
+        raise ValueError("expected %d complete token blocks, found %d" %
+                         (len(themes), len(blocks)))
+    for match, theme in reversed(tuple(zip(blocks, themes))):
+        body = match.group(1)
+        for name, value in palettes[theme].items():
+            body = re.sub(
+                r"(--%s:\s*)#[0-9a-fA-F]{6}" % re.escape(name),
+                lambda found, value=value: found.group(1) + value,
+                body,
+            )
+        source = source[:match.start(1)] + body + source[match.end(1):]
+    return source
+
+
+def replace_design_register(source, palettes):
+    aliases = {
+        "canvas": "bg", "pass-green": "green", "warn-yellow": "yellow",
+        "fail-red": "red", "gate-orange": "orange",
+    }
+    for theme, palette in palettes.items():
+        for label, name in aliases.items():
+            source = re.sub(
+                r'(%s-%s:\s*")[#0-9a-fA-F]+(")' % (re.escape(label), theme),
+                lambda match, value=palette[name]: match.group(1) + value + match.group(2),
+                source,
+            )
+        for name, value in palette.items():
+            if name in {"bg", "green", "yellow", "red", "orange"}:
+                continue
+            source = re.sub(
+                r'(%s-%s:\s*")[#0-9a-fA-F]+(")' % (re.escape(name), theme),
+                lambda match, value=value: match.group(1) + value + match.group(2),
+                source,
+            )
+    return source
+
+
+def desired_files():
+    palettes = json.loads(SOURCE.read_text())
+    previous = previous_palettes(palettes)
+    files = {path: replace_raw_tokens(path.read_text(), previous, palettes)
+             for path in RAW_TARGETS}
+    for path, themes in TARGETS.items():
+        files[path] = replace_css_blocks(files[path], palettes, themes)
+    design = ROOT / "DESIGN.md"
+    files[design] = replace_design_register(files[design], palettes)
+    return files
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--write", action="store_true", help="synchronize embedded declarations")
+    args = parser.parse_args()
+    drift = []
+    for path, desired in desired_files().items():
+        if path.read_text() == desired:
+            continue
+        drift.append(path)
+        if args.write:
+            path.write_text(desired)
+    if drift and not args.write:
+        for path in drift:
+            print(path.relative_to(ROOT))
+        return 1
+    if args.write:
+        print("synchronized %d file(s)" % len(drift))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

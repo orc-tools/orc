@@ -1,0 +1,1048 @@
+/* Upside Down mode: frontend.js sets data-upside-down on <html> and this file dresses
+   Orc as a small Indiana town with something wrong underneath it. By day it
+   is Upside Down in 1983: faded striped wallpaper, index cards, typewritten
+   labels and one red marker. By night it is the Upside Down: blue-black dark,
+   spores in the air, a red neon title and a string of lights that flickers.
+   It re-points the shell's own tokens, so every surface that reads var(--bg),
+   var(--accent) and friends follows without its own rule, then redraws the
+   chrome: runs as cards with a bulb for a lamp, typewritten tabs, a framed
+   transcript and a string of lights along the Settled shelf.
+
+   The gate pages load this file too, inlined through string.Template, so keep
+   it free of the dollar sign.
+
+   Every block below out-specifies the swamp block it replaces. The day block
+   matches at night too, so both night blocks declare again everything it sets
+   per mode, and the rules below read those values instead of repeating
+   themselves per mode. tests/test_upside-down_mode.py holds the palettes to the
+   swamp's contrast floors.
+
+   --accent stays blue so danger never reads as the accent; the red that
+   letters the titles and lights the open run is --upside-down-neon. */
+:root[data-upside-down] {
+  color-scheme: light;
+  --bg: #efe4cc; --panel: #f8f1e0; --border: #a89070;
+  --text: #33261c; --heading: #1d1410; --muted: #74624c; --accent: #23587f;
+  --accent-soft: #e6d8b8; --chip: #ebdfc3; --code: #ebdfc3;
+  --green: #2f6b3c; --yellow: #8a5a00; --red: #b3202a;
+  --purple: #6b3fa0; --cyan: #1f5f7a; --orange: #b8470b;
+  --focus: #c8102e;
+  --ready-text: #2f6b3c;
+  --blue-text: #23587f;
+  --upside-down-on-accent: #fffaf0;
+  --upside-down-neon: #c8102e; --upside-down-neon-glow: 0 0 0 0 transparent;
+  --upside-down-title: #b3202a; --upside-down-title-glow: none;
+  --upside-down-logo-glow: none;
+  --upside-down-go: #c8102e; --upside-down-go-ink: #ffffff;
+
+  --upside-down-serif: "ITC Benguiat", "Benguiat", "Bookman Old Style", "Bookman", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --upside-down-type: "American Typewriter", "Courier Prime", "Courier New", ui-monospace, monospace;
+  --upside-down-radius: 3px; --orc-radius-sm: 3px; --orc-radius-md: 4px;
+  /* The living-room wall: stripes in pairs with a small flower between them,
+     and the paper browned towards its edges. */
+  --upside-down-pattern:
+    radial-gradient(ellipse 85% 85% at 50% 45%, transparent 55%, rgb(120 84 40 / .16) 100%),
+    radial-gradient(circle at 50% 50%, rgb(140 96 48 / .2) 0 2.5px, transparent 3.5px) -24px 0 / 96px 64px,
+    repeating-linear-gradient(90deg, transparent 0 46px, rgb(140 96 48 / .11) 46px 48px, transparent 48px 58px, rgb(140 96 48 / .08) 58px 59px, transparent 59px 96px);
+  /* What the chrome shows behind itself: by day a little sun-fade from the
+     top of the wall, fixed so the sidebar, the run's header and the
+     transcript's margins share one room. By night it is clear, and the spores
+     drifting behind the whole window show through it. */
+  --upside-down-world: linear-gradient(180deg, rgb(255 250 235 / .4), transparent 180px) fixed;
+  --upside-down-chat-wall: var(--bg); --upside-down-view-wall: none;
+  --upside-down-spore-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'%3E%3Ccircle cx='53' cy='17' r='0.5' fill='%23cfdcf5' opacity='0.22'/%3E%3Ccircle cx='250' cy='328' r='1.4' fill='%23cfdcf5' opacity='0.57'/%3E%3Ccircle cx='447' cy='159' r='1.1' fill='%23cfdcf5' opacity='0.36'/%3E%3Ccircle cx='164' cy='470' r='0.9' fill='%23ff6b78' opacity='0.71'/%3E%3Ccircle cx='361' cy='301' r='0.6' fill='%23cfdcf5' opacity='0.50'/%3E%3Ccircle cx='78' cy='132' r='1.5' fill='%23cfdcf5' opacity='0.29'/%3E%3Ccircle cx='275' cy='443' r='1.3' fill='%23cfdcf5' opacity='0.64'/%3E%3Ccircle cx='472' cy='274' r='1.0' fill='%23cfdcf5' opacity='0.43'/%3E%3Ccircle cx='189' cy='105' r='0.8' fill='%23cfdcf5' opacity='0.22'/%3E%3Ccircle cx='386' cy='416' r='0.5' fill='%23cfdcf5' opacity='0.57'/%3E%3Ccircle cx='103' cy='247' r='1.4' fill='%23ff6b78' opacity='0.36'/%3E%3Ccircle cx='300' cy='78' r='1.1' fill='%23cfdcf5' opacity='0.71'/%3E%3Ccircle cx='17' cy='389' r='0.9' fill='%23cfdcf5' opacity='0.50'/%3E%3Ccircle cx='214' cy='220' r='0.6' fill='%23cfdcf5' opacity='0.29'/%3E%3Ccircle cx='411' cy='51' r='1.5' fill='%23cfdcf5' opacity='0.64'/%3E%3Ccircle cx='128' cy='362' r='1.3' fill='%23cfdcf5' opacity='0.43'/%3E%3Ccircle cx='325' cy='193' r='1.0' fill='%23cfdcf5' opacity='0.22'/%3E%3Ccircle cx='42' cy='24' r='0.8' fill='%23ff6b78' opacity='0.57'/%3E%3Ccircle cx='239' cy='335' r='0.5' fill='%23cfdcf5' opacity='0.36'/%3E%3Ccircle cx='436' cy='166' r='1.4' fill='%23cfdcf5' opacity='0.71'/%3E%3Ccircle cx='153' cy='477' r='1.1' fill='%23cfdcf5' opacity='0.50'/%3E%3Ccircle cx='350' cy='308' r='0.9' fill='%23cfdcf5' opacity='0.29'/%3E%3Ccircle cx='67' cy='139' r='0.6' fill='%23cfdcf5' opacity='0.64'/%3E%3Ccircle cx='264' cy='450' r='1.5' fill='%23cfdcf5' opacity='0.43'/%3E%3Ccircle cx='461' cy='281' r='1.3' fill='%23ff6b78' opacity='0.22'/%3E%3Ccircle cx='178' cy='112' r='1.0' fill='%23cfdcf5' opacity='0.57'/%3E%3Ccircle cx='375' cy='423' r='0.8' fill='%23cfdcf5' opacity='0.36'/%3E%3Ccircle cx='92' cy='254' r='0.5' fill='%23cfdcf5' opacity='0.71'/%3E%3Ccircle cx='289' cy='85' r='1.4' fill='%23cfdcf5' opacity='0.50'/%3E%3Ccircle cx='6' cy='396' r='1.1' fill='%23cfdcf5' opacity='0.29'/%3E%3Ccircle cx='203' cy='227' r='0.9' fill='%23cfdcf5' opacity='0.64'/%3E%3Ccircle cx='400' cy='58' r='0.6' fill='%23ff6b78' opacity='0.43'/%3E%3Ccircle cx='117' cy='369' r='1.5' fill='%23cfdcf5' opacity='0.22'/%3E%3Ccircle cx='314' cy='200' r='1.3' fill='%23cfdcf5' opacity='0.57'/%3E%3Ccircle cx='31' cy='31' r='1.0' fill='%23cfdcf5' opacity='0.36'/%3E%3Ccircle cx='228' cy='342' r='0.8' fill='%23cfdcf5' opacity='0.71'/%3E%3Ccircle cx='425' cy='173' r='0.5' fill='%23cfdcf5' opacity='0.50'/%3E%3Ccircle cx='142' cy='4' r='1.4' fill='%23cfdcf5' opacity='0.29'/%3E%3C/svg%3E");
+  /* The four colours of the string of lights. */
+  --upside-down-bulb-1: #ff3b4a; --upside-down-bulb-2: #ffc857; --upside-down-bulb-3: #4fd08a; --upside-down-bulb-4: #5aa9ff;
+  --upside-down-wire: #2c3a2c; --upside-down-socket: #3a2a20;
+  /* A bulb on paper is inked round; a bulb in the dark glows. */
+  --upside-down-bulb-glow: 0 0 0 1px rgb(29 20 16 / .5);
+  --upside-down-string-glow: 0%;
+  /* A run's lamp is one bulb of the string. */
+  --upside-down-lamp-off: 0 0 0 1px rgb(29 20 16 / .45);
+  --upside-down-lamp-on: 0 0 0 1px rgb(29 20 16 / .45);
+  --upside-down-lamp-alert: 0 0 0 1px rgb(29 20 16 / .45), 0 0 0 3px color-mix(in srgb, currentColor 30%, transparent);
+  /* By day a card is pinned to the wall and throws a soft shadow, and the
+     open run is ringed in red marker. */
+  --upside-down-lift: 0 1px 0 rgb(60 40 20 / .18), 0 3px 8px -3px rgb(60 40 20 / .35);
+  --upside-down-lift-side: 3px 0 8px -4px rgb(60 40 20 / .35);
+  --upside-down-active-border: var(--upside-down-neon); --upside-down-active-bg: #fffaf0;
+  --upside-down-active-shadow: 0 0 0 1px var(--upside-down-neon), 0 3px 8px -3px rgb(60 40 20 / .4);
+  --upside-down-rule: 3px double var(--border);
+  /* The Settled shelf's backdrop. Its stops are in pixels because the open
+     drawer wears it too, and that is as tall as the list. */
+  --upside-down-shelf: linear-gradient(180deg, #e7d9b8 0, #f8f1e0 56px);
+  --upside-down-shade: rgb(60 40 20 / .3);
+  --upside-down-spores: none;
+  /* The crack in the new-run screen's floor, 1600 by 260: broken rock lips
+     round a seam that cools from white-hot to dark red at its walls, with
+     jagged fractures forking off it. Then the glow hugging it, 1600 by 460
+     with the same crack at its foot, and on tiles of that size two sheets of
+     rays and two of red smoke rising from its widest gashes. All meet
+     themselves at their ends. Then one bolt of lightning. */
+  --upside-down-crack: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 260'%3E%3Cdefs%3E%3Cpath id='a' d='M0 212.2L39.6 205.4L60.8 216.1L86 208.4L114.9 206.7L151.2 202.2L169.8 195.2L211.6 187L228 179.7L249.2 195.5L289.5 195.4L309 194.3L335.9 191.3L352.3 199.7L387.4 188.6L431.2 180.7L461.2 180.5L491 179.6L524 189.2L559.2 204.4L584.9 202.7L628.2 200.2L644.1 205.4L670.3 211.4L703.2 215.4L731.4 202.1L753.2 208.3L785.9 212.6L803.8 208.7L824 202.1L839 195.9L880.7 197.8L907.8 204.8L927.2 205.5L946.3 202.6L973.3 208.4L1002.7 203.4L1038.3 202.9L1055.7 199.7L1079.6 196.2L1098.7 191.3L1116.4 193L1143.2 179.8L1172.9 181.5L1205.2 185L1220.5 202.2L1247.6 190.2L1267 194.5L1285.8 202.6L1306 197.4L1341.9 195.4L1362.5 193.5L1394.2 200.7L1435.6 204.3L1473 207.9L1515.5 199.4L1556.4 213.1L1600 212.2L1600 226.7L1556.4 230.4L1515.5 213.5L1473 213.6L1435.6 208.8L1394.2 206.3L1362.5 199.1L1341.9 202.7L1306 203.9L1285.8 207.5L1267 198.5L1247.6 194.4L1220.5 207.5L1205.2 192L1172.9 195.8L1143.2 195.1L1116.4 206.2L1098.7 203.4L1079.6 202.4L1055.7 203.6L1038.3 206.4L1002.7 207.3L973.3 212.7L946.3 213.6L927.2 222.7L907.8 230.6L880.7 229.3L839 213.8L824 214.3L803.8 219.4L785.9 219.6L753.2 214.1L731.4 209.2L703.2 226.9L670.3 234L644.1 226.1L628.2 229L584.9 222L559.2 219.8L524 204.4L491 200.6L461.2 205.5L431.2 197.6L387.4 201.6L352.3 206.7L335.9 200.5L309 206.6L289.5 214.8L249.2 220.9L228 212.5L211.6 230L169.8 213.9L151.2 213.9L114.9 211L86 212L60.8 219.7L39.6 211.2L0 226.7Z'/%3E%3Cpath id='f' d='M114.9 206.3L147.8 199.4L179.2 186.2L214.1 173.5L214.1 174.1L179.2 187.6L147.8 202.5L114.9 211ZM289.5 199.7L305.5 196.1L341.6 187L364.9 178.8L390.8 177.7L407.2 167.8L407.2 168.4L390.8 179.3L364.9 182.1L341.6 192.2L305.5 203.3L289.5 208.9ZM341.6 187.5L325.1 181.8L314.4 173.4L298.2 163.5L298.2 164.1L314.4 174.7L325.1 184.5L341.6 191.7ZM431.2 183.3L387.5 192.4L346.6 195.5L298.2 202.8L298.2 203.4L346.6 198.3L387.5 198.3L431.2 192.5ZM584.9 206.2L614.4 195.5L649.3 190.8L692.8 186.1L725.9 172.1L725.9 172.7L692.8 188.1L649.3 195L614.4 202.2L584.9 215.4ZM731.4 202.5L681.4 190.5L642.8 180.7L602.7 167.7L602.7 168.3L642.8 182.4L681.4 194.2L731.4 208.4ZM880.7 204.4L909.4 205.1L923.8 214.2L957.3 220.4L957.3 221L923.8 216.9L909.4 211L880.7 213.6ZM923.8 214.5L918 219.8L898.7 222.1L903.5 222.2L888.1 226.6L879.7 230.5L879.7 231.1L888.1 227.2L903.5 223L898.7 223.3L918 221.6L923.8 216.7ZM1038.3 202.4L990.9 188L952.8 166.6L917 136.5L917 137.1L952.8 167.9L990.9 190.8L1038.3 206.8ZM1205.2 185.8L1164.1 171.4L1120.1 145.8L1077.2 119.4L1077.2 120L1120.1 147.6L1164.1 175.2L1205.2 191.7ZM1164.1 171.8L1182 169.8L1201.6 160.4L1213.7 151.6L1213.7 152.2L1201.6 161.3L1182 171.7L1164.1 174.8ZM1362.5 192.6L1342.3 191.5L1325.2 203.7L1301.6 202.8L1286.9 209.9L1286.9 210.5L1301.6 204L1325.2 206.2L1342.3 195.4L1362.5 197.9Z'/%3E%3Cg id='c'%3E%3Cuse href='%23a'/%3E%3Cuse href='%23f'/%3E%3C/g%3E%3Cg id='t'%3E%3Cuse href='%23c'/%3E%3Cuse href='%23c' x='-1600'/%3E%3Cuse href='%23c' x='1600'/%3E%3C/g%3E%3Cpath id='w' d='M289 215L250 222L230 229L201 236M298 203L281 215L246 218L215 216L178 229M880 231L853 233L821 233' fill='none'/%3E%3Cfilter id='h' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='320' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='dilate' radius='7'/%3E%3CfeGaussianBlur stdDeviation='36 24'/%3E%3CfeOffset dy='-26'/%3E%3C/filter%3E%3Cfilter id='g' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='320' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='dilate' radius='3'/%3E%3CfeGaussianBlur stdDeviation='9'/%3E%3C/filter%3E%3Cfilter id='s' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='320' color-interpolation-filters='sRGB'%3E%3CfeGaussianBlur stdDeviation='1.4'/%3E%3C/filter%3E%3Cfilter id='o' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='320' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='dilate' radius='6'/%3E%3CfeGaussianBlur stdDeviation='5'/%3E%3C/filter%3E%3Cfilter id='l' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='320' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='dilate' radius='4'/%3E%3CfeOffset dy='1.5'/%3E%3CfeGaussianBlur stdDeviation='.9'/%3E%3C/filter%3E%3Cfilter id='lf' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='320' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='dilate' radius='1.0'/%3E%3CfeGaussianBlur stdDeviation='.7'/%3E%3C/filter%3E%3Cfilter id='r' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='320' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.035 .05' numOctaves='2' seed='11' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='8' xChannelSelector='R' yChannelSelector='G'/%3E%3C/filter%3E%3Cfilter id='m' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='320' color-interpolation-filters='sRGB'%3E%3CfeMorphology in='SourceAlpha' operator='erode' radius='1' result='e'/%3E%3CfeMorphology in='SourceAlpha' operator='erode' radius='2.5'/%3E%3CfeGaussianBlur stdDeviation='4.5'/%3E%3CfeOffset dy='2.5'/%3E%3CfeColorMatrix values='0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 1' result='d'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.03 .11' numOctaves='3' seed='4'/%3E%3CfeColorMatrix values='2.2 0 0 0 -.6 2.2 0 0 0 -.6 2.2 0 0 0 -.6 0 0 0 0 1'/%3E%3CfeComposite in2='d' operator='arithmetic' k2='0.4' k3='0.95' k4='-0.05'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='table' tableValues='.05 .43 .85 1 1 1'/%3E%3CfeFuncG type='table' tableValues='.01 .04 .12 .35 .70 .96'/%3E%3CfeFuncB type='table' tableValues='.03 .06 .10 .12 .28 .82'/%3E%3C/feComponentTransfer%3E%3CfeComposite in2='e' operator='in'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23h)' opacity='.34'%3E%3Cuse href='%23t' fill='%23ff2d3f'/%3E%3C/g%3E%3Cg filter='url(%23g)' opacity='.6'%3E%3Cuse href='%23t' fill='%23ff3b3c'/%3E%3C/g%3E%3Cuse href='%23w' stroke='%23ff2d3f' stroke-width='3' opacity='.3' filter='url(%23s)'/%3E%3Cuse href='%23w' stroke='%2314060a' stroke-width='1'/%3E%3Cg filter='url(%23o)' opacity='.55'%3E%3Cuse href='%23t' fill='%230a0306'/%3E%3C/g%3E%3Cg filter='url(%23r)'%3E%3Cg filter='url(%23l)'%3E%3Cuse href='%23a' fill='%2314040a'/%3E%3C/g%3E%3Cg filter='url(%23lf)'%3E%3Cuse href='%23f' fill='%2314040a'/%3E%3C/g%3E%3Cuse href='%23c' fill='%23ff2d3f'/%3E%3Cuse href='%23c' filter='url(%23m)'/%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-crack-glow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 460'%3E%3Cdefs%3E%3Cpath id='a' d='M0 412.2L39.6 405.4L60.8 416.1L86 408.4L114.9 406.7L151.2 402.2L169.8 395.2L211.6 387L228 379.7L249.2 395.5L289.5 395.4L309 394.3L335.9 391.3L352.3 399.7L387.4 388.6L431.2 380.7L461.2 380.5L491 379.6L524 389.2L559.2 404.4L584.9 402.7L628.2 400.2L644.1 405.4L670.3 411.4L703.2 415.4L731.4 402.1L753.2 408.3L785.9 412.6L803.8 408.7L824 402.1L839 395.9L880.7 397.8L907.8 404.8L927.2 405.5L946.3 402.6L973.3 408.4L1002.7 403.4L1038.3 402.9L1055.7 399.7L1079.6 396.2L1098.7 391.3L1116.4 393L1143.2 379.8L1172.9 381.5L1205.2 385L1220.5 402.2L1247.6 390.2L1267 394.5L1285.8 402.6L1306 397.4L1341.9 395.4L1362.5 393.5L1394.2 400.7L1435.6 404.3L1473 407.9L1515.5 399.4L1556.4 413.1L1600 412.2L1600 426.7L1556.4 430.4L1515.5 413.5L1473 413.6L1435.6 408.8L1394.2 406.3L1362.5 399.1L1341.9 402.7L1306 403.9L1285.8 407.5L1267 398.5L1247.6 394.4L1220.5 407.5L1205.2 392L1172.9 395.8L1143.2 395.1L1116.4 406.2L1098.7 403.4L1079.6 402.4L1055.7 403.6L1038.3 406.4L1002.7 407.3L973.3 412.7L946.3 413.6L927.2 422.7L907.8 430.6L880.7 429.3L839 413.8L824 414.3L803.8 419.4L785.9 419.6L753.2 414.1L731.4 409.2L703.2 426.9L670.3 434L644.1 426.1L628.2 429L584.9 422L559.2 419.8L524 404.4L491 400.6L461.2 405.5L431.2 397.6L387.4 401.6L352.3 406.7L335.9 400.5L309 406.6L289.5 414.8L249.2 420.9L228 412.5L211.6 430L169.8 413.9L151.2 413.9L114.9 411L86 412L60.8 419.7L39.6 411.2L0 426.7Z'/%3E%3Cg id='c'%3E%3Cuse href='%23a'/%3E%3Cpath d='M114.9 406.3L147.8 399.4L179.2 386.2L214.1 373.5L214.1 374.1L179.2 387.6L147.8 402.5L114.9 411ZM289.5 399.7L305.5 396.1L341.6 387L364.9 378.8L390.8 377.7L407.2 367.8L407.2 368.4L390.8 379.3L364.9 382.1L341.6 392.2L305.5 403.3L289.5 408.9ZM341.6 387.5L325.1 381.8L314.4 373.4L298.2 363.5L298.2 364.1L314.4 374.7L325.1 384.5L341.6 391.7ZM431.2 383.3L387.5 392.4L346.6 395.5L298.2 402.8L298.2 403.4L346.6 398.3L387.5 398.3L431.2 392.5ZM584.9 406.2L614.4 395.5L649.3 390.8L692.8 386.1L725.9 372.1L725.9 372.7L692.8 388.1L649.3 395L614.4 402.2L584.9 415.4ZM731.4 402.5L681.4 390.5L642.8 380.7L602.7 367.7L602.7 368.3L642.8 382.4L681.4 394.2L731.4 408.4ZM880.7 404.4L909.4 405.1L923.8 414.2L957.3 420.4L957.3 421L923.8 416.9L909.4 411L880.7 413.6ZM923.8 414.5L918 419.8L898.7 422.1L903.5 422.2L888.1 426.6L879.7 430.5L879.7 431.1L888.1 427.2L903.5 423L898.7 423.3L918 421.6L923.8 416.7ZM1038.3 402.4L990.9 388L952.8 366.6L917 336.5L917 337.1L952.8 367.9L990.9 390.8L1038.3 406.8ZM1205.2 385.8L1164.1 371.4L1120.1 345.8L1077.2 319.4L1077.2 320L1120.1 347.6L1164.1 375.2L1205.2 391.7ZM1164.1 371.8L1182 369.8L1201.6 360.4L1213.7 351.6L1213.7 352.2L1201.6 361.3L1182 371.7L1164.1 374.8ZM1362.5 392.6L1342.3 391.5L1325.2 403.7L1301.6 402.8L1286.9 409.9L1286.9 410.5L1301.6 404L1325.2 406.2L1342.3 395.4L1362.5 397.9Z'/%3E%3C/g%3E%3Cg id='t'%3E%3Cuse href='%23c'/%3E%3Cuse href='%23c' x='-1600'/%3E%3Cuse href='%23c' x='1600'/%3E%3C/g%3E%3Cmask id='q' maskUnits='userSpaceOnUse' x='0' y='0' width='1600' height='460'%3E%3Cpath d='M0 0H1600V460H0Z' fill='%23fff'/%3E%3Cuse href='%23c'/%3E%3C/mask%3E%3Cfilter id='bl' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='520' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='erode' radius='6'/%3E%3CfeMorphology operator='dilate' radius='4'/%3E%3CfeGaussianBlur stdDeviation='15'/%3E%3C/filter%3E%3Cfilter id='h' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='520' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='dilate' radius='7'/%3E%3CfeGaussianBlur stdDeviation='40 30'/%3E%3CfeOffset dy='-30'/%3E%3C/filter%3E%3Cfilter id='g' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='520' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='dilate' radius='2'/%3E%3CfeGaussianBlur stdDeviation='6'/%3E%3C/filter%3E%3Cfilter id='b' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='520' color-interpolation-filters='sRGB'%3E%3CfeMorphology operator='erode' radius='7'/%3E%3CfeGaussianBlur stdDeviation='3'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23h)' opacity='.5'%3E%3Cuse href='%23t' fill='%23ff2d3f'/%3E%3C/g%3E%3Cg filter='url(%23bl)' opacity='0.5'%3E%3Cuse href='%23t' fill='%23ffa060'/%3E%3C/g%3E%3Cg mask='url(%23q)'%3E%3Cg filter='url(%23g)' opacity='.7'%3E%3Cuse href='%23t' fill='%23ff7a3c'/%3E%3C/g%3E%3C/g%3E%3Cg filter='url(%23b)' opacity='0.55'%3E%3Cuse href='%23t' fill='%23fff3d6'/%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-rays-a: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 460'%3E%3Cdefs%3E%3ClinearGradient id='y' x1='0' y1='1' x2='0' y2='0'%3E%3Cstop offset='0' stop-color='%23ff6a4a' stop-opacity='.42'/%3E%3Cstop offset='.4' stop-color='%23ff2d3f' stop-opacity='.17'/%3E%3Cstop offset='1' stop-color='%23ff2d3f' stop-opacity='0'/%3E%3C/linearGradient%3E%3ClinearGradient id='ug' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.84' stop-color='%23fff'/%3E%3Cstop offset='.905' stop-color='%23000'/%3E%3C/linearGradient%3E%3Cmask id='u' maskUnits='userSpaceOnUse' x='0' y='0' width='1600' height='460'%3E%3Cpath d='M0 0H1600V460H0Z' fill='url(%23ug)'/%3E%3C/mask%3E%3Cfilter id='k' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='520' color-interpolation-filters='sRGB'%3E%3CfeGaussianBlur stdDeviation='3.2 2.4'/%3E%3C/filter%3E%3C/defs%3E%3Cg mask='url(%23u)'%3E%3Cg fill='url(%23y)' filter='url(%23k)' opacity='1.2'%3E%3Cpath d='M222.0 405.7L222.7 405.5L188.5 233.0L179.6 234.9Z' fill-opacity='0.65'/%3E%3Cpath d='M230.5 405.1L230.9 405.2L242.6 307.7L239.5 307.4Z' fill-opacity='0.80'/%3E%3Cpath d='M221.5 405.8L224.1 405.3L210.3 280.5L185.2 285.6Z' fill-opacity='0.34'/%3E%3Cpath d='M234.6 405.8L235.9 406.2L288.8 250.0L273.3 245.5Z' fill-opacity='0.36'/%3E%3Cpath d='M230.4 405.1L231.5 405.2L264.9 179.1L248.5 177.3Z' fill-opacity='0.74'/%3E%3Cpath d='M230.8 405.2L232.6 405.4L252.4 309.5L239.0 307.6Z' fill-opacity='0.39'/%3E%3Cpath d='M222.6 405.6L224.8 405.2L216.2 313.0L200.6 315.7Z' fill-opacity='0.34'/%3E%3Cpath d='M475.1 392.5L476.7 392.9L550.7 136.2L522.4 129.6Z' fill-opacity='0.48'/%3E%3Cpath d='M466.7 392.2L467.6 392.1L446.9 140.5L432.0 142.1Z' fill-opacity='0.81'/%3E%3Cpath d='M479.8 393.9L480.3 394.1L528.2 284.3L524.5 282.7Z' fill-opacity='0.38'/%3E%3Cpath d='M481.6 394.7L482.8 395.3L575.8 236.9L560.5 228.8Z' fill-opacity='0.43'/%3E%3Cpath d='M469.8 392.0L470.5 392.0L475.8 217.8L467.2 217.8Z' fill-opacity='0.60'/%3E%3Cpath d='M471.5 392.0L473.0 392.2L510.0 122.8L482.5 120.3Z' fill-opacity='0.48'/%3E%3Cpath d='M478.8 393.5L480.2 394.1L597.7 130.8L571.2 120.4Z' fill-opacity='0.21'/%3E%3Cpath d='M478.5 393.4L480.7 394.3L604.5 139.4L563.1 123.0Z' fill-opacity='0.36'/%3E%3Cpath d='M474.8 392.4L476.8 392.9L517.3 257.5L496.8 252.9Z' fill-opacity='0.36'/%3E%3Cpath d='M648.9 414.7L651.0 414.3L641.5 336.6L628.1 339.3Z' fill-opacity='0.42'/%3E%3Cpath d='M645.1 415.9L645.9 415.6L586.6 252.0L577.4 255.6Z' fill-opacity='0.28'/%3E%3Cpath d='M649.1 414.7L651.3 414.3L631.7 245.4L605.6 250.4Z' fill-opacity='0.14'/%3E%3Cpath d='M656.9 414.1L658.5 414.2L670.6 339.4L660.5 338.3Z' fill-opacity='0.22'/%3E%3Cpath d='M663.3 415.4L664.3 415.7L737.2 232.2L724.2 227.5Z' fill-opacity='0.70'/%3E%3Cpath d='M649.9 414.5L651.2 414.3L640.8 334.9L632.8 336.4Z' fill-opacity='0.23'/%3E%3Cpath d='M893.8 413.3L895.0 412.9L853.3 252.2L838.8 256.6Z' fill-opacity='0.37'/%3E%3Cpath d='M890.5 414.7L891.0 414.4L788.9 189.8L779.2 194.4Z' fill-opacity='0.87'/%3E%3Cpath d='M911.4 413.8L912.2 414.1L977.4 267.1L967.8 263.2Z' fill-opacity='0.60'/%3E%3Cpath d='M905.1 412.2L906.2 412.3L941.4 216.4L925.7 214.2Z' fill-opacity='0.66'/%3E%3Cpath d='M912.5 414.2L913.2 414.6L994.4 250.0L984.5 245.4Z' fill-opacity='0.72'/%3E%3Cpath d='M894.1 413.2L896.7 412.5L871.9 267.3L844.5 274.5Z' fill-opacity='0.36'/%3E%3Cpath d='M902.8 412.0L903.6 412.1L910.9 315.8L904.7 315.5Z' fill-opacity='0.64'/%3E%3Cpath d='M889.6 415.1L890.9 414.5L807.2 230.0L790.3 238.6Z' fill-opacity='0.31'/%3E%3Cpath d='M1182.7 392.1L1184.2 392.3L1210.3 251.0L1194.8 249.0Z' fill-opacity='0.23'/%3E%3Cpath d='M1185.4 392.6L1185.8 392.7L1227.4 214.9L1222.3 213.8Z' fill-opacity='0.24'/%3E%3Cpath d='M1184.5 392.4L1185.0 392.5L1228.2 182.1L1220.1 180.6Z' fill-opacity='0.43'/%3E%3Cpath d='M1182.2 392.1L1182.9 392.2L1197.7 270.3L1191.1 269.7Z' fill-opacity='0.36'/%3E%3Cpath d='M1176.1 392.3L1176.8 392.2L1157.9 231.1L1150.7 232.1Z' fill-opacity='0.39'/%3E%3Cpath d='M1186.7 392.9L1187.9 393.2L1213.7 316.6L1206.3 314.4Z' fill-opacity='0.57'/%3E%3Cpath d='M1173.9 392.7L1175.8 392.3L1161.3 284.5L1145.5 287.7Z' fill-opacity='0.20'/%3E%3Cpath d='M1553.1 420.9L1554.6 420.6L1534.5 314.9L1522.1 317.9Z' fill-opacity='0.13'/%3E%3Cpath d='M1555.4 420.4L1557.5 420.1L1551.0 324.0L1535.7 326.1Z' fill-opacity='0.22'/%3E%3Cpath d='M1566.7 420.9L1567.3 421.1L1590.2 346.3L1586.0 345.1Z' fill-opacity='0.45'/%3E%3Cpath d='M1567.3 421.1L1567.8 421.2L1601.5 317.2L1597.3 315.9Z' fill-opacity='0.23'/%3E%3Cpath d='M1559.6 420.0L1561.6 420.0L1568.8 339.8L1556.0 339.5Z' fill-opacity='0.32'/%3E%3Cpath d='M53.4 414.9L55.3 414.4L43.1 335.7L30.7 338.5Z' fill-opacity='0.22'/%3E%3Cpath d='M65.3 414.5L65.7 414.6L85.3 330.7L82.3 330.1Z' fill-opacity='0.25'/%3E%3Cpath d='M65.0 414.5L65.6 414.6L83.6 337.7L79.2 336.8Z' fill-opacity='0.30'/%3E%3Cpath d='M57.3 414.1L59.7 414.0L62.1 321.6L44.6 322.6Z' fill-opacity='0.12'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-rays-b: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 460'%3E%3Cdefs%3E%3ClinearGradient id='y' x1='0' y1='1' x2='0' y2='0'%3E%3Cstop offset='0' stop-color='%23ff6a4a' stop-opacity='.42'/%3E%3Cstop offset='.4' stop-color='%23ff2d3f' stop-opacity='.17'/%3E%3Cstop offset='1' stop-color='%23ff2d3f' stop-opacity='0'/%3E%3C/linearGradient%3E%3ClinearGradient id='ug' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.84' stop-color='%23fff'/%3E%3Cstop offset='.905' stop-color='%23000'/%3E%3C/linearGradient%3E%3Cmask id='u' maskUnits='userSpaceOnUse' x='0' y='0' width='1600' height='460'%3E%3Cpath d='M0 0H1600V460H0Z' fill='url(%23ug)'/%3E%3C/mask%3E%3Cfilter id='k' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='520' color-interpolation-filters='sRGB'%3E%3CfeGaussianBlur stdDeviation='3.2 2.4'/%3E%3C/filter%3E%3C/defs%3E%3Cg mask='url(%23u)'%3E%3Cg fill='url(%23y)' filter='url(%23k)' opacity='1.2'%3E%3Cpath d='M225.8 405.1L228.2 405.0L235.1 226.7L204.6 227.9Z' fill-opacity='0.34'/%3E%3Cpath d='M227.9 405.0L228.4 405.0L232.5 222.1L226.2 222.1Z' fill-opacity='0.59'/%3E%3Cpath d='M230.6 405.1L231.0 405.2L257.5 190.4L251.1 189.7Z' fill-opacity='0.46'/%3E%3Cpath d='M218.5 406.8L220.0 406.3L156.6 196.6L134.7 204.4Z' fill-opacity='0.18'/%3E%3Cpath d='M237.6 406.8L238.9 407.4L345.0 187.3L323.3 178.1Z' fill-opacity='0.66'/%3E%3Cpath d='M220.1 406.2L221.2 405.9L198.9 318.8L191.6 320.9Z' fill-opacity='0.31'/%3E%3Cpath d='M221.1 405.9L221.5 405.8L190.7 282.8L186.9 283.8Z' fill-opacity='0.56'/%3E%3Cpath d='M467.9 392.1L468.9 392.0L461.4 131.8L443.0 133.0Z' fill-opacity='0.64'/%3E%3Cpath d='M469.5 392.0L470.4 392.0L476.9 165.7L462.9 165.7Z' fill-opacity='0.42'/%3E%3Cpath d='M482.0 395.0L483.8 396.0L644.0 155.2L609.2 135.2Z' fill-opacity='0.41'/%3E%3Cpath d='M464.7 392.5L465.3 392.4L440.3 249.8L434.1 251.0Z' fill-opacity='0.30'/%3E%3Cpath d='M476.1 392.7L478.2 393.3L538.4 226.9L513.2 219.7Z' fill-opacity='0.29'/%3E%3Cpath d='M481.8 394.8L482.2 395.0L605.7 164.9L599.3 161.5Z' fill-opacity='0.38'/%3E%3Cpath d='M479.6 393.8L482.0 395.0L575.9 229.6L543.5 214.8Z' fill-opacity='0.29'/%3E%3Cpath d='M457.9 395.0L459.6 394.2L376.3 190.4L351.2 202.4Z' fill-opacity='0.25'/%3E%3Cpath d='M457.9 395.0L460.3 393.9L404.4 239.5L376.8 252.2Z' fill-opacity='0.42'/%3E%3Cpath d='M646.0 415.6L646.4 415.5L613.1 319.0L609.9 320.2Z' fill-opacity='0.24'/%3E%3Cpath d='M661.4 414.8L662.5 415.1L690.7 326.4L682.6 324.2Z' fill-opacity='0.43'/%3E%3Cpath d='M647.6 415.1L648.0 415.0L604.6 255.6L599.5 257.1Z' fill-opacity='0.53'/%3E%3Cpath d='M645.9 415.6L646.4 415.5L605.9 297.5L601.4 299.2Z' fill-opacity='0.34'/%3E%3Cpath d='M665.5 416.2L666.1 416.5L741.6 259.2L734.6 256.0Z' fill-opacity='0.64'/%3E%3Cpath d='M647.2 415.2L649.3 414.6L626.2 295.6L607.5 300.6Z' fill-opacity='0.31'/%3E%3Cpath d='M891.9 414.1L892.3 413.9L794.3 164.3L785.7 167.8Z' fill-opacity='0.43'/%3E%3Cpath d='M908.6 412.8L909.1 413.0L952.2 267.0L945.7 265.2Z' fill-opacity='0.32'/%3E%3Cpath d='M891.6 414.2L892.1 414.0L818.6 231.4L811.7 234.4Z' fill-opacity='0.65'/%3E%3Cpath d='M897.5 412.4L900.0 412.1L892.8 238.2L861.3 242.1Z' fill-opacity='0.34'/%3E%3Cpath d='M903.7 412.1L904.1 412.1L925.9 166.5L917.8 165.9Z' fill-opacity='0.37'/%3E%3Cpath d='M911.8 413.9L912.4 414.2L1008.8 196.5L1000.4 193.0Z' fill-opacity='0.39'/%3E%3Cpath d='M907.8 412.7L908.3 412.8L972.5 161.3L963.9 159.3Z' fill-opacity='0.87'/%3E%3Cpath d='M911.1 413.6L911.9 413.9L990.0 229.4L979.2 225.2Z' fill-opacity='0.34'/%3E%3Cpath d='M1167.7 395.1L1168.2 394.9L1071.8 203.0L1064.7 206.8Z' fill-opacity='0.56'/%3E%3Cpath d='M1172.9 393.0L1174.1 392.7L1132.7 202.3L1116.3 206.6Z' fill-opacity='0.35'/%3E%3Cpath d='M1171.1 393.6L1171.5 393.4L1113.8 222.9L1108.8 224.7Z' fill-opacity='0.32'/%3E%3Cpath d='M1181.0 392.0L1182.3 392.1L1202.9 194.3L1185.0 193.2Z' fill-opacity='0.35'/%3E%3Cpath d='M1190.8 394.4L1191.2 394.5L1237.4 299.0L1234.4 297.6Z' fill-opacity='0.34'/%3E%3Cpath d='M1178.3 392.1L1178.8 392.0L1175.3 306.5L1172.0 306.6Z' fill-opacity='0.39'/%3E%3Cpath d='M1181.6 392.0L1182.3 392.1L1191.9 296.8L1186.5 296.4Z' fill-opacity='0.65'/%3E%3Cpath d='M1568.7 421.5L1570.1 422.0L1623.9 301.4L1610.0 296.0Z' fill-opacity='0.26'/%3E%3Cpath d='M1552.7 421.0L1553.1 420.9L1536.7 359.7L1534.5 360.3Z' fill-opacity='0.56'/%3E%3Cpath d='M1563.8 420.3L1564.2 420.3L1591.9 256.8L1587.1 256.0Z' fill-opacity='0.45'/%3E%3Cpath d='M1559.3 420.0L1560.0 420.0L1561.0 279.8L1554.4 279.9Z' fill-opacity='0.60'/%3E%3Cpath d='M1550.9 421.7L1552.5 421.1L1520.5 305.6L1506.2 310.5Z' fill-opacity='0.33'/%3E%3Cpath d='M63.3 414.2L65.2 414.5L92.6 296.6L75.7 293.7Z' fill-opacity='0.28'/%3E%3Cpath d='M56.2 414.3L58.5 414.0L55.4 294.8L34.7 296.9Z' fill-opacity='0.27'/%3E%3Cpath d='M57.4 414.1L59.6 414.0L61.4 284.4L40.7 285.6Z' fill-opacity='0.21'/%3E%3Cpath d='M61.7 414.1L62.9 414.2L74.4 325.1L65.8 324.4Z' fill-opacity='0.36'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-smoke-a: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 460'%3E%3Cdefs%3E%3ClinearGradient id='ug' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.84' stop-color='%23fff'/%3E%3Cstop offset='.905' stop-color='%23000'/%3E%3C/linearGradient%3E%3Cmask id='u' maskUnits='userSpaceOnUse' x='0' y='0' width='1600' height='460'%3E%3Cpath d='M0 0H1600V460H0Z' fill='url(%23ug)'/%3E%3C/mask%3E%3Cfilter id='p' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='520' color-interpolation-filters='sRGB'%3E%3CfeGaussianBlur stdDeviation='13 18' result='soft'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.005 .003' numOctaves='2' seed='9' result='warp'/%3E%3CfeDisplacementMap in='soft' in2='warp' scale='70' xChannelSelector='R' yChannelSelector='G' result='bent'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0075 .0055' numOctaves='4' seed='12'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 3.0 0 0 0 -0.95' result='wisp'/%3E%3CfeComposite in='bent' in2='wisp' operator='arithmetic' k1='1.25' k2='0.1' result='smoke'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.022 .0009' numOctaves='2' seed='17'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 2.2 0 0 0 -0.62'/%3E%3CfeGaussianBlur stdDeviation='4 0' result='streak'/%3E%3CfeComposite in='smoke' in2='streak' operator='arithmetic' k1='0.75' k2='0.55'/%3E%3C/filter%3E%3C/defs%3E%3Cg mask='url(%23u)'%3E%3Cg filter='url(%23p)'%3E%3Cellipse cx='226' cy='404' rx='52' ry='34' fill='%23ff7a45' fill-opacity='0.62'/%3E%3Cellipse cx='228' cy='370' rx='45' ry='31' fill='%23ff5038' fill-opacity='0.44'/%3E%3Cellipse cx='234' cy='335' rx='38' ry='29' fill='%23f5303a' fill-opacity='0.27'/%3E%3Cellipse cx='243' cy='301' rx='31' ry='26' fill='%23d9243a' fill-opacity='0.13'/%3E%3Cellipse cx='256' cy='266' rx='23' ry='24' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='300' cy='402' rx='60' ry='14' fill='%23ff7a45' fill-opacity='0.32'/%3E%3Cellipse cx='299' cy='387' rx='52' ry='13' fill='%23ff5038' fill-opacity='0.23'/%3E%3Cellipse cx='298' cy='372' rx='44' ry='12' fill='%23f5303a' fill-opacity='0.15'/%3E%3Cellipse cx='294' cy='358' rx='35' ry='11' fill='%23d9243a' fill-opacity='0.07'/%3E%3Cellipse cx='290' cy='343' rx='27' ry='10' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='470' cy='392' rx='86' ry='43' fill='%23ff7a45' fill-opacity='0.59'/%3E%3Cellipse cx='468' cy='348' rx='74' ry='40' fill='%23ff5038' fill-opacity='0.42'/%3E%3Cellipse cx='461' cy='303' rx='62' ry='37' fill='%23f5303a' fill-opacity='0.26'/%3E%3Cellipse cx='450' cy='259' rx='51' ry='33' fill='%23d9243a' fill-opacity='0.12'/%3E%3Cellipse cx='434' cy='215' rx='39' ry='30' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='560' cy='404' rx='50' ry='18' fill='%23ff7a45' fill-opacity='0.32'/%3E%3Cellipse cx='561' cy='386' rx='43' ry='16' fill='%23ff5038' fill-opacity='0.23'/%3E%3Cellipse cx='565' cy='368' rx='36' ry='15' fill='%23f5303a' fill-opacity='0.15'/%3E%3Cellipse cx='571' cy='350' rx='29' ry='14' fill='%23d9243a' fill-opacity='0.07'/%3E%3Cellipse cx='580' cy='332' rx='22' ry='12' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='655' cy='414' rx='64' ry='27' fill='%23ff7a45' fill-opacity='0.53'/%3E%3Cellipse cx='658' cy='386' rx='55' ry='25' fill='%23ff5038' fill-opacity='0.38'/%3E%3Cellipse cx='665' cy='358' rx='46' ry='23' fill='%23f5303a' fill-opacity='0.23'/%3E%3Cellipse cx='678' cy='330' rx='38' ry='21' fill='%23d9243a' fill-opacity='0.11'/%3E%3Cellipse cx='695' cy='302' rx='29' ry='19' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='770' cy='412' rx='70' ry='13' fill='%23ff7a45' fill-opacity='0.26'/%3E%3Cellipse cx='770' cy='399' rx='60' ry='12' fill='%23ff5038' fill-opacity='0.19'/%3E%3Cellipse cx='768' cy='386' rx='51' ry='11' fill='%23f5303a' fill-opacity='0.12'/%3E%3Cellipse cx='766' cy='373' rx='41' ry='10' fill='%23d9243a' fill-opacity='0.06'/%3E%3Cellipse cx='762' cy='360' rx='31' ry='9' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='902' cy='412' rx='58' ry='38' fill='%23ff7a45' fill-opacity='0.62'/%3E%3Cellipse cx='903' cy='373' rx='50' ry='35' fill='%23ff5038' fill-opacity='0.44'/%3E%3Cellipse cx='908' cy='335' rx='42' ry='32' fill='%23f5303a' fill-opacity='0.27'/%3E%3Cellipse cx='914' cy='296' rx='34' ry='29' fill='%23d9243a' fill-opacity='0.13'/%3E%3Cellipse cx='924' cy='258' rx='26' ry='26' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='1010' cy='404' rx='60' ry='16' fill='%23ff7a45' fill-opacity='0.29'/%3E%3Cellipse cx='1011' cy='388' rx='52' ry='15' fill='%23ff5038' fill-opacity='0.21'/%3E%3Cellipse cx='1013' cy='371' rx='44' ry='14' fill='%23f5303a' fill-opacity='0.13'/%3E%3Cellipse cx='1017' cy='355' rx='35' ry='12' fill='%23d9243a' fill-opacity='0.07'/%3E%3Cellipse cx='1022' cy='338' rx='27' ry='11' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='1180' cy='392' rx='76' ry='30' fill='%23ff7a45' fill-opacity='0.50'/%3E%3Cellipse cx='1178' cy='361' rx='66' ry='28' fill='%23ff5038' fill-opacity='0.36'/%3E%3Cellipse cx='1174' cy='330' rx='55' ry='26' fill='%23f5303a' fill-opacity='0.22'/%3E%3Cellipse cx='1165' cy='299' rx='45' ry='24' fill='%23d9243a' fill-opacity='0.10'/%3E%3Cellipse cx='1154' cy='267' rx='34' ry='21' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='1330' cy='400' rx='60' ry='19' fill='%23ff7a45' fill-opacity='0.32'/%3E%3Cellipse cx='1331' cy='380' rx='52' ry='18' fill='%23ff5038' fill-opacity='0.23'/%3E%3Cellipse cx='1334' cy='361' rx='44' ry='16' fill='%23f5303a' fill-opacity='0.15'/%3E%3Cellipse cx='1339' cy='341' rx='35' ry='15' fill='%23d9243a' fill-opacity='0.07'/%3E%3Cellipse cx='1346' cy='321' rx='27' ry='13' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='1560' cy='420' rx='48' ry='24' fill='%23ff7a45' fill-opacity='0.44'/%3E%3Cellipse cx='1561' cy='395' rx='41' ry='22' fill='%23ff5038' fill-opacity='0.31'/%3E%3Cellipse cx='1566' cy='371' rx='35' ry='20' fill='%23f5303a' fill-opacity='0.20'/%3E%3Cellipse cx='1572' cy='346' rx='28' ry='19' fill='%23d9243a' fill-opacity='0.09'/%3E%3Cellipse cx='1582' cy='322' rx='22' ry='17' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='60' cy='414' rx='44' ry='21' fill='%23ff7a45' fill-opacity='0.38'/%3E%3Cellipse cx='59' cy='393' rx='38' ry='19' fill='%23ff5038' fill-opacity='0.27'/%3E%3Cellipse cx='56' cy='371' rx='32' ry='18' fill='%23f5303a' fill-opacity='0.17'/%3E%3Cellipse cx='51' cy='350' rx='26' ry='16' fill='%23d9243a' fill-opacity='0.08'/%3E%3Cellipse cx='44' cy='329' rx='20' ry='15' fill='%23b81c36' fill-opacity='0.02'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-smoke-b: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 460'%3E%3Cdefs%3E%3ClinearGradient id='ug' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.84' stop-color='%23fff'/%3E%3Cstop offset='.905' stop-color='%23000'/%3E%3C/linearGradient%3E%3Cmask id='u' maskUnits='userSpaceOnUse' x='0' y='0' width='1600' height='460'%3E%3Cpath d='M0 0H1600V460H0Z' fill='url(%23ug)'/%3E%3C/mask%3E%3Cfilter id='p' filterUnits='userSpaceOnUse' x='-100' y='0' width='1800' height='520' color-interpolation-filters='sRGB'%3E%3CfeGaussianBlur stdDeviation='13 18' result='soft'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.005 .003' numOctaves='2' seed='23' result='warp'/%3E%3CfeDisplacementMap in='soft' in2='warp' scale='70' xChannelSelector='R' yChannelSelector='G' result='bent'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0075 .0055' numOctaves='4' seed='26'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 3.0 0 0 0 -0.95' result='wisp'/%3E%3CfeComposite in='bent' in2='wisp' operator='arithmetic' k1='1.25' k2='0.1' result='smoke'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.022 .0009' numOctaves='2' seed='31'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 2.2 0 0 0 -0.62'/%3E%3CfeGaussianBlur stdDeviation='4 0' result='streak'/%3E%3CfeComposite in='smoke' in2='streak' operator='arithmetic' k1='0.75' k2='0.55'/%3E%3C/filter%3E%3C/defs%3E%3Cg mask='url(%23u)'%3E%3Cg filter='url(%23p)'%3E%3Cellipse cx='226' cy='404' rx='52' ry='34' fill='%23ff7a45' fill-opacity='0.62'/%3E%3Cellipse cx='228' cy='370' rx='45' ry='31' fill='%23ff5038' fill-opacity='0.44'/%3E%3Cellipse cx='234' cy='335' rx='38' ry='29' fill='%23f5303a' fill-opacity='0.27'/%3E%3Cellipse cx='243' cy='301' rx='31' ry='26' fill='%23d9243a' fill-opacity='0.13'/%3E%3Cellipse cx='256' cy='266' rx='23' ry='24' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='300' cy='402' rx='60' ry='14' fill='%23ff7a45' fill-opacity='0.32'/%3E%3Cellipse cx='299' cy='387' rx='52' ry='13' fill='%23ff5038' fill-opacity='0.23'/%3E%3Cellipse cx='298' cy='372' rx='44' ry='12' fill='%23f5303a' fill-opacity='0.15'/%3E%3Cellipse cx='294' cy='358' rx='35' ry='11' fill='%23d9243a' fill-opacity='0.07'/%3E%3Cellipse cx='290' cy='343' rx='27' ry='10' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='470' cy='392' rx='86' ry='43' fill='%23ff7a45' fill-opacity='0.59'/%3E%3Cellipse cx='468' cy='348' rx='74' ry='40' fill='%23ff5038' fill-opacity='0.42'/%3E%3Cellipse cx='461' cy='303' rx='62' ry='37' fill='%23f5303a' fill-opacity='0.26'/%3E%3Cellipse cx='450' cy='259' rx='51' ry='33' fill='%23d9243a' fill-opacity='0.12'/%3E%3Cellipse cx='434' cy='215' rx='39' ry='30' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='560' cy='404' rx='50' ry='18' fill='%23ff7a45' fill-opacity='0.32'/%3E%3Cellipse cx='561' cy='386' rx='43' ry='16' fill='%23ff5038' fill-opacity='0.23'/%3E%3Cellipse cx='565' cy='368' rx='36' ry='15' fill='%23f5303a' fill-opacity='0.15'/%3E%3Cellipse cx='571' cy='350' rx='29' ry='14' fill='%23d9243a' fill-opacity='0.07'/%3E%3Cellipse cx='580' cy='332' rx='22' ry='12' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='655' cy='414' rx='64' ry='27' fill='%23ff7a45' fill-opacity='0.53'/%3E%3Cellipse cx='658' cy='386' rx='55' ry='25' fill='%23ff5038' fill-opacity='0.38'/%3E%3Cellipse cx='665' cy='358' rx='46' ry='23' fill='%23f5303a' fill-opacity='0.23'/%3E%3Cellipse cx='678' cy='330' rx='38' ry='21' fill='%23d9243a' fill-opacity='0.11'/%3E%3Cellipse cx='695' cy='302' rx='29' ry='19' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='770' cy='412' rx='70' ry='13' fill='%23ff7a45' fill-opacity='0.26'/%3E%3Cellipse cx='770' cy='399' rx='60' ry='12' fill='%23ff5038' fill-opacity='0.19'/%3E%3Cellipse cx='768' cy='386' rx='51' ry='11' fill='%23f5303a' fill-opacity='0.12'/%3E%3Cellipse cx='766' cy='373' rx='41' ry='10' fill='%23d9243a' fill-opacity='0.06'/%3E%3Cellipse cx='762' cy='360' rx='31' ry='9' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='902' cy='412' rx='58' ry='38' fill='%23ff7a45' fill-opacity='0.62'/%3E%3Cellipse cx='903' cy='373' rx='50' ry='35' fill='%23ff5038' fill-opacity='0.44'/%3E%3Cellipse cx='908' cy='335' rx='42' ry='32' fill='%23f5303a' fill-opacity='0.27'/%3E%3Cellipse cx='914' cy='296' rx='34' ry='29' fill='%23d9243a' fill-opacity='0.13'/%3E%3Cellipse cx='924' cy='258' rx='26' ry='26' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='1010' cy='404' rx='60' ry='16' fill='%23ff7a45' fill-opacity='0.29'/%3E%3Cellipse cx='1011' cy='388' rx='52' ry='15' fill='%23ff5038' fill-opacity='0.21'/%3E%3Cellipse cx='1013' cy='371' rx='44' ry='14' fill='%23f5303a' fill-opacity='0.13'/%3E%3Cellipse cx='1017' cy='355' rx='35' ry='12' fill='%23d9243a' fill-opacity='0.07'/%3E%3Cellipse cx='1022' cy='338' rx='27' ry='11' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='1180' cy='392' rx='76' ry='30' fill='%23ff7a45' fill-opacity='0.50'/%3E%3Cellipse cx='1178' cy='361' rx='66' ry='28' fill='%23ff5038' fill-opacity='0.36'/%3E%3Cellipse cx='1174' cy='330' rx='55' ry='26' fill='%23f5303a' fill-opacity='0.22'/%3E%3Cellipse cx='1165' cy='299' rx='45' ry='24' fill='%23d9243a' fill-opacity='0.10'/%3E%3Cellipse cx='1154' cy='267' rx='34' ry='21' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='1330' cy='400' rx='60' ry='19' fill='%23ff7a45' fill-opacity='0.32'/%3E%3Cellipse cx='1331' cy='380' rx='52' ry='18' fill='%23ff5038' fill-opacity='0.23'/%3E%3Cellipse cx='1334' cy='361' rx='44' ry='16' fill='%23f5303a' fill-opacity='0.15'/%3E%3Cellipse cx='1339' cy='341' rx='35' ry='15' fill='%23d9243a' fill-opacity='0.07'/%3E%3Cellipse cx='1346' cy='321' rx='27' ry='13' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='1560' cy='420' rx='48' ry='24' fill='%23ff7a45' fill-opacity='0.44'/%3E%3Cellipse cx='1561' cy='395' rx='41' ry='22' fill='%23ff5038' fill-opacity='0.31'/%3E%3Cellipse cx='1566' cy='371' rx='35' ry='20' fill='%23f5303a' fill-opacity='0.20'/%3E%3Cellipse cx='1572' cy='346' rx='28' ry='19' fill='%23d9243a' fill-opacity='0.09'/%3E%3Cellipse cx='1582' cy='322' rx='22' ry='17' fill='%23b81c36' fill-opacity='0.02'/%3E%3Cellipse cx='60' cy='414' rx='44' ry='21' fill='%23ff7a45' fill-opacity='0.38'/%3E%3Cellipse cx='59' cy='393' rx='38' ry='19' fill='%23ff5038' fill-opacity='0.27'/%3E%3Cellipse cx='56' cy='371' rx='32' ry='18' fill='%23f5303a' fill-opacity='0.17'/%3E%3Cellipse cx='51' cy='350' rx='26' ry='16' fill='%23d9243a' fill-opacity='0.08'/%3E%3Cellipse cx='44' cy='329' rx='20' ry='15' fill='%23b81c36' fill-opacity='0.02'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-bolt: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 280'%3E%3Cfilter id='g' x='-1' y='-.2' width='3' height='1.4'%3E%3CfeGaussianBlur stdDeviation='4'/%3E%3C/filter%3E%3Cpath id='z' d='M80 280L89 262L72 244L88 226L76 207L82 189L67 171L80 153L70 135L67 117L60 99L65 81L66 62L57 44L64 26L62 8M82 189L88 173L95 157L103 140L118 124L124 107M67 117L81 105L92 94L95 82L118 70L122 59' fill='none' stroke-linejoin='round' stroke='%23ff2d3f' stroke-width='7' opacity='.85' filter='url(%23g)'/%3E%3Cpath d='M80 280L89 262L72 244L88 226L76 207L82 189L67 171L80 153L70 135L67 117L60 99L65 81L66 62L57 44L64 26L62 8M82 189L88 173L95 157L103 140L118 124L124 107M67 117L81 105L92 94L95 82L118 70L122 59' fill='none' stroke='%23ff8f9a' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M80 280L89 262L72 244L88 226L76 207L82 189L67 171L80 153L70 135L67 117L60 99L65 81L66 62L57 44L64 26L62 8M82 189L88 173L95 157L103 140L118 124L124 107M67 117L81 105L92 94L95 82L118 70L122 59' fill='none' stroke='%23fff4ee' stroke-width='.8' stroke-linejoin='round'/%3E%3C/svg%3E");
+  /* The night wall, drawn by docs/upside-down-art/pictures.mjs: dust far off,
+     spores in two currents, and a few flakes close to, each one tile of 1340
+     by 1120; then
+     the storm's red cloud and the dark cloud under it, the cold haze and the
+     heat off the crack, each a strip 1340 wide that thins to nothing at its
+     ends, so where it repeats is a break in the cloud. */
+  --upside-down-dust-far: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1340' height='1120' viewBox='0 0 1340 1120'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath stroke='%23ff6b78' stroke-width='0.8' stroke-opacity='0.5' d='M180.5 808.5h0M320 993h0M172 923.5h0M594.5 779h0M744.5 116.5h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.1' stroke-opacity='0.5' d='M1231 311.5h0M1190.5 889h0M556.5 805h0M453 571h0M574 507h0M1174.5 694.5h0M311 418.5h0M862 388h0M200.5 941h0M1211.5 630.5h0M661.5 631.5h0M1283.5 1070.5h0M449.5 891h0M158.5 986h0M311.5 895.5h0M338 802.5h0M1089.5 137h0M344 946.5h0M896 93h0M477 414h0M483 197.5h0M159.5 1032h0M167.5 507h0M67 900.5h0M138.5 1028h0M393 869.5h0M431 1060h0M680 278.5h0M1096.5 293.5h0M327 817.5h0M60.5 106h0M1332.5 1005h0M1159 430h0M569.5 558.5h0M299.5 913.5h0M1156 381h0M320 750h0M179.5 913h0M284 977.5h0M90 1031.5h0M415.5 1084h0M485 388.5h0M332.5 883.5h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.5' stroke-opacity='0.22' d='M643.5 586h0M205 400.5h0M516.5 877h0M1311.5 1052h0M145.5 934h0M118.5 1006.5h0M440.5 746.5h0M440.5 810.5h0M1030.5 161h0M115 1072.5h0M328.5 925h0M163.5 874.5h0M278.5 783.5h0M591.5 194.5h0M99 915.5h0M64.5 839h0M274.5 854h0M262 714h0M148 433.5h0M822.5 610.5h0M296 365h0M1199 308h0M59.5 785.5h0M1289.5 943h0M1080.5 811h0M552.5 988.5h0M1183.5 800.5h0M306.5 757h0M1157 880h0M443 728.5h0M1153 238.5h0M762 656h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='0.8' stroke-opacity='0.5' d='M402 499.5h0M375 844h0M507.5 559h0M315.5 406h0M114.5 1050h0M215.5 560h0M326 771.5h0M500.5 765h0M1185 870h0M1315.5 236h0M487 483.5h0M131.5 67h0M448 759.5h0M1119.5 837h0M188.5 435h0M858.5 82h0M349 916h0M184.5 1050.5h0M215.5 443.5h0M170.5 1070h0M580 726h0M295 608.5h0M642.5 576h0M131.5 789.5h0M709 730.5h0M489 844h0M776 534.5h0M1135 390h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='0.8' stroke-opacity='0.22' d='M533 720h0M1248 714.5h0M418.5 455.5h0M626 313h0M803 248.5h0M522 886h0M1306.5 1078.5h0M1194 907.5h0M3.5 995.5h0M18.5 535.5h0M1255.5 848.5h0M1313 958.5h0M1239.5 784.5h0M359 876.5h0M349 356.5h0M1210.5 323.5h0M575 1033.5h0M1203 235.5h0M645.5 582.5h0M722.5 77h0M164 982.5h0M361.5 987.5h0M628.5 610h0M1213 317h0M416 790.5h0M441 1068h0M391.5 339.5h0M95.5 1065h0M264 372.5h0M321.5 444h0M261.5 423.5h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.1' stroke-opacity='0.22' d='M122.5 545.5h0M204.5 769h0M650 1087h0M469.5 1048.5h0M342.5 455h0M827.5 1025.5h0M400.5 1023.5h0M1117.5 1077h0M1279.5 732.5h0M114 755.5h0M1300.5 1100h0M194 880h0M1120 140.5h0M1111.5 868.5h0M1038 126.5h0M829.5 1113h0M38.5 1098.5h0M272 640.5h0M1134 929h0M0.5 498.5h0M1204.5 898.5h0M1244 62h0M1262.5 309h0M535 640.5h0M932 727.5h0M1008 180h0M249 1103.5h0M592 748h0M210.5 1017.5h0M702 79h0M960 639.5h0M426.5 447.5h0M636 708.5h0M550.5 773.5h0M480 778.5h0M477.5 866.5h0M1005.5 617h0M1185.5 333h0M386.5 355h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.5' stroke-opacity='0.36' d='M1310.5 230h0M337.5 666h0M41.5 971.5h0M1264.5 790.5h0M542 535h0M649.5 849.5h0M1211.5 209h0M1211.5 246.5h0M739.5 678.5h0M1211 307h0M374.5 907.5h0M1209.5 273h0M276.5 642h0M603.5 524h0M84.5 855h0M40.5 1061h0M1285 969h0M87 1056.5h0M1261.5 760h0M363.5 708h0M546 567h0M14 264.5h0M1227 319.5h0M447 817h0M1172.5 809h0M1205 305.5h0M262.5 800.5h0M94.5 1030.5h0M725 720.5h0M708 813.5h0M884.5 211.5h0M322.5 779h0M15.5 1090h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.1' stroke-opacity='0.36' d='M533 709.5h0M633.5 388h0M1056 182h0M258 938h0M64.5 1053.5h0M1058 316.5h0M269 1032h0M1138 630.5h0M103.5 760.5h0M1225 413.5h0M39 902.5h0M336 796.5h0M377.5 766h0M389.5 843h0M822.5 186h0M511.5 436h0M308 749h0M1085.5 1109h0M11 273h0M261.5 1100.5h0M1216.5 231h0M277.5 861.5h0M581.5 923.5h0M1135 900.5h0M1194.5 192.5h0M1294 922h0M170.5 479h0M192 93.5h0M427 698h0M181.5 455h0M761 388.5h0M85 1069h0M561.5 884.5h0M167 1038h0M1144.5 981.5h0M1166 308h0M163.5 407h0M1328.5 266h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='0.8' stroke-opacity='0.36' d='M603 721.5h0M1165.5 887.5h0M1049.5 995h0M146.5 1019h0M1079.5 405.5h0M820 115.5h0M245 874h0M149.5 1071.5h0M754.5 458.5h0M716 610h0M620.5 806.5h0M1025.5 54h0M34.5 401h0M112 1041h0M82.5 1038.5h0M649.5 924.5h0M1195.5 756h0M653.5 448.5h0M409 475.5h0M1307 1018.5h0M1177 661.5h0M142.5 965.5h0M847.5 227.5h0M39 556.5h0M400.5 725.5h0'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.5' stroke-opacity='0.5' d='M874.5 92h0M402.5 401h0M874.5 156.5h0M362 442.5h0M882.5 72h0M609.5 549h0M1295.5 505.5h0M246.5 746.5h0M945.5 197.5h0M388.5 1091h0M275 817.5h0M572.5 667h0M690.5 1008h0M945 197h0M1208.5 269.5h0M1159.5 328h0M21.5 1061.5h0M224 839h0M230.5 452h0M147 937h0M902.5 259.5h0M1322.5 643h0M320 722h0M404.5 846h0M359.5 390.5h0M1339 740h0M1106.5 345.5h0M1036 780h0'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.5' stroke-opacity='0.5' d='M894.5 685.5h0M667 582h0M322 962.5h0M31 478h0M1198 146.5h0M436.5 792h0M1280 572h0'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.1' stroke-opacity='0.22' d='M798.5 16h0M236.5 587h0M78 939h0'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.5' stroke-opacity='0.22' d='M904.5 99.5h0M58.5 71h0M634.5 567h0M443.5 975.5h0'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.1' stroke-opacity='0.36' d='M469 971.5h0M351 1015h0M185 1117h0M67.5 971h0M1090 82.5h0'/%3E%3Cpath stroke='%23ff6b78' stroke-width='0.8' stroke-opacity='0.36' d='M650.5 840h0M12 783.5h0M649.5 621h0'/%3E%3Cpath stroke='%23ff6b78' stroke-width='0.8' stroke-opacity='0.22' d='M375.5 805h0M257 815h0M411.5 45h0'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.1' stroke-opacity='0.5' d='M157.5 0h0'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.5' stroke-opacity='0.36' d='M613.5 774h0M158.5 410h0'/%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-dust-mid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1340' height='1120' viewBox='0 0 1340 1120'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.8' stroke-opacity='0.45' d='M101.5 1053.5l-0.8 0.1M240 1057l0.3 0.3M627.5 529l-0.3 0.1M182 916.5l-0.3 0.4M998.5 112.5l-1 0.8M1209.5 277l-0.1 0.8M190 1004l0.1 1.2M821.5 578.5l0.8 1M1311 912l0.3 0M1100.5 995l-1.4 0.2M147.5 1034.5l-0.3 0.4M377 783.5l0.2 0.1M293 808.5l-0.9 0.6'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.8' stroke-opacity='0.85' d='M653.5 703.5l-0.1 0.5'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.8' stroke-opacity='0.65' d='M236.5 575l-0.4 0.1M1133 700l-0.6 0.7M792 152.5l0.1 0.2M35 1052.5l0.4 0M930.5 260.5l0.3 0.5'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='3.2' stroke-opacity='0.85' d='M372.5 988.5l-0.1 0.2M1240.5 57.5l0.1 0.5M128.5 715l-0.6 0.6M259.5 522l-0.2 1.1M303.5 540l0.2 0.7M351.5 1029.5l1.2 0.6M238 57l0.7 0.2M306.5 1075l-0.3 0.2M830 591.5l0.1 0.3M152.5 510.5l-0.4 0.1M1212.5 363l0 0.1M202.5 827.5l0.7 0.6'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='2.4' stroke-opacity='0.65' d='M125 1053l1 0.7M632 807.5h0M179 1047l1.4 0.2M290.5 988l1 0.6M526.5 833l-0.8 0.5M239.5 874.5l-0.5 0.2M6 1103l0.2 0.3M679.5 666l0.6 0.8'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='2.4' stroke-opacity='0.45' d='M179 763l-1.3 0.1M232.5 806.5l-0.5 0.9M453 1021l-1 0.9M340.5 486.5l-0.1 1M751 279.5h0M629 514l-0.8 1M167.5 512l0.5 0.3'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.8' stroke-opacity='0.85' d='M630 672.5l-0.4 0.5M1170.5 906.5l0.8 1M446.5 748.5l-0.3 0M282 831.5l0 0.8M407 453l-0.8 0.3M879 144.5l0.2 0.1'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='2.4' stroke-opacity='0.85' d='M908.5 144l0.2 0.4M1326 1099.5l-0.1 0.1M31 962l-0.7 0.2M869 402.5l-0.2 0.4M253 840.5l-0.1 0M828 1046.5h0M176.5 1002.5l0.7 0.6M386 960.5l-0.1 0.6'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.8' stroke-opacity='0.45' d='M1185 666l-0.1 0.4M301 796.5l0.1 0.2'/%3E%3Cpath stroke='%23ff6b78' stroke-width='1.8' stroke-opacity='0.65' d='M374 19.5l-0.1 0.3'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='3.2' stroke-opacity='0.45' d='M72 17h0M1103.5 178l-0.3 0M1132 264.5l0.6 0.3M540 591l-0.8 0.7M33.5 1059l0.3 0.5'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='3.2' stroke-opacity='0.65' d='M521.5 674h0M364.5 16l-1.1 0.2M28.5 883l0.2 1M1290 358l0.6 0.5'/%3E%3Cpath stroke='%23ff6b78' stroke-width='2.4' stroke-opacity='0.65' d='M198.5 322l0.6 0.2'/%3E%3Cpath stroke='%23ff6b78' stroke-width='3.2' stroke-opacity='0.85' d='M353.5 882l-0.5 0.8'/%3E%3Cpath stroke='%23ff6b78' stroke-width='3.2' stroke-opacity='0.65' d='M1208.5 329l0 1.3'/%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-dust-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1340' height='1120' viewBox='0 0 1340 1120'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath stroke='%23cfdcf5' stroke-width='2.4' stroke-opacity='0.45' d='M617 869.5l-0.1 0.2M304 1030.5l0.5 0.2M846 865l0.9 0M1230 958.5l-0.1 0.1M367 949.5l0.8 0.4M1331.5 684l-1.1 0.5M186.5 349.5l0.4 0.3M1314.5 986.5l-1 0.7M19.5 1043l-0.1 0.3M965.5 249l-0.9 0M361.5 552.5l-0.7 0.6M1221 97l0.5 0.5M769 688.5l-0.7 1.2M485 751.5l-0.1 0.8'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='3.2' stroke-opacity='0.45' d='M670.5 656.5l0.1 0.1M484 886l-0.3 0.7M1277.5 340l-0.1 0.9M306 799l-0.1 0.5M1323 1109.5l0.4 0.3M393 716.5l0.5 0M347.5 850l-0.1 0.3M298 632l-1.1 0.3M158 1064l0.3 0.5'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.8' stroke-opacity='0.45' d='M106.5 839l-0.2 0.7M331 404l-0.1 0.7M144.5 1096l-0.5 0.1M385.5 543l-1.1 0M294 1013.5l-0.3 0.2M598.5 321.5l-0.5 0.1'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.8' stroke-opacity='0.85' d='M93 67l0.2 0.2M33 1074l0.6 0.5M99.5 994l-0.5 0.4M25 872l0.2 0M19 1033l0.7 0.9M1216 1001l-0.9 0.6M1260.5 317.5l-0.6 0.1M1135 346.5l0.4 0M51 1019l0.2 0M369.5 914l0.2 0.1M179 869.5l0.8 0.9M1190 252l0.8 0.4M747.5 802.5l-0.2 0.2'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='1.8' stroke-opacity='0.65' d='M1318 978l-0.4 0.7M164 1080l1.1 0.8M162.5 846.5l0.4 0.3M102.5 901.5l0 0.6M121.5 885.5l-0.2 0.7M688 767.5l0.5 1M1315 345.5l-0.4 0.4M1225 653l1.1 0.6'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='2.4' stroke-opacity='0.85' d='M185.5 1001l-0.6 0.3M210 873l0.3 0M412 824.5l0.2 1M123 976l0.2 0.4M793.5 532l0.4 0.2M897 309l-0.5 0.5M129 1022.5l0.9 0.2M219 418l0.1 0.5M264.5 455.5l0.3 0.4'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='3.2' stroke-opacity='0.85' d='M337 164.5l-0.8 0.3M386.5 719l-0.1 0.1M694.5 626.5l1.3 0.2M191.5 1047.5l0.4 0.2'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='3.2' stroke-opacity='0.65' d='M1269.5 680l-0.8 0.8M1221 322l0.8 0.7M394.5 399.5l-0.7 1.2M224.5 328.5l0.5 0.3M1285.5 486.5l-0.1 0.2M419 271.5h0M760 1078.5l0 0.4'/%3E%3Cpath stroke='%23cfdcf5' stroke-width='2.4' stroke-opacity='0.65' d='M745 118l-0.2 0.1M320.5 803.5l-0.7 0.5M241 755l0.5 0.1M244 802.5l-0.1 0.5M901.5 296l0.3 0.2'/%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-dust-near: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1340' height='1120' viewBox='0 0 1340 1120'%3E%3Cdefs%3E%3CradialGradient id='a'%3E%3Cstop offset='0' stop-color='%23cfdcf5' stop-opacity='1'/%3E%3Cstop offset='0.3' stop-color='%23cfdcf5' stop-opacity='0.86'/%3E%3Cstop offset='0.55' stop-color='%23cfdcf5' stop-opacity='0.45'/%3E%3Cstop offset='0.8' stop-color='%23cfdcf5' stop-opacity='0.12'/%3E%3Cstop offset='1' stop-color='%23cfdcf5' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='b'%3E%3Cstop offset='0' stop-color='%23ff8a80' stop-opacity='1'/%3E%3Cstop offset='0.3' stop-color='%23ff8a80' stop-opacity='0.86'/%3E%3Cstop offset='0.55' stop-color='%23ff8a80' stop-opacity='0.45'/%3E%3Cstop offset='0.8' stop-color='%23ff8a80' stop-opacity='0.12'/%3E%3Cstop offset='1' stop-color='%23ff8a80' stop-opacity='0'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cellipse cx='361.5' cy='891.5' rx='11.5' ry='9.4' transform='rotate(7 361.5 891.5)' fill='url(%23a)' opacity='0.21'/%3E%3Cellipse cx='846' cy='587' rx='10.7' ry='8.8' transform='rotate(85 846 587)' fill='url(%23a)' opacity='0.29'/%3E%3Cellipse cx='288' cy='1034.5' rx='13.7' ry='11.2' transform='rotate(9 288 1034.5)' fill='url(%23a)' opacity='0.15'/%3E%3Cellipse cx='795.5' cy='813.5' rx='14.2' ry='11.7' transform='rotate(51 795.5 813.5)' fill='url(%23a)' opacity='0.20'/%3E%3Cellipse cx='251' cy='257.5' rx='9.4' ry='7.7' transform='rotate(154 251 257.5)' fill='url(%23a)' opacity='0.26'/%3E%3Cellipse cx='268' cy='543.5' rx='10.7' ry='8.8' transform='rotate(42 268 543.5)' fill='url(%23a)' opacity='0.29'/%3E%3Cellipse cx='1133' cy='362.5' rx='10.5' ry='8.6' transform='rotate(163 1133 362.5)' fill='url(%23a)' opacity='0.23'/%3E%3Cellipse cx='965.5' cy='843.5' rx='11.0' ry='9.1' transform='rotate(56 965.5 843.5)' fill='url(%23a)' opacity='0.28'/%3E%3Cellipse cx='624' cy='152.5' rx='11.4' ry='9.3' transform='rotate(176 624 152.5)' fill='url(%23b)' opacity='0.21'/%3E%3Cellipse cx='536.5' cy='767' rx='12.1' ry='9.9' transform='rotate(122 536.5 767)' fill='url(%23a)' opacity='0.25'/%3E%3Cellipse cx='836.5' cy='1017' rx='8.7' ry='7.2' transform='rotate(49 836.5 1017)' fill='url(%23a)' opacity='0.28'/%3E%3Cellipse cx='815' cy='868.5' rx='10.5' ry='8.6' transform='rotate(169 815 868.5)' fill='url(%23a)' opacity='0.30'/%3E%3Cellipse cx='1070' cy='969.5' rx='9.9' ry='8.1' transform='rotate(59 1070 969.5)' fill='url(%23a)' opacity='0.25'/%3E%3C/svg%3E");
+  --upside-down-storm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1340' height='400' viewBox='0 0 1340 400'%3E%3Cfilter id='a' filterUnits='userSpaceOnUse' x='0' y='0' width='1340' height='400' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0032 .0075' numOctaves='4' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 .86 0 0 0 0 .12 0 0 0 0 .18 2.6 0 0 0 -.98'/%3E%3C/filter%3E%3ClinearGradient id='b'%3E%3Cstop stop-color='%23000'/%3E%3Cstop offset='.09' stop-color='%23fff'/%3E%3Cstop offset='.91' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23000'/%3E%3C/linearGradient%3E%3Cmask id='c' maskUnits='userSpaceOnUse' x='0' y='0' width='1340' height='400'%3E%3Crect x='0' y='0' width='1340' height='400' fill='url(%23b)'/%3E%3C/mask%3E%3Cg mask='url(%23c)'%3E%3Crect x='0' y='0' width='1340' height='400' filter='url(%23a)' opacity='.34'/%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-storm-belly: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1340' height='400' viewBox='0 0 1340 400'%3E%3Cfilter id='a' filterUnits='userSpaceOnUse' x='0' y='0' width='1340' height='400' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.005 .011' numOctaves='3' seed='21'/%3E%3CfeColorMatrix values='0 0 0 0 .015 0 0 0 0 .02 0 0 0 0 .045 3 0 0 0 -1.25'/%3E%3C/filter%3E%3ClinearGradient id='b'%3E%3Cstop stop-color='%23000'/%3E%3Cstop offset='.09' stop-color='%23fff'/%3E%3Cstop offset='.91' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23000'/%3E%3C/linearGradient%3E%3Cmask id='c' maskUnits='userSpaceOnUse' x='0' y='0' width='1340' height='400'%3E%3Crect x='0' y='0' width='1340' height='400' fill='url(%23b)'/%3E%3C/mask%3E%3Cg mask='url(%23c)'%3E%3Crect x='0' y='0' width='1340' height='400' filter='url(%23a)' opacity='.8'/%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-haze: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1340' height='540' viewBox='0 470 1340 540'%3E%3Cfilter id='a' filterUnits='userSpaceOnUse' x='0' y='470' width='1340' height='540' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0028 .0085' numOctaves='3' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .62 0 0 0 0 .84 2.4 0 0 0 -.9'/%3E%3C/filter%3E%3ClinearGradient id='b'%3E%3Cstop stop-color='%23000'/%3E%3Cstop offset='.09' stop-color='%23fff'/%3E%3Cstop offset='.91' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23000'/%3E%3C/linearGradient%3E%3Cmask id='c' maskUnits='userSpaceOnUse' x='0' y='470' width='1340' height='540'%3E%3Crect x='0' y='470' width='1340' height='540' fill='url(%23b)'/%3E%3C/mask%3E%3Cg mask='url(%23c)'%3E%3Crect x='0' y='470' width='1340' height='540' filter='url(%23a)' opacity='.2'/%3E%3C/g%3E%3C/svg%3E");
+  --upside-down-heat: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1340' height='426' viewBox='0 694 1340 426'%3E%3Cfilter id='a' filterUnits='userSpaceOnUse' x='0' y='694' width='1340' height='426' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.003 .009' numOctaves='3' seed='12'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 .3 0 0 0 0 .24 2.4 0 0 0 -.9'/%3E%3C/filter%3E%3ClinearGradient id='b'%3E%3Cstop stop-color='%23000'/%3E%3Cstop offset='.09' stop-color='%23fff'/%3E%3Cstop offset='.91' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23000'/%3E%3C/linearGradient%3E%3Cmask id='c' maskUnits='userSpaceOnUse' x='0' y='694' width='1340' height='426'%3E%3Crect x='0' y='694' width='1340' height='426' fill='url(%23b)'/%3E%3C/mask%3E%3Cg mask='url(%23c)'%3E%3Crect x='0' y='694' width='1340' height='426' filter='url(%23a)' opacity='.2'/%3E%3C/g%3E%3C/svg%3E");
+  /* The shell's fireflies are cinders here. */
+  --nc-firefly-gold: #ff9a52; --nc-firefly-lime: #ff4a3c;
+  --nc-firefly-halo-gold: drop-shadow(0 0 5px rgb(255 122 60 / .7));
+  --nc-firefly-halo-lime: drop-shadow(0 0 4px rgb(255 45 63 / .7));
+  --upside-down-crack-light: .5;
+  /* The new-run screen is indoors by day, so it has no mist. By night the
+     mist lies over the crack, so it is thin and takes the fire's colours: a
+     cold or heavy one greys the heat. */
+  --nc-mist-alpha-low: 0; --nc-mist-alpha-high: 0;
+  accent-color: var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-upside-down]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #05080f; --panel: #0b111c; --border: #25314a;
+    --text: #c3ccdc; --heading: #f4f6fb; --muted: #7b88a3; --accent: #6fc3e0;
+    --accent-soft: #101a2b; --chip: #101a2b; --code: #101a2b;
+    --green: #7be0a0; --yellow: #ffc857; --red: #ff6b6b;
+    --purple: #b9a2ff; --cyan: #6fc3e0; --orange: #ffa25c;
+    --focus: #ff3b4a;
+    --ready-text: var(--green);
+    --blue-text: var(--accent);
+    --upside-down-on-accent: var(--bg);
+    --upside-down-neon: #ff2d3f; --upside-down-neon-glow: 0 0 10px rgb(255 45 63 / .8);
+    --upside-down-title: #ff5562; --upside-down-title-glow: 0 0 9px rgb(255 45 63 / .75), 0 0 26px rgb(255 45 63 / .4);
+    --upside-down-logo-glow: drop-shadow(0 0 3px rgb(255 45 63 / .9)) drop-shadow(0 0 10px rgb(255 45 63 / .45));
+    --upside-down-go: #ff3b4a; --upside-down-go-ink: #1a0508;
+
+    --upside-down-radius: 6px; --orc-radius-sm: 4px; --orc-radius-md: 6px;
+    --upside-down-pattern:
+      radial-gradient(ellipse 70% 60% at 88% 0%, rgb(255 45 63 / .13), transparent 100%),
+      radial-gradient(ellipse 60% 50% at 0% 100%, rgb(40 80 140 / .25), transparent 100%);
+    --upside-down-world: none; --upside-down-chat-wall: transparent;
+    --upside-down-view-wall: var(--upside-down-pattern), var(--bg);
+    --upside-down-wire: #3c4a44; --upside-down-socket: #1c2433;
+    --upside-down-bulb-glow: 0 2px 9px 1px var(--c, currentColor);
+    --upside-down-string-glow: 55%;
+    --upside-down-lamp-off: 0 0 0 0 transparent;
+    --upside-down-lamp-on: 0 1px 7px currentColor;
+    --upside-down-lamp-alert: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent), 0 1px 7px currentColor;
+    --upside-down-lift: 0 0 0 0 transparent; --upside-down-lift-side: 0 0 0 0 transparent;
+    --upside-down-active-border: #a3283a; --upside-down-active-bg: #150d17;
+    --upside-down-active-shadow: 0 0 0 1px rgb(255 45 63 / .18), 0 0 18px -5px rgb(255 45 63 / .8);
+    --upside-down-rule: 1px solid var(--border);
+    --upside-down-shelf: linear-gradient(180deg, #1c0c14 0, #0b111c 64px);
+    --upside-down-shade: rgb(0 0 0 / .6);
+    --upside-down-spores: block;
+    --upside-down-crack-light: 1;
+    --nc-mist-alpha-low: .16; --nc-mist-alpha-high: .12;
+    --nc-mist-moss: rgb(255 45 63 / .6); --nc-mist-haze: rgb(255 110 60 / .55);
+  }
+}
+:root[data-upside-down][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #05080f; --panel: #0b111c; --border: #25314a;
+  --text: #c3ccdc; --heading: #f4f6fb; --muted: #7b88a3; --accent: #6fc3e0;
+  --accent-soft: #101a2b; --chip: #101a2b; --code: #101a2b;
+  --green: #7be0a0; --yellow: #ffc857; --red: #ff6b6b;
+  --purple: #b9a2ff; --cyan: #6fc3e0; --orange: #ffa25c;
+  --focus: #ff3b4a;
+  --ready-text: var(--green);
+  --blue-text: var(--accent);
+  --upside-down-on-accent: var(--bg);
+  --upside-down-neon: #ff2d3f; --upside-down-neon-glow: 0 0 10px rgb(255 45 63 / .8);
+  --upside-down-title: #ff5562; --upside-down-title-glow: 0 0 9px rgb(255 45 63 / .75), 0 0 26px rgb(255 45 63 / .4);
+  --upside-down-logo-glow: drop-shadow(0 0 3px rgb(255 45 63 / .9)) drop-shadow(0 0 10px rgb(255 45 63 / .45));
+  --upside-down-go: #ff3b4a; --upside-down-go-ink: #1a0508;
+
+  --upside-down-radius: 6px; --orc-radius-sm: 4px; --orc-radius-md: 6px;
+  --upside-down-pattern:
+    radial-gradient(ellipse 70% 60% at 88% 0%, rgb(255 45 63 / .13), transparent 100%),
+    radial-gradient(ellipse 60% 50% at 0% 100%, rgb(40 80 140 / .25), transparent 100%);
+  --upside-down-world: none; --upside-down-chat-wall: transparent;
+  --upside-down-view-wall: var(--upside-down-pattern), var(--bg);
+  --upside-down-wire: #3c4a44; --upside-down-socket: #1c2433;
+  --upside-down-bulb-glow: 0 2px 9px 1px var(--c, currentColor);
+  --upside-down-string-glow: 55%;
+  --upside-down-lamp-off: 0 0 0 0 transparent;
+  --upside-down-lamp-on: 0 1px 7px currentColor;
+  --upside-down-lamp-alert: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent), 0 1px 7px currentColor;
+  --upside-down-lift: 0 0 0 0 transparent; --upside-down-lift-side: 0 0 0 0 transparent;
+  --upside-down-active-border: #a3283a; --upside-down-active-bg: #150d17;
+  --upside-down-active-shadow: 0 0 0 1px rgb(255 45 63 / .18), 0 0 18px -5px rgb(255 45 63 / .8);
+  --upside-down-rule: 1px solid var(--border);
+  --upside-down-shelf: linear-gradient(180deg, #1c0c14 0, #0b111c 64px);
+  --upside-down-shade: rgb(0 0 0 / .6);
+  --upside-down-spores: block;
+  --upside-down-crack-light: 1;
+  --nc-mist-alpha-low: .16; --nc-mist-alpha-high: .12;
+  --nc-mist-moss: rgb(255 45 63 / .6); --nc-mist-haze: rgb(255 110 60 / .55);
+}
+
+:root[data-upside-down] body { background: var(--upside-down-pattern), var(--bg); }
+/* By night spores drift behind the whole window at three depths: dust far
+   off, spores in two currents, and a few large flakes close to and out of
+   focus, the nearest rising fastest. The sheets sit under everything, so they
+   show only where the chrome is clear: the sidebar, the run's header, the tab
+   bar, the transcript's margins and the new-run screen.
+
+   No sheet climbs straight or steadily. Each is turned to a heading of its
+   own that keeps swinging, the spores' two currents leaning opposite ways so
+   that two spores side by side part company. A gust lifts it and lets it sink
+   back, one current rising as the other falls, and it swells toward the eye
+   and away. Each of those goes there and back on a clock no other shares, so
+   the three never line up the same way twice in a sitting, and a spore's
+   path is a slow curl with no corner in it. A sheet turns and swells about a
+   point in the window, each about its own, so what the turn and the swell do
+   to a spore depends on where in the window it is.
+
+   The rise is the sheet's own transform and the rest are the properties
+   outside it, so the sheet climbs along whatever heading it has been turned
+   to. It overhangs the window by one tile along that heading and rises by
+   exactly that, so the loop has no seam, and by --upside-down-spill all round,
+   which is the room the turn and the gust need. Only transforms move, which
+   the compositor runs without a repaint
+   (tests/e2e/idle-animations.spec.js). The dust and the spores' first current
+   are the body's two sheets, so they are there at first paint; the second
+   current and the flakes are sheets of frontend.js's wall layer, under both.
+   The artifact pages load this file too and have no sidebar, so they get no
+   sheets. */
+:root[data-upside-down] body:has(> #run-sidebar)::before,
+:root[data-upside-down] body:has(> #run-sidebar)::after,
+#upside-down-wall::after,
+.upside-down-cross {
+  --upside-down-spill: calc(8vmax + 60px);
+  content: ""; display: var(--upside-down-spores);
+  position: fixed; inset: calc(0px - var(--upside-down-spill)); bottom: calc(-1120px - var(--upside-down-spill));
+  z-index: -1; pointer-events: none;
+  transform-origin: calc(var(--upside-down-spill) + 58vw) calc(var(--upside-down-spill) + 56vh);
+  background: var(--upside-down-dust-mid) 0 0 / 1340px 1120px;
+  animation: upside-down-rise-wall 230s linear infinite, upside-down-veer-mid 37s ease-in-out infinite alternate,
+    upside-down-gust 17s ease-in-out infinite alternate, upside-down-swell 53s ease-in-out infinite alternate;
+}
+:root[data-upside-down] body:has(> #run-sidebar)::after {
+  transform-origin: calc(var(--upside-down-spill) + 41vw) calc(var(--upside-down-spill) + 44vh);
+  background-image: var(--upside-down-dust-far);
+  animation-name: upside-down-rise-wall, upside-down-veer-far, upside-down-gust, upside-down-swell;
+  animation-duration: 460s, 59s, 29s, 71s; animation-delay: 0s, -31s, -17s, -40s;
+}
+/* The wall layer is fixed and nothing moves it, so its own sheets are placed
+   in the window too and the layer's clip does not reach them. Inside the
+   layer they lie over the weather. */
+#upside-down-wall::after {
+  z-index: auto; transform-origin: calc(var(--upside-down-spill) + 50vw) calc(var(--upside-down-spill) + 50vh);
+  background-image: var(--upside-down-dust-near);
+  animation-name: upside-down-rise-wall, upside-down-veer-near, upside-down-gust, upside-down-swell;
+  animation-duration: 120s, 23s, 13s, 31s; animation-delay: 0s, -11s, -5s, -19s;
+}
+/* The spores' second current leans against the first and starts its gust from
+   the other end, on clocks of its own. */
+.upside-down-cross {
+  z-index: auto; transform-origin: calc(var(--upside-down-spill) + 46vw) calc(var(--upside-down-spill) + 60vh);
+  background-image: var(--upside-down-dust-cross);
+  animation-name: upside-down-rise-wall, upside-down-veer-cross, upside-down-gust, upside-down-swell;
+  animation-duration: 190s, 47s, 19s, 61s; animation-delay: -70s, -7s, 0s, -26s;
+  animation-direction: normal, alternate, alternate-reverse, alternate;
+}
+/* A phone keeps the wall it had: one small tile of spores on two sheets,
+   which move as the window's do. */
+@media (max-width: 700px) {
+  :root[data-upside-down] body:has(> #run-sidebar)::before,
+  :root[data-upside-down] body:has(> #run-sidebar)::after {
+    bottom: calc(-480px - var(--upside-down-spill));
+    background: var(--upside-down-spore-tile) 0 0 / 480px 480px;
+    animation-name: upside-down-rise, upside-down-veer-mid, upside-down-gust, upside-down-swell;
+    animation-duration: 90s, 37s, 17s, 53s;
+  }
+  :root[data-upside-down] body:has(> #run-sidebar)::after {
+    bottom: calc(-330px - var(--upside-down-spill)); opacity: .55;
+    background-position: 140px 60px; background-size: 330px 330px;
+    animation-name: upside-down-rise-far, upside-down-veer-far, upside-down-gust, upside-down-swell;
+    animation-duration: 140s, 59s, 29s, 71s;
+  }
+}
+/* Every other screen in main is for reading: with no run and no new-run
+   screen open (Settings, Activity, a plugin's page), main paints the night's
+   wall over the sheets. Fixed, so it lines up with the body's own wall behind
+   the sidebar; main does not scroll. Answer mode stands in for the transcript
+   and keeps the spores in its margins, round its opaque card. */
+:root[data-upside-down] main:not(:has(> :is(#head, #new-view):not([hidden]))) {
+  background: var(--upside-down-view-wall); background-attachment: fixed;
+}
+@keyframes upside-down-rise-wall { to { transform: translateY(-1120px); } }
+@keyframes upside-down-rise { to { transform: translateY(-480px); } }
+@keyframes upside-down-rise-far { to { transform: translateY(-330px); } }
+/* A sheet's heading: the far dust leans left, the spores' two currents right
+   and left, and the flakes swing across them all. */
+@keyframes upside-down-veer-far { from { rotate: -7deg; } to { rotate: -1deg; } }
+@keyframes upside-down-veer-mid { from { rotate: 1deg; } to { rotate: 7deg; } }
+@keyframes upside-down-veer-cross { from { rotate: -1.5deg; } to { rotate: -6.5deg; } }
+@keyframes upside-down-veer-near { from { rotate: -6deg; } to { rotate: 6deg; } }
+/* A gust lifts the sheet and carries it across a little, then lets it sink
+   back. Laid over the rise, the spores surge, hang and now and then fall. */
+@keyframes upside-down-gust { from { translate: -18px 30px; } to { translate: 16px -36px; } }
+@keyframes upside-down-swell { from { scale: 1; } to { scale: 1.12; } }
+:root[data-upside-down] :is(h1, h2, h3) {
+  font-family: var(--upside-down-serif);
+  letter-spacing: .02em;
+}
+:root[data-upside-down] ::selection {
+  background: color-mix(in srgb, var(--upside-down-neon) 34%, var(--panel));
+  color: var(--heading);
+}
+:root[data-upside-down] :is(:hover, :focus-within) { scrollbar-color: var(--border) transparent; }
+:root[data-upside-down] :is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: var(--border); }
+
+/* The sidebar is the wall, and each run is a card on it. */
+:root[data-upside-down] #run-sidebar { background: var(--upside-down-world); }
+/* On a phone the sidebar is a drawer over the run, so it brings the wall. */
+@media (max-width: 700px) {
+  :root[data-upside-down] #run-sidebar { background: var(--upside-down-world), var(--upside-down-pattern), var(--bg); }
+}
+:root[data-upside-down] #logo { gap: 9px; }
+/* The logo is the show's title card: hollow letters between a full bar above
+   and two short bars below. The glow is a filter because the letters have no
+   fill for a text-shadow to sit behind. */
+:root[data-upside-down] .logo-word {
+  padding: 4px 0 4px .1em;
+  font: 700 19px/1 var(--upside-down-serif); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--upside-down-title);
+  -webkit-text-fill-color: transparent; -webkit-text-stroke: .9px var(--upside-down-title);
+  filter: var(--upside-down-logo-glow);
+  background:
+    linear-gradient(var(--upside-down-title) 0 0) top / 100% 1.2px no-repeat,
+    linear-gradient(var(--upside-down-title) 0 0) bottom left / 22% 1.2px no-repeat,
+    linear-gradient(var(--upside-down-title) 0 0) bottom right / 22% 1.2px no-repeat;
+}
+:root[data-upside-down] .logo-slash { display: none; }
+/* Forced colours drop the stroke's colour and the bars, so the letters fill. */
+@media (forced-colors: active) {
+  :root[data-upside-down] .logo-word { -webkit-text-fill-color: currentColor; -webkit-text-stroke: 0; filter: none; }
+}
+:root[data-upside-down] { --run-row-inset: 10px; --run-row-gap: 6px; }
+:root[data-upside-down] #list .run {
+  padding: 7px 10px 8px;
+  border: 1px solid var(--border); border-radius: var(--upside-down-radius);
+  background: var(--panel);
+  box-shadow: var(--upside-down-lift);
+}
+:root[data-upside-down] #list .run:hover {
+  background: var(--chip);
+  border-color: color-mix(in srgb, var(--upside-down-neon) 45%, var(--border));
+}
+:root[data-upside-down] #list .run.active {
+  border-color: var(--upside-down-active-border);
+  background: var(--upside-down-active-bg);
+  box-shadow: var(--upside-down-active-shadow);
+}
+/* The branch lines of nested runs cross the gap the cards now leave. */
+:root[data-upside-down] #list .run.fork-child { margin-left: 30px; }
+:root[data-upside-down] #list .run.fork-child::before { top: -7px; left: -14px; }
+:root[data-upside-down] #list .run.fork-child:not(.fork-last)::after { top: -7px; bottom: -7px; left: -14px; }
+:root[data-upside-down] .run-project {
+  font: 500 10px/1 var(--upside-down-type); letter-spacing: .08em; text-transform: uppercase;
+}
+:root[data-upside-down] .run .name { font-weight: 600; font-size: 13px; }
+/* The lamp is a bulb hanging in the title's own line, socket up, because
+   nested runs already draw their branch on the card's two pseudo-elements. */
+:root[data-upside-down] .run .name::before {
+  content: ""; display: inline-block; width: 8px; height: 11px; margin: 0 9px -1px 4px;
+  border-radius: 2px 2px 50% 50% / 2px 2px 58% 58%;
+  color: var(--muted);
+  background: linear-gradient(var(--upside-down-socket) 0 3px, currentColor 3px);
+  box-shadow: var(--upside-down-lamp-off);
+}
+:root[data-upside-down] .run:has(.state-working) .name::before { color: var(--upside-down-bulb-4); box-shadow: var(--upside-down-lamp-on); }
+:root[data-upside-down] .run:has(.state-reviewing, .state-done) .name::before { color: var(--purple); box-shadow: var(--upside-down-lamp-on); }
+:root[data-upside-down] .run:has(.state-ready) .name::before { color: var(--upside-down-bulb-3); box-shadow: var(--upside-down-lamp-on); }
+:root[data-upside-down] .run:has(.state-started, .state-waiting) .name::before { color: var(--upside-down-bulb-2); box-shadow: var(--upside-down-lamp-on); }
+:root[data-upside-down] .run:has(.state-cancelled) .name::before { color: var(--muted); box-shadow: var(--upside-down-lamp-on); }
+:root[data-upside-down] .run:has(.state-blocked) .name::before { color: var(--upside-down-bulb-1); box-shadow: var(--upside-down-lamp-alert); }
+/* The bulb says a session is live by flickering, so the row's own dot goes. */
+:root[data-upside-down] .run .session-status.running { display: none; }
+:root[data-upside-down] .run:has(.session-status.running) .name::before { animation: upside-down-flicker 2.6s linear infinite; }
+:root[data-upside-down] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+  font: 500 10px/1.5 var(--upside-down-type); letter-spacing: .06em; text-transform: uppercase;
+}
+/* The Settled shelf hangs the string of lights along its top edge, closed and
+   open: the wire sags from nail to nail and the bulbs hang off it. The shell's
+   --settled-shelf-* tokens give the shelf its shape. */
+:root[data-upside-down] {
+  --settled-shelf-radius: 0;
+  --settled-shelf-border-width: 1px 0 0;
+  --settled-shelf-border-color: var(--border);
+  --settled-shelf-bg: var(--upside-down-shelf);
+  --settled-shelf-shadow: 0 -12px 20px -12px var(--upside-down-shade);
+  --settled-head-justify: center;
+}
+:root[data-upside-down] #list > .settled-heading { padding: 23px 0 4px; }
+:root[data-upside-down] .settled-drawer .settled-heading { padding-top: 23px; }
+/* Three stacks, top to bottom: a shade over each bulb while it falters, the
+   string itself, and each bulb's glow. The tile is stretched to a whole
+   number across the shelf (`round`), so no bulb is cut off at either edge,
+   and the gradients sit at percentages so they stretch with it. The drawing
+   cannot read the theme's tokens, so its bulbs repeat --upside-down-bulb-1 to 4. */
+:root[data-upside-down] .settled-heading::before {
+  content: ""; position: absolute; inset: -1px 0 auto; height: 26px;
+  background:
+    radial-gradient(ellipse 3.6px 5px at 12.5% 10.6px, rgb(12 8 14 / calc(.55 - .55 * var(--upside-down-lit-1, 1))) 0 96%, transparent 100%),
+    radial-gradient(ellipse 3.6px 5px at 37.5% 13.6px, rgb(12 8 14 / calc(.55 - .55 * var(--upside-down-lit-2, 1))) 0 96%, transparent 100%),
+    radial-gradient(ellipse 3.6px 5px at 62.5% 13.6px, rgb(12 8 14 / calc(.55 - .55 * var(--upside-down-lit-3, 1))) 0 96%, transparent 100%),
+    radial-gradient(ellipse 3.6px 5px at 87.5% 10.6px, rgb(12 8 14 / calc(.55 - .55 * var(--upside-down-lit-4, 1))) 0 96%, transparent 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 20' preserveAspectRatio='none'%3E%3Cpath d='M0 1.5Q48 13.5 96 1.5' fill='none' stroke='%233c4a44' stroke-width='1.1'/%3E%3Ccircle cx='0' cy='1.5' r='1.6' fill='%2356645c'/%3E%3Ccircle cx='96' cy='1.5' r='1.6' fill='%2356645c'/%3E%3Cg transform='rotate(-9 12 4.1)'%3E%3Cellipse cx='12' cy='10.6' rx='3.1' ry='4.4' fill='%23ff3b4a' stroke='%231d1410' stroke-opacity='.45' stroke-width='.6'/%3E%3Cellipse cx='10.9' cy='9.3' rx='.8' ry='1.5' fill='%23fff' fill-opacity='.5'/%3E%3Crect x='10.1' y='3.7' width='3.8' height='3.2' rx='.7' fill='%2356645c'/%3E%3C/g%3E%3Cg transform='rotate(5 36 7.1)'%3E%3Cellipse cx='36' cy='13.6' rx='3.1' ry='4.4' fill='%23ffc857' stroke='%231d1410' stroke-opacity='.45' stroke-width='.6'/%3E%3Cellipse cx='34.9' cy='12.3' rx='.8' ry='1.5' fill='%23fff' fill-opacity='.5'/%3E%3Crect x='34.1' y='6.7' width='3.8' height='3.2' rx='.7' fill='%2356645c'/%3E%3C/g%3E%3Cg transform='rotate(-5 60 7.1)'%3E%3Cellipse cx='60' cy='13.6' rx='3.1' ry='4.4' fill='%234fd08a' stroke='%231d1410' stroke-opacity='.45' stroke-width='.6'/%3E%3Cellipse cx='58.9' cy='12.3' rx='.8' ry='1.5' fill='%23fff' fill-opacity='.5'/%3E%3Crect x='58.1' y='6.7' width='3.8' height='3.2' rx='.7' fill='%2356645c'/%3E%3C/g%3E%3Cg transform='rotate(9 84 4.1)'%3E%3Cellipse cx='84' cy='10.6' rx='3.1' ry='4.4' fill='%235aa9ff' stroke='%231d1410' stroke-opacity='.45' stroke-width='.6'/%3E%3Cellipse cx='82.9' cy='9.3' rx='.8' ry='1.5' fill='%23fff' fill-opacity='.5'/%3E%3Crect x='82.1' y='3.7' width='3.8' height='3.2' rx='.7' fill='%2356645c'/%3E%3C/g%3E%3C/svg%3E"),
+    radial-gradient(circle 11px at 12.5% 10.6px, color-mix(in srgb, var(--upside-down-bulb-1) calc(var(--upside-down-string-glow) * var(--upside-down-lit-1, 1)), transparent), transparent),
+    radial-gradient(circle 11px at 37.5% 13.6px, color-mix(in srgb, var(--upside-down-bulb-2) calc(var(--upside-down-string-glow) * var(--upside-down-lit-2, 1)), transparent), transparent),
+    radial-gradient(circle 11px at 62.5% 13.6px, color-mix(in srgb, var(--upside-down-bulb-3) calc(var(--upside-down-string-glow) * var(--upside-down-lit-3, 1)), transparent), transparent),
+    radial-gradient(circle 11px at 87.5% 10.6px, color-mix(in srgb, var(--upside-down-bulb-4) calc(var(--upside-down-string-glow) * var(--upside-down-lit-4, 1)), transparent), transparent);
+  background-size: 96px 26px, 96px 26px, 96px 26px, 96px 26px, 96px 20px, 96px 26px, 96px 26px, 96px 26px, 96px 26px;
+  background-repeat: round no-repeat;
+  animation:
+    upside-down-falter-1 5.2s linear infinite, upside-down-falter-2 7.3s linear -2s infinite,
+    upside-down-falter-3 6.1s linear -4s infinite, upside-down-falter-4 8.7s linear -1s infinite;
+  pointer-events: none;
+}
+/* Each colour falters on its own clock. Registered, so a dip fades instead of
+   snapping; a browser without @property still dips, only abruptly. */
+@property --upside-down-lit-1 { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --upside-down-lit-2 { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --upside-down-lit-3 { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --upside-down-lit-4 { syntax: "<number>"; inherits: false; initial-value: 1; }
+@keyframes upside-down-falter-1 {
+  0%, 40%, 45%, 88%, 94%, 100% { --upside-down-lit-1: 1; }
+  42% { --upside-down-lit-1: .3; }
+  91% { --upside-down-lit-1: .1; }
+}
+@keyframes upside-down-falter-2 {
+  0%, 62%, 66%, 100% { --upside-down-lit-2: 1; }
+  64% { --upside-down-lit-2: .15; }
+}
+@keyframes upside-down-falter-3 {
+  0%, 20%, 24%, 27%, 31%, 100% { --upside-down-lit-3: 1; }
+  22% { --upside-down-lit-3: .4; }
+  29% { --upside-down-lit-3: .1; }
+}
+@keyframes upside-down-falter-4 {
+  0%, 76%, 81%, 100% { --upside-down-lit-4: 1; }
+  78% { --upside-down-lit-4: .2; }
+}
+:root[data-upside-down] #settled-head {
+  font: 500 10px/1.2 var(--upside-down-type); letter-spacing: .16em; text-transform: uppercase;
+}
+
+/* The run's header and tab bar are the wall too, lettered like a case file. */
+:root[data-upside-down] :is(#head, #tabbar) { background: var(--upside-down-world); }
+:root[data-upside-down] #tabbar { border-bottom: var(--upside-down-rule); }
+:root[data-upside-down] :is(#head h2, .nc-title) {
+  text-transform: uppercase; letter-spacing: .07em;
+  color: var(--upside-down-title); text-shadow: var(--upside-down-title-glow);
+}
+/* The project's name is a button, which would keep its own case. */
+:root[data-upside-down] .nc-project-switch { text-transform: inherit; }
+:root[data-upside-down] #tabs button {
+  padding: 10px 12px 9px;
+  font: 500 11px/1.6 var(--upside-down-type); letter-spacing: .1em; text-transform: uppercase;
+}
+:root[data-upside-down] #tabs button.active { color: var(--heading); font-weight: 500; }
+/* The active tab is underlined in the neon, not filled. */
+:root[data-upside-down] #tabs .tab-indicator {
+  top: auto; bottom: 0; height: 2px;
+  border: 0; border-radius: 0; background: var(--upside-down-neon);
+  box-shadow: var(--upside-down-neon-glow);
+}
+:root[data-upside-down] #run-times {
+  font: 10px/1.6 var(--upside-down-type); letter-spacing: .1em; text-transform: uppercase;
+}
+:root[data-upside-down] #run-panel-tabs button {
+  font: 500 11px/1.6 var(--upside-down-type); letter-spacing: .1em; text-transform: uppercase;
+}
+
+/* The transcript and its composer share one opaque panel, with the wall in
+   the margins either side. 982px is the 832px lane plus the room the shell
+   keeps for message times, so the lane stays centred in the panel. The panel
+   is drawn on the transcript and the composer themselves, each one end of it:
+   a layer behind them would need .chat to be a stacking context, and that
+   would trap the composer under the spores. */
+:root[data-upside-down] .chat { background: var(--upside-down-world); }
+/* The shell paints #content, which would hide the spores from the margins. */
+:root[data-upside-down] #content:has(> .chat) { background: var(--upside-down-chat-wall); }
+@media not all and (max-width: 700px) {
+  :root[data-upside-down] .chat { --chat-pane: min(100cqw - 30px, 982px); }
+  :root[data-upside-down] .chat > :is(.chat-body, .chat-reviews, .chat-composer) {
+    border-inline: 1px solid var(--border);
+    background: var(--panel);
+    box-shadow: var(--upside-down-lift);
+  }
+  /* The transcript is positioned, so it paints over the composer below it:
+     its shadow falls to the side only, or it would rule a line across the
+     composer's top. */
+  :root[data-upside-down] .chat > .chat-body {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    border-radius: var(--upside-down-radius) var(--upside-down-radius) 0 0;
+    box-shadow: var(--upside-down-lift-side);
+  }
+  :root[data-upside-down] .chat > .chat-composer {
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0 0 var(--upside-down-radius) var(--upside-down-radius);
+  }
+}
+@media (max-width: 700px) {
+  :root[data-upside-down] .chat { background: var(--panel); }
+}
+:root[data-upside-down] .chat-bubble {
+  border: 1px solid var(--border); border-radius: var(--upside-down-radius);
+  box-shadow: var(--upside-down-lift);
+}
+:root[data-upside-down] .chat-md :not(pre) > code {
+  border: 1px solid var(--border); border-radius: min(4px, var(--upside-down-radius));
+  color: var(--heading);
+}
+:root[data-upside-down] .chat-md th { background: var(--chip); }
+/* Timings and step counts are typed, as on a lab report. */
+:root[data-upside-down] :is(.chat-fold, .chat-working, .chat-steps-toggle, .chat-files-title) {
+  font: 500 10.5px/1.6 var(--upside-down-type); letter-spacing: .08em; text-transform: uppercase;
+}
+:root[data-upside-down] .chat-time { font-family: var(--upside-down-type); }
+/* The composer is a shade off the panel it sits in, and the beam's cover is
+   painted to match. */
+:root[data-upside-down] .chat .newconv-prompt { border-radius: var(--upside-down-radius); background: var(--chip); }
+:root[data-upside-down] .chat .nc-beam::after { background: linear-gradient(var(--chip) 0 0) padding-box; }
+/* The beam round a composer's rim is the neon, with a hotter core where the
+   swamp's runs yellow. */
+:root[data-upside-down] .nc-beam { --green: var(--upside-down-neon); --yellow: color-mix(in oklab, var(--upside-down-neon), #fff0ee 45%); }
+:root[data-upside-down] .newconv-prompt:has(textarea:focus) {
+  --nc-beam-underlay: color-mix(in srgb, var(--upside-down-neon) 45%, transparent);
+}
+:root[data-upside-down] .chat-composer-info {
+  font: 10px/1.6 var(--upside-down-type); letter-spacing: .1em; text-transform: uppercase;
+}
+
+/* Controls whose own cursor already says drag, busy or unavailable keep it,
+   and text entry keeps the native I-beam. The arrow has a red tip; the
+   pointing hand wears a red flannel cuff. */
+:root[data-upside-down], :root[data-upside-down] body {
+  --orc-cursor-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cg transform='translate(0 .5)'%3E%3Cg fill='none' stroke='%23fffaf0' stroke-opacity='.9' stroke-width='3.6' stroke-linejoin='round'%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5'/%3E%3C/g%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z' fill='%23f1e6cf' stroke='%231d1410' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M14.5 13.5v3M19 14.25v2.75M23.5 15.25v2.5' fill='none' stroke='%231d1410' stroke-width='1.1' stroke-linecap='round' stroke-opacity='.45'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5' fill='%23c8102e' stroke='%231d1410' stroke-width='1.5'/%3E%3Cpath d='M16.4 24.6v4.8M20.2 24.6v4.8' fill='none' stroke='%231d1410' stroke-width='1.1' stroke-opacity='.6'/%3E%3C/g%3E%3C/svg%3E") 12 2, pointer;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M4 3v19l5-5 4 9 4-2-4-9h7z' fill='%23f4f6fb' stroke='%231d1410' stroke-width='1.6' stroke-linejoin='round'/%3E%3Cpath d='M4.8 4.6v5.2l4.6-1.4z' fill='%23ff2d3f'/%3E%3C/svg%3E") 4 3, auto;
+}
+:root[data-upside-down] :where(a[href], button, summary, label, select, [role="button"], [role="tab"], [role="option"], [role="menuitem"], orc-button, orc-icon-button, orc-theme-toggle):not(:disabled, [disabled], [aria-disabled="true"], [aria-busy="true"], .is-busy, [draggable="true"]) {
+  cursor: var(--orc-cursor-pointer);
+}
+:root[data-upside-down] :where(input:not([type="checkbox"], [type="radio"], [type="range"]), textarea, [contenteditable="true"], orc-input):not(:disabled, [disabled]) {
+  cursor: text;
+}
+
+/* Design-system primary buttons fill with --orc-green; here they are the red
+   bulb at night and the red marker by day, typewritten. Scoped to the button
+   host so status chips keep their own green. */
+:root[data-upside-down] orc-button:is(:not([variant]), [variant="primary"]) {
+  --orc-green: var(--upside-down-go);
+  --orc-button-text: var(--upside-down-go-ink);
+}
+:root[data-upside-down] orc-button {
+  --orc-font-sans: var(--upside-down-type);
+  letter-spacing: .08em; text-transform: uppercase;
+}
+
+/* The gate pages pin these copy buttons to the swamp's day blue by hex rather
+   than by token, so they are named here. A finished #copy-answers keeps its
+   green. */
+:root[data-upside-down] body :is(#orc-copy, #copy-answers:not(.done)) {
+  background: var(--accent);
+  color: var(--upside-down-on-accent);
+}
+:root[data-upside-down] body :is(#orc-copy, #copy-answers:not(.done)):not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--heading));
+}
+
+/* Decorative text below uses the `content: "…" / ""` alternative so screen
+   readers skip it; the first declaration is the fallback for engines that
+   drop the second. */
+:root[data-upside-down] #empty::before {
+  content: "🔦  ·  🚲  ·  📻"; content: "🔦  ·  🚲  ·  📻" / "";
+  display: block; margin-bottom: 8px; font-size: 32px; text-align: center;
+  white-space: pre; color: var(--upside-down-neon);
+}
+/* The command palette opens under the alphabet painted on the wall. */
+:root[data-upside-down] #cmdk-layout::before {
+  content: "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z"; content: "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z" / "";
+  padding: 6px 14px 3px;
+  font: 700 12px var(--upside-down-serif); letter-spacing: .12em; color: var(--heading);
+  border-bottom: 1px solid var(--border);
+  background:
+    repeating-linear-gradient(90deg, var(--upside-down-bulb-1) 0 6px, transparent 6px 24px, var(--upside-down-bulb-2) 24px 30px, transparent 30px 48px, var(--upside-down-bulb-3) 48px 54px, transparent 54px 72px, var(--upside-down-bulb-4) 72px 78px, transparent 78px 96px) 0 0 / 100% 3px no-repeat,
+    var(--accent-soft);
+}
+:root[data-upside-down] #cmdk-footer::after { content: " · do you copy? 📻"; content: " · do you copy? 📻" / ""; }
+
+/* The string of lights hangs along the window's top edge, inside the 20px
+   kept clear of text, and by night spores drift up the window's right edge. */
+#upside-down-sky {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+}
+.upside-down-piece {
+  position: absolute; left: var(--x, 50%); top: var(--y, 3px);
+  translate: -50% -50%;
+}
+.upside-down-wire {
+  left: 0; width: 100%; height: 1.5px; translate: 0 -50%;
+  background: var(--upside-down-wire);
+}
+/* Each bulb hangs from its socket, which is where it swings from. */
+.upside-down-bulb {
+  width: 9px; height: 13px; translate: -50% 0;
+  transform-origin: 50% 0; rotate: var(--tilt, 0deg);
+  border-radius: 2px 2px 50% 50% / 2px 2px 58% 58%;
+  background: linear-gradient(var(--upside-down-socket) 0 3px, var(--c) 3px);
+  box-shadow: var(--upside-down-bulb-glow);
+  animation: upside-down-flicker var(--dur) linear var(--delay) infinite;
+}
+/* The string hangs only over the new-run composer: every other view is for
+   reading, and its top edge stays bare. The layer starts where the composer's
+   view does, so the string stops at the sidebar. The layer itself takes the
+   anchor because its pieces cannot: an anchor has to sit inside the box its
+   piece is placed in. Without anchor positioning the string runs the window. */
+:root[data-upside-down] #new-view { anchor-name: --upside-down-new-view; }
+#upside-down-sky { left: anchor(--upside-down-new-view left, 0px); }
+:root[data-upside-down]:not(:has(#new-view:not([hidden]))) :is(.upside-down-wire, .upside-down-bulb, .upside-down-light, .upside-down-ember, .upside-down-bolt, .upside-down-flash, .upside-down-band) { display: none; }
+.upside-down-spore {
+  display: var(--upside-down-spores);
+  width: var(--size); height: var(--size); border-radius: 50%;
+  background: #cfdcf5; filter: blur(.4px);
+  animation: upside-down-drift var(--dur) linear var(--delay) infinite;
+}
+/* Red smoke and thin rays rise from the new-run screen's crack. Each is two
+   sheets laid as the crack's are, a tile repeating sideways from the middle
+   of the screen, and each sheet fades in and out on a clock of its own, so
+   the light shifts instead of pulsing as one. Only opacity moves. With
+   animations off each rests as drawn, and by day each burns at the crack's
+   lower strength. They lie under the screen, so the crack covers their feet. */
+.upside-down-light {
+  inset: auto 0 0; height: 460px; translate: none;
+  background: var(--sheet) center bottom / auto 100% repeat-x;
+  opacity: calc(var(--upside-down-crack-light) * var(--rest));
+  animation: upside-down-waver var(--dur) ease-in-out infinite alternate;
+}
+@keyframes upside-down-waver {
+  to { opacity: calc(var(--upside-down-crack-light) * var(--to)); }
+}
+/* Embers climb out of the crack too and lightning strikes up from it. Both
+   live in this layer, under that screen, so they pass behind its notes and
+   its crack. Each rests unseen, so with animations off there are none.
+   Lightning is the other side's, so it strikes only by night. */
+.upside-down-ember {
+  top: auto; bottom: var(--y); width: var(--size); height: var(--size); border-radius: 50%;
+  background: var(--c); box-shadow: 0 0 6px 1px color-mix(in srgb, var(--c) 70%, transparent);
+  opacity: 0;
+  animation: upside-down-ember var(--dur) linear var(--delay) infinite;
+}
+.upside-down-bolt {
+  display: var(--upside-down-spores);
+  top: auto; bottom: 50px; width: 150px; height: 262px; translate: -50% 0;
+  transform-origin: 50% 100%; scale: var(--flip) var(--tall);
+  background: var(--upside-down-bolt) center bottom / 100% 100% no-repeat;
+  opacity: 0;
+  animation: upside-down-bolt var(--dur) linear var(--delay) infinite;
+}
+
+/* The new-run screen's wall has weather by night. Up top a storm: red cloud
+   with darker cloud passing under it, gathered in the two top corners, which
+   now and then lights dimly from inside. Cold haze lies in banks across the
+   middle and heat haze stands over the crack. frontend.js builds it as a
+   second layer under the spores' sheets, so the spores drift in front of it,
+   and the layer starts where the new-run screen does, as the string of lights
+   does. Each band is a window with a mask, and the cloud in it is a strip one
+   tile wider that slides by exactly that, so the loop has no seam and only a
+   transform moves. At rest each strip's break sits somewhere of its own: the
+   storm's between its two corners, and the haze's and the heat's apart, so
+   no gap runs down the wall. With animations off every band rests where it
+   is drawn and the storm stays dark. A band keeps its height in a tall
+   window and takes its share of a short one, so the weather never fills the
+   wall. */
+#upside-down-wall {
+  display: var(--upside-down-spores);
+  position: fixed; inset: 0; left: anchor(--upside-down-new-view left, 0px); z-index: -2;
+  overflow: hidden; pointer-events: none;
+}
+.upside-down-band { position: absolute; inset-inline: 0; overflow: hidden; }
+.upside-down-cloud {
+  position: absolute; inset: 0 -1340px 0 0;
+  background: 47% 0 / 1340px 100% repeat-x;
+  animation: upside-down-slide 460s linear infinite;
+}
+.upside-down-storm {
+  top: 0; height: min(400px, 36%);
+  mask-image:
+    radial-gradient(ellipse 62% 90% at 86% 0, #000, rgb(0 0 0 / .55) 55%, transparent),
+    radial-gradient(ellipse 38% 53% at 8% 0, rgb(0 0 0 / .7), transparent);
+}
+.upside-down-storm > .upside-down-cloud { background-image: var(--upside-down-storm); }
+.upside-down-storm > .upside-down-belly { background-image: var(--upside-down-storm-belly); background-position-x: 52%; animation-duration: 280s; }
+/* The haze keeps its place over the crack whatever the window's height. */
+.upside-down-haze {
+  bottom: min(110px, 10%); height: min(540px, 48%);
+  mask-image: linear-gradient(180deg, transparent, #000 37%, rgb(0 0 0 / .8) 71%, transparent);
+}
+.upside-down-haze > .upside-down-cloud { background-image: var(--upside-down-haze); background-position-x: 86%; animation-duration: 340s; animation-direction: reverse; }
+.upside-down-heat {
+  bottom: 0; height: min(426px, 38%);
+  mask-image: linear-gradient(180deg, transparent, #000 58%, rgb(0 0 0 / .5));
+  animation: upside-down-breathe 17s ease-in-out infinite alternate;
+}
+.upside-down-heat > .upside-down-cloud { background-image: var(--upside-down-heat); background-position-x: 22%; animation-duration: 230s; }
+.upside-down-flash {
+  position: absolute; left: var(--x); top: var(--y); width: var(--wide); height: var(--tall);
+  border-radius: 50%; opacity: 0;
+  background: radial-gradient(closest-side, rgb(255 96 84 / .55), rgb(255 45 63 / .2) 55%, transparent);
+  animation: upside-down-flash var(--dur) linear var(--delay) infinite;
+}
+
+/* A few spores have left the drift and go their own way: one corkscrews up
+   an eddy, one hangs and is then snatched round, one rocks down like ash and
+   one comes at the eye until it is out of focus. They are the wall layer's,
+   so they lie under the body's sheets and show only where those do, and each
+   is placed in the window as the layer's sheets are. frontend.js places each,
+   picks its path and turns, stretches and mirrors that path, so the
+   keyframes below read no custom property and no two strays fly alike. The
+   path is stretched by --reach, so the spore is drawn that much smaller.
+   Each rests unseen, so with animations off there are none. */
+.upside-down-stray {
+  position: fixed; left: var(--x); top: var(--y);
+  width: calc(var(--size) / var(--reach)); aspect-ratio: 1; border-radius: 50%;
+  background: radial-gradient(closest-side, var(--c) 32%, transparent);
+  rotate: var(--turn); scale: calc(var(--reach) * var(--flip)) var(--reach);
+  opacity: 0;
+  animation: var(--dur) linear var(--delay) infinite;
+}
+.upside-down-curl { animation-name: upside-down-curl; }
+.upside-down-dart { animation-name: upside-down-dart; }
+.upside-down-sink { animation-name: upside-down-sink; animation-timing-function: ease-in-out; }
+.upside-down-loom { animation-name: upside-down-loom; animation-timing-function: ease-in; }
+
+/* The composers rise over the spores, so nothing shows under what you type.
+   Project home's composer sits inside its view's own layer, so the whole view
+   rises there. Composer textareas stay out: the pickers in the composer's
+   footer open over them. */
+:root[data-upside-down] :is(#new-view, .newconv-prompt) { z-index: 1; }
+:root[data-upside-down] textarea:not(.newconv-prompt textarea) { position: relative; z-index: 1; }
+/* The side panel rises too, so the spores never show over a PR body. On a
+   phone the panel is already a sheet over everything. */
+@media not all and (max-width: 900px) {
+  :root[data-upside-down] #run-diff { z-index: 1; }
+}
+/* The spores drift up the window's right edge, which is where the Factory
+   tab's roster stands, so it rises over them as well. */
+:root[data-upside-down] .factory-roster { z-index: 1; }
+
+/* The new-run screen's floor has split along its bottom edge, below the board
+   so the notes pin over it. The crack and the glow hugging it are separate
+   sheets so that only the glow's opacity moves, which the compositor runs
+   without a repaint; with animations off it rests lit. The glow lies over
+   the crack, so the molten rock burns hotter as it comes up. Each sheet is a
+   tile that repeats sideways from the middle, so a window of any width has
+   the crack. */
+:root[data-upside-down] #new-view::before, :root[data-upside-down] #new-view::after {
+  content: ""; position: absolute; inset: auto 0 0; z-index: -1; pointer-events: none;
+  background: center bottom / auto 100% repeat-x;
+}
+:root[data-upside-down] #new-view::before { height: 260px; background-image: var(--upside-down-crack); }
+:root[data-upside-down] #new-view::after {
+  height: 460px; background-image: var(--upside-down-crack-glow);
+  opacity: calc(var(--upside-down-crack-light) * .75);
+  animation: upside-down-crack-throb 11s ease-in-out infinite;
+}
+@keyframes upside-down-crack-throb {
+  0%, 100% { opacity: calc(var(--upside-down-crack-light) * .6); }
+  24% { opacity: calc(var(--upside-down-crack-light) * .88); }
+  47% { opacity: calc(var(--upside-down-crack-light) * .55); }
+  62%, 65% { opacity: var(--upside-down-crack-light); }
+  63.5% { opacity: calc(var(--upside-down-crack-light) * .62); }
+  70% { opacity: calc(var(--upside-down-crack-light) * .68); }
+  86% { opacity: calc(var(--upside-down-crack-light) * .82); }
+}
+/* On a phone the notes run to the bottom edge and would cover all but the
+   crack's ends, so it is left out where the shell leaves out its mist. */
+@media (max-width: 700px) {
+  :root[data-upside-down] #new-view::before, :root[data-upside-down] #new-view::after { display: none; }
+  .upside-down-light, .upside-down-ember, .upside-down-bolt, #upside-down-wall { display: none; }
+}
+
+/* A click makes the lights surge: sparks in the string's colours thrown out
+   and a flash that spreads. */
+.upside-down-spark {
+  position: fixed; left: var(--px); top: var(--py);
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--c, var(--upside-down-neon));
+  box-shadow: 0 0 6px var(--c, var(--upside-down-neon));
+  animation: upside-down-spark .7s cubic-bezier(.2, .7, .4, 1) var(--delay, 0s) both;
+}
+.upside-down-spark.upside-down-surge {
+  width: 18px; height: 18px; background: none;
+  border: 1.5px solid color-mix(in srgb, var(--upside-down-neon) 70%, transparent);
+  box-shadow: none;
+  animation-name: upside-down-surge;
+}
+/* A held press leaves spores: smaller and shorter-lived, so a long drag stays
+   under frontend.js's cap. They drift up, not out. */
+.upside-down-spark.upside-down-trail {
+  width: 4px; height: 4px; animation-duration: .5s;
+  background: color-mix(in srgb, var(--heading) 70%, var(--upside-down-neon));
+  box-shadow: 0 0 5px color-mix(in srgb, var(--upside-down-neon) 60%, transparent);
+}
+/* The bulbs do not pulse, they falter: bright for most of the loop, then a
+   dip or two, as when something on the other side is trying to get through. */
+@keyframes upside-down-flicker {
+  0%, 40%, 45%, 70%, 74%, 88%, 94%, 100% { opacity: 1; }
+  42% { opacity: .3; }
+  72% { opacity: .55; }
+  91% { opacity: .15; }
+}
+@keyframes upside-down-drift {
+  0% { translate: -50% 40px; opacity: 0; }
+  15% { opacity: .75; }
+  80% { opacity: .5; }
+  100% { translate: calc(-50% + var(--sway, 0px)) -140px; opacity: 0; }
+}
+/* An ember swings out one way as it climbs and back past where it began. */
+@keyframes upside-down-ember {
+  0% { translate: -50% 0; scale: 1; opacity: 0; }
+  8% { opacity: 1; }
+  45% { translate: calc(-50% - var(--sway) * .5) calc(var(--rise) * -.42); opacity: .8; }
+  100% { translate: calc(-50% + var(--sway)) calc(var(--rise) * -1); scale: .35; opacity: 0; }
+}
+/* A strike is two flashes inside a third of a second, then a long dark. */
+@keyframes upside-down-bolt {
+  0%, 2.4%, 100% { opacity: 0; }
+  .4% { opacity: 1; }
+  1% { opacity: .12; }
+  1.5% { opacity: .85; }
+}
+@keyframes upside-down-slide { to { translate: -1340px 0; } }
+@keyframes upside-down-breathe { from { opacity: 1; } to { opacity: .6; } }
+/* The storm lights twice, dimly, then stays dark for most of its loop. */
+@keyframes upside-down-flash {
+  0%, 91%, 100% { opacity: 0; }
+  92% { opacity: .36; }
+  93.2% { opacity: .08; }
+  94.6% { opacity: .3; }
+  97% { opacity: .05; }
+}
+/* The strays' four paths. Each keeps one list of transform functions from
+   end to end, so an angle past half a turn is still a turn and not the short
+   way round. A curl circles a point that climbs, wider each time round. */
+@keyframes upside-down-curl {
+  0% { transform: translate(0, 40px) rotate(-90deg) translateX(8px) scale(.7); opacity: 0; }
+  14% { opacity: .9; }
+  55% { opacity: .5; }
+  63% { opacity: .9; }
+  86% { opacity: .7; }
+  100% { transform: translate(24px, -130px) rotate(540deg) translateX(30px) scale(1); opacity: 0; }
+}
+/* A dart idles along an arc, is whipped over the top of it, and is gone. */
+@keyframes upside-down-dart {
+  0% { transform: rotate(200deg) translateX(64px) scale(1); opacity: 0; animation-timing-function: ease-out; }
+  12% { opacity: .9; }
+  58% { transform: rotate(176deg) translateX(70px) scale(1); opacity: .9; animation-timing-function: cubic-bezier(.6, 0, .3, 1); }
+  84% { transform: rotate(58deg) translateX(92px) scale(.8); opacity: .6; animation-timing-function: ease-out; }
+  100% { transform: rotate(36deg) translateX(104px) scale(.5); opacity: 0; }
+}
+/* Ash swings from side to side as it falls, each swing smaller. */
+@keyframes upside-down-sink {
+  0% { transform: translateY(-60px) rotate(30deg) translateY(44px) scale(1); opacity: 0; }
+  10% { opacity: .8; }
+  24% { transform: translateY(-34px) rotate(-26deg) translateY(44px) scale(1); }
+  48% { transform: translateY(-6px) rotate(22deg) translateY(44px) scale(1); }
+  72% { transform: translateY(24px) rotate(-17deg) translateY(44px) scale(1); opacity: .8; }
+  100% { transform: translateY(56px) rotate(10deg) translateY(44px) scale(.8); opacity: 0; }
+}
+/* The one that comes at the eye grows and thins until it is past. */
+@keyframes upside-down-loom {
+  0% { transform: translate(-30px, 20px) scale(.5); opacity: 0; }
+  22% { opacity: .8; }
+  70% { opacity: .3; }
+  100% { transform: translate(46px, -34px) scale(4.2); opacity: 0; }
+}
+@keyframes upside-down-spark {
+  0% { translate: -50% -50%; scale: 1; opacity: 0; }
+  10% { opacity: 1; }
+  100% { translate: calc(-50% + var(--dx, 0px)) calc(-50% + var(--dy, 0px)); scale: .3; opacity: 0; }
+}
+@keyframes upside-down-surge {
+  from { translate: -50% -50%; scale: .3; opacity: .9; }
+  to { translate: -50% -50%; scale: 2.4; opacity: 0; }
+}
+/* A phone has no clear strip along its top or margin down its side, so only
+   the Settled shelf's lights and a click's surge show there. */
+@media (max-width: 640px) {
+  .upside-down-piece { display: none; }
+}
+@media (forced-colors: active), print {
+  #upside-down-sky, #upside-down-wall { display: none; }
+  :root[data-upside-down] body:has(> #run-sidebar)::before,
+  :root[data-upside-down] body:has(> #run-sidebar)::after,
+  :root[data-upside-down] #new-view::before,
+  :root[data-upside-down] #new-view::after { display: none; }
+}
+
+/* Typing effects, drawn by frontend.js's upside-downTyping into the shell's
+   typing layer. Each piece runs one animation and leaves when it ends. */
+.upside-down-typed-letter {
+  font: 700 15px var(--upside-down-serif); text-transform: uppercase;
+  color: var(--c); text-shadow: 0 0 8px var(--c);
+  animation: upside-down-typed-light .9s ease-out both;
+}
+.upside-down-typed-bulb {
+  width: 5px; height: 7px; border-radius: 2px 2px 50% 50% / 2px 2px 58% 58%;
+  background: var(--c); box-shadow: 0 0 6px var(--c);
+  animation: upside-down-typed-thrown .6s ease-out var(--delay, 0s) both;
+}
+.upside-down-typed-spore {
+  width: var(--size, 5px); height: var(--size, 5px); border-radius: 50%;
+  background: color-mix(in srgb, var(--heading) 75%, var(--upside-down-neon));
+  box-shadow: 0 0 5px color-mix(in srgb, var(--upside-down-neon) 55%, transparent);
+  animation: upside-down-typed-float .9s ease-out both;
+}
+.upside-down-typed-out {
+  width: 6px; height: 9px; border-radius: 2px 2px 50% 50% / 2px 2px 58% 58%;
+  background: linear-gradient(var(--upside-down-socket) 0 2px, var(--muted) 2px);
+  animation: upside-down-typed-fall .8s ease-in both;
+}
+.upside-down-typed-bike {
+  font-size: 22px;
+  animation: upside-down-typed-ride 1.6s cubic-bezier(.4, 0, .7, .6) both;
+}
+.upside-down-typed-say {
+  padding: 2px 9px; border-radius: 3px;
+  font: 600 11px var(--upside-down-type); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--upside-down-go-ink); background: var(--upside-down-go);
+  animation: upside-down-typed-say 1.6s ease-out both;
+}
+@keyframes upside-down-typed-light {
+  0% { translate: -50% -60%; scale: .6; opacity: 0; }
+  12% { translate: -50% -110%; scale: 1.15; opacity: 1; }
+  18% { opacity: .35; }
+  26% { opacity: 1; }
+  70% { translate: -50% -130%; scale: 1; opacity: 1; }
+  100% { translate: -50% -150%; opacity: 0; }
+}
+@keyframes upside-down-typed-thrown {
+  from { translate: -50% -50%; scale: 1.2; opacity: 1; }
+  to { translate: calc(-50% + var(--dx)) calc(-50% + var(--dy)); scale: .3; opacity: 0; }
+}
+@keyframes upside-down-typed-float {
+  from { translate: calc(-50% + var(--dx, 0px)) -50%; opacity: .9; }
+  to { translate: calc(-50% + var(--dx, 0px) * 2) -420%; opacity: 0; }
+}
+@keyframes upside-down-typed-fall {
+  0% { translate: -50% -110%; opacity: 0; }
+  20% { opacity: 1; }
+  100% { translate: -50% 0%; rotate: 24deg; opacity: 0; }
+}
+/* The bike faces left as drawn, so it is flipped to ride off to the right. */
+@keyframes upside-down-typed-ride {
+  0% { translate: -50% -85%; scale: -1 1; opacity: 0; }
+  12% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { translate: calc(-50% + 110px) -85%; scale: -1 1; opacity: 0; }
+}
+@keyframes upside-down-typed-say {
+  0%, 20% { translate: 0 -40%; scale: .4; opacity: 0; }
+  35% { translate: 0 -100%; scale: 1; opacity: 1; }
+  82% { translate: 0 -100%; opacity: 1; }
+  100% { translate: 0 -150%; opacity: 0; }
+}
+
+/* Typing heat (see index.html's --typing-heat): fast typing makes the
+   composer's edge surge like the lights, from rest through the neon to
+   white-hot. It holds steady, with no beat. */
+:root[data-upside-down] .newconv-prompt[data-typing-hot] { animation: none; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :root[data-upside-down] .newconv-prompt,
+  :root[data-upside-down] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    --upside-down-heat-hot: color-mix(in oklab, var(--upside-down-neon), #fff0ee clamp(0%, (var(--typing-heat) - .6) * 180%, 100%));
+    border-color: color-mix(in srgb, var(--upside-down-heat-hot) clamp(0%, var(--typing-heat) * 200%, 100%), var(--typing-heat-rest));
+    --typing-glow:
+      0 0 calc(var(--typing-heat) * 6px) calc(var(--typing-heat) * 1px) color-mix(in srgb, var(--upside-down-heat-hot) calc(var(--typing-heat) * 75%), transparent),
+      0 0 calc(var(--typing-heat) * 26px) calc(var(--typing-heat) * 3px) color-mix(in srgb, #ff1a2e calc(var(--typing-heat) * 40%), transparent);
+  }
+}
+
+/* The maximised terminal stage: a monitor in the lab, lit red from the gate
+   behind it. terminal.js tears the rift open over it. */
+:root[data-upside-down] #run-terminal.terminal-staged {
+  --stage-radius: 10px;
+  border: 2px solid color-mix(in srgb, var(--upside-down-neon) 55%, var(--border));
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--border) 55%, transparent), 0 0 44px color-mix(in srgb, var(--upside-down-neon) 22%, transparent), 0 30px 90px rgb(2 4 12 / .55);
+}
+:root[data-upside-down] .terminal-staged #run-terminal-bar {
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--upside-down-neon) 10%, var(--panel)), var(--panel));
+  border-bottom: 0;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--upside-down-neon) 45%, transparent);
+  font-family: var(--upside-down-type);
+}
+
+:root[data-upside-down] {
+  --answer-mode-done: "✓"; --answer-mode-now: "🔦"; --answer-mode-next: "○";
+  --answer-mode-heading-font: var(--upside-down-serif);
+  --answer-mode-trim: linear-gradient(90deg, var(--upside-down-bulb-1), var(--upside-down-bulb-2), var(--upside-down-bulb-3), var(--upside-down-bulb-4));
+  --answer-mode-trim-height: 3px;
+  --answer-mode-on-accent: var(--upside-down-on-accent);
+  --answer-mode-radius: var(--upside-down-radius);
+  --run-row-radius: var(--upside-down-radius);
+  --composer-radius: var(--upside-down-radius);
+  --chat-bubble-radius: var(--upside-down-radius);
+  --card-radius: var(--upside-down-radius);
+  --dialog-radius: var(--upside-down-radius);
+}
+
+:root[data-upside-down] [data-part="command-palette"],
+:root[data-upside-down] orc-dialog::part(dialog) {
+  border-radius: var(--dialog-radius);
+  border-color: var(--border);
+}
+/* Answering is the go call, so its buttons take the go colour and the card
+   that asks for it has the panel's corners. */
+:root[data-upside-down] .am-invite { border-radius: var(--upside-down-radius); }
+:root[data-upside-down] .am-btn.primary {
+  background: var(--upside-down-go); color: var(--upside-down-go-ink);
+  font: 600 12px/1.5 var(--upside-down-type); letter-spacing: .08em; text-transform: uppercase;
+}
+:root[data-upside-down] .am-btn.primary:hover { background: color-mix(in srgb, var(--upside-down-go) 86%, var(--heading)); }
+:root[data-upside-down] .am-btn.primary kbd {
+  border-color: color-mix(in srgb, var(--upside-down-go-ink) 45%, transparent); color: var(--upside-down-go-ink);
+}
+
+/* Sticky notes: an index card, typed, with a red line under its heading and
+   blue rules below. A bulb in the project's colour pins it up, and comes on
+   at night. */
+:root[data-upside-down] .nc-note {
+  --note-font: var(--upside-down-type);
+  --note-paper:
+    linear-gradient(color-mix(in srgb, var(--upside-down-neon) 62%, transparent), color-mix(in srgb, var(--upside-down-neon) 62%, transparent)) 0 39px / 100% 1.5px no-repeat,
+    color-mix(in srgb, var(--note-tint) 9%, var(--panel));
+  --note-edge: color-mix(in srgb, var(--border) 75%, transparent);
+  --note-radius: 2px;
+  --note-shadow: drop-shadow(0 1px 0 rgb(40 26 12 / .2)) drop-shadow(0 5px 7px rgb(40 26 12 / .28));
+  --note-shadow-raised: drop-shadow(0 1px 0 rgb(40 26 12 / .2)) drop-shadow(0 14px 16px rgb(40 26 12 / .36));
+  --note-rule: color-mix(in srgb, var(--cyan) 30%, transparent);
+  --note-fold: 0px;
+  --note-tape: radial-gradient(circle at 38% 30%, #fff 0 9%, color-mix(in srgb, var(--note-tint) 80%, #fff) 22%, var(--note-tint) 70%);
+}
+:root[data-upside-down] .nc-note-tape {
+  top: -11px; width: 12px; height: 16px; rotate: calc(var(--tape, 0) * 14deg); clip-path: none; border-radius: 50% 50% 46% 46% / 42% 42% 58% 58%;
+  box-shadow: 0 -3px 0 -1px var(--upside-down-socket), 0 0 0 1px rgb(29 20 16 / .45),
+    0 0 12px 3px color-mix(in srgb, var(--note-tint) var(--upside-down-string-glow), transparent);
+}

@@ -1,0 +1,15 @@
+{
+  "apiVersion": 1,
+  "id": "skills-manager",
+  "name": "Skills",
+  "version": "1.0.0",
+  "required": true,
+  "description": "One-stop manager for global and individual agent skills: paste a link to add, check daily for updates, and keep Carbon, Codex, .agents and every Claude login in sync.",
+  "icon": "icon.png",
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py",
+    "commands": {"orc-skills": "orc-skills"},
+    "skills": ["skills/skills-manager"]
+  }
+}

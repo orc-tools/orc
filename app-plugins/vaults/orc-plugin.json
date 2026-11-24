@@ -1,0 +1,14 @@
+{
+  "apiVersion": 1,
+  "id": "vaults",
+  "name": "Vaults",
+  "version": "2.1.0",
+  "description": "Start with a fullscreen moodboard, goals planner or listening journal, or describe a page of your own. They can rebuild themselves, and agents read their notes and propose additions.",
+  "icon": "icon.png",
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py",
+    "commands": {"orc-vault": "orc-vault"},
+    "skills": ["skills/vaults"]
+  }
+}

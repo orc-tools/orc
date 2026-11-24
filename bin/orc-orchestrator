@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Serve run-scoped Orc orchestration tools over MCP stdio or one CLI call."""
+import argparse
+import json
+import math
+import os
+from pathlib import Path
+import stat
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ui"))
+from orchestrator_tools import TOOLS, TOOLS_BY_NAME
+
+MAX_MESSAGE_BYTES = 1024 * 1024
+SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+
+
+class InvalidParams(ValueError):
+    pass
+
+
+def validate(value, schema, path="arguments"):
+    kind = schema.get("type")
+    matches = {"object": isinstance(value, dict), "array": isinstance(value, list),
+               "string": isinstance(value, str), "boolean": isinstance(value, bool),
+               "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+               "integer": isinstance(value, int) and not isinstance(value, bool)}
+    if kind and not matches[kind]:
+        raise InvalidParams(path + " has an invalid type")
+    if kind in ("number", "integer"):
+        if (isinstance(value, float) and not math.isfinite(value)) or value < schema.get("minimum", -math.inf):
+            raise InvalidParams(path + " has an invalid value")
+    if "enum" in schema and value not in schema["enum"]:
+        raise InvalidParams(path + " has an unsupported value")
+    if kind == "string" and len(value) < schema.get("minLength", 0):
+        raise InvalidParams(path + " must not be empty")
+    if kind == "object":
+        fields = schema.get("properties", {})
+        if any(key not in value for key in schema.get("required", [])):
+            raise InvalidParams(path + " is missing required fields")
+        if schema.get("additionalProperties") is False and any(key not in fields for key in value):
+            raise InvalidParams(path + " has unknown fields")
+        for key, item in value.items():
+            if key in fields:
+                validate(item, fields[key], path + "." + key)
+    elif kind == "array":
+        for item in value:
+            validate(item, schema["items"], path + "[]")
+
+
+class Bridge:
+    def __init__(self, run_id, token_file, port):
+        self.run_id = run_id
+        self.token_file = token_file
+        self.port = port
+
+    def token(self):
+        try:
+            with open(self.token_file, "rb") as source:
+                metadata = os.fstat(source.fileno())
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+                    raise ValueError()
+                if metadata.st_uid != os.getuid():
+                    raise ValueError()
+                data = source.read(MAX_MESSAGE_BYTES + 1)
+            if len(data) > MAX_MESSAGE_BYTES:
+                raise ValueError()
+            credentials = json.loads(data)
+            token = credentials.get("token")
+            if credentials.get("runId") != self.run_id or not isinstance(token, str) or not token:
+                raise ValueError()
+            if "\n" in token or "\r" in token:
+                raise ValueError()
+            return token
+        except (OSError, ValueError, AttributeError, RecursionError):
+            raise ValueError("Orchestration credentials are unavailable or do not match this run") from None
+
+    @staticmethod
+    def redact(value, token):
+        if isinstance(value, str):
+            return value.replace(token, "[redacted]")
+        if isinstance(value, list):
+            return [Bridge.redact(item, token) for item in value]
+        if isinstance(value, dict):
+            return {Bridge.redact(key, token): Bridge.redact(item, token) for key, item in value.items()}
+        return value
+
+    def call(self, name, arguments):
+        if not isinstance(name, str) or name not in TOOLS_BY_NAME:
+            raise InvalidParams("Unknown orchestration tool")
+        validate(arguments, TOOLS_BY_NAME[name]["inputSchema"])
+        try:
+            token = self.token()
+            url = "http://127.0.0.1:%d/api/runs/%s/orchestrator" % (
+                self.port, urllib.parse.quote(self.run_id, safe=""))
+            payload = json.dumps({"tool": name, "arguments": arguments}, allow_nan=False).encode()
+            request = urllib.request.Request(url, data=payload, method="POST", headers={
+                "Content-Type": "application/json", "Authorization": "Bearer " + token})
+            timeout = max(120, float(arguments.get("timeoutMs", 0)) / 1000 + 10)
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                data = response.read(MAX_MESSAGE_BYTES + 1)
+            if len(data) > MAX_MESSAGE_BYTES:
+                raise ValueError("Orchestration response exceeds the message size limit")
+            result = self.redact(json.loads(data), token)
+            structured = result if isinstance(result, dict) else {"result": result}
+            return {"content": [{"type": "text", "text": json.dumps(structured, allow_nan=False)}],
+                    "structuredContent": structured,
+                    "isError": bool(structured.get("error") or structured.get("isError"))}
+        except urllib.error.HTTPError as exc:
+            message = "Orchestration request failed with HTTP %d" % exc.code
+            try:
+                body = exc.read(MAX_MESSAGE_BYTES + 1)
+                if len(body) <= MAX_MESSAGE_BYTES:
+                    detail = json.loads(body).get('error')
+                    if isinstance(detail, str):
+                        message += ': ' + self.redact(detail, token)
+            except (ValueError, AttributeError, RecursionError):
+                pass
+            return tool_error(message)
+        except Exception:
+            return tool_error("Orchestration request failed; check run access, credentials and local server")
+
+
+def tool_error(message):
+    return {"content": [{"type": "text", "text": message}],
+            "structuredContent": {"error": message}, "isError": True}
+
+
+def rpc_error(request_id, code, message):
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+
+
+def dispatch(bridge, message):
+    if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+        return rpc_error(None, -32600, "Invalid Request")
+    request_id = message.get("id")
+    if "id" in message and (isinstance(request_id, bool) or not isinstance(request_id, (str, int, type(None)))):
+        return rpc_error(None, -32600, "Invalid Request")
+    if not isinstance(message.get("method"), str):
+        return rpc_error(request_id, -32600, "Invalid Request")
+    notification = "id" not in message
+    method = message["method"]
+    params = message.get("params", {})
+    try:
+        if not isinstance(params, dict):
+            raise InvalidParams("Parameters must be an object")
+        if method == "initialize":
+            version = params.get("protocolVersion")
+            if not isinstance(version, str) or not isinstance(params.get("capabilities"), dict) or not isinstance(params.get("clientInfo"), dict):
+                raise InvalidParams("Invalid initialization parameters")
+            result = {"protocolVersion": version if version in SUPPORTED_VERSIONS else SUPPORTED_VERSIONS[0],
+                      "capabilities": {"tools": {"listChanged": False}},
+                      "serverInfo": {"name": "orc-orchestrator", "version": "1.0.0"}}
+        elif method == "ping":
+            result = {}
+        elif method == "tools/list":
+            result = {"tools": TOOLS}
+        elif method == "tools/call":
+            result = bridge.call(params.get("name"), params.get("arguments", {}))
+        elif method == "notifications/initialized":
+            return None
+        else:
+            return None if notification else rpc_error(request_id, -32601, "Method not found")
+    except InvalidParams as exc:
+        return None if notification else rpc_error(request_id, -32602, str(exc))
+    except (RecursionError, OverflowError):
+        return None if notification else rpc_error(request_id, -32602, "Parameters exceed supported limits")
+    return None if notification else {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def reject_constant(value):
+    raise ValueError("Non-finite JSON number")
+
+
+def write_message(message):
+    if message is not None:
+        sys.stdout.write(json.dumps(message, allow_nan=False, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
+
+
+def serve(bridge):
+    while True:
+        line = sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1)
+        if not line:
+            return 0
+        if len(line) > MAX_MESSAGE_BYTES:
+            while not line.endswith(b"\n"):
+                line = sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1)
+                if not line:
+                    break
+            write_message(rpc_error(None, -32700, "Message exceeds size limit"))
+            continue
+        try:
+            message = json.loads(line, parse_constant=reject_constant)
+        except (ValueError, UnicodeError, RecursionError):
+            write_message(rpc_error(None, -32700, "Parse error"))
+            continue
+        write_message(dispatch(bridge, message))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--token-file", required=True)
+    parser.add_argument("--port", type=int, default=4173)
+    parser.add_argument("command", nargs="?", choices=("call",))
+    parser.add_argument("tool_name", nargs="?")
+    parser.add_argument("--tool")
+    parser.add_argument("--arguments", default="{}")
+    args = parser.parse_args(argv)
+    if not 1 <= args.port <= 65535:
+        parser.error("port must be between 1 and 65535")
+    bridge = Bridge(args.run_id, args.token_file, args.port)
+    name = args.tool or args.tool_name
+    if args.command or name:
+        try:
+            if not name:
+                raise InvalidParams("A tool name is required")
+            if len(args.arguments.encode()) > MAX_MESSAGE_BYTES:
+                raise InvalidParams("Arguments exceed the message size limit")
+            result = bridge.call(name, json.loads(args.arguments, parse_constant=reject_constant))
+        except (ValueError, UnicodeError, RecursionError):
+            result = tool_error("Invalid orchestration tool or arguments")
+        write_message(result)
+        return 1 if result.get("isError") else 0
+    return serve(bridge)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (BrokenPipeError, KeyboardInterrupt):
+        sys.exit(0)

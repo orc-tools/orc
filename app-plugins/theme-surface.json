@@ -1,0 +1,1546 @@
+{
+  "apiVersion": 2,
+  "about": "What Orc promises a theme. Removing or renaming anything here is a breaking change: it needs a \"Theme changes\" entry in distribution/CHANGELOG.md and a higher apiVersion. bin/orc-theme-surface checks both. A theme's own names start with its id (--<id>-…, .<id>-…, #<id>-…) and are never Orc's.",
+  "tokens": {
+    "palette": [
+      {
+        "name": "--bg",
+        "what": "Page background"
+      },
+      {
+        "name": "--panel",
+        "what": "Cards, sidebars and the composer"
+      },
+      {
+        "name": "--border",
+        "what": "Hairlines and dividers"
+      },
+      {
+        "name": "--text",
+        "what": "Body text; at least 4.5:1 on --bg and --panel"
+      },
+      {
+        "name": "--heading",
+        "what": "Headings and the strongest text; at least 4.5:1"
+      },
+      {
+        "name": "--muted",
+        "what": "Quiet text and fills; Orc prints small text as the --muted-strong mix"
+      },
+      {
+        "name": "--accent",
+        "what": "Links, primary buttons and selection; at least 4.5:1"
+      },
+      {
+        "name": "--accent-soft",
+        "what": "Soft accent fills behind selected rows"
+      },
+      {
+        "name": "--chip",
+        "what": "Chip and pill backgrounds"
+      },
+      {
+        "name": "--code",
+        "what": "Code block background"
+      },
+      {
+        "name": "--green",
+        "what": "Success and running"
+      },
+      {
+        "name": "--yellow",
+        "what": "Waiting and warnings"
+      },
+      {
+        "name": "--red",
+        "what": "Errors and danger; keep it apart from --accent"
+      },
+      {
+        "name": "--purple",
+        "what": "Planning and review"
+      },
+      {
+        "name": "--cyan",
+        "what": "Secondary links and info; at least 4.5:1"
+      },
+      {
+        "name": "--orange",
+        "what": "Gates that wait on you"
+      }
+    ],
+    "derived": [
+      {
+        "name": "--gate",
+        "what": "The colour of a gate waiting on you; Swamp mixes --orange with --heading by day"
+      },
+      {
+        "name": "--muted-strong",
+        "what": "Small secondary text and placeholders; --muted mixed 45% with --heading"
+      },
+      {
+        "name": "--accent-text",
+        "what": "Accent-coloured small text"
+      },
+      {
+        "name": "--accent-strong",
+        "what": "The accent on filled controls"
+      },
+      {
+        "name": "--red-text",
+        "what": "Error text"
+      },
+      {
+        "name": "--yellow-text",
+        "what": "Warning text"
+      },
+      {
+        "name": "--green-text",
+        "what": "Success text"
+      },
+      {
+        "name": "--orange-text",
+        "what": "Gate text"
+      },
+      {
+        "name": "--purple-text",
+        "what": "Planning text"
+      },
+      {
+        "name": "--ready-text",
+        "what": "The Ready label on a finished run"
+      },
+      {
+        "name": "--blue-text",
+        "what": "Informational links in notices"
+      },
+      {
+        "name": "--state-working",
+        "what": "The Working dot on a run; --accent when unset"
+      },
+      {
+        "name": "--focus",
+        "what": "Keyboard focus ring; at least 3:1 on --bg and --panel"
+      },
+      {
+        "name": "--control-border",
+        "what": "Borders of inputs and buttons; --border mixed 65% with --heading"
+      }
+    ],
+    "shell": [
+      {
+        "name": "--orc-font-sans",
+        "what": "The interface typeface"
+      },
+      {
+        "name": "--orc-font-sans-nudge",
+        "what": "How far a control's label drops so that typeface's capitals sit on its middle (a length, set beside --orc-font-sans)"
+      },
+      {
+        "name": "--orc-radius-sm",
+        "what": "Small corner radius (inputs, chips)"
+      },
+      {
+        "name": "--orc-radius-md",
+        "what": "Medium corner radius (cards, menus)"
+      },
+      {
+        "name": "--orc-radius-1",
+        "what": "Design-system radius step 1"
+      },
+      {
+        "name": "--orc-radius-2",
+        "what": "Design-system radius step 2"
+      },
+      {
+        "name": "--orc-radius-chip",
+        "what": "Chip radius"
+      },
+      {
+        "name": "--orc-radius-callout",
+        "what": "Callout and toast radius"
+      },
+      {
+        "name": "--orc-button-radius",
+        "what": "Button radius"
+      },
+      {
+        "name": "--orc-button-text",
+        "what": "Label colour on filled buttons"
+      },
+      {
+        "name": "--orc-cursor-pointer",
+        "what": "Cursor over clickable controls; a url() cursor works"
+      },
+      {
+        "name": "--orc-green",
+        "what": "Design-system green (button hover borders, toggles)"
+      },
+      {
+        "name": "--orc-green-text",
+        "what": "Design-system green text"
+      },
+      {
+        "name": "--orc-heading",
+        "what": "Design-system heading colour"
+      },
+      {
+        "name": "--orc-text",
+        "what": "Design-system body colour"
+      },
+      {
+        "name": "--orc-muted-strong",
+        "what": "Design-system small secondary text"
+      },
+      {
+        "name": "--stage-radius",
+        "what": "Corner radius of the run terminal stage"
+      },
+      {
+        "name": "--head-glow",
+        "what": "A background-image behind the sidebar head (none by default)"
+      },
+      {
+        "name": "--typing-glow",
+        "what": "A box-shadow on the composer while you type (none by default)"
+      },
+      {
+        "name": "--nc-beam-underlay",
+        "what": "The colour of the composer's rim under its beam; the shell sets it on .newconv-prompt:has(textarea:focus), so set it there too"
+      },
+      {
+        "name": "--factory-stage-bg",
+        "what": "The backdrop behind the Factory tab's canvas"
+      },
+      {
+        "name": "--settled-shelf-bg",
+        "what": "Background of the Settled shelf at the foot of the run list"
+      },
+      {
+        "name": "--settled-shelf-border-color",
+        "what": "Border colour of the Settled shelf"
+      },
+      {
+        "name": "--settled-shelf-border-width",
+        "what": "Border widths of the Settled shelf (1px 1px 0 by default)"
+      },
+      {
+        "name": "--settled-shelf-radius",
+        "what": "Corner radius of the Settled shelf"
+      },
+      {
+        "name": "--settled-shelf-shadow",
+        "what": "Shadow above the Settled shelf"
+      },
+      {
+        "name": "--settled-head-justify",
+        "what": "Where the Settled heading sits in its row (flex-start by default)"
+      }
+    ],
+    "component": [
+      {
+        "name": "--sidebar-border-width",
+        "what": "Border width on the right edge of the runs sidebar"
+      },
+      {
+        "name": "--sidebar-border-color",
+        "what": "Border colour on the right edge of the runs sidebar"
+      },
+      {
+        "name": "--sidebar-bg",
+        "what": "Background of the runs sidebar. On a phone Orc uses the sidebar's ::before and ::after for a solid --bg floor, so a see-through background shows that colour, not the page"
+      },
+      {
+        "name": "--sidebar-shadow",
+        "what": "Shadow cast by the runs sidebar"
+      },
+      {
+        "name": "--run-row-padding",
+        "what": "Padding inside a row in the run list"
+      },
+      {
+        "name": "--run-row-inset",
+        "what": "Gap between a row and each side of the run list (8px by default); the list's scrollbar sits inside the right one"
+      },
+      {
+        "name": "--run-row-gap",
+        "what": "Gap below a row in the run list (1px by default)"
+      },
+      {
+        "name": "--run-row-border-width",
+        "what": "Border width of a row in the run list"
+      },
+      {
+        "name": "--run-row-border-color",
+        "what": "Border colour of a row in the run list"
+      },
+      {
+        "name": "--run-row-radius",
+        "what": "Corner radius of a row in the run list"
+      },
+      {
+        "name": "--run-row-bg",
+        "what": "Resting background of a row in the run list"
+      },
+      {
+        "name": "--run-row-shadow",
+        "what": "Shadow on a row in the run list"
+      },
+      {
+        "name": "--run-row-hover-bg",
+        "what": "Hover background of a row in the run list"
+      },
+      {
+        "name": "--run-row-active-bg",
+        "what": "Background of the selected row in the run list"
+      },
+      {
+        "name": "--run-row-active-border-color",
+        "what": "Border colour of the selected row in the run list"
+      },
+      {
+        "name": "--tab-bar-bg",
+        "what": "Background of the run tab bar"
+      },
+      {
+        "name": "--tab-bar-border-color",
+        "what": "Bottom border colour of the run tab bar"
+      },
+      {
+        "name": "--tab-border-width",
+        "what": "Border width of a run tab button"
+      },
+      {
+        "name": "--tab-radius",
+        "what": "Corner radius of run tabs and the active tab indicator"
+      },
+      {
+        "name": "--tab-bg",
+        "what": "Resting background of a run tab button"
+      },
+      {
+        "name": "--tab-active-bg",
+        "what": "Background of the selected run tab button"
+      },
+      {
+        "name": "--tab-font",
+        "what": "Font shorthand for run tab labels"
+      },
+      {
+        "name": "--tab-indicator-height",
+        "what": "Height of the sliding active tab indicator"
+      },
+      {
+        "name": "--tab-indicator-color",
+        "what": "Fill of the sliding active tab indicator"
+      },
+      {
+        "name": "--composer-border-width",
+        "what": "Border width of the prompt composer"
+      },
+      {
+        "name": "--composer-border-color",
+        "what": "Border colour of the prompt composer"
+      },
+      {
+        "name": "--composer-radius",
+        "what": "Corner radius of the prompt composer"
+      },
+      {
+        "name": "--composer-bg",
+        "what": "Background of the prompt composer"
+      },
+      {
+        "name": "--composer-shadow",
+        "what": "Resting shadow on the prompt composer"
+      },
+      {
+        "name": "--chat-bubble-padding",
+        "what": "Padding inside a chat bubble"
+      },
+      {
+        "name": "--chat-bubble-border-width",
+        "what": "Border width of a chat bubble"
+      },
+      {
+        "name": "--chat-bubble-border-color",
+        "what": "Border colour of a chat bubble"
+      },
+      {
+        "name": "--chat-bubble-radius",
+        "what": "Corner radius of a chat bubble"
+      },
+      {
+        "name": "--chat-bubble-bg",
+        "what": "Background of a chat bubble"
+      },
+      {
+        "name": "--chat-bubble-shadow",
+        "what": "Shadow on a chat bubble"
+      },
+      {
+        "name": "--chat-bubble-user-bg",
+        "what": "Background of a chat bubble you sent"
+      },
+      {
+        "name": "--chat-pane",
+        "what": "Width of the chat sheet that holds the transcript and its composer, set on .chat (default 100cqw, the full pane)"
+      },
+      {
+        "name": "--card-border-width",
+        "what": "Border width of settings and invitation cards"
+      },
+      {
+        "name": "--card-border-color",
+        "what": "Border colour of settings and invitation cards"
+      },
+      {
+        "name": "--card-radius",
+        "what": "Corner radius of settings and invitation cards"
+      },
+      {
+        "name": "--card-bg",
+        "what": "Background of settings and invitation cards"
+      },
+      {
+        "name": "--card-shadow",
+        "what": "Shadow on settings and invitation cards"
+      },
+      {
+        "name": "--dialog-border-width",
+        "what": "Border width of <orc-dialog> modals and command palette"
+      },
+      {
+        "name": "--dialog-border-color",
+        "what": "Border colour of <orc-dialog> modals and command palette"
+      },
+      {
+        "name": "--dialog-radius",
+        "what": "Corner radius of <orc-dialog> modals and command palette"
+      },
+      {
+        "name": "--dialog-bg",
+        "what": "Background of <orc-dialog> modals and command palette"
+      },
+      {
+        "name": "--dialog-shadow",
+        "what": "Shadow on <orc-dialog> modals and command palette"
+      }
+    ],
+    "answerMode": [
+      {
+        "name": "--answer-mode-done",
+        "what": "Marker for an answered question (a string, such as an emoji)"
+      },
+      {
+        "name": "--answer-mode-now",
+        "what": "Marker for the question you are on"
+      },
+      {
+        "name": "--answer-mode-next",
+        "what": "Marker for a question still to come"
+      },
+      {
+        "name": "--answer-mode-glow",
+        "what": "Glow colour behind the question card"
+      },
+      {
+        "name": "--answer-mode-on-accent",
+        "what": "Text on the accent in answer mode"
+      },
+      {
+        "name": "--answer-mode-trim",
+        "what": "A background-image trim along the top of the card"
+      },
+      {
+        "name": "--answer-mode-trim-height",
+        "what": "Height of that trim"
+      },
+      {
+        "name": "--answer-mode-radius",
+        "what": "Corner radius of the question card"
+      },
+      {
+        "name": "--answer-mode-heading-font",
+        "what": "Typeface of the question heading"
+      }
+    ],
+    "newRun": [
+      {
+        "name": "--nc-firefly-gold",
+        "what": "Gold firefly colour on the new-run screen"
+      },
+      {
+        "name": "--nc-firefly-lime",
+        "what": "Lime firefly colour"
+      },
+      {
+        "name": "--nc-firefly-size",
+        "what": "Firefly size multiplier"
+      },
+      {
+        "name": "--nc-firefly-alpha",
+        "what": "Firefly opacity"
+      },
+      {
+        "name": "--nc-firefly-halo-gold",
+        "what": "filter() glow for gold fireflies"
+      },
+      {
+        "name": "--nc-firefly-halo-lime",
+        "what": "filter() glow for lime fireflies"
+      },
+      {
+        "name": "--nc-mist-moss",
+        "what": "Low mist colour"
+      },
+      {
+        "name": "--nc-mist-haze",
+        "what": "High mist colour"
+      },
+      {
+        "name": "--nc-mist-alpha-low",
+        "what": "Low mist opacity"
+      },
+      {
+        "name": "--nc-mist-alpha-high",
+        "what": "High mist opacity"
+      }
+    ],
+    "notes": [
+      {
+        "name": "--note-paper",
+        "what": "The note's face, as a background; the stock paper is --note-tint mixed into --note-surface"
+      },
+      {
+        "name": "--note-surface",
+        "what": "What the stock paper mixes the project colour into (--panel by default)"
+      },
+      {
+        "name": "--note-tint-share",
+        "what": "How much of the project colour the stock paper takes, as a percentage"
+      },
+      {
+        "name": "--note-ink",
+        "what": "The note's writing (--heading by default); keep it 4.5:1 on --note-paper"
+      },
+      {
+        "name": "--note-edge",
+        "what": "Colour of the note's outline"
+      },
+      {
+        "name": "--note-edge-width",
+        "what": "Width of the note's outline (1px by default)"
+      },
+      {
+        "name": "--note-trim",
+        "what": "Extra box-shadows on the note's face, such as a bevel or an inner glow"
+      },
+      {
+        "name": "--note-radius",
+        "what": "The note's corner radius"
+      },
+      {
+        "name": "--note-shadow",
+        "what": "A filter on the note at rest: its drop shadow or glow"
+      },
+      {
+        "name": "--note-shadow-raised",
+        "what": "That filter while the note is hovered, edited or dragged"
+      },
+      {
+        "name": "--note-font",
+        "what": "The note's typeface"
+      },
+      {
+        "name": "--note-rule",
+        "what": "Colour of the ruled lines under the writing; transparent removes them"
+      },
+      {
+        "name": "--note-lean",
+        "what": "How far a note leans, from 0 (square on the board) to 1 (the stock tilt)"
+      },
+      {
+        "name": "--note-fold",
+        "what": "Size of the folded corner that resizes the note (22px by default); 0px flattens it to a grip"
+      },
+      {
+        "name": "--note-tape",
+        "what": "Background of the tape that holds the note up; none removes it. Restyle .nc-note-tape for a pin"
+      }
+    ],
+    "hostSet": [
+      {
+        "name": "--orc-view-x",
+        "what": "Set by Orc during a screen change: where it started, horizontally"
+      },
+      {
+        "name": "--orc-view-y",
+        "what": "Set by Orc during a screen change: where it started, vertically"
+      },
+      {
+        "name": "--orc-view-r",
+        "what": "Set by Orc during a screen change: distance to the farthest corner"
+      },
+      {
+        "name": "--note-tint",
+        "what": "Set by Orc on each .nc-note: the colour of its project, one of --yellow, --green, --cyan, --orange and --purple"
+      }
+    ]
+  },
+  "hooks": {
+    "ids": [
+      {
+        "name": "tabbar",
+        "what": "The bar of run tabs across the top"
+      },
+      {
+        "name": "logo",
+        "what": "The Orc wordmark in the sidebar head"
+      },
+      {
+        "name": "logo-icon",
+        "what": "The persona picture inside #logo"
+      },
+      {
+        "name": "run-sidebar",
+        "what": "The runs sidebar"
+      },
+      {
+        "name": "sidebar-head",
+        "what": "The top of the sidebar, around #logo"
+      },
+      {
+        "name": "sidebar-close",
+        "what": "The button that closes the sidebar on narrow windows"
+      },
+      {
+        "name": "sidebar-collapse",
+        "what": "The button that hides and shows the sidebar on wide windows"
+      },
+      {
+        "name": "sidebar-status",
+        "what": "The status line under the run list"
+      },
+      {
+        "name": "sidebar-usage",
+        "what": "Subscription usage rows in the sidebar"
+      },
+      {
+        "name": "sidebar-footer",
+        "what": "The links at the foot of the sidebar"
+      },
+      {
+        "name": "settled-shelf",
+        "what": "The Settled heading over finished runs"
+      },
+      {
+        "name": "focus-indicator",
+        "what": "The Queue mode badge in the sidebar head"
+      },
+      {
+        "name": "radio-now",
+        "what": "Radio's now-playing strip"
+      },
+      {
+        "name": "merge-selection-bar",
+        "what": "The bar shown while runs are selected for merging"
+      },
+      {
+        "name": "content",
+        "what": "The run page's main column"
+      },
+      {
+        "name": "empty",
+        "what": "The empty state when no run is open"
+      },
+      {
+        "name": "new-view",
+        "what": "The new-run screen"
+      },
+      {
+        "name": "run-terminal",
+        "what": "The run terminal stage"
+      },
+      {
+        "name": "run-terminal-bar",
+        "what": "The bar above the run terminal"
+      },
+      {
+        "name": "run-terminal-title",
+        "what": "The run terminal's title"
+      },
+      {
+        "name": "run-diff",
+        "what": "The side panel beside a run (diff, files, browser)"
+      },
+      {
+        "name": "cmdk-layout",
+        "what": "The command palette body. Its `::before` is your banner across the top: Orc sets its height and centres its content so the palette is one size in every theme, so leave `display` and the height alone. With no banner, the theme picker shows your theme's name there"
+      },
+      {
+        "name": "cmdk-footer",
+        "what": "The command palette footer"
+      },
+      {
+        "name": "orc-copy",
+        "what": "Copy button on gate and answer pages"
+      },
+      {
+        "name": "copy-answers",
+        "what": "Copy answers button on question pages"
+      },
+      {
+        "name": "gary",
+        "what": "The assistant's corner button"
+      },
+      {
+        "name": "head",
+        "what": "The run page's head: title, links and state note"
+      },
+      {
+        "name": "links",
+        "what": "The links row in the run head"
+      },
+      {
+        "name": "list",
+        "what": "The run list in the sidebar"
+      },
+      {
+        "name": "tabs",
+        "what": "The run tabs inside #tabbar"
+      },
+      {
+        "name": "run-times",
+        "what": "The run's start and activity times inside #tabbar"
+      },
+      {
+        "name": "run-panel-tabs",
+        "what": "The tabs of the side panel beside a run"
+      },
+      {
+        "name": "settled-head",
+        "what": "The button heading the Settled shelf"
+      },
+      {
+        "name": "search-wrap",
+        "what": "The search row under the sidebar head: the search field, the filter menu and New"
+      },
+      {
+        "name": "chat-send",
+        "what": "The chat composer's Send button"
+      },
+      {
+        "name": "nc-send",
+        "what": "The new-run screen's Start button, inside its composer; it carries [disabled] until there is something to send and [hidden] when Copy prompt takes its place"
+      },
+      {
+        "name": "chat-stop",
+        "what": "The chat composer's Stop button"
+      }
+    ],
+    "classes": [
+      {
+        "name": "newconv-prompt",
+        "what": "The composer box (new run and chat); carries [data-typing-hot] while you type"
+      },
+      {
+        "name": "newconv",
+        "what": "The new-run screen's column: the start bar and the cards under it"
+      },
+      {
+        "name": "nc-startbar",
+        "what": "The new-run screen's start bar: .nc-title, the composer and .nc-tray"
+      },
+      {
+        "name": "nc-scroll",
+        "what": "The new-run screen's scrolling column inside #new-view: .newconv, then .nc-notes"
+      },
+      {
+        "name": "nc-title",
+        "what": "The new-run screen's heading"
+      },
+      {
+        "name": "nc-tray",
+        "what": "The new-run screen's option tray"
+      },
+      {
+        "name": "nc-beam",
+        "what": "The beam of light that runs round a composer's rim, drawn from --green and --yellow"
+      },
+      {
+        "name": "nc-notes",
+        "what": "The sticky notes board on project home, between the start bar and the foot of the screen"
+      },
+      {
+        "name": "nc-note",
+        "what": "A sticky note on project home; set the --note-… tokens on it"
+      },
+      {
+        "name": "nc-note-paper",
+        "what": "A note's face, inside .nc-note"
+      },
+      {
+        "name": "nc-note-tape",
+        "what": "What holds a note up: tape by default, a pin or a clip if you redraw it"
+      },
+      {
+        "name": "nc-note-curl",
+        "what": "A note's bottom right corner, which resizes it; keep it reachable"
+      },
+      {
+        "name": "nc-note-head",
+        "what": "The row along a note's top: its key and state"
+      },
+      {
+        "name": "nc-note-key",
+        "what": "A note's ticket key"
+      },
+      {
+        "name": "nc-note-state",
+        "what": "The In progress mark on a note"
+      },
+      {
+        "name": "nc-note-title",
+        "what": "A note's first line"
+      },
+      {
+        "name": "nc-note-text",
+        "what": "The rest of a note's writing"
+      },
+      {
+        "name": "nc-handout",
+        "what": "The New sticky note button that hands notes out"
+      },
+      {
+        "name": "nc-project-switch",
+        "what": "The project switch on the new-run screen"
+      },
+      {
+        "name": "run",
+        "what": "A row in the run list"
+      },
+      {
+        "name": "active",
+        "what": "The open row in the run list, with .run"
+      },
+      {
+        "name": "is-busy",
+        "what": "A control while its action is in flight"
+      },
+      {
+        "name": "done",
+        "what": "A copy button after it copied"
+      },
+      {
+        "name": "primary",
+        "what": "The primary button in a group, with .am-btn"
+      },
+      {
+        "name": "terminal-staged",
+        "what": "#run-terminal while it is maximised onto its stage"
+      },
+      {
+        "name": "chat",
+        "what": "The chat column"
+      },
+      {
+        "name": "chat-row-user",
+        "what": "A message row you sent"
+      },
+      {
+        "name": "chat-bubble",
+        "what": "A chat message bubble"
+      },
+      {
+        "name": "is-queued",
+        "what": "A sent message still waiting for the agent"
+      },
+      {
+        "name": "is-shell",
+        "what": "A shell command bubble"
+      },
+      {
+        "name": "link-switch",
+        "what": "The link toggle in the sidebar head"
+      },
+      {
+        "name": "logo-slash",
+        "what": "The slash inside #logo"
+      },
+      {
+        "name": "gary",
+        "what": "The assistant's corner button (also #gary)"
+      },
+      {
+        "name": "am-card",
+        "what": "Answer mode's question card"
+      },
+      {
+        "name": "am-q",
+        "what": "A question's text in answer mode"
+      },
+      {
+        "name": "am-btn",
+        "what": "An answer-mode button"
+      },
+      {
+        "name": "am-glyph",
+        "what": "The step marker beside a question"
+      },
+      {
+        "name": "am-trail",
+        "what": "The row of question markers"
+      },
+      {
+        "name": "factory-main",
+        "what": "The Factory tab's stage"
+      },
+      {
+        "name": "factory-summary",
+        "what": "The Factory tab's summary line"
+      },
+      {
+        "name": "factory-agent",
+        "what": "An agent row beside the Factory floor"
+      },
+      {
+        "name": "factory-label",
+        "what": "A station's floating label"
+      },
+      {
+        "name": "factory-label-name",
+        "what": "The name in a station label"
+      },
+      {
+        "name": "factory-label-meta",
+        "what": "The detail line in a station label"
+      },
+      {
+        "name": "factory-label-effort",
+        "what": "The effort level beside the name in a station label"
+      },
+      {
+        "name": "is-hot",
+        "what": "A station label for the agent working right now"
+      },
+      {
+        "name": "name",
+        "what": "A run's title in the run list, with .run"
+      },
+      {
+        "name": "run-project",
+        "what": "A run's project line in the run list"
+      },
+      {
+        "name": "run-age",
+        "what": "How long ago a run in the list last moved"
+      },
+      {
+        "name": "session-status",
+        "what": "A run's session lamp in the list; .running while its agent works"
+      },
+      {
+        "name": "running",
+        "what": "A session status while its agent works"
+      },
+      {
+        "name": "fork-child",
+        "what": "A run listed under the run it forked from"
+      },
+      {
+        "name": "fork-last",
+        "what": "The last fork under its parent"
+      },
+      {
+        "name": "state-tag",
+        "what": "A run's state label in the list"
+      },
+      {
+        "name": "unread-tag",
+        "what": "The label on a run that stopped and has not been opened since"
+      },
+      {
+        "name": "stale-tag",
+        "what": "The label on a run gone quiet"
+      },
+      {
+        "name": "focus-tag",
+        "what": "The label on the active run in Queue mode"
+      },
+      {
+        "name": "pushed-tag",
+        "what": "The label on a run whose branch is pushed"
+      },
+      {
+        "name": "live-tag",
+        "what": "The label on a run with a live preview"
+      },
+      {
+        "name": "evals-candidate-tag",
+        "what": "The label on an evals candidate run"
+      },
+      {
+        "name": "state-started",
+        "what": "State class: started"
+      },
+      {
+        "name": "state-waiting",
+        "what": "State class: waiting on another run"
+      },
+      {
+        "name": "state-working",
+        "what": "State class: working"
+      },
+      {
+        "name": "state-reviewing",
+        "what": "State class: reviewing"
+      },
+      {
+        "name": "state-blocked",
+        "what": "State class: blocked, waiting on you"
+      },
+      {
+        "name": "state-ready",
+        "what": "State class: ready to ship"
+      },
+      {
+        "name": "state-done",
+        "what": "State class: done"
+      },
+      {
+        "name": "state-cancelled",
+        "what": "State class: cancelled"
+      },
+      {
+        "name": "settled-heading",
+        "what": "The Settled heading in the run list"
+      },
+      {
+        "name": "settled-drawer",
+        "what": "The Settled shelf when it opens as a drawer"
+      },
+      {
+        "name": "logo-word",
+        "what": "The word inside #logo"
+      },
+      {
+        "name": "tab-indicator",
+        "what": "The sliding marker under the selected run tab"
+      },
+      {
+        "name": "dot",
+        "what": "The live status dot"
+      },
+      {
+        "name": "chat-body",
+        "what": "The chat's message column"
+      },
+      {
+        "name": "chat-reviews",
+        "what": "Review cards under the chat"
+      },
+      {
+        "name": "chat-composer",
+        "what": "The chat's composer area"
+      },
+      {
+        "name": "chat-composer-info",
+        "what": "The line under the chat composer"
+      },
+      {
+        "name": "chat-md",
+        "what": "Rendered Markdown in a chat message"
+      },
+      {
+        "name": "chat-time",
+        "what": "A message's time"
+      },
+      {
+        "name": "chat-fold",
+        "what": "A folded group of agent steps"
+      },
+      {
+        "name": "chat-working",
+        "what": "The working line while the agent runs"
+      },
+      {
+        "name": "chat-steps-toggle",
+        "what": "The button that shows or hides agent steps"
+      },
+      {
+        "name": "chat-files-title",
+        "what": "The changed-files card title"
+      },
+      {
+        "name": "am-invite",
+        "what": "The invitation to answer questions in answer mode"
+      },
+      {
+        "name": "factory-roster",
+        "what": "The agent list beside the Factory floor"
+      },
+      {
+        "name": "factory-recenter",
+        "what": "The Reset view button in the Factory floor corner"
+      },
+      {
+        "name": "factory-zoom",
+        "what": "The zoom button group in the Factory floor corner"
+      },
+      {
+        "name": "factory-roster-toggle",
+        "what": "The Show/Hide agents button in the Factory floor corner"
+      },
+      {
+        "name": "factory-ticket",
+        "what": "The picked agent's job ticket laid over the Factory floor"
+      },
+      {
+        "name": "factory-ticket-name",
+        "what": "The heading inside the Factory job ticket"
+      },
+      {
+        "name": "factory-ticket-facts",
+        "what": "The details grid inside the Factory job ticket"
+      },
+      {
+        "name": "is-main",
+        "what": "The main agent's floating label on the Factory floor"
+      },
+      {
+        "name": "is-selected",
+        "what": "A selected station label or roster row in the Factory tab"
+      }
+    ],
+    "attributes": [
+      {
+        "name": "data-theme",
+        "what": "On <html>: \"dark\" or \"light\" when the person picks one, absent on Auto. Give night in both :root[data-<id>][data-theme=\"dark\"] and :root[data-<id>]:not([data-theme=\"light\"]) inside @media (prefers-color-scheme: dark)"
+      },
+      {
+        "name": "data-view-transition",
+        "what": "On <html> while a screen change plays: the destination (settings, activity, run, terminal and so on)"
+      },
+      {
+        "name": "data-typing-hot",
+        "what": "On .newconv-prompt while you type quickly"
+      },
+      {
+        "name": "data-suppress-focus-ring",
+        "what": "On .newconv-prompt when its focus ring is hidden for a pointer click"
+      },
+      {
+        "name": "data-part",
+        "what": "Names a promised part of the shell; see Named parts below"
+      },
+      {
+        "name": "data-state",
+        "what": "On run rows, status lamps, state tags, factory stage, and answer-mode markers"
+      },
+      {
+        "name": "data-unread",
+        "what": "On a run row that stopped and has not been opened since"
+      },
+      {
+        "name": "data-sidebar-collapsed",
+        "what": "On <html> while the sidebar is collapsed to its 44px strip on a wide window"
+      },
+      {
+        "name": "data-orc-shot",
+        "what": "On <html> while Orc's own screenshots are taken; hold animations still"
+      },
+      {
+        "name": "data-tint",
+        "what": "On a project-home sticky note: its paper tint (yellow, green, cyan, orange or purple)"
+      },
+      {
+        "name": "data-evals",
+        "what": "On #new-view while the composer builds an eval: the Evals candidates take the board's place"
+      },
+      {
+        "name": "data-retired",
+        "what": "On a decommissioned station's floating label in the Factory tab"
+      }
+    ],
+    "parts": [
+      {
+        "name": "sidebar",
+        "what": "The runs sidebar (<aside#run-sidebar>)"
+      },
+      {
+        "name": "sidebar-head",
+        "what": "The top of the sidebar around the wordmark and controls"
+      },
+      {
+        "name": "sidebar-search",
+        "what": "The search, filter, and new-conversation bar in the sidebar"
+      },
+      {
+        "name": "run-list",
+        "what": "The scrollable run list container"
+      },
+      {
+        "name": "run-group",
+        "what": "A grouped section of runs in the sidebar"
+      },
+      {
+        "name": "run-row",
+        "what": "A row in the run list; carries [data-state]"
+      },
+      {
+        "name": "run-actions",
+        "what": "The hover action cluster on a run row"
+      },
+      {
+        "name": "run-project",
+        "what": "The project line above a run's title"
+      },
+      {
+        "name": "run-title",
+        "what": "A run's title inside its row"
+      },
+      {
+        "name": "run-meta",
+        "what": "The state, badge, age, and agent line under a run's title"
+      },
+      {
+        "name": "status-lamp",
+        "what": "A live status dot or working lamp; carries [data-state]"
+      },
+      {
+        "name": "state-tag",
+        "what": "A run's state pill; carries [data-state]"
+      },
+      {
+        "name": "settled-shelf",
+        "what": "The Settled heading at the foot of the run list"
+      },
+      {
+        "name": "settled-drawer",
+        "what": "The open Settled drawer over the run list"
+      },
+      {
+        "name": "sidebar-footer",
+        "what": "The navigation bar at the foot of the sidebar"
+      },
+      {
+        "name": "empty-state",
+        "what": "The empty state when no run or artifact is open"
+      },
+      {
+        "name": "run-head",
+        "what": "The open run's header above the tab bar"
+      },
+      {
+        "name": "tab-bar",
+        "what": "The bar holding run tabs and timestamps"
+      },
+      {
+        "name": "tab-list",
+        "what": "The strip of tab buttons inside the tab bar"
+      },
+      {
+        "name": "tab",
+        "what": "An individual tab button inside [data-part=\"tab-list\"]"
+      },
+      {
+        "name": "tab-indicator",
+        "what": "The sliding active indicator behind the selected tab"
+      },
+      {
+        "name": "answer-card",
+        "what": "The inline invitation card when questions are waiting"
+      },
+      {
+        "name": "terminal-stage",
+        "what": "The run terminal stage"
+      },
+      {
+        "name": "new-run",
+        "what": "The new-conversation screen"
+      },
+      {
+        "name": "composer",
+        "what": "The prompt composer box on new-run and chat screens"
+      },
+      {
+        "name": "chat",
+        "what": "The chat column for a run"
+      },
+      {
+        "name": "transcript-message",
+        "what": "A user or assistant message row in the chat transcript"
+      },
+      {
+        "name": "chat-bubble",
+        "what": "A message bubble inside a user transcript row"
+      },
+      {
+        "name": "factory-stage",
+        "what": "The 3D stage area inside the Factory tab"
+      },
+      {
+        "name": "factory-roster",
+        "what": "The agent roster beside the Factory stage"
+      },
+      {
+        "name": "side-panel",
+        "what": "The side panel beside a run (diff, files, browser)"
+      },
+      {
+        "name": "command-palette",
+        "what": "The ⌘K command palette dialog"
+      }
+    ],
+    "shadowParts": [
+      {
+        "name": "body",
+        "what": "Main content region inside <orc-dialog>"
+      },
+      {
+        "name": "box",
+        "what": "Checkbox square inside <orc-checkbox>"
+      },
+      {
+        "name": "button",
+        "what": "Interactive button inside <orc-button>, <orc-icon-button>, and composer toggles"
+      },
+      {
+        "name": "callout",
+        "what": "Surface box inside <orc-callout>"
+      },
+      {
+        "name": "chevron",
+        "what": "Disclosure arrow inside <orc-select> and <orc-accordion>"
+      },
+      {
+        "name": "chip",
+        "what": "Pill surface inside <orc-chip>"
+      },
+      {
+        "name": "close",
+        "what": "Close button inside <orc-dialog> and <orc-model-picker>"
+      },
+      {
+        "name": "control",
+        "what": "Outer control wrapper in <orc-checkbox>, <orc-combobox>, <orc-select>, <orc-switch>, <orc-effort-slider>, and <orc-model-picker>"
+      },
+      {
+        "name": "dialog",
+        "what": "Modal <dialog> surface inside <orc-dialog>"
+      },
+      {
+        "name": "dot",
+        "what": "Status dot inside <orc-chip> and <orc-select>"
+      },
+      {
+        "name": "face",
+        "what": "Interactive face inside <orc-effort-slider>"
+      },
+      {
+        "name": "field",
+        "what": "Field frame inside <orc-input>, <orc-textarea>, and <orc-select>"
+      },
+      {
+        "name": "fill",
+        "what": "Active range fill inside <orc-effort-slider>"
+      },
+      {
+        "name": "footer",
+        "what": "Footer bar inside <orc-dialog>"
+      },
+      {
+        "name": "group",
+        "what": "Radio group container inside <orc-segmented>"
+      },
+      {
+        "name": "header",
+        "what": "Header bar inside <orc-dialog> and <orc-model-picker>"
+      },
+      {
+        "name": "heading",
+        "what": "Heading inside <orc-callout>, <orc-dialog>, and <orc-effort-slider>"
+      },
+      {
+        "name": "icon",
+        "what": "SVG icon inside <orc-theme-toggle> and composer toggles"
+      },
+      {
+        "name": "input",
+        "what": "Native input or textarea inside form controls and toggles"
+      },
+      {
+        "name": "label",
+        "what": "Text label inside buttons, chips, fields, switches, and toggles"
+      },
+      {
+        "name": "list",
+        "what": "Option list inside <orc-select> and <orc-model-picker>"
+      },
+      {
+        "name": "listbox",
+        "what": "Popup listbox inside <orc-combobox> and <orc-select>"
+      },
+      {
+        "name": "menu",
+        "what": "Popup menu container inside <orc-select>"
+      },
+      {
+        "name": "option",
+        "what": "Selectable option inside <orc-combobox>, <orc-segmented>, <orc-select>, and <orc-model-picker>"
+      },
+      {
+        "name": "output",
+        "what": "Current value readout inside <orc-effort-slider>"
+      },
+      {
+        "name": "panel",
+        "what": "Popup or tab panel inside <orc-combobox>, <orc-select>, <orc-tabs>, and <orc-model-picker>; the folded content inside <orc-accordion>"
+      },
+      {
+        "name": "panels",
+        "what": "Tab panels wrapper inside <orc-tabs>"
+      },
+      {
+        "name": "rail",
+        "what": "Track or provider rail inside <orc-effort-slider> and <orc-model-picker>"
+      },
+      {
+        "name": "search",
+        "what": "Filter search box inside <orc-select> and <orc-model-picker>"
+      },
+      {
+        "name": "step",
+        "what": "Step item inside <orc-stepper>"
+      },
+      {
+        "name": "summary",
+        "what": "Button that opens and closes <orc-accordion>"
+      },
+      {
+        "name": "tab",
+        "what": "Tab button inside <orc-tabs>"
+      },
+      {
+        "name": "tablist",
+        "what": "Tab list strip inside <orc-tabs>"
+      },
+      {
+        "name": "thumb",
+        "what": "Sliding thumb inside <orc-switch>"
+      },
+      {
+        "name": "track",
+        "what": "Switch or slider track inside <orc-switch> and <orc-effort-slider>"
+      },
+      {
+        "name": "trigger",
+        "what": "Popup trigger button inside <orc-select> and <orc-model-picker>"
+      },
+      {
+        "name": "value",
+        "what": "Selected value text inside <orc-select> and <orc-model-picker>"
+      }
+    ],
+    "families": []
+  },
+  "sceneKit": {
+    "about": "ES modules served at /theme-kit/<apiVersion>/. A scene or factory module imports them by URL and needs no build step.",
+    "modules": {
+      "three.js": {
+        "what": "three.js r186, every export",
+        "exports": [
+          "*"
+        ]
+      },
+      "stage.js": {
+        "what": "The scene stage and easing helpers every scene uses",
+        "exports": [
+          "back",
+          "clamp",
+          "createStage",
+          "fall",
+          "keys",
+          "mix",
+          "out",
+          "pulse",
+          "range",
+          "smooth",
+          "wearSkin",
+          "whip",
+          "wobble"
+        ]
+      },
+      "party.js": {
+        "what": "The All settled fireworks",
+        "exports": [
+          "CLEAR_LANDS",
+          "createFireworks",
+          "finale"
+        ]
+      },
+      "factory.js": {
+        "what": "The Factory engine; a skin is the second argument",
+        "exports": [
+          "createFactory",
+          "stock"
+        ]
+      },
+      "factory-layout.js": {
+        "what": "Where Factory stations stand, and the camera a painted floor is seen through",
+        "exports": [
+          "CAPACITY",
+          "DOOR",
+          "HALL",
+          "createLayout",
+          "paintedCamera"
+        ]
+      },
+      "swamp.js": {
+        "what": "Swamp's scene module, to build on",
+        "exports": [
+          "default"
+        ]
+      }
+    }
+  },
+  "hostModules": {
+    "about": "Orc's own page modules a theme's frontend or terminal module may import by URL. Only these exports are promised.",
+    "modules": {
+      "/js/fun-modes.js": {
+        "what": "Theme painting and pointer effects",
+        "exports": [
+          "defineFunMode",
+          "funModeSaved",
+          "leaveOtherFunModes",
+          "paintedFunMode",
+          "registerFunMode",
+          "whileFunPress"
+        ]
+      },
+      "/js/motion.js": {
+        "what": "Motion preferences",
+        "exports": [
+          "animationsOff",
+          "reducedMotion"
+        ]
+      },
+      "/js/core.js": {
+        "what": "Announcements and artifact frames",
+        "exports": [
+          "announce",
+          "syncOpenArtifactThemes"
+        ]
+      },
+      "/js/theme-components.js": {
+        "what": "Safe DOM builder and replaceable component registry",
+        "exports": [
+          "el",
+          "registerThemeComponents",
+          "themeComponent",
+          "unregisterThemeComponents"
+        ]
+      }
+    }
+  }
+}

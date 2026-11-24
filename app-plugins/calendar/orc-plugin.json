@@ -1,0 +1,13 @@
+{
+  "apiVersion": 1,
+  "id": "calendar",
+  "name": "Calendar",
+  "version": "1.1.0",
+  "description": "Your Google calendars with editing and replies, and read-only iCal feeds, with sign-ins kept in the macOS Keychain",
+  "icon": "icon.png",
+  "adoptOnUpgrade": true,
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py"
+  }
+}

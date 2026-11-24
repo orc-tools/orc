@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import sys
+import time
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from typing import Any, Callable
+
+
+ACTIVE = {"running", "awaiting-gate", "escalated"}
+OWNER_KEYS = {
+    "claude": "sessionId",
+    "codex": "codexThreadId",
+}
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
+# Keep retired UserPromptSubmit/Stop actions (`run-init`, `idle`, `gate`) as
+# exit-0 no-ops so sessions started before upgrade or turns inside the
+# post-switch retirement window never fail with exit 2 and drop user prompts.
+ACTIONS = ("normalize", "worktree", "run-init", "idle", "gate")
+
+
+def emit(code: int = 0, message: str = "", payload: dict[str, Any] | None = None) -> None:
+    if payload is not None:
+        print(json.dumps(payload, separators=(",", ":")))
+    if message:
+        print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def read_input() -> dict[str, Any]:
+    try:
+        value = json.load(sys.stdin)
+    except (ValueError, OSError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def normalize(raw: dict[str, Any], harness: str | None = None) -> dict[str, Any]:
+    selected = harness or raw.get("harness")
+    if selected is not None and selected not in OWNER_KEYS:
+        selected = ""
+    elif selected is None:
+        selected = "codex" if raw.get("turn_id") else "claude"
+    session_id = (
+        raw.get("sessionId")
+        or raw.get("session_id")
+        or ""
+    )
+    tool_input = raw.get("toolInput")
+    if not isinstance(tool_input, dict):
+        tool_input = raw.get("tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    return {
+        "harness": selected,
+        "sessionId": str(session_id or ""),
+        "cwd": str(raw.get("cwd") or os.getcwd()),
+        "event": str(raw.get("event") or raw.get("hook_event_name") or ""),
+        "toolName": str(raw.get("toolName") or raw.get("tool_name") or ""),
+        "toolInput": tool_input,
+        "prompt": str(raw.get("prompt") or ""),
+        "stopHookActive": bool(raw.get("stopHookActive") or raw.get("stop_hook_active")),
+        "lastMessage": str(raw.get("last_assistant_message") or ""),
+        "transcriptPath": str(raw.get("transcript_path") or ""),
+    }
+
+
+def config_dir() -> pathlib.Path:
+    override = os.environ.get("ORC_CONFIG_DIR")
+    return pathlib.Path(override) if override else pathlib.Path.home() / ".orc"
+
+
+def runs_dir() -> pathlib.Path:
+    return config_dir() / "runs"
+
+
+def real(path: str) -> str:
+    return os.path.realpath(os.path.abspath(os.path.expanduser(path))) if path else ""
+
+
+def within(child: str, parent: str) -> bool:
+    child, parent = real(child), real(parent)
+    return bool(parent and (child == parent or child.startswith(parent + os.sep)))
+
+
+def owner(meta: dict[str, Any]) -> tuple[str, str] | None:
+    harness = meta.get("harness")
+    key = OWNER_KEYS.get(harness)
+    if key and meta.get(key):
+        return harness, str(meta[key])
+    for candidate_harness, candidate_key in OWNER_KEYS.items():
+        if meta.get(candidate_key):
+            return candidate_harness, str(meta[candidate_key])
+    return None
+
+
+def find_run(
+    event: dict[str, Any],
+    *,
+    states: set[str] | None = ACTIVE,
+    where: Callable[[dict[str, Any]], bool] | None = None,
+) -> tuple[str, pathlib.Path, dict[str, Any]] | None:
+    """Locate the matching run for this hook invocation."""
+    root = runs_dir()
+    if not root.is_dir():
+        return None
+    env_rid = os.environ.get("ORC_RUN_ID", "").strip()
+    if env_rid and RUN_ID_RE.fullmatch(env_rid):
+        env_path = root / env_rid / "meta.json"
+        try:
+            env_meta = json.loads(env_path.read_text())
+        except (OSError, ValueError):
+            env_meta = None
+        if isinstance(env_meta, dict) and (
+            (states is None or env_meta.get("status") in states)
+            and (where is None or where(env_meta))
+        ):
+            recorded = owner(env_meta)
+            if (
+                recorded is None
+                or not event["sessionId"]
+                or recorded == (event["harness"], event["sessionId"])
+            ):
+                return env_rid, env_path, env_meta
+
+    # `~/.orc/runs` holds thousands of historical dirs; restrict to a two-day
+    # mtime window with raw `os.scandir`/`os.stat` strings instead of `Path`
+    # allocations on every PreToolUse call.
+    cutoff = time.time() - 2 * 86400
+    exact: list[tuple[float, str, pathlib.Path, dict[str, Any]]] = []
+    fallback: list[tuple[float, str, pathlib.Path, dict[str, Any]]] = []
+    base = os.fspath(root)
+    sep = os.sep
+    stat = os.stat
+    try:
+        with os.scandir(base) as entries:
+            names = [entry.name for entry in entries]
+    except OSError:
+        return None
+    for rid in names:
+        meta_file = f"{base}{sep}{rid}{sep}meta.json"
+        try:
+            mtime = stat(meta_file).st_mtime
+            if mtime < cutoff:
+                continue
+            with open(meta_file) as handle:
+                meta = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(meta, dict) or (
+            states is not None and meta.get("status") not in states
+        ) or (
+            where is not None and not where(meta)
+        ):
+            continue
+        path = pathlib.Path(meta_file)
+        recorded = owner(meta)
+        if event["sessionId"]:
+            if recorded == (event["harness"], event["sessionId"]):
+                exact.append((mtime, rid, path, meta))
+            continue
+        if recorded:
+            continue
+        repo = str(meta.get("repoPath") or "")
+        if repo and (within(event["cwd"], repo) or within(repo, event["cwd"])):
+            fallback.append((mtime, rid, path, meta))
+    candidates = exact or fallback
+    if not candidates:
+        return None
+    _, rid, path, meta = max(candidates, key=lambda item: item[0])
+    return rid, path, meta
+
+
+def repo_config(main_repo: str) -> dict[str, Any]:
+    try:
+        config = json.loads((config_dir() / "config.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    merged: dict[str, Any] = {}
+    for key, value in (config.get("repos") or {}).items():
+        if real(str(key)) == real(main_repo) and isinstance(value, dict):
+            merged.update(value)
+    return merged
+
+
+def worktree(event: dict[str, Any]) -> None:
+    if not event["sessionId"] and not os.environ.get("ORC_RUN_ID", "").strip():
+        emit()
+    file_path = event["toolInput"].get("file_path") or event["toolInput"].get("filePath") or ""
+    if not isinstance(file_path, str) or not file_path:
+        emit()
+    target = real(file_path if os.path.isabs(file_path) else os.path.join(event["cwd"], file_path))
+    found = find_run(event)
+    if not found:
+        emit()
+    rid, meta_path, meta = found
+    repositories = meta.get("repositories")
+    if meta.get("repositoriesVersion") == 1 and isinstance(repositories, list):
+        participants = [item for item in repositories if isinstance(item, dict)]
+    else:
+        participants = [meta]
+    targets_participant = any(
+        within(target, str(item.get("mainRepoPath") or ""))
+        or within(target, str(item.get("repoPath") or ""))
+        for item in participants
+    )
+    if not targets_participant:
+        emit()
+    if meta.get("repositoriesVersion") == 1:
+        blocked = [
+            str(item.get("id") or "unknown")
+            for item in participants
+            if item.get("status") != "ready"
+        ]
+        if blocked:
+            emit(
+                2,
+                "orc worktree guard — all repositories must be ready before edits; "
+                f"prepare: {', '.join(blocked)} (run: {rid})",
+            )
+    for participant in participants:
+        main_repo = str(participant.get("mainRepoPath") or participant.get("repoPath") or "")
+        repo_path = str(participant.get("repoPath") or "")
+        if not main_repo or not (within(target, main_repo) or within(target, repo_path)):
+            continue
+        active = (
+            bool((participant.get("worktree") or {}).get("enabled"))
+            or real(repo_path) != real(main_repo)
+        )
+        label = str(participant.get("id") or "primary")
+        if active:
+            if within(target, repo_path) or not within(target, main_repo):
+                emit()
+            emit(
+                2,
+                f"orc worktree guard — edit targets shared checkout for {label}; "
+                f"edit {real(repo_path)} instead (run: {rid})",
+            )
+        setting = repo_config(main_repo).get("worktree")
+        if setting is None:
+            try:
+                config = json.loads((config_dir() / "config.json").read_text())
+                for key, value in ((config.get("worktree") or {}).get("repos") or {}).items():
+                    if real(str(key)) == real(main_repo):
+                        setting = value.get("worktree") if isinstance(value, dict) else value
+            except (OSError, ValueError):
+                pass
+        # A v1 repositories roster or an explicit `worktree.enabled` flag means
+        # worktree setup already ran and recorded its decision.
+        decided = (
+            meta.get("repositoriesVersion") == 1
+            or "enabled" in (participant.get("worktree") or {})
+        )
+        if setting is True and not decided:
+            emit(
+                2,
+                f"orc worktree guard — worktree=true but setup has not run for {label} "
+                f"(run: {rid}); run orc-worktree setup --run-dir {meta_path.parent} --repo-id {label}",
+            )
+    emit()
+
+
+def run_init(_event: dict[str, Any]) -> None:
+    emit()
+
+
+def idle(_event: dict[str, Any]) -> None:
+    emit()
+
+
+def gate(_event: dict[str, Any]) -> None:
+    emit()
+
+
+class Args:
+    def __init__(self, action: str, harness: str | None) -> None:
+        self.action = action
+        self.harness = harness
+
+
+def parse_args(argv: list[str]) -> Args:
+    # Importing `argparse` adds ~8 ms to every PreToolUse invocation; hooks
+    # pass only `<action>` or `<action> --harness <name>`, so match them first.
+    if argv and argv[0] in ACTIONS:
+        if len(argv) == 1:
+            return Args(argv[0], None)
+        if len(argv) == 3 and argv[1] == "--harness" and argv[2] in OWNER_KEYS:
+            return Args(argv[0], argv[2])
+        if len(argv) == 2 and argv[1].startswith("--harness=") and argv[1][10:] in OWNER_KEYS:
+            return Args(argv[0], argv[1][10:])
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=ACTIONS)
+    parser.add_argument("--harness", choices=tuple(OWNER_KEYS))
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    args = parse_args(sys.argv[1:])
+    raw = read_input()
+    event = normalize(raw, args.harness)
+    if args.action == "normalize":
+        emit(payload=event)
+    if event["sessionId"]:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "ui"))
+        import session_paths
+        retired_path = session_paths.retired_session_path(
+            config_dir(), event["harness"], event["sessionId"]
+        )
+        if retired_path.exists():
+            try:
+                retired = json.loads(retired_path.read_text())
+            except (OSError, ValueError):
+                emit(2, "This session is retired. Open its run in Orc before continuing.")
+            emit(
+                2,
+                "This session was superseded by a rescue. Stop work and open "
+                f"http://127.0.0.1:4173/#{retired.get('runId', '')}. "
+                "Do not resume or commit from this session.",
+            )
+    globals()[args.action.replace("-", "_")](event)
+
+
+if __name__ == "__main__":
+    main()

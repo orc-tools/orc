@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>The yeet · Orc</title>
+  <style>
+    :root { color-scheme:dark; --bg:#191d20; font-family:system-ui,sans-serif; color:#d6ddd6; background:var(--bg); }
+    * { box-sizing:border-box; }
+    body { margin:0; }
+    main { max-width:860px; margin:auto; padding:64px 32px; }
+    .eyebrow { color:#9ebc78; font-size:12px; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { font-size:clamp(36px,7vw,58px); letter-spacing:-.055em; margin:12px 0 18px; line-height:1.05; color:#e5ecde; }
+    .lede { max-width:570px; color:#acb7ae; line-height:1.65; font-size:17px; }
+    .band { margin:32px 0; padding:22px; border:1px solid #3c493c; border-radius:14px; background:#222b23; }
+    .band strong { display:block; margin-bottom:8px; color:#bed69d; }
+    .band p { margin:0; line-height:1.6; color:#aab8a7; }
+    .row { border-bottom:1px solid #333d37; padding:22px 0; display:flex; gap:20px; line-height:1.5; }
+    .number { color:#879a76; }
+    .row b { display:block; color:#cbd5c7; margin-bottom:5px; }
+    .row p { margin:0; color:#91a090; }
+    footer { display:flex; align-items:center; flex-wrap:wrap; gap:18px; padding-top:32px; }
+    button { background:#b4d18b; border:0; border-radius:8px; padding:12px 22px; color:#1b291c; font:750 16px system-ui; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:default; }
+    button:focus-visible { outline:2px solid #c9ec94; outline-offset:5px; }
+    small { color:#a6b29f; line-height:1.6; }
+    @media(max-width:500px) { main { padding:36px 22px; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Orc · Animation preview</div>
+  <h1>Give this run a proper send-off.</h1>
+  <p class="lede">A small button. A very large orc. One deeply unnecessary display of upper-body strength.</p>
+  <div class="band"><strong>Ready for a test throw</strong><p>This is a replay. Nothing here merges, pushes, or changes a run.</p></div>
+  <div class="row"><span class="number">01</span><div><b>Paperwork meets brute force</b><p>Your orc tears through the run, shoulders first.</p></div></div>
+  <div class="row"><span class="number">02</span><div><b>Compact the context</b><p>The whole thing becomes one extremely throwable ball.</p></div></div>
+  <div class="row"><span class="number">03</span><div><b>Special delivery</b><p>A wind-up, a throw, and a satisfying exit.</p></div></div>
+  <footer><button type="button" id="replay">Preview merged</button><button type="button" id="replay-pr">Preview PR opened</button><small id="note" role="status">Escape skips the scene. </small></footer>
+</main>
+<script src="/app-plugin-state.js"></script>
+<script type="module">
+  import { previewFunMode } from '/js/fun-modes.js';
+  const theme = new URLSearchParams(location.search).get('theme');
+  previewFunMode(theme);
+  import { playPrOpened, playYeet, preloadSendOffs } from '/js/send-offs.js';
+  import { reducedMotion } from '/js/motion.js';
+  // Reduce animations, or the system's reduced motion, holds send-offs off, previews too.
+  const held = reducedMotion();
+  if (held) document.getElementById('note').textContent = 'Send-offs are off while animations or motion are reduced.';
+  for (const [id, play, again] of [['replay', () => playYeet({ force: true }), 'Replay merged'], ['replay-pr', () => playPrOpened({ force: true }), 'Replay PR opened']]) {
+    const button = document.getElementById(id);
+    button.disabled = held;
+    button.addEventListener('pointerenter', () => preloadSendOffs(undefined, { force: true }), { once:true });
+    button.addEventListener('focus', () => preloadSendOffs(undefined, { force: true }), { once:true });
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      await play().finished;
+      button.disabled = false;
+      button.textContent = again;
+      button.focus();
+    });
+  }
+</script>
+</body>
+</html>

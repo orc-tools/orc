@@ -1,0 +1,12 @@
+{
+  "apiVersion": 1,
+  "id": "mcp-client",
+  "name": "MCP client",
+  "version": "1.0.0",
+  "description": "Connect to any MCP server by its URL, sign in with OAuth or an API key header, and try its tools, resources and prompts, with arguments a fast model can suggest.",
+  "icon": "icon.png",
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py"
+  }
+}

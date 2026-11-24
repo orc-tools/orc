@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""Post a PR feedback round's suggested replies once its fixes are pushed.
+
+    orc-pr-replies --run-dir <run-dir>                    the user approved the replies
+    orc-pr-replies --run-dir <run-dir> --zerohands-only   the user approved only the push
+
+Reads `pr-replies.json`, which the round writes beside `pr-comments.mdx`:
+
+    {"round": 2, "pr": "https://github.com/<owner>/<repo>/pull/<n>",
+     "replies": [
+       {"card": "1", "kind": "thread", "commentId": 123, "body": "..."},
+       {"card": "4", "kind": "review", "quote": "...", "body": "..."}]}
+
+Each `thread` reply goes to its inline thread through the pulls replies API.
+All `review` replies, which answer points made in a review body that has no
+thread, go out together as one PR comment.
+
+Posting needs `meta.prFeedback.state == "pushed"`, so no reply cites a commit
+the PR does not have yet. Each post is recorded in `meta.prFeedback.replies`
+the moment it succeeds, and a recorded card is never posted again, so a second
+click or a retry after a partial failure cannot double-post. Once every card
+is recorded, `repliesPostedAt` is set and the posted links are written into the
+page's `## Posted replies` section.
+
+A push the user approved without naming the replies still answers Zerohands,
+the review bot: `--zerohands-only` posts the replies whose comment GitHub says
+Zerohands wrote and holds the rest for the user's own approval. The author is
+read from GitHub, never from the round's notes, and a reply whose author
+cannot be read is held. Review-body replies share one PR comment, so one held
+point holds them all. A held reply leaves `repliesPostedAt` unset, which keeps
+the page's Push comments button live.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime
+import fcntl
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+REPLIES_FILE = "pr-replies.json"
+PAGE = "pr-comments.mdx"
+REVIEW_KEY = "review"
+PR_URL = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)/?")
+POSTED_HEADING = "## Posted replies"
+SOURCE_ANCHORS = {"pullrequestreview-": "pulls/%(number)s/reviews/%(id)s",
+                  "issuecomment-": "issues/comments/%(id)s",
+                  "discussion_r": "pulls/comments/%(id)s"}
+SOURCE_ANCHOR = re.compile(r"#(%s)(\d+)" % "|".join(SOURCE_ANCHORS))
+UNKNOWN_AUTHOR = "an author GitHub could not confirm"
+
+
+class ReplyError(Exception):
+    pass
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(
+        timespec="seconds").replace("+00:00", "Z")
+
+
+def read_json(path):
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ReplyError("cannot read %s: %s" % (path.name, exc)) from exc
+    if not isinstance(value, dict):
+        raise ReplyError("%s must contain a JSON object" % path.name)
+    return value
+
+
+def write_atomic(path, text):
+    fd, temp_name = tempfile.mkstemp(
+        prefix=".%s." % path.name, suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name)
+        raise
+
+
+def write_meta(path, meta):
+    write_atomic(path, json.dumps(meta, indent=2) + "\n")
+
+
+def pr_urls(meta):
+    urls = meta.get("prUrls") if isinstance(meta.get("prUrls"), list) \
+        else [meta.get("prUrl")]
+    return [url for url in urls if isinstance(url, str) and PR_URL.fullmatch(url)]
+
+
+def load_plan(run_dir, meta):
+    feedback = meta.get("prFeedback")
+    if not isinstance(feedback, dict):
+        raise ReplyError("run has no PR feedback round")
+    if feedback.get("state") != "pushed":
+        raise ReplyError(
+            "the round's fixes are not pushed (prFeedback.state=%s); push them "
+            "first so no reply cites an unpushed commit" % feedback.get("state"))
+    plan = read_json(run_dir / REPLIES_FILE)
+    if "round" in feedback and plan.get("round") != feedback.get("round"):
+        raise ReplyError("%s is for round %r, but the recorded round is %r"
+                         % (REPLIES_FILE, plan.get("round"), feedback.get("round")))
+    urls = pr_urls(meta)
+    pr = plan.get("pr") or (urls[0] if len(urls) == 1 else None)
+    if pr not in urls:
+        raise ReplyError("%s names PR %r, which is not this run's PR" % (REPLIES_FILE, pr))
+    replies = plan.get("replies")
+    if not isinstance(replies, list) or not replies:
+        raise ReplyError("%s has no replies" % REPLIES_FILE)
+    cards = set()
+    for reply in replies:
+        if not isinstance(reply, dict):
+            raise ReplyError("every reply must be an object")
+        card, kind, body = reply.get("card"), reply.get("kind"), reply.get("body")
+        if not isinstance(card, str) or not card or card == REVIEW_KEY or card in cards:
+            raise ReplyError("reply card ids must be unique non-empty strings: %r" % card)
+        cards.add(card)
+        if not isinstance(body, str) or not body.strip():
+            raise ReplyError("card %s has an empty reply" % card)
+        if kind == "thread":
+            comment_id = reply.get("commentId")
+            if isinstance(comment_id, bool) or not isinstance(comment_id, int) \
+                    or comment_id <= 0:
+                raise ReplyError("card %s needs a numeric commentId" % card)
+        elif kind != "review":
+            raise ReplyError("card %s has kind %r; use thread or review" % (card, kind))
+    threads = plan.get("threads")
+    links = {thread.get("card"): thread.get("url")
+             for thread in threads if isinstance(thread, dict)} \
+        if isinstance(threads, list) else {}
+    return pr, replies, links
+
+
+def gh(args, stdin=""):
+    executable = shutil.which("gh")
+    if not executable:
+        raise ReplyError("gh is not installed")
+    result = subprocess.run([executable, *args], input=stdin,
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        lines = (result.stderr or result.stdout).strip().splitlines()
+        raise ReplyError("gh %s failed: %s" % (args[0], lines[-1] if lines else
+                                                "exit %d" % result.returncode))
+    return result.stdout
+
+
+def post_thread_reply(pr, comment_id, body):
+    owner, repo, number = PR_URL.fullmatch(pr).groups()
+    out = gh(["api", "--method", "POST",
+              "repos/%s/%s/pulls/%s/comments/%d/replies" % (owner, repo, number, comment_id),
+              "--input", "-"], json.dumps({"body": body}))
+    try:
+        posted = json.loads(out)
+    except ValueError as exc:
+        raise ReplyError("gh api returned no JSON for comment %d" % comment_id) from exc
+    return {"id": posted.get("id"), "url": posted.get("html_url")}
+
+
+def answered_api_path(pr, reply, links):
+    owner, repo, number = PR_URL.fullmatch(pr).groups()
+    base = "repos/%s/%s/" % (owner, repo)
+    if reply["kind"] == "thread":
+        return base + "pulls/comments/%d" % reply["commentId"]
+    link = links.get(reply["card"])
+    if not isinstance(link, str) or not link.startswith(pr.rstrip("/")):
+        return None
+    match = SOURCE_ANCHOR.fullmatch(link[len(pr.rstrip("/")):].lstrip("/"))
+    if not match:
+        return None
+    return base + SOURCE_ANCHORS[match.group(1)] % {"number": number, "id": match.group(2)}
+
+
+def answered_author(pr, reply, links):
+    path = answered_api_path(pr, reply, links)
+    if not path:
+        return None
+    try:
+        user = json.loads(gh(["api", path])).get("user")
+    except (ReplyError, ValueError, AttributeError):
+        return None
+    return user if isinstance(user, dict) else None
+
+
+def is_zerohands(user):
+    return (isinstance(user, dict) and user.get("type") == "Bot"
+            and str(user.get("login") or "").lower().startswith("zerohands"))
+
+
+def hold_for_approval(pr, replies, links, posted):
+    """The unposted replies that answer someone other than Zerohands, as
+    {card: who}."""
+    held = {}
+    for reply in replies:
+        key = reply["card"] if reply["kind"] == "thread" else REVIEW_KEY
+        if key in posted:
+            continue
+        user = answered_author(pr, reply, links)
+        if not is_zerohands(user):
+            held[reply["card"]] = (user or {}).get("login") or UNKNOWN_AUTHOR
+    review = [reply["card"] for reply in replies if reply["kind"] == "review"]
+    blocked = [card for card in review if card in held]
+    for card in review:
+        if blocked and card not in held:
+            held[card] = "%s, in the same comment" % held[blocked[0]]
+    return held
+
+
+def review_comment_body(replies):
+    parts = []
+    for reply in replies:
+        quote = reply.get("quote")
+        if isinstance(quote, str) and quote.strip():
+            parts.append("> " + "\n> ".join(quote.strip().splitlines()))
+        parts.append(reply["body"].strip())
+    return "\n\n".join(parts) + "\n"
+
+
+def post_pr_comment(pr, body):
+    out = gh(["pr", "comment", pr, "--body-file", "-"], body)
+    url = next((line.strip() for line in out.splitlines()
+                if line.strip().startswith("https://")), None)
+    if not url:
+        raise ReplyError("gh pr comment printed no comment URL")
+    match = re.search(r"#issuecomment-(\d+)$", url)
+    return {"id": int(match.group(1)) if match else None, "url": url}
+
+
+def posted_section(replies, posted):
+    lines = [POSTED_HEADING, ""]
+    for reply in replies:
+        key = reply["card"] if reply["kind"] == "thread" else REVIEW_KEY
+        lines.append("- Card %s: %s" % (reply["card"], posted[key]["url"]))
+    return "\n".join(lines) + "\n"
+
+
+def update_page(run_dir, replies, posted):
+    page = run_dir / PAGE
+    if not page.exists():
+        return
+    text = page.read_text()
+    shutil.copyfile(page, run_dir / (PAGE + ".bak-replies"))
+    head = text.split("\n" + POSTED_HEADING + "\n", 1)[0].rstrip("\n")
+    write_atomic(page, head + "\n\n" + posted_section(replies, posted))
+
+
+@contextlib.contextmanager
+def post_lock(run_dir):
+    with (run_dir / ".pr-replies.lock").open("a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ReplyError("replies for this run are already being posted") from exc
+        yield
+
+
+def post_replies(run_dir, zerohands_only=False):
+    meta_path = run_dir / "meta.json"
+    with post_lock(run_dir):
+        meta = read_json(meta_path)
+        feedback = meta.get("prFeedback")
+        if isinstance(feedback, dict) and feedback.get("repliesPostedAt"):
+            return [], {}
+        pr, replies, links = load_plan(run_dir, meta)
+        posted = meta["prFeedback"].setdefault("replies", {})
+        held = hold_for_approval(pr, replies, links, posted) if zerohands_only else {}
+        new = []
+        for reply in replies:
+            if reply["kind"] != "thread" or reply["card"] in posted \
+                    or reply["card"] in held:
+                continue
+            result = post_thread_reply(pr, reply["commentId"], reply["body"])
+            posted[reply["card"]] = dict(result, postedAt=now())
+            write_meta(meta_path, meta)
+            new.append((reply["card"], result["url"]))
+        review = [reply for reply in replies if reply["kind"] == "review"]
+        if review and REVIEW_KEY not in posted and review[0]["card"] not in held:
+            result = post_pr_comment(pr, review_comment_body(review))
+            posted[REVIEW_KEY] = dict(result, postedAt=now(),
+                                      cards=[reply["card"] for reply in review])
+            write_meta(meta_path, meta)
+            new.append((", ".join(reply["card"] for reply in review), result["url"]))
+        if held:
+            return new, held
+        meta["prFeedback"]["repliesPostedAt"] = now()
+        if meta.get("phase") == "done" and meta.get("status") in ("running", "awaiting-gate"):
+            meta["status"] = "complete"
+        write_meta(meta_path, meta)
+        update_page(run_dir, replies, posted)
+        return new, held
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-pr-replies")
+    parser.add_argument("--run-dir", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--zerohands-only", action="store_true",
+        help="post the replies to Zerohands and hold the replies to people")
+    args = parser.parse_args(argv)
+    run_dir = args.run_dir.expanduser().resolve()
+    try:
+        new, held = post_replies(run_dir, args.zerohands_only)
+    except ReplyError as exc:
+        print("orc-pr-replies: %s" % exc, file=sys.stderr)
+        return 1
+    if not new and not held:
+        print("replies already posted; nothing sent")
+    for cards, url in new:
+        print("posted card %s: %s" % (cards, url))
+    for card, who in held.items():
+        print("held card %s: reply to %s waits for your approval" % (card, who))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

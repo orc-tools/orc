@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""Check a run's branch out in its main checkout and drop the run worktree.
+
+Local only: no merge commit, no push, no PR. bin/orc-merge-main lands code by
+merging; this only moves where the user keeps working on it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+
+class BringToMainError(Exception):
+    pass
+
+
+MERGE_STATUSES = {"merging", "merging-to-parent"}
+
+
+def now():
+    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# Mirrors orc-merge-main.git_env: an inherited GIT_INDEX_FILE/GIT_DIR from a
+# hook context resolves relative to the worktree and breaks `git -C`.
+def git_env():
+    env = dict(os.environ)
+    for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+        env.pop(name, None)
+    return env
+
+
+def run_git(repo, *args, check=True):
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args], text=True, capture_output=True,
+        env=git_env())
+    if check and result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise BringToMainError("git %s failed%s" % (
+            " ".join(args), ": " + detail if detail else ""))
+    return result
+
+
+def git_value(repo, *args):
+    return run_git(repo, *args).stdout.strip()
+
+
+def read_json(path):
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise BringToMainError("could not read %s: %s" % (path, exc)) from exc
+    if not isinstance(value, dict):
+        raise BringToMainError("%s must contain a JSON object" % path)
+    return value
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=".%s." % path.name, suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(value, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+
+
+def canonical_repo(path):
+    if not isinstance(path, str) or not path.strip():
+        raise BringToMainError("run has no repository path")
+    try:
+        return Path(git_value(Path(path).expanduser(), "rev-parse",
+                               "--show-toplevel")).resolve()
+    except BringToMainError as exc:
+        raise BringToMainError("not a Git checkout: %s" % path) from exc
+
+
+def git_common_dir(repo):
+    common = Path(git_value(repo, "rev-parse", "--git-common-dir"))
+    if not common.is_absolute():
+        common = repo / common
+    return common.resolve()
+
+
+def default_branch(repo):
+    result = run_git(repo, "symbolic-ref", "--quiet", "--short",
+                     "refs/remotes/origin/HEAD", check=False)
+    if result.returncode == 0 and "/" in result.stdout:
+        return result.stdout.strip().split("/", 1)[1]
+    for candidate in ("main", "master"):
+        result = run_git(
+            repo, "rev-parse", "--verify", "--quiet",
+            "refs/heads/%s" % candidate, check=False)
+        if result.returncode == 0:
+            return candidate
+    raise BringToMainError("cannot determine the default branch safely")
+
+
+def require_clean(repo, label):
+    dirty = bool(run_git(repo, "status", "--porcelain").stdout.strip())
+    if dirty:
+        raise BringToMainError("%s checkout is dirty: %s" % (label, repo))
+    git_dir = Path(git_value(repo, "rev-parse", "--git-dir"))
+    if not git_dir.is_absolute():
+        git_dir = repo / git_dir
+    if (git_dir / "MERGE_HEAD").exists() or (git_dir / "rebase-merge").exists() \
+            or (git_dir / "rebase-apply").exists():
+        raise BringToMainError("%s checkout has a merge or rebase in progress" % label)
+
+
+def find_merge_blocker(runs_dir, run_id, target_repo):
+    """Return one other run holding the shared per-repository merge slot."""
+    try:
+        candidates = sorted(runs_dir.iterdir(), key=lambda path: path.name)
+    except OSError:
+        return None
+    for candidate_dir in candidates:
+        candidate_id = candidate_dir.name
+        if candidate_id == run_id or candidate_id.startswith(".") \
+                or not candidate_dir.is_dir():
+            continue
+        try:
+            meta = read_json(candidate_dir / "meta.json")
+        except BringToMainError:
+            continue
+        if meta.get("status") not in MERGE_STATUSES:
+            continue
+        try:
+            candidate_repo = canonical_repo(
+                meta.get("mainRepoPath") or meta.get("repoPath"))
+        except BringToMainError:
+            continue
+        if candidate_repo != target_repo:
+            continue
+        title = meta.get("title")
+        return (title.strip() if isinstance(title, str) and title.strip()
+                else candidate_id), candidate_id
+    return None
+
+
+def transaction_path(run_dir):
+    return run_dir / "bring-to-main-transaction.json"
+
+
+def validate_preconditions(meta):
+    """Read-only checks. Raises before anything is written or checked out."""
+    repositories = meta.get("repositories")
+    if isinstance(repositories, list) and len(repositories) > 1:
+        raise BringToMainError(
+            "multi-repository runs cannot bring to main; land each "
+            "repository through its own delivery")
+    target = canonical_repo(meta.get("mainRepoPath") or "")
+    configured_target = Path(meta.get("mainRepoPath", "")).expanduser().resolve()
+    if configured_target != target:
+        raise BringToMainError("mainRepoPath must name the exact default checkout")
+    common_dir = git_common_dir(target)
+    if common_dir.parent != target:
+        raise BringToMainError("mainRepoPath is not the primary checkout")
+    branch = meta.get("branch")
+    if not isinstance(branch, str) or not branch.strip():
+        raise BringToMainError("run has no recorded branch")
+    if run_git(target, "rev-parse", "--verify", "--quiet",
+              "refs/heads/%s" % branch, check=False).returncode != 0:
+        raise BringToMainError("branch %s does not exist in %s" % (branch, target))
+    require_clean(target, "main")
+    default = default_branch(target)
+    current = git_value(target, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if current not in (branch, default):
+        raise BringToMainError(
+            "mainRepoPath is on %s — check out %s or %s to bring this run to main"
+            % (current or "a detached HEAD", default, branch))
+    raw_source = meta.get("repoPath")
+    source = canonical_repo(raw_source) if isinstance(raw_source, str) \
+        and raw_source.strip() else target
+    if source != target:
+        require_clean(source, "run")
+    return target, source, branch
+
+
+def bring_to_main(runs_dir, run_id):
+    run_dir = runs_dir / run_id
+    meta_path = run_dir / "meta.json"
+    meta = read_json(meta_path)
+    if meta.get("runId") not in (None, run_id):
+        raise BringToMainError("run metadata identity does not match directory")
+    if meta.get("broughtToMainAt") and meta.get("status") == "complete" \
+            and meta.get("phase") == "done":
+        return meta.get("mainRepoPath"), meta.get("branch"), True
+
+    target, source, branch = validate_preconditions(meta)
+    blocker = find_merge_blocker(runs_dir, run_id, target)
+    if blocker:
+        raise BringToMainError("blocked by %s (%s), which holds the repository lock"
+                              % blocker)
+
+    # Tear the worktree down before switching mainRepoPath onto its branch:
+    # Git refuses to check a branch out anywhere else while a linked worktree
+    # still holds it.
+    worktree = meta.get("worktree")
+    if source != target and isinstance(worktree, dict) and worktree.get("enabled"):
+        helper = Path(__file__).resolve().parent / "orc-worktree"
+        result = subprocess.run(
+            [sys.executable, str(helper), "teardown-generic",
+             "--run-dir", str(run_dir)],
+            capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            detail = (result.stderr or result.stdout).strip()
+            raise BringToMainError("worktree teardown failed: %s" % detail)
+
+    run_git(target, "checkout", "--quiet", branch)
+
+    meta = read_json(meta_path)
+    brought_at = now()
+    meta.update({"status": "complete", "phase": "done", "broughtToMainAt": brought_at})
+    write_json(meta_path, meta)
+    write_json(transaction_path(run_dir), {
+        "runId": run_id, "branch": branch, "targetPath": str(target),
+        "broughtToMainAt": brought_at,
+    })
+    return str(target), branch, False
+
+
+BRING_TO_MAIN_LOCK_WAIT_SECONDS = 30.0
+
+
+@contextlib.contextmanager
+def bring_to_main_lock(runs_dir, target_repo, timeout=None):
+    if timeout is None:
+        # Test-only override: a real 30s wait would make lock-contention
+        # coverage slow.
+        timeout = float(os.environ.get("ORC_BRING_TO_MAIN_TEST_LOCK_TIMEOUT")
+                        or BRING_TO_MAIN_LOCK_WAIT_SECONDS)
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(str(target_repo).encode()).hexdigest()[:16]
+    lock_path = runs_dir / (".merge-parent-%s.lock" % digest)
+    with lock_path.open("a+") as handle:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise BringToMainError(
+                        "another local merge operation is running") from exc
+                time.sleep(0.1)
+        yield
+
+
+def target_repo_for(runs_dir, run_id):
+    meta = read_json(runs_dir / run_id / "meta.json")
+    return canonical_repo(meta.get("mainRepoPath") or "")
+
+
+def print_completion_block(run_id, target, branch):
+    port = os.environ.get("ORC_UI_PORT", "4173")
+    print("")
+    print("final message must be these two lines (Completion block):")
+    print("[Open in Orc.app](http://127.0.0.1:%s/#%s)" % (port, run_id))
+    print("")
+    print("<status dot> Brought %s to main (%s) — <one-line what changed>" % (
+        branch, target))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-bring-to-main")
+    parser.add_argument("run_id")
+    args = parser.parse_args(argv)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id):
+        parser.error("run_id is unsafe")
+    runs_dir = Path(os.environ.get("ORC_RUNS_DIR", "~/.orc/runs")).expanduser().resolve()
+    try:
+        target_repo = target_repo_for(runs_dir, args.run_id)
+        with bring_to_main_lock(runs_dir, target_repo):
+            target, branch, already = bring_to_main(runs_dir, args.run_id)
+    except BringToMainError as exc:
+        print("orc-bring-to-main: %s" % exc, file=sys.stderr)
+        return 1
+    note = " (already on main)" if already else ""
+    print("brought %s to main at %s%s" % (args.run_id, target, note))
+    print_completion_block(args.run_id, target, branch)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

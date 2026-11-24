@@ -1,0 +1,11 @@
+{
+  "world": "mr-robot",
+  "width": 1280,
+  "height": 800,
+  "left": 300,
+  "titles": {
+    "chat": "Quarantine hosts beaconing to the CS-30 rootkit",
+    "pull-request": "Require security keys for transfers over $10k",
+    "plan": "Plan how the tape vaults survive a controller failure"
+  }
+}

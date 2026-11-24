@@ -1,0 +1,14 @@
+{
+  "apiVersion": 1,
+  "id": "auto-merge",
+  "name": "Auto merge",
+  "version": "1.0.0",
+  "description": "Adds a ship button to the composer and Chat. When on, new runs skip the plan and any run takes its project's Ship action once done.",
+  "icon": "icon.png",
+  "adoptOnUpgrade": true,
+  "onByDefault": true,
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py"
+  }
+}

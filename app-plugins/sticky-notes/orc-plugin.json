@@ -1,0 +1,12 @@
+{
+  "apiVersion": 1,
+  "id": "sticky-notes",
+  "name": "Sticky notes",
+  "version": "1.0.0",
+  "description": "Draggable sticky notes on project home for open tickets, with a corner handout, inline editing and prompt badges.",
+  "icon": "icon.png",
+  "adoptOnUpgrade": true,
+  "contributes": {
+    "frontend": "frontend.js"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "apiVersion": 1,
+  "id": "files-browser",
+  "name": "Files browser",
+  "version": "1.0.0",
+  "description": "Browse and preview checkout files, then open them with your editors or custom scripts.",
+  "adoptOnUpgrade": true,
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py"
+  },
+  "icon": "icon.png"
+}

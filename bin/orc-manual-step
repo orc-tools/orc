@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Leave the user a step only they can do, where they cannot miss it.
+
+`orc-manual-step add --title "..." --command '...'` puts a checklist in the
+run's Chat with the exact command to paste. Orc refuses to settle the run
+until the user has ticked every step.
+`orc-manual-step add --follow-up --title "..."` leaves a run for the user to
+start instead, such as a review comment they moved to a follow-up run.
+`orc-manual-step list` prints the run's steps and how many are still open.
+`orc-manual-step done ID` ticks a step you ran yourself because the user asked.
+`orc-manual-step remove ID` drops a step that no longer applies.
+"""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import manual_steps  # noqa: E402
+import run_dir_args  # noqa: E402
+
+
+def run_dir_for(args):
+    return run_dir_args.resolve(args, "orc-manual-step")
+
+
+def add(args):
+    run_dir, status = run_dir_for(args)
+    if status == "cancelled":
+        raise SystemExit("orc-manual-step: run is cancelled and cannot leave a step")
+    step = manual_steps.add(str(run_dir), args.title, command=args.command, detail=args.detail,
+                            follow_up=args.follow_up)
+    print("Recorded step %s: %s. Orc lists it in this run's Chat and will not settle the run "
+          "until the user ticks it. Name it in your reply too. If the user asks you to run "
+          "it, run it and then `orc-manual-step done %s`." % (step["id"], step["title"], step["id"]))
+
+
+def show(args):
+    run_dir, _status = run_dir_for(args)
+    print(json.dumps({"steps": manual_steps.steps(str(run_dir)),
+                      "open": manual_steps.open_count(str(run_dir))}, indent=2))
+
+
+def done(args):
+    run_dir, _status = run_dir_for(args)
+    step = manual_steps.set_done(str(run_dir), args.id, True, by="agent")
+    print("Ticked step %s: %s." % (step["id"], step["title"]))
+
+
+def remove(args):
+    run_dir, _status = run_dir_for(args)
+    step = manual_steps.remove(str(run_dir), args.id)
+    print("Removed step %s: %s." % (step["id"], step["title"]))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    new = commands.add_parser("add", help="leave the user a step to do by hand")
+    new.add_argument("--title", required=True, help="what to do, as one imperative line")
+    new.add_argument("--command", default="",
+                     help="the exact command to paste, runnable from any directory after delivery")
+    new.add_argument("--detail", default="", help="why it is needed, or what to expect")
+    new.add_argument("--follow-up", action="store_true",
+                     help="a run for the user to start (its title is the run's task), not a command")
+    new.set_defaults(handler=add)
+    commands.add_parser("list", help="print the run's steps as JSON").set_defaults(handler=show)
+    ticked = commands.add_parser("done", help="tick a step you ran because the user asked")
+    ticked.add_argument("id")
+    ticked.set_defaults(handler=done)
+    dropped = commands.add_parser("remove", help="drop a step that no longer applies")
+    dropped.add_argument("id")
+    dropped.set_defaults(handler=remove)
+    for command in commands.choices.values():
+        run_dir_args.add_arguments(command)
+    args = parser.parse_args()
+    try:
+        args.handler(args)
+    except manual_steps.StepError as error:
+        raise SystemExit("orc-manual-step: %s" % error)
+
+
+if __name__ == "__main__":
+    main()

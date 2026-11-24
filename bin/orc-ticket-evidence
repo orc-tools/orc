@@ -1,0 +1,613 @@
+#!/usr/bin/env python3
+"""Validate ticket evidence and rebuild the legacy root diff aggregate."""
+
+from __future__ import annotations
+
+import argparse
+from hashlib import sha256
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+
+TICKET = re.compile(r"^Ticket-\d+$")
+SHA = re.compile(r"^[0-9a-f]{40}$")
+STATUS = {"planned", "building", "complete", "blocked", "failed"}
+PLAN_V3_MARKER = "<!-- plan-contract-version: 3 -->"
+
+
+def load_json(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
+def within(run_dir: Path, raw: str) -> Path:
+    path = (run_dir / raw).resolve()
+    try:
+        path.relative_to(run_dir.resolve())
+    except ValueError as exc:
+        raise ValueError(f"evidence path escapes run dir: {raw}") from exc
+    return path
+
+
+def plan_tickets(run_dir: Path) -> tuple[str, dict[str, dict]]:
+    path = run_dir / "plan.mdx"
+    try:
+        payload = path.read_bytes()
+        text = payload.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}") from exc
+    if PLAN_V3_MARKER not in text:
+        raise ValueError("ticket evidence requires a v3 plan")
+    lines = text.splitlines()
+    try:
+        start = next(index for index, line in enumerate(lines)
+                     if line.strip() == "## Tickets") + 1
+    except StopIteration as exc:
+        raise ValueError("v3 plan has no Tickets section") from exc
+    section = []
+    for line in lines[start:]:
+        if line.startswith("## "):
+            break
+        if line.strip():
+            section.append(line.strip())
+    expected = ["Ticket", "Repository", "Scope", "Blocked by", "Review boundary"]
+    if len(section) < 3:
+        raise ValueError("v3 Tickets table is missing")
+
+    def cells(line: str) -> list[str]:
+        return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+    if cells(section[0]) != expected:
+        raise ValueError("v3 Tickets header is malformed")
+    planned: dict[str, dict] = {}
+    for line in section[2:]:
+        if not line.startswith("|"):
+            break
+        row = cells(line)
+        if len(row) != 5:
+            raise ValueError("v3 Tickets row is malformed")
+        match = re.match(r"^(Ticket-\d+)\s+—\s+\S", row[0])
+        if not match:
+            raise ValueError("v3 Tickets row has an invalid ticket ID")
+        ticket = match.group(1)
+        if ticket in planned:
+            raise ValueError(f"v3 Tickets repeats {ticket}")
+        blockers = [] if row[3] in {"—", "-", "None"} else [
+            value.strip() for value in row[3].split(",")
+        ]
+        planned[ticket] = {
+            "participantId": row[1].removeprefix("`").removesuffix("`"),
+            "scope": [value.strip() for value in row[2].split(",")],
+            "blockedBy": blockers,
+        }
+    if not planned:
+        raise ValueError("v3 Tickets table is empty")
+    return sha256(payload).hexdigest(), planned
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes] | None:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], capture_output=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def git_output(repo: Path, *args: str) -> bytes | None:
+    result = git(repo, *args)
+    return result.stdout if result is not None and result.returncode == 0 else None
+
+
+def linked_fork_authority(
+    run_dir: Path,
+    meta: dict,
+    authorities: dict[str, dict],
+    visited: set[Path],
+) -> tuple[dict[str, set[str]], dict[str, str], list[str]]:
+    """Admit ticket-owned history from terminal children merged with --no-ff."""
+    allowed = {participant: set() for participant in authorities}
+    anchors = {participant: authority["head"] for participant, authority in authorities.items()}
+    errors: list[str] = []
+    forks = meta.get("forks", [])
+    if not isinstance(forks, list):
+        return allowed, anchors, ["meta.forks must be a list"]
+    merged = [row for row in forks if isinstance(row, dict)
+              and row.get("status") == "merged-to-parent"]
+    if not merged:
+        return allowed, anchors, errors
+    merge_parents: dict[str, dict[str, str]] = {
+        participant: {} for participant in authorities
+    }
+    parent_id = meta.get("runId") or run_dir.name
+    for row in merged:
+        child_id = row.get("childRunId")
+        if (not isinstance(child_id, str) or not child_id
+                or "/" in child_id or child_id in {".", ".."}):
+            errors.append("linked child has an unsafe run ID")
+            continue
+        child_dir = (run_dir.parent / child_id).resolve()
+        if child_dir.parent != run_dir.parent.resolve() or not child_dir.is_dir():
+            errors.append(f"linked child {child_id}: run directory is unavailable")
+            continue
+        try:
+            child = load_json(child_dir / "meta.json")
+            if child.get("lifecycleVersion") == 4:
+                delivery_proof = load_json(child_dir / "delivery-authority.json")
+                producer_rows = delivery_proof.get("participants")
+            else:
+                delivery_proof = load_json(child_dir / "verification-receipt.json")
+                producer_rows = delivery_proof.get("finalHeads")
+        except ValueError as exc:
+            errors.append(f"linked child {child_id}: {exc}")
+            continue
+        merge_commit = row.get("mergeCommit")
+        if not isinstance(merge_commit, str) or not SHA.fullmatch(merge_commit):
+            errors.append(f"linked child {child_id}: mergeCommit is invalid")
+            continue
+        if not all((
+            child.get("runId") == child_id,
+            child.get("source") == "fork",
+            child.get("parentRunId") == parent_id,
+            child.get("mergedIntoRunId") == parent_id,
+            child.get("phase") == "done",
+            child.get("status") == "merged-to-parent",
+            child.get("mergeCommit") == merge_commit,
+        )):
+            errors.append(f"linked child {child_id}: terminal provenance does not match parent")
+            continue
+        if child.get("lifecycleVersion") == 4:
+            if (delivery_proof.get("schemaVersion") not in {1, 2}
+                    or delivery_proof.get("lifecycleVersion") != 4):
+                errors.append(f"linked child {child_id}: valid v4 delivery authority is required")
+                continue
+        elif (delivery_proof.get("status") != "pass"
+              or delivery_proof.get("lifecycleVersion") != 3):
+            errors.append(f"linked child {child_id}: passing v3 receipt is required")
+            continue
+        producers = [(entry.get("participantId"), entry.get("head"))
+                     for entry in producer_rows or [] if isinstance(entry, dict)
+                     and entry.get("participantId") in authorities]
+        if len(producers) != 1 or not SHA.fullmatch(str(producers[0][1])):
+            errors.append(f"linked child {child_id}: delivery producer head is missing")
+            continue
+        participant, producer_head = producers[0]
+        authority = authorities[participant]
+        repo = authority["repo"]
+        parent_row = git_output(repo, "rev-list", "--parents", "-n", "1", merge_commit)
+        parts = parent_row.decode().split() if parent_row is not None else []
+        if len(parts) != 3 or parts[2] != producer_head:
+            errors.append(f"linked child {child_id}: merge parents do not match delivery proof")
+            continue
+        if merge_commit not in authority["history"]:
+            errors.append(f"linked child {child_id}: merge commit is outside parent history")
+            continue
+        ticket_binding = delivery_proof.get("ticketEvidence")
+        try:
+            manifest_path = within(child_dir, str((ticket_binding or {}).get("path", "")))
+            if manifest_path != (child_dir / "evidence" / "manifest.json").resolve():
+                raise ValueError("ticket evidence path is not canonical")
+            if sha256(manifest_path.read_bytes()).hexdigest() != (ticket_binding or {}).get("sha256"):
+                raise ValueError("ticket evidence digest does not match")
+        except (OSError, ValueError) as exc:
+            errors.append(f"linked child {child_id}: {exc}")
+            continue
+        _, child_errors = validate(child_dir, visited)
+        if child_errors:
+            errors.append(f"linked child {child_id}: " + "; ".join(child_errors))
+            continue
+        child_repos = child.get("repositories")
+        child_repo = next((item for item in child_repos or []
+                           if isinstance(item, dict) and item.get("id") == participant), None)
+        child_base = child_repo.get("buildBaseCommit") if child_repo else None
+        if not isinstance(child_base, str) or not SHA.fullmatch(child_base):
+            errors.append(f"linked child {child_id}: build base is missing")
+            continue
+        history = git_output(repo, "rev-list", child_base + ".." + producer_head)
+        if history is None:
+            errors.append(f"linked child {child_id}: producer history is unavailable")
+            continue
+        allowed[participant].update(value for value in history.decode().splitlines() if value)
+        allowed[participant].add(merge_commit)
+        merge_parents[participant][merge_commit] = parts[1]
+
+    for participant, authority in authorities.items():
+        current = authority["head"]
+        seen: set[str] = set()
+        parents = merge_parents[participant]
+        while current in parents and current not in seen:
+            seen.add(current)
+            current = parents[current]
+        anchors[participant] = current
+    return allowed, anchors, errors
+
+
+def validate(run_dir: Path, visited: set[Path] | None = None) -> tuple[dict, list[str]]:
+    run_dir = run_dir.resolve()
+    visited = set() if visited is None else set(visited)
+    if run_dir in visited:
+        return {}, [f"linked child evidence cycle at {run_dir.name}"]
+    visited.add(run_dir)
+    errors: list[str] = []
+    manifest = load_json(run_dir / "evidence" / "manifest.json")
+    meta = load_json(run_dir / "meta.json")
+    if manifest.get("schemaVersion") != 1:
+        errors.append("evidence schemaVersion must be 1")
+    plan_digest, planned = plan_tickets(run_dir)
+    if manifest.get("planSourceDigest") != plan_digest:
+        errors.append("evidence planSourceDigest does not match plan.mdx")
+    if meta.get("repositoriesVersion") != 1:
+        errors.append("meta.repositoriesVersion must be 1")
+    repos = meta.get("repositories")
+    if not isinstance(repos, list) or not repos:
+        errors.append("meta.repositories must be a nonempty list")
+        participant_ids: set[str] = set()
+    else:
+        participant_ids = {
+            item.get("id") for item in repos
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if len(participant_ids) != len(repos):
+            errors.append("repository participant IDs must be unique strings")
+    repos_by_id = {
+        item.get("id"): item for item in repos or []
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    authorities: dict[str, dict] = {}
+    for participant in sorted(set(item["participantId"] for item in planned.values())):
+        repo_meta = repos_by_id.get(participant)
+        repo_path_raw = repo_meta.get("repoPath") if isinstance(repo_meta, dict) else None
+        main_repo_path_raw = repo_meta.get("mainRepoPath") if isinstance(repo_meta, dict) else None
+        branch = repo_meta.get("branch") if isinstance(repo_meta, dict) else None
+        base = repo_meta.get("buildBaseCommit") if isinstance(repo_meta, dict) else None
+        candidate_raws = [
+            raw for raw in (repo_path_raw, main_repo_path_raw)
+            if isinstance(raw, str) and raw.strip()
+        ]
+        if (not candidate_raws
+                or not isinstance(branch, str) or not branch.strip()
+                or not isinstance(base, str) or not SHA.fullmatch(base)):
+            errors.append(f"participant {participant}: Git authority is incomplete")
+            continue
+        candidates: list[Path] = []
+        for raw in candidate_raws:
+            resolved = Path(raw).expanduser().resolve()
+            if resolved not in candidates:
+                candidates.append(resolved)
+        recorded_repo_path = (
+            Path(repo_path_raw).expanduser().resolve()
+            if isinstance(repo_path_raw, str) and repo_path_raw.strip() else None
+        )
+        repo = None
+        head = ""
+        for candidate in candidates:
+            inside = git_output(candidate, "rev-parse", "--is-inside-work-tree")
+            if inside is None or inside.strip() != b"true":
+                continue
+            head_output = git_output(candidate, "rev-parse", "--verify", "refs/heads/" + branch)
+            candidate_head = head_output.decode().strip() if head_output is not None else ""
+            if not SHA.fullmatch(candidate_head):
+                continue
+            repo = candidate
+            head = candidate_head
+            break
+        if repo is None:
+            errors.append(f"participant {participant}: repository is unavailable")
+            continue
+        ancestry = git(repo, "merge-base", "--is-ancestor", base, head)
+        if ancestry is None or ancestry.returncode != 0:
+            errors.append(f"participant {participant}: build base is not an ancestor of head")
+        if repo == recorded_repo_path:
+            # Compare content against HEAD, not `git status`. A path-scoped
+            # commit (`git commit -- <paths>`) discards whatever a pre-commit
+            # hook staged outside those paths, leaving a stale index entry over
+            # a file whose content already matches HEAD -- real dirt for
+            # `status`, nothing uncommitted in fact. `diff HEAD` still catches
+            # unstaged edits, staged edits and staged additions.
+            dirty = git(repo, "diff", "--quiet", "HEAD")
+            if dirty is None or dirty.returncode != 0:
+                errors.append(f"participant {participant}: checkout has uncommitted tracked changes")
+        history = git_output(repo, "rev-list", "--reverse", base + ".." + head)
+        if history is None:
+            errors.append(f"participant {participant}: branch history is unavailable")
+            continue
+        history_set = {value for value in history.decode().splitlines() if value}
+        merge_commits: set[str] = set()
+        for commit in sorted(history_set):
+            commit_row = git_output(repo, "rev-list", "--parents", "-n", "1", commit)
+            parts = commit_row.decode().split() if commit_row is not None else []
+            if len(parts) <= 2:
+                continue
+            if len(parts) != 3:
+                errors.append(
+                    f"participant {participant}: merge commit {commit} must have exactly two parents"
+                )
+                continue
+            merge_valid = True
+            for parent in parts[1:]:
+                parent_in_range = parent == base or parent in history_set
+                head_check = git(repo, "merge-base", "--is-ancestor", parent, head)
+                shared_base = git_output(repo, "merge-base", base, parent)
+                if (not parent_in_range or head_check is None
+                        or head_check.returncode != 0 or shared_base is None
+                        or not shared_base.strip()):
+                    errors.append(
+                        f"participant {participant}: merge commit {commit} has parent "
+                        f"{parent} outside participant base..head"
+                    )
+                    merge_valid = False
+                    continue
+                merged_history = git_output(repo, "rev-list", base + ".." + parent)
+                merged_commits = set(merged_history.decode().splitlines()) \
+                    if merged_history is not None else set()
+                if merged_history is None or not merged_commits.issubset(history_set):
+                    errors.append(
+                        f"participant {participant}: merge commit {commit} has history "
+                        "outside participant authority"
+                    )
+                    merge_valid = False
+            if merge_valid:
+                merge_commits.add(commit)
+        authorities[participant] = {
+            "repo": repo, "base": base, "head": head,
+            "history": history_set, "mergeCommits": merge_commits,
+        }
+    linked_commits, evidence_heads, linked_errors = linked_fork_authority(
+        run_dir, meta, authorities, visited
+    )
+    errors.extend(linked_errors)
+    tickets = manifest.get("tickets")
+    if not isinstance(tickets, list) or not tickets:
+        return manifest, errors + ["evidence tickets must be a nonempty list"]
+    by_id: dict[str, dict] = {}
+    scope_owner: dict[str, str] = {}
+    commit_owner: dict[tuple[str, str], str] = {}
+    owned_by_participant: dict[str, set[str]] = {}
+    diff_owner: dict[Path, str] = {}
+    for entry in tickets:
+        if not isinstance(entry, dict):
+            errors.append("ticket evidence entries must be objects")
+            continue
+        ticket = entry.get("id")
+        if not isinstance(ticket, str) or not TICKET.fullmatch(ticket):
+            errors.append(f"invalid ticket id: {ticket!r}")
+            continue
+        if ticket in by_id:
+            errors.append(f"duplicate ticket id {ticket}")
+        by_id[ticket] = entry
+        participant = entry.get("participantId")
+        if participant not in participant_ids:
+            errors.append(f"{ticket}: unknown participant {participant}")
+        scope = entry.get("scope")
+        if not isinstance(scope, list) or not scope:
+            errors.append(f"{ticket}: scope must be a nonempty list")
+        else:
+            for in_id in scope:
+                if not isinstance(in_id, str) or not re.fullmatch(r"In-\d+", in_id):
+                    errors.append(f"{ticket}: invalid scope ID {in_id!r}")
+                    continue
+                if in_id in scope_owner:
+                    errors.append(f"scope {in_id} is owned more than once")
+                else:
+                    scope_owner[in_id] = ticket
+        if entry.get("status") not in STATUS:
+            errors.append(f"{ticket}: invalid status")
+        blockers = entry.get("blockedBy")
+        if not isinstance(blockers, list):
+            errors.append(f"{ticket}: blockedBy must be a list")
+        if entry.get("status") != "complete":
+            errors.append(f"{ticket}: evidence is not complete")
+            continue
+        for field in ("baseSha", "headSha"):
+            if not isinstance(entry.get(field), str) or not SHA.fullmatch(entry[field]):
+                errors.append(f"{ticket}: {field} must be a 40-character SHA")
+        commits = entry.get("commitShas")
+        if not isinstance(commits, list) or not commits or any(
+            not isinstance(commit, str) or not SHA.fullmatch(commit) for commit in commits
+        ):
+            errors.append(f"{ticket}: commitShas must contain SHAs")
+        diff = entry.get("diff")
+        diff_payload = None
+        diff_path = None
+        if not isinstance(diff, dict):
+            errors.append(f"{ticket}: diff must be an object")
+        else:
+            try:
+                diff_path = within(run_dir, str(diff.get("path", "")))
+                diff_payload = diff_path.read_bytes()
+                if diff_path in diff_owner:
+                    errors.append(
+                        f"{ticket}: diff path is already owned by {diff_owner[diff_path]}"
+                    )
+                else:
+                    diff_owner[diff_path] = ticket
+                if sha256(diff_payload).hexdigest() != diff.get("sha256"):
+                    errors.append(f"{ticket}: diff digest does not match")
+            except (OSError, ValueError) as exc:
+                errors.append(f"{ticket}: cannot read diff: {exc}")
+        verification = entry.get("verification")
+        if not isinstance(verification, list) or not verification:
+            errors.append(f"{ticket}: complete evidence needs verification")
+        else:
+            for proof in verification:
+                if not isinstance(proof, dict):
+                    errors.append(f"{ticket}: verification entries must be objects")
+                    continue
+                if proof.get("result") != "pass":
+                    errors.append(f"{ticket}: verification result must pass")
+                if proof.get("headSha") != entry.get("headSha"):
+                    errors.append(f"{ticket}: verification headSha does not match")
+                if not all(str(proof.get(key, "")).strip() for key in ("command", "recordedAt")):
+                    errors.append(f"{ticket}: verification needs command and recordedAt")
+        if entry.get("invalidatedBy") != []:
+            errors.append(f"{ticket}: complete evidence cannot be invalidated")
+
+        authority = authorities.get(participant)
+        if authority is None:
+            continue
+        repo = authority["repo"]
+        expected_base = authority["base"]
+        branch_head = authority["head"]
+        if entry.get("baseSha") != expected_base:
+            errors.append(f"{ticket}: baseSha does not match participant buildBaseCommit")
+        if entry.get("headSha") != evidence_heads.get(participant, branch_head):
+            errors.append(f"{ticket}: headSha does not match participant branch head")
+
+        derived = bytearray()
+        derivation_complete = True
+        if isinstance(commits, list):
+            for commit in commits:
+                if not isinstance(commit, str) or not SHA.fullmatch(commit):
+                    continue
+                ownership_key = (participant, commit)
+                if ownership_key in commit_owner:
+                    errors.append(
+                        f"{ticket}: commit {commit} is already owned by "
+                        f"{commit_owner[ownership_key]} in participant {participant}"
+                    )
+                    derivation_complete = False
+                    continue
+                commit_owner[ownership_key] = ticket
+                owned_by_participant.setdefault(participant, set()).add(commit)
+                commit_row = git_output(repo, "rev-list", "--parents", "-n", "1", commit)
+                parts = commit_row.decode().split() if commit_row is not None else []
+                if len(parts) != 2:
+                    errors.append(f"{ticket}: commit {commit} is missing or not single-parent")
+                    derivation_complete = False
+                    continue
+                head_check = git(repo, "merge-base", "--is-ancestor", commit, branch_head)
+                shared_base = git_output(repo, "merge-base", expected_base, commit)
+                if (commit not in authority["history"] or head_check is None
+                        or head_check.returncode != 0 or shared_base is None
+                        or not shared_base.strip()):
+                    errors.append(f"{ticket}: commit {commit} is outside participant base..head")
+                    derivation_complete = False
+                    continue
+                patch = git_output(
+                    repo, "diff-tree", "--binary", "--full-index",
+                    "--no-commit-id", "-p", parts[1], commit,
+                )
+                if patch is None:
+                    errors.append(f"{ticket}: cannot derive commit {commit} diff")
+                    derivation_complete = False
+                else:
+                    derived.extend(patch)
+        if diff_payload is not None and derivation_complete and bytes(derived) != diff_payload:
+            errors.append(f"{ticket}: diff is not derived from owned commits")
+
+    for participant, authority in authorities.items():
+        branch_commits = authority["history"] - authority["mergeCommits"]
+        owned = owned_by_participant.get(participant, set())
+        missing = sorted(branch_commits - owned - linked_commits.get(participant, set()))
+        if missing:
+            errors.append(
+                f"participant {participant}: branch history has unowned commits: "
+                + ", ".join(missing)
+            )
+    graph: dict[str, list[str]] = {}
+    for ticket, entry in by_id.items():
+        blockers = entry.get("blockedBy") if isinstance(entry.get("blockedBy"), list) else []
+        graph[ticket] = []
+        for blocker in blockers:
+            if blocker not in by_id:
+                errors.append(f"{ticket}: unknown blocker {blocker}")
+            else:
+                graph[ticket].append(blocker)
+                if (entry.get("status") == "complete"
+                        and by_id[blocker].get("status") != "complete"):
+                    errors.append(
+                        f"{ticket}: complete ticket has incomplete blocker {blocker}")
+    if set(by_id) != set(planned):
+        missing = sorted(set(planned) - set(by_id))
+        extra = sorted(set(by_id) - set(planned))
+        if missing:
+            errors.append("evidence is missing planned tickets: " + ", ".join(missing))
+        if extra:
+            errors.append("evidence contains unplanned tickets: " + ", ".join(extra))
+    for ticket in sorted(set(by_id) & set(planned)):
+        entry = by_id[ticket]
+        expected = planned[ticket]
+        for field in ("participantId", "scope", "blockedBy"):
+            if entry.get(field) != expected[field]:
+                errors.append(f"{ticket}: {field} does not match plan.mdx")
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def walk(ticket: str) -> None:
+        if ticket in visiting:
+            errors.append("ticket blocker graph contains a cycle")
+            return
+        if ticket in visited:
+            return
+        visiting.add(ticket)
+        for blocker in graph.get(ticket, []):
+            walk(blocker)
+        visiting.remove(ticket)
+        visited.add(ticket)
+
+    for ticket in graph:
+        walk(ticket)
+    return manifest, list(dict.fromkeys(errors))
+
+
+def atomic_write(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(name, path)
+    finally:
+        try:
+            os.unlink(name)
+        except FileNotFoundError:
+            pass
+
+
+def rebuild_root(run_dir: Path, manifest: dict) -> None:
+    chunks: list[bytes] = []
+    for entry in manifest["tickets"]:
+        diff = within(run_dir, entry["diff"]["path"]).read_bytes()
+        label = f"# participant: {entry['participantId']} · ticket: {entry['id']}\n".encode()
+        chunks.extend((label, diff, b"\n" if not diff.endswith(b"\n") else b""))
+    atomic_write(run_dir / "diff.patch", b"".join(chunks))
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser()
+    result.add_argument("command", choices=("validate", "rebuild-root"))
+    result.add_argument("--run-dir", required=True, type=Path)
+    return result
+
+
+def main() -> int:
+    args = parser().parse_args()
+    try:
+        manifest, errors = validate(args.run_dir.resolve())
+        if errors:
+            for error in errors:
+                print(error, file=sys.stderr)
+            return 1
+        if args.command == "rebuild-root":
+            rebuild_root(args.run_dir.resolve(), manifest)
+        print(json.dumps({"ok": True, "tickets": len(manifest["tickets"])}))
+        return 0
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

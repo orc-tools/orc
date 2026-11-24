@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Check that the installed agent CLIs still work
+the way Orc reads them, and with --latest the newest release of each too.
+
+Each check runs the CLI against a scripted model on localhost, so it needs no
+sign-in and spends nothing. --latest installs the newest npm release into
+~/.orc/harness-compat/cli (one release per CLI). A release that could not be
+checked is listed as "skip" with the reason. Exits 1 when any check fails.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import harness_compat  # noqa: E402
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("cli", nargs="*", help="CLI ids to check (default: every CLI Orc drives)")
+    parser.add_argument("--latest", action="store_true", help="also check the newest published release")
+    parser.add_argument("--binary", help="check this executable instead (needs exactly one CLI)")
+    parser.add_argument("--json", action="store_true", help="print the results as JSON")
+    args = parser.parse_args(argv)
+    known = harness_compat.clis()
+    unknown = [cli for cli in args.cli if cli not in known]
+    if unknown:
+        parser.error("no compatibility check for %s (known: %s)" % (", ".join(unknown), ", ".join(known)))
+    if args.binary:
+        if len(args.cli) != 1:
+            parser.error("--binary needs exactly one CLI")
+        results = [{**harness_compat.check(args.cli[0], args.binary), "release": "given"}]
+    else:
+        cache = harness_compat.home(os.environ.get("ORC_HOME") or Path.home() / ".orc") / "cli"
+        results = harness_compat.check_all(cache=cache, latest=args.latest, only=set(args.cli) or None)
+    if args.json:
+        print(json.dumps(results, indent=2))
+    for result in () if args.json else results:
+        if result["ok"] is None:
+            print("skip %s (%s): %s" % (result["label"], result["release"], result["reason"]))
+            continue
+        print("%s %s %s (%s, %s)" % ("ok  " if result["ok"] else "FAIL", result["label"], result["version"],
+                                     result["release"], result["binary"]))
+        for failure in result["failures"]:
+            print("     - " + failure)
+    return 1 if any(result["ok"] is False for result in results) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

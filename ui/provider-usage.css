@@ -1,0 +1,154 @@
+/* Settings → Account: what a login has left, inside its card. settings.css
+   lays the card out; these are the figures in it. */
+.login-meter { --usage-bar: var(--green); display: grid; gap: 5px; min-width: 0; font-size: 12.5px; }
+:is(.login-meter, .login-window).usage-level-medium { --usage-bar: var(--yellow); }
+:is(.login-meter, .login-window).usage-level-low { --usage-bar: var(--red); }
+.login-meter-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; color: var(--text); }
+.login-meter-top strong { margin-left: auto; color: var(--heading); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+:is(.login-meter, .login-window).usage-exhausted strong { color: var(--red-text); }
+.login-meter-passed { margin-left: auto; color: var(--muted-strong); font-size: 12px; white-space: nowrap; }
+/* The wrapper draws the bar: WebKit paints a <meter> its own green whatever
+   is asked of it. The meter fills the wrapper, unseen, for assistive tech. */
+.login-bar { position: relative; display: block; height: 6px; overflow: hidden; border-radius: 999px; background: var(--accent-soft); }
+.login-bar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--usage-fill); border-radius: 999px; background: var(--usage-bar); }
+.login-bar meter { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; appearance: none; }
+.login-meter-foot { color: var(--muted-strong); font-size: 12px; line-height: 1.45; }
+/* Facts on one line with a dot between them. Each fact carries its dot in the
+   space to its left, and the list is pulled left by that space, so the dot of
+   a fact that starts a line falls outside the clip: a wrapped line neither
+   ends nor starts on one. */
+/* The clip edge sits 4px outside the text, room for a focus ring at a line's
+   start, without overflow-clip-margin, which WebKit lacks. */
+:is(.login-meter-foot, .login-strip-facts) { overflow-x: clip; margin-inline: -4px; padding-inline: 4px; }
+.login-dots { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; margin-left: -17px; }
+.login-dots > * { position: relative; padding-left: 17px; }
+.login-dots > *::before { content: "·"; position: absolute; left: 6px; }
+.login-dots > .usage-renewal.is-editing::before { content: none; }
+.login-meter-note { margin: 0; color: var(--muted-strong); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.usage-btn-compact, :is(.login-strip, .usage-tip-reset-card) .settings-btn-inline { min-height: 24px; padding: 3px 8px; border-radius: 6px; font-size: 11px; line-height: 16px; white-space: nowrap; }
+:is(.login-strip, .usage-tip-reset-card, .usage-renewal) .settings-note:empty { display: none; }
+:is(.login-strip, .usage-tip-reset-card) button:disabled { opacity: .55; cursor: default; }
+:is(.login-strip, .usage-tip-reset-card, .usage-renewal) button:focus-visible, .usage-renewal input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.usage-auto-reset { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.usage-auto-reset button[aria-disabled="true"] { opacity: .55; cursor: default; }
+/* The plan's renewal day reads as part of the line under the bar until it is edited. */
+.usage-renewal { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.usage-renewal.is-editing { flex: 1 1 100%; display: grid; gap: 5px; padding-top: 4px; }
+.usage-renewal-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.usage-renewal label { color: var(--muted-strong); font-size: 11.5px; white-space: nowrap; }
+.usage-renewal input { width: 6ch; min-height: 24px; padding: 2px 6px; border: 1px solid var(--control-border); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; font-size: 12px; }
+.usage-renewal input[aria-invalid="true"] { border-color: var(--red); }
+/* Every window a login reports, in its opened card. */
+.login-windows { display: grid; align-content: start; gap: 6px; min-width: 0; font-size: 12.5px; }
+.login-window { --usage-bar: var(--green); display: grid; grid-template-columns: minmax(0, 126px) minmax(40px, 1fr) minmax(62px, auto) minmax(0, 150px); align-items: center; gap: 4px 12px; }
+.login-window-label { color: var(--text); overflow-wrap: anywhere; }
+.login-window strong { text-align: right; color: var(--heading); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.login-window-when { color: var(--muted-strong); font-size: 12px; }
+.login-window .usage-tip-toggle { font-size: 12px; text-align: left; }
+.usage-window-excluded :is(.login-window-label, .login-bar, strong) { opacity: .55; }
+/* Narrow: the label and what is left share a line, over the bar, over the reset. */
+@container login (max-width: 620px) {
+  .login-window { grid-template-columns: minmax(0, 1fr) auto; }
+  .login-window-label { grid-area: 1 / 1; }
+  .login-window strong { grid-area: 1 / 2; }
+  .login-window .login-bar { grid-area: 2 / 1 / auto / -1; }
+  .login-window-when { grid-area: 3 / 1 / auto / -1; }
+}
+/* Under a login's row: what its plan holds beyond the windows, and Codex's
+   controls for spending a reset. */
+.login-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted-strong); }
+.login-strip-facts { margin-block: 0; min-width: 0; }
+.login-strip-facts strong { color: var(--heading); font-weight: 600; }
+.login-strip-actions { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.login-strip .usage-tip-toggle { font-size: 12.5px; }
+/* A plugin's allowance, in the Other allowances card. */
+.login-allowances { display: grid; gap: 12px; }
+.login-allowance + .login-allowance { padding-top: 12px; border-top: 1px solid var(--border); }
+.login-allowance:focus { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+.login-allowance-name { color: var(--heading); font-size: 13px; font-weight: 600; }
+#usage-reset-dialog { --orc-dialog-max-width: 480px; }
+#usage-reset-dialog [slot="footer"] { display: flex; gap: 12px; }
+#sidebar-usage[hidden] { display: none; }
+#sidebar-usage { position: relative; flex-shrink: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
+#sidebar-usage [data-usage-summary] { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 5px 8px; font-size: 11.5px; }
+/* WebKit mis-sizes refreshed subgrids that anchor absolute children.
+   The provider label anchors the tooltip instead. */
+.usage-row { --usage-bar: var(--green); display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; cursor: help; }
+.usage-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 3px; }
+.usage-tooltip { display: none; position: absolute; bottom: 100%; left: 0; width: max-content; min-width: 220px; max-width: min(440px, calc(100vw - 32px)); box-sizing: border-box; max-height: min(480px, 65dvh); overflow-y: auto; padding: 10px 12px; z-index: var(--z-tooltip); border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--heading); box-shadow: 0 8px 24px #0004; font-size: 12px; font-weight: 400; line-height: 1.45; overflow-wrap: anywhere; cursor: default; }
+.usage-tooltip > strong, .usage-tooltip-email { display: block; }
+.usage-tooltip-email { color: var(--muted-strong); font-size: 11px; }
+.usage-tip-windows { clear: both; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 4px 8px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.usage-tip-window { --usage-bar: var(--green); display: contents; }
+.usage-tip-window.usage-level-medium { --usage-bar: var(--yellow); }
+.usage-tip-window.usage-level-low { --usage-bar: var(--red); }
+.usage-tip-window.usage-exhausted .usage-battery { --usage-edge: var(--red); }
+.usage-tip-window.usage-exhausted .usage-tip-percent { color: var(--red-text); }
+.usage-tip-label { overflow-wrap: break-word; }
+.usage-tip-primary .usage-tip-label { font-weight: 600; }
+.usage-tip-percent { text-align: right; font-weight: 600; white-space: nowrap; }
+.usage-tip-reset { color: var(--muted-strong); white-space: nowrap; }
+.usage-tip-passed { grid-column: 2 / -1; color: var(--muted-strong); }
+.usage-tip-excluded > * { opacity: .55; }
+/* Floated so the name and email wrap beside the switches and the settings link, top right. */
+.usage-tip-corner { float: right; display: flex; align-items: flex-start; gap: 6px; margin: 1px 0 8px 12px; }
+.usage-tip-toggles { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.usage-tip-settings { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin: -4px -5px -4px 0; border-radius: 6px; color: var(--muted-strong); }
+.usage-tip-settings:hover { background: var(--accent-soft); color: var(--heading); }
+.usage-tip-settings:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.usage-tip-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 1px 0; border: 0; background: none; color: var(--muted-strong); font: inherit; font-size: 11px; text-align: right; cursor: var(--orc-cursor-pointer, pointer); }
+.usage-tip-toggle:hover { color: var(--heading); }
+.usage-tip-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.usage-switch { position: relative; flex-shrink: 0; width: 22px; height: 12px; box-sizing: border-box; border: 1px solid var(--control-border); border-radius: 6px; background: var(--accent-soft); transition: background-color .15s; }
+.usage-switch::after { content: ""; position: absolute; top: 1px; left: 1px; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-strong); transition: transform .15s; }
+.usage-tip-toggle[aria-checked="true"] .usage-switch { border-color: var(--accent); background: var(--accent); }
+.usage-tip-toggle[aria-checked="true"] .usage-switch::after { transform: translateX(10px); background: var(--bg); }
+@media (prefers-reduced-motion: reduce) { .usage-switch, .usage-switch::after { transition: none; } }
+.usage-tip-message { clear: both; display: block; margin-top: 6px; }
+.usage-tip-meta { clear: both; display: flex; flex-direction: column; gap: 7px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--muted-strong); font-size: 11px; font-variant-numeric: tabular-nums; }
+.usage-tip-rows { display: flex; flex-direction: column; gap: 3px; }
+.usage-tip-row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; }
+.usage-tip-key { white-space: nowrap; }
+.usage-tip-val { min-width: 0; text-align: right; }
+.usage-tip-val strong { color: var(--heading); font-weight: 600; }
+.usage-tip-reset-card { display: flex; flex-direction: column; gap: 7px; padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--border) 75%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+.usage-tip-reset-head { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.usage-tip-reset-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.usage-tip-reset-card .settings-btn-inline { flex-shrink: 0; margin: 0; }
+.usage-tip-reset-count { color: var(--text); line-height: 1.3; }
+.usage-tip-reset-count strong { color: var(--heading); font-weight: 600; }
+.usage-tip-reset-expiry, .usage-tip-reset-hint, .usage-tip-reset-status { line-height: 1.35; }
+.usage-tip-reset-expiry, .usage-tip-reset-hint { font-size: 10.5px; }
+/* The switch lines up under the redeem button, its label on the left. */
+.usage-tip-reset-card .usage-auto-reset { padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent); }
+.usage-tip-reset-card .usage-tip-toggle { flex: 1 1 auto; flex-direction: row-reverse; justify-content: space-between; text-align: left; }
+.usage-tip-checked { font-size: 10.5px; line-height: 1.35; }
+.usage-tip-stale { color: var(--yellow-text); }
+.usage-row:not(.usage-tooltip-dismissed):hover .usage-tooltip,
+.usage-row:not(.usage-tooltip-dismissed):focus-within .usage-tooltip { display: block; }
+.usage-row-name { position: relative; min-width: 0; color: var(--heading); font-weight: 600; }
+/* The tooltip hangs off the name, so only the label clips. */
+.usage-row-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-row.usage-level-medium { --usage-bar: var(--yellow); }
+.usage-row.usage-level-low { --usage-bar: var(--red); }
+/* WebKit can drop author styles from a meter's track and paint its grey
+   default, so the wrapper draws the battery and the meter stays for
+   assistive tech. Five cells of 4px with 1px gaps; the trailing gap is
+   why the right padding is a pixel short. */
+.usage-battery { --usage-edge: color-mix(in srgb, var(--muted-strong) 70%, transparent); position: relative; display: grid; grid-template-rows: 100%; box-sizing: content-box; width: 25px; height: 6px; padding: 2px 1px 2px 2px; margin-right: 3px; border: 1px solid var(--usage-edge); border-radius: 3px; }
+.usage-battery::after { content: ""; position: absolute; top: 2px; right: -4px; width: 2px; height: 6px; border-radius: 0 1px 1px 0; background: var(--usage-edge); }
+.usage-battery::before { content: ""; grid-area: 1 / 1; border-radius: 1px;
+  background: linear-gradient(var(--usage-bar), var(--usage-bar)) 0 0 / calc(var(--usage-cells) * 20%) 100% no-repeat, color-mix(in srgb, var(--muted-strong) 22%, transparent);
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 4px, transparent 4px 5px); mask: repeating-linear-gradient(90deg, #000 0 4px, transparent 4px 5px); }
+.usage-battery meter { grid-area: 1 / 1; width: 100%; height: 100%; margin: 0; opacity: 0; appearance: none; }
+.usage-row.usage-exhausted > .usage-battery { --usage-edge: var(--red); }
+.usage-row-percent { min-width: 4ch; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.usage-row.usage-exhausted .usage-row-percent { color: var(--red-text); }
+.usage-row-reset { min-width: 6ch; text-align: right; color: var(--muted-strong); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-row-unavailable { grid-column: 2 / -1; color: var(--muted-strong); }
+@media (pointer: coarse) {
+  .usage-renewal input, .account-logins .usage-tip-toggle, .account-logins .login-link { min-height: 44px; }
+}
+@media (max-width: 700px) {
+  #sidebar-usage { padding-inline: 16px; }
+}

@@ -1,0 +1,21 @@
+/* The coffee cup at the sidebar row's far end. On, it fills with the accent
+   and steams; on but not holding the Mac awake, it turns red with a warning
+   mark, so neither state needs a hover to read. */
+#stay-awake { position: relative; margin-left: auto; }
+#stay-awake .stay-awake-steam { display: none; }
+#stay-awake[data-stay-awake="on"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-text);
+}
+#stay-awake[data-stay-awake="on"] .stay-awake-steam { display: inline; }
+#stay-awake[data-stay-awake="on"] .stay-awake-cup { fill: currentColor; }
+#stay-awake[data-stay-awake="broken"] {
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-text);
+}
+#stay-awake[data-stay-awake="broken"]::after {
+  content: "!"; position: absolute; top: -5px; right: -5px; width: 14px; height: 14px; box-sizing: border-box;
+  border: 2px solid var(--panel); border-radius: 7px; background: var(--red); color: var(--bg);
+  font: 800 9px/10px system-ui, sans-serif; text-align: center; pointer-events: none;
+}
+#stay-awake[aria-busy="true"] { cursor: progress; }

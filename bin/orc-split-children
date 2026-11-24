@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Split a multi-repository run at Ship into one child run per repository.
+
+The parent planned and built every repository together, so their changes stay
+coordinated. Each child then owns one repository's PR, PR comments, push and
+merge, and the parent settles as complete with its worktrees handed over.
+
+Usage: orc-split-children --run-dir <parent-run-dir>
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import uuid
+
+
+BIN = Path(__file__).resolve().parent
+RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\Z")
+SHIP_PHASES = {"build", "ship"}
+COPIED_META = ("source", "sourceRef", "harness", "sessionBackend", "host", "machineId", "launchedBy",
+               "launchModel", "launchEffort", "launchPermissionMode", "launchFast",
+               "claudeAccount", "mode", "lifecycleVersion", "route", "gatedPhases", "orchestration")
+
+
+class SplitError(Exception):
+    pass
+
+
+def read_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SplitError(f"cannot read {path}: {exc}") from exc
+
+
+def write_json(path: Path, value) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+        json.dump(value, target, indent=2)
+        target.write("\n")
+    os.replace(raw, path)
+
+
+def eligible_parent(run_dir: Path) -> dict:
+    meta = read_json(run_dir / "meta.json")
+    if meta.get("splitChildren"):
+        return meta
+    if meta.get("lifecycleVersion") != 4 or meta.get("route") != "minimal-shell":
+        raise SplitError("only a lifecycle-v4 minimal-shell run can split")
+    repositories = meta.get("repositories")
+    if meta.get("repositoriesVersion") != 1 or not isinstance(repositories, list) \
+            or len(repositories) < 2:
+        raise SplitError("only a run with two or more repositories can split")
+    if meta.get("phase") not in SHIP_PHASES or meta.get("status") not in {"running", "awaiting-gate"}:
+        raise SplitError("the run must be finishing Build or waiting at Ship to split")
+    if meta.get("prUrl") or meta.get("prUrls") or meta.get("delivery"):
+        raise SplitError("the run already opened PRs; deliver it as one run")
+    for entry in repositories:
+        if not isinstance(entry, dict) or not RUN_ID.fullmatch(str(entry.get("id") or "")):
+            raise SplitError("every repository needs a simple id to name its child run")
+    return meta
+
+
+def git(repo: str, *args: str) -> bytes:
+    result = subprocess.run(["git", "-C", repo, *args], capture_output=True, check=False)
+    if result.returncode != 0:
+        raise SplitError(f"git {' '.join(args[:2])} failed in {repo}: "
+                         + result.stderr.decode(errors="replace").strip())
+    return result.stdout
+
+
+def child_worktree(parent: dict, entry: dict) -> dict | None:
+    """The primary repository's worktree is the parent's own; every other one
+    keeps the worktree its participant recorded, so a tree the run adopted
+    (`managedByOrc: false`) is never deleted by its child. A participant
+    with no record had a generic tree set up beside its repository."""
+    if entry.get("primary") is True and isinstance(parent.get("worktree"), dict):
+        return dict(parent["worktree"])
+    recorded = entry.get("worktree")
+    if isinstance(recorded, dict) and recorded.get("enabled") is True:
+        return dict(recorded)
+    path = entry.get("repoPath")
+    if not path or Path(path).resolve() == Path(entry.get("mainRepoPath") or "").resolve():
+        return None
+    return {"enabled": True, "adapter": "generic", "managedByOrc": True,
+            "path": path, "slug": Path(path).name}
+
+
+def child_hands_on(parent_dir: Path, child_dir: Path, hands_on: dict, participant: str) -> dict:
+    """Keep only this repository's captures; a repository with none has
+    nothing to try by hand."""
+    if hands_on.get("state") != "ready":
+        return hands_on
+    entries = read_json(parent_dir / "shots/manifest.json")
+    mine = [entry for entry in entries
+            if isinstance(entry, dict) and entry.get("participant") == participant]
+    if not mine:
+        return {"applicable": False, "state": "not-applicable", "flows": []}
+    for entry in mine:
+        for key in ("before", "after"):
+            if isinstance(entry.get(key), str):
+                target = child_dir / "shots" / entry[key]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(parent_dir / "shots" / entry[key], target)
+    write_json(child_dir / "shots/manifest.json", mine)
+    captured = {entry.get("flow") for entry in mine}
+    flows = [flow for flow in hands_on.get("flows", []) if flow in captured] \
+        or sorted(flow for flow in captured if isinstance(flow, str))[:3]
+    manifest = (child_dir / "shots/manifest.json").read_bytes()
+    return {"applicable": True, "state": "ready", "flows": flows,
+            "shots": {"path": "shots/manifest.json", "sha256": hashlib.sha256(manifest).hexdigest()}}
+
+
+def prepare_child(parent_dir: Path, parent: dict, authority: dict, entry: dict) -> str:
+    participant = entry["id"]
+    child_id = f"{parent['runId']}--{participant}"
+    if not RUN_ID.fullmatch(child_id):
+        raise SplitError(f"child run id is too long: {child_id}")
+    child_dir = parent_dir.parent / child_id
+    if (child_dir / "meta.json").is_file():
+        existing = read_json(child_dir / "meta.json")
+        if existing.get("splitFrom", {}).get("runId") != parent["runId"]:
+            raise SplitError(f"{child_id} already exists and is not this run's child")
+    base, repo = entry.get("buildBaseCommit"), entry.get("repoPath")
+    if not base or not repo:
+        raise SplitError(f"repository {participant} has no build base or checkout")
+    diff = git(repo, "diff", "--binary", "--full-index", f"{base}..HEAD")
+    if not diff:
+        raise SplitError(f"repository {participant} has no changes to deliver")
+
+    (child_dir / "inputs/build-spec").mkdir(parents=True, exist_ok=True)
+    for name in ("inputs/build-spec/source.json", "inputs/build-spec/authority.json",
+                 "inputs/start-prompt.txt"):
+        if (parent_dir / name).is_file():
+            shutil.copyfile(parent_dir / name, child_dir / name)
+    (child_dir / "diff.patch").write_bytes(diff)
+
+    meta = {key: parent[key] for key in COPIED_META if key in parent}
+    meta.update({
+        "runId": child_id,
+        "title": f"{parent.get('title') or parent['runId']} ({participant})",
+        "parentRunId": parent["runId"],
+        "splitFrom": {"runId": parent["runId"], "participantId": participant},
+        "mainRepoPath": entry["mainRepoPath"],
+        "repoPath": repo,
+        "branch": entry["branch"],
+        "buildBaseCommit": base,
+        "phase": "ship",
+        "status": "running",
+        "phaseDispatch": {"schemaVersion": 1, "phases": {}},
+        "repositoriesVersion": 1,
+        "repositories": [{**entry, "primary": True}],
+    })
+    worktree = child_worktree(parent, entry)
+    if worktree:
+        meta["worktree"] = worktree
+    feedback_evidence = [row for row in authority.get("feedbackEvidence", [])
+                         if row.get("producerHead") == next(
+                             p["head"] for p in authority["participants"] if p["participantId"] == participant)]
+    # The child's first session forks the parent's conversation, so it starts
+    # knowing what was built and why.
+    if parent.get("harness", "claude") == "claude" and parent.get("sessionId"):
+        meta["sessionId"] = str(uuid.uuid4())
+        meta["forkSessionFrom"] = parent["sessionId"]
+    write_json(child_dir / "meta.json", meta)
+    # Leave .headless/launch.json unset so the child's first turn materializes
+    # child-scoped orchestration and devd MCP flags instead of inheriting the parent's.
+
+    for feedback in feedback_evidence:
+        relative = feedback["path"]
+        target = child_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(parent_dir / relative, target)
+
+    proof = [item for item in authority["buildProof"] if item.get("participantId") == participant]
+    supplied = {
+        "buildProof": proof,
+        "handsOn": child_hands_on(parent_dir, child_dir, authority["handsOn"], participant),
+        "feedbackEvidence": feedback_evidence,
+    }
+    input_path = child_dir / "inputs/split-authority-input.json"
+    write_json(input_path, supplied)
+    result = subprocess.run(
+        [str(BIN / "orc-delivery-authority"), "publish", "--run-dir", str(child_dir),
+         "--input", str(input_path)], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise SplitError(f"{child_id}: {result.stderr.strip()}")
+    return child_id
+
+
+def split(run_dir: Path) -> list[dict]:
+    parent = eligible_parent(run_dir)
+    if parent.get("splitChildren"):
+        return parent["splitChildren"]
+    validated = subprocess.run(
+        [str(BIN / "orc-delivery-authority"), "validate", "--run-dir", str(run_dir)],
+        capture_output=True, text=True, check=False)
+    if validated.returncode != 0:
+        raise SplitError("the run's delivery authority is not valid: " + validated.stderr.strip())
+    authority = read_json(run_dir / "delivery-authority.json")
+    children = [{"participantId": entry["id"],
+                 "runId": prepare_child(run_dir, parent, authority, entry)}
+                for entry in parent["repositories"]]
+    current = read_json(run_dir / "meta.json")
+    # The children own the worktrees now; a finished parent that kept one
+    # would have it torn down under them.
+    current.pop("worktree", None)
+    current.update(splitChildren=children, phase="done", status="complete")
+    write_json(run_dir / "meta.json", current)
+    return children
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--run-dir", type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        children = split(args.run_dir.expanduser().resolve())
+    except SplitError as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"ok": True, "children": children}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

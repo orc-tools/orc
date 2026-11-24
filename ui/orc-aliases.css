@@ -1,0 +1,98 @@
+/* Design-system bridge — the one place --orc-* is defined for orc-ui.
+   Every <orc-*> element styles its shadow root from these names, so aliasing
+   them once is what lets a design-system component theme itself with no
+   per-component CSS.
+
+   Both surfaces read this file: the shell links it (ui/index.html), and
+   ui/serve.py inlines it into the gate-page template so an artifact page stays
+   self-contained. It used to be two hand-maintained copies that had already
+   drifted, because the two palettes are not identical — the gate pages have no
+   --gate, --accent-strong, --purple-text or --button-hover* of their own. Every
+   such name resolves through a var() fallback holding exactly the formula that
+   surface computed before, so neither surface changes colour and neither needs
+   the other's tokens.
+
+   The palette half is a pure rename: dist/tokens.json's day/night values are
+   byte-identical to the shell's own :root palette, so no colour decision is
+   made here. Scale and type values match dist/tokens.css. One layer covers both
+   themes because every alias resolves through a var() that the dark blocks
+   re-point. */
+@property --orc-beam-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 24deg;
+}
+
+:root {
+  --orc-bg: var(--bg); --orc-panel: var(--panel); --orc-border: var(--border);
+  --orc-text: var(--text); --orc-heading: var(--heading); --orc-muted: var(--muted);
+  --orc-accent: var(--accent); --orc-accent-soft: var(--accent-soft);
+  --orc-chip: var(--chip); --orc-code: var(--code);
+  --orc-green: var(--green); --orc-yellow: var(--yellow); --orc-red: var(--red);
+  --orc-purple: var(--purple); --orc-cyan: var(--cyan); --orc-orange: var(--orange);
+  --orc-control-border: var(--control-border);
+  --orc-muted-strong: var(--muted-strong); --orc-accent-text: var(--accent-text);
+  --orc-red-text: var(--red-text); --orc-yellow-text: var(--yellow-text);
+  --orc-green-text: var(--green-text);
+  /* Gate pages define none of these four; the fallback is the formula each of
+     them already used inline. */
+  --orc-gate: var(--gate, color-mix(in srgb, var(--orange) 60%, var(--heading)));
+  --orc-purple-text: var(--purple-text, color-mix(in srgb, var(--purple) 65%, var(--heading)));
+  --orc-accent-strong: var(--accent-strong, var(--accent));
+  --orc-button-hover: var(--button-hover, color-mix(in srgb, var(--accent) 10%, var(--bg)));
+  --orc-button-hover-chip: var(--button-hover-chip, color-mix(in srgb, var(--accent) 12%, var(--chip)));
+  --orc-button-hover-strong: var(--button-hover-strong, color-mix(in srgb, var(--accent) 86%, var(--heading)));
+  /* Neither palette has a --cyan-text or --orange-text of its own. The
+     component defaults for both are a heading-mix of the base hue; --gate is
+     exactly that mix for orange, so orange follows it where it exists and falls
+     back to the same formula where it does not, and cyan gets the same
+     treatment inline. Both stay AA on small text in day. */
+  --orc-cyan-text: color-mix(in srgb, var(--cyan) 55%, var(--heading));
+  --orc-orange-text: var(--gate, color-mix(in srgb, var(--orange) 60%, var(--heading)));
+  /* Scale and type, matching dist/tokens.css. orc-ui's stack is Inter and
+     JetBrains Mono, so the aliases name them rather than inheriting the
+     platform fallback. */
+  --orc-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --orc-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --orc-space-1: 4px; --orc-space-2: 8px; --orc-space-3: 12px;
+  --orc-space-4: 16px; --orc-space-5: 24px;
+  --orc-radius-sm: 4px; --orc-radius-md: 8px; --orc-radius-pill: 999px;
+  /* orc-segmented predates the shared radius scale and reads these two. */
+  --orc-radius-1: 6px; --orc-radius-2: 8px;
+  /* Focus is green across Orc, so every <orc-*> shadow root gets the same cue
+     the shell's own controls do. Gate pages define --focus too; the fallback
+     keeps any other surface honest. */
+  --orc-focus-ring: 2px solid var(--focus, var(--green)); --orc-focus-offset: 2px;
+  /* A hint, not typed text: greyer than --text, and mixed from the palette so
+     it stays at 4.5:1 or better on --bg and --panel in every theme
+     (tests/test_placeholder_colour.py). Day needs more --text in the mix than
+     night to get there; both surfaces set color-scheme, which light-dark reads. */
+  --placeholder: light-dark(
+    color-mix(in srgb, var(--muted) 70%, var(--text)),
+    color-mix(in srgb, var(--muted) 82%, var(--text)));
+}
+/* Every text box takes its placeholder colour from here, so a new one needs no
+   rule. The ::part selectors reach the fields inside <orc-input>,
+   <orc-textarea>, <orc-combobox> and <orc-select>. Without `opacity: 1`
+   Firefox fades the colour again. */
+::placeholder, ::part(input)::placeholder, ::part(search)::placeholder {
+  color: var(--placeholder); opacity: 1;
+}
+/* An iPhone zooms the page in when the field you tap has text under 16px, and
+   leaves it zoomed. So on a touch screen every field you can type in is at
+   least that size, whatever its own rule says. A turned phone is wider than
+   the phone layout, so this follows the pointer and not the width. */
+@media (pointer: coarse) {
+  :is(input, textarea, select, [contenteditable]):not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"], [type="hidden"], [contenteditable="false"]),
+  :is(orc-input, orc-textarea, orc-combobox, orc-model-picker)::part(input),
+  orc-select::part(search) { font-size: max(16px, 1em) !important; }
+}
+
+.pending-status { display: flex; align-items: center; gap: 8px; margin: 8px 0 0;
+  color: var(--muted-strong); font-size: 13px; line-height: 1.5; }
+.pending-status::before { content: ''; box-sizing: border-box; flex: none; width: 10px; height: 10px;
+  border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; }
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-animations-off]) .pending-status::before { animation: pending-spin 900ms linear infinite; }
+}
+@keyframes pending-spin { to { transform: rotate(360deg); } }

@@ -1,0 +1,13 @@
+{
+  "apiVersion": 1,
+  "id": "stay-awake",
+  "name": "Stay awake",
+  "version": "1.0.0",
+  "description": "A coffee cup in the sidebar that keeps this Mac from idle-sleeping while Orc runs, and turns red when it is on but not holding the Mac awake",
+  "icon": "icon.png",
+  "adoptOnUpgrade": true,
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py"
+  }
+}

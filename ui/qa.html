@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QA · Orc</title>
+<link rel="icon" type="image/png" sizes="192x192" href="/pwa/icon-192.png?v=3d-1">
+<script src="/app-plugin-state.js"></script>
+<link rel="stylesheet" href="/app-plugin-themes.css">
+<script>
+window.ORC_INSTANCE = null;
+window.ORC_HOST_THEME = null;
+// The QA window wears the theme and mode the main window wears: the host's
+// choice when there is one, else this browser's own.
+(() => {
+  const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
+  const host = window.ORC_HOST_THEME;
+  const accent = document.documentElement.dataset.basicsAccent = (host ? host.basicsAccent : stored('orcBasicsAccent')) || 'green';
+  if (/^#[0-9a-f]{6}$/.test(accent)) document.documentElement.style.setProperty('--basics-custom', accent);
+  const mode = host ? host.mode : stored('orcTheme');
+  if (mode === 'light' || mode === 'dark') document.documentElement.dataset.theme = mode;
+  const themes = (window.ORC_APP_PLUGINS?.plugins || [])
+    .filter(plugin => plugin.enabled && !plugin.error && plugin.contributes?.theme)
+    .map(plugin => ({ id: plugin.contributes.theme.id, required: plugin.required }));
+  const aliases = { hawkins: 'upside-down', leonida: 'grand-theft-orc' };
+  const rawSaved = host ? host.funMode : stored('orcFunMode');
+  const saved = aliases[rawSaved] || rawSaved;
+  const theme = themes.find(entry => entry.id === saved) || themes.find(entry => entry.required);
+  if (theme) {
+    document.documentElement.setAttribute('data-' + theme.id, '');
+    document.documentElement.dataset.funMode = theme.id;
+  }
+  if (stored('orcAnimationsOff') === '1') document.documentElement.setAttribute('data-animations-off', '');
+})();
+</script>
+<link rel="stylesheet" href="/orc-aliases.css">
+<link rel="stylesheet" href="/qa-window.css">
+<script type="module" src="/js/qa-window.js"></script>
+</head>
+<body>
+<div id="qa-root" class="qa" data-state="loading">
+  <aside id="qa-rail" class="qa-rail" aria-label="QA steps"></aside>
+  <main id="qa-pane" class="qa-pane"></main>
+</div>
+<div id="qa-live" class="qa-visually-hidden" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,556 @@
+/* Phosphor mode: the host sets data-phosphor on <html> and this file turns
+   Orc into a green-screen terminal by night and plain continuous-feed
+   printout paper by day. It re-points the shell's own tokens, so every
+   surface that reads var(--bg), var(--accent) and friends follows without
+   its own rule. The gate pages load the same file through
+   /app-plugin-themes.css.
+
+   Every block below out-specifies the swamp block it replaces:
+   :root[data-phosphor] beats :root, and the night blocks carry one more
+   attribute than the swamp's dark ones. Anything set in the day block that
+   differs at night is declared again in both night blocks, because the day
+   block matches there too. The palettes keep the swamp's contrast floors
+   (tests/test_phosphor_mode.py checks them).
+
+   The ink is phosphor green, so green cannot also mean ok on its own: success
+   is a lime, Ready an aquamarine, info a cyan, Working a periwinkle, danger a
+   red and the gate keeps its orange, each its own hue, and the accent stays
+   the ink's green so neither orange nor amber ever reads as the primary
+   action. */
+:root[data-phosphor] {
+  color-scheme: light;
+  --bg: #f2f0de; --panel: #fbfaf0; --border: #8fb594;
+  --text: #1d3a25; --heading: #0c2114; --muted: #567a5e; --accent: #13693a;
+  --accent-soft: #dcebd5; --chip: #dcebd5; --code: #e9f1e1;
+  --green: #4a7a00; --yellow: #7a6200; --red: #b3261e;
+  --purple: #7a3fb0; --cyan: #00659e; --orange: #b05300;
+  --focus: #13693a;
+  --ready-text: #006f5e;
+  --blue-text: #3149c4;
+  --phosphor-on-accent: #fff;
+  --phosphor-ink: #13693a; --phosphor-rain: #2f8a4a;
+  --phosphor-glow: none; --phosphor-heading-glow: none;
+  /* Plain paper by day, with no greenbar rows: alternating rows across the
+     reading area make the text hard to concentrate on. */
+  --phosphor-glass: none;
+  --phosphor-glass-blend: normal;
+  --phosphor-bar: color-mix(in srgb, var(--phosphor-ink) 12%, var(--panel));
+  --phosphor-feed: radial-gradient(circle at 8px 12px, #d6d1b8 3.6px, color-mix(in srgb, #8fb594 70%, transparent) 4.2px, transparent 4.8px) 0 0 / 16px 24px repeat-y;
+  --phosphor-font: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --orc-font-sans: var(--phosphor-font);
+  --orc-radius-sm: 2px; --orc-radius-md: 4px;
+  accent-color: var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-phosphor]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #050a06; --panel: #08110a; --border: #2a6b38;
+    --text: #7dfc96; --heading: #d2ffdc; --muted: #3f9455; --accent: #39ff6a;
+    --accent-soft: #0e2a15; --chip: #0e2a15; --code: #071a0c;
+    --green: #c0ff4a; --yellow: #f5e663; --red: #ff6b5e;
+    --purple: #d59bff; --cyan: #4fd8ff; --orange: #ffa940;
+    --focus: #39ff6a;
+    --ready-text: #45ffc8;
+    --blue-text: #8aa6ff;
+    --phosphor-on-accent: var(--bg);
+    --phosphor-ink: #39ff6a; --phosphor-rain: #39ff6a;
+    --phosphor-glow: 0 0 3px color-mix(in srgb, currentColor 45%, transparent);
+    --phosphor-heading-glow: 0 0 6px color-mix(in srgb, currentColor 60%, transparent), 0 0 1px currentColor;
+    --phosphor-scanlines: repeating-linear-gradient(to bottom, rgb(0 0 0 / .22) 0 1px, transparent 1px 3px);
+    --phosphor-glass: var(--phosphor-scanlines), radial-gradient(ellipse at center, transparent 58%, rgb(0 0 0 / .5) 100%);
+    --phosphor-glass-blend: normal;
+    --phosphor-feed: none;
+    --phosphor-bar: repeating-linear-gradient(to bottom, color-mix(in srgb, var(--phosphor-ink) 16%, var(--panel)) 0 2px, color-mix(in srgb, var(--phosphor-ink) 9%, var(--panel)) 2px 4px);
+  }
+}
+:root[data-phosphor][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #050a06; --panel: #08110a; --border: #2a6b38;
+  --text: #7dfc96; --heading: #d2ffdc; --muted: #3f9455; --accent: #39ff6a;
+  --accent-soft: #0e2a15; --chip: #0e2a15; --code: #071a0c;
+  --green: #c0ff4a; --yellow: #f5e663; --red: #ff6b5e;
+  --purple: #d59bff; --cyan: #4fd8ff; --orange: #ffa940;
+  --focus: #39ff6a;
+  --ready-text: #45ffc8;
+  --blue-text: #8aa6ff;
+  --phosphor-on-accent: var(--bg);
+  --phosphor-ink: #39ff6a; --phosphor-rain: #39ff6a;
+  --phosphor-glow: 0 0 3px color-mix(in srgb, currentColor 45%, transparent);
+  --phosphor-heading-glow: 0 0 6px color-mix(in srgb, currentColor 60%, transparent), 0 0 1px currentColor;
+  --phosphor-scanlines: repeating-linear-gradient(to bottom, rgb(0 0 0 / .22) 0 1px, transparent 1px 3px);
+  --phosphor-glass: var(--phosphor-scanlines), radial-gradient(ellipse at center, transparent 58%, rgb(0 0 0 / .5) 100%);
+  --phosphor-glass-blend: normal;
+  --phosphor-feed: none;
+  --phosphor-bar: repeating-linear-gradient(to bottom, color-mix(in srgb, var(--phosphor-ink) 16%, var(--panel)) 0 2px, color-mix(in srgb, var(--phosphor-ink) 9%, var(--panel)) 2px 4px);
+}
+
+/* JetBrains Mono is self-hosted (ui/fonts), so every machine renders the same
+   terminal. The faint glow is inherited, so all text glows in its own colour
+   by night; by day it is none. */
+:root[data-phosphor] body {
+  font-family: var(--phosphor-font);
+  background-color: var(--bg);
+  background-image: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--phosphor-ink) 7%, transparent), transparent 70%);
+  text-shadow: var(--phosphor-glow);
+}
+/* Form controls take the UA's font rather than inheriting it. Zero
+   specificity so any author font-family wins, which keeps code, diffs and
+   terminals in their own monospace. */
+:where(:root[data-phosphor]) :where(button, input, textarea, select) {
+  font-family: var(--phosphor-font);
+}
+:root[data-phosphor] :is(h1, h2, h3) {
+  text-shadow: var(--phosphor-heading-glow);
+  letter-spacing: -.01em;
+}
+/* Phosphor rims stand in for the hairline borders at night: the same 1px
+   line, lit. */
+:root[data-phosphor] #run-sidebar {
+  border-right-color: color-mix(in srgb, var(--phosphor-ink) 45%, var(--border));
+  box-shadow: 1px 0 12px -4px color-mix(in srgb, var(--phosphor-ink) 40%, transparent);
+}
+/* The sidebar is the printout's margin: by day tractor-feed holes are
+   punched down its outer edge beside a perforated tear line, and by night it
+   is the tube's dark border. The strip is the sidebar's own padding, so the
+   run list stays clear of it. */
+@media (min-width: 701px) {
+  :root[data-phosphor] #run-sidebar { position: relative; box-sizing: border-box; padding-left: 16px; }
+  :root[data-phosphor] #run-sidebar::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 16px;
+    z-index: calc(var(--z-sticky) + 1); pointer-events: none;
+    background:
+      linear-gradient(90deg, transparent 15px, color-mix(in srgb, var(--border) 70%, transparent) 15px) 0 0 / 16px 100% no-repeat,
+      repeating-linear-gradient(to bottom, transparent 0 4px, color-mix(in srgb, var(--border) 80%, transparent) 4px 7px) 15px 0 / 1px 100% no-repeat,
+      var(--phosphor-feed);
+  }
+}
+/* A dashed rule under the tabs, like a terminal's status line. */
+:root[data-phosphor] #tabbar {
+  border-bottom: 1px dashed color-mix(in srgb, var(--phosphor-ink) 60%, var(--border));
+}
+:root[data-phosphor] main {
+  --head-glow: linear-gradient(180deg, color-mix(in srgb, var(--phosphor-ink) 9%, transparent), transparent 70%);
+}
+:root[data-phosphor] ::selection {
+  background: var(--accent);
+  color: var(--phosphor-on-accent);
+  text-shadow: none;
+}
+:root[data-phosphor] :is(:hover, :focus-within) { scrollbar-color: var(--border) transparent; }
+:root[data-phosphor] :is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: var(--border); }
+
+/* Controls whose own cursor already says drag, busy or unavailable keep it,
+   and text entry keeps the native I-beam. The pointing hand's hotspot is its
+   fingertip. Everywhere else keeps the system arrow: an image cursor set on
+   the root is inherited by every element, and WebKit then spends about twice
+   as long restyling the page on each view change. */
+:root[data-phosphor], :root[data-phosphor] body {
+  --orc-cursor-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cg transform='translate(0 .5)'%3E%3Cg fill='none' stroke='%2339ff6a' stroke-opacity='.4' stroke-width='3.6' stroke-linejoin='round'%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5'/%3E%3C/g%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z' fill='%2339ff6a' stroke='%23050a06' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M14.5 13.5v3M19 14.25v2.75M23.5 15.25v2.5' fill='none' stroke='%23050a06' stroke-width='1.1' stroke-linecap='round' stroke-opacity='.55'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' rx='1.5' fill='%23c6ffd2' stroke='%23050a06' stroke-width='1.5'/%3E%3C/g%3E%3C/svg%3E") 12 2, pointer;
+}
+:root[data-phosphor] :where(a[href], button, summary, label, select, [role="button"], [role="tab"], [role="option"], [role="menuitem"], orc-button, orc-icon-button, orc-theme-toggle):not(:disabled, [disabled], [aria-disabled="true"], [aria-busy="true"], .is-busy, [draggable="true"]) {
+  cursor: var(--orc-cursor-pointer);
+}
+:root[data-phosphor] :where(input:not([type="checkbox"], [type="radio"], [type="range"]), textarea, [contenteditable="true"], orc-input):not(:disabled, [disabled]) {
+  cursor: text;
+}
+
+/* Design-system primary buttons fill with --orc-green; inside phosphor mode
+   they fill with the ink, lettered in the tube's black like a reverse-video
+   menu bar. Scoped to the button host so status chips keep their lime. */
+:root[data-phosphor] orc-button:is(:not([variant]), [variant="primary"]) {
+  --orc-green: var(--accent);
+  --orc-button-text: var(--phosphor-on-accent);
+  text-shadow: none;
+}
+
+/* The gate pages pin these copy buttons to the swamp's day blue by hex rather
+   than by token, so they are named here. A finished #copy-answers keeps its
+   green. */
+:root[data-phosphor] body :is(#orc-copy, #copy-answers:not(.done)) {
+  background: var(--accent);
+  color: var(--phosphor-on-accent);
+  text-shadow: none;
+}
+:root[data-phosphor] body :is(#orc-copy, #copy-answers:not(.done)):not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--heading));
+}
+
+/* The orc glows on the tube, and a block cursor blinks on the slash of /orc.
+   The lit block is an overlay with its own dark slash, so it stays readable
+   where the blink never runs, and the slash shows its own green each time the
+   block goes dark. Only the overlay's opacity blinks, which the compositor
+   runs without restyling the page. */
+:root[data-phosphor] #logo-icon {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--phosphor-ink) 70%, transparent));
+}
+:root[data-phosphor] #logo .logo-slash { position: relative; }
+:root[data-phosphor] #logo .logo-slash::before {
+  content: "/"; content: "/" / "";
+  position: absolute; inset: 0;
+  background: var(--phosphor-ink); color: var(--panel);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--phosphor-ink) 70%, transparent);
+  animation: phosphor-cursor-glyph 1.06s linear infinite;
+}
+/* Decorative text below uses the `content: "…" / ""` alternative so screen
+   readers skip it; the first declaration is the fallback for engines that
+   drop the second. The art has no star in it, because the comment-stripping
+   test scanner would read a slash-star as a comment. */
+:root[data-phosphor] #empty::before {
+  content: " /\\  .------.  /\\\A  \\ \\/ \\    / \\/ /\A   \\|  (o)(o)  |/\A    |    /\\    |\A    |  V----V  |\A     '-.____.-'\A orc@phosphor:~# _"; content: " /\\  .------.  /\\\A  \\ \\/ \\    / \\/ /\A   \\|  (o)(o)  |/\A    |    /\\    |\A    |  V----V  |\A     '-.____.-'\A orc@phosphor:~# _" / "";
+  display: block; margin: 0 auto 14px; width: max-content;
+  font: 700 15px/1.2 var(--phosphor-font); text-align: left; white-space: pre;
+  color: var(--phosphor-ink); text-shadow: var(--phosphor-heading-glow);
+}
+:root[data-phosphor] #cmdk-layout::before {
+  content: "[ PHOSPHOR MODE ]  > hack the planet_"; content: "[ PHOSPHOR MODE ]  > hack the planet_" / "";
+  justify-content: flex-start; padding: 0 14px;
+  font: 700 12px/1.4 var(--phosphor-font); letter-spacing: .08em;
+  color: var(--phosphor-on-accent); background: var(--accent); text-shadow: none;
+}
+:root[data-phosphor] #cmdk-footer::after { content: " · ^C to quit"; content: " · ^C to quit" / ""; }
+
+#phosphor-scene {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+}
+.phosphor-thing {
+  position: absolute; left: var(--x, 50%); top: var(--y, 50%);
+  font: 600 var(--size)/1.15 var(--phosphor-font); white-space: pre;
+  color: var(--phosphor-rain);
+}
+/* Each column fades toward its tail, so its newest glyph, at the bottom,
+   leads the fall. */
+.phosphor-rain {
+  top: 0; opacity: .3; text-shadow: 0 0 6px var(--phosphor-rain);
+  -webkit-mask: linear-gradient(transparent, #000 85%);
+  mask: linear-gradient(transparent, #000 85%);
+}
+.phosphor-packet {
+  top: 0; opacity: .26;
+  padding: 1px 4px; border: 1px solid color-mix(in srgb, var(--phosphor-rain) 55%, transparent);
+}
+.phosphor-worm {
+  top: auto; bottom: 4px; left: 0; opacity: .55;
+}
+/* orc-shot marks the pages it photographs. Rows 3px apart land between a
+   scaled still's pixels and come out as uneven bands across the text. */
+:root[data-phosphor][data-orc-shot] { --phosphor-scanlines: none; }
+#phosphor-crt {
+  position: fixed; inset: 0; z-index: 2147483000; overflow: hidden; pointer-events: none;
+  background: var(--phosphor-glass);
+  mix-blend-mode: var(--phosphor-glass-blend);
+}
+/* The bright band a tube's refresh rolls down the glass, at night only. */
+.phosphor-rollbar {
+  position: absolute; left: 0; right: 0; top: 0; height: 18vh;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--phosphor-ink) 5%, transparent), transparent);
+}
+.phosphor-glitch {
+  position: absolute; left: 0; right: 0; top: 38%; height: 6px; opacity: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--phosphor-ink) 30%, transparent) 20%, transparent 21% 54%, color-mix(in srgb, var(--cyan) 30%, transparent) 55%, transparent 72%);
+}
+:root[data-phosphor][data-theme="light"] :is(.phosphor-rollbar, .phosphor-glitch) { display: none; }
+@media (prefers-color-scheme: light) {
+  :root[data-phosphor]:not([data-theme="dark"]) :is(.phosphor-rollbar, .phosphor-glitch) { display: none; }
+}
+/* The boot screen, typed out on the glass as the mode turns on. Each line
+   types in --chars steps after the ones before it, and the whole screen
+   fades once the last line has landed. */
+.phosphor-boot {
+  position: absolute; left: 50%; top: 30%; translate: -50% -50%;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 16px 20px; min-width: 46ch;
+  font: 600 13px/1.5 var(--phosphor-font); color: var(--phosphor-ink);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border: 1px solid var(--phosphor-ink);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--phosphor-ink) 35%, transparent);
+  text-shadow: 0 0 4px color-mix(in srgb, var(--phosphor-ink) 60%, transparent);
+  mix-blend-mode: normal;
+  animation: phosphor-boot 3s linear both;
+}
+.phosphor-boot-line {
+  width: 0; overflow: hidden; white-space: pre;
+  animation: phosphor-type calc(var(--chars) * 12ms) steps(var(--chars), end) calc(var(--i) * 340ms + 120ms) both;
+}
+.phosphor-boot-line:last-child { color: var(--heading); }
+.phosphor-zap {
+  position: fixed; left: var(--px); top: var(--py); translate: -50% -50%;
+  line-height: 1;
+}
+/* A targeting bracket: four corners that lock in and widen out. */
+.phosphor-reticle {
+  width: 22px; height: 22px;
+  background:
+    linear-gradient(var(--phosphor-ink), var(--phosphor-ink)) 0 0 / 7px 2px no-repeat,
+    linear-gradient(var(--phosphor-ink), var(--phosphor-ink)) 0 0 / 2px 7px no-repeat,
+    linear-gradient(var(--phosphor-ink), var(--phosphor-ink)) 100% 0 / 7px 2px no-repeat,
+    linear-gradient(var(--phosphor-ink), var(--phosphor-ink)) 100% 0 / 2px 7px no-repeat,
+    linear-gradient(var(--phosphor-ink), var(--phosphor-ink)) 0 100% / 7px 2px no-repeat,
+    linear-gradient(var(--phosphor-ink), var(--phosphor-ink)) 0 100% / 2px 7px no-repeat,
+    linear-gradient(var(--phosphor-ink), var(--phosphor-ink)) 100% 100% / 7px 2px no-repeat,
+    linear-gradient(var(--phosphor-ink), var(--phosphor-ink)) 100% 100% / 2px 7px no-repeat;
+  filter: drop-shadow(0 0 3px var(--phosphor-ink));
+  animation: phosphor-lock .6s ease-out both;
+}
+.phosphor-spark {
+  font: 700 16px var(--phosphor-font); color: var(--phosphor-ink);
+  text-shadow: 0 0 6px var(--phosphor-ink);
+  animation: phosphor-spark .8s steps(8, end) both;
+}
+/* A held press's trail: a little smaller and shorter-lived, so a long
+   drag stays under frontend.js's cap. */
+.phosphor-spark.phosphor-trail { font-size: 13px; animation: phosphor-bit .6s ease-in both; }
+/* The composers rise over the scene, so nothing drifts under what you type.
+   Project home's composer sits inside its view's own layer, so the whole view
+   rises there and the scene shows only through its gaps. Composer textareas
+   stay out: the pickers in the composer's footer open over them. */
+:root[data-phosphor] :is(#new-view, .newconv-prompt) { z-index: 1; }
+:root[data-phosphor] textarea:not(.newconv-prompt textarea) { position: relative; z-index: 1; }
+/* The side panel rises too, so the scene never lies over a PR body's
+   screenshots. On a phone the panel is already a sheet over everything. */
+@media not all and (max-width: 900px) {
+  :root[data-phosphor] #run-diff { z-index: 1; }
+}
+/* The loops below run for as long as the mode is on, so each is linear and
+   holds a value with a pair of keyframes rather than steps(). WebKit runs a
+   stepped animation on the main thread and restyles the page on every frame
+   of it, even between steps. */
+.phosphor-rain { animation: phosphor-fall var(--dur) linear var(--delay) infinite; }
+.phosphor-packet {
+  animation: phosphor-rise var(--dur) linear var(--delay) infinite,
+    phosphor-drift 3.8s ease-in-out var(--delay) infinite alternate;
+}
+.phosphor-worm { animation: phosphor-crawl var(--dur) linear var(--delay) infinite; }
+.phosphor-rollbar { animation: phosphor-roll 7s linear infinite; }
+/* The glitch tears a band across the glass and the tube flickers, both for a
+   few frames in every several seconds. They flash, so reduced motion keeps
+   them still. */
+@media (prefers-reduced-motion: no-preference) {
+  .phosphor-glitch { animation: phosphor-glitch 9.3s linear infinite; }
+  #phosphor-crt { animation: phosphor-flicker 5.7s linear infinite; }
+}
+@keyframes phosphor-fall {
+  from { translate: 0 -105%; }
+  to { translate: 0 105vh; }
+}
+@keyframes phosphor-rise {
+  from { translate: 0 104vh; }
+  to { translate: 0 -12vh; }
+}
+@keyframes phosphor-drift {
+  from { transform: translateX(calc(var(--sway, 10px) * -1)); }
+  to { transform: translateX(var(--sway, 10px)); }
+}
+@keyframes phosphor-crawl {
+  from { translate: calc(50vw - var(--dir, 1) * 62vw) 0; }
+  to { translate: calc(50vw + var(--dir, 1) * 62vw) 0; }
+}
+@keyframes phosphor-roll {
+  from { translate: 0 -20vh; }
+  to { translate: 0 105vh; }
+}
+@keyframes phosphor-glitch {
+  0%, 93.69%, 95.2%, 100% { opacity: 0; translate: 0 0; scale: 1; }
+  93.7%, 94.19% { opacity: 1; translate: -14px 0; scale: 1; }
+  94.2%, 94.69% { opacity: .8; translate: 22px 30vh; scale: 1 2; }
+  94.7%, 95.19% { opacity: 1; translate: -6px -12vh; scale: 1 .6; }
+}
+@keyframes phosphor-flicker {
+  0%, 61.29%, 61.9%, 100% { opacity: 1; }
+  61.3%, 61.59% { opacity: .82; }
+  61.6%, 61.89% { opacity: .94; }
+}
+@keyframes phosphor-cursor-glyph {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+@keyframes phosphor-type {
+  from { width: 0; }
+  to { width: calc(var(--chars) * 1ch); }
+}
+@keyframes phosphor-boot {
+  0% { opacity: 0; }
+  4%, 86% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes phosphor-lock {
+  0% { width: 64px; height: 64px; opacity: 0; }
+  30% { width: 18px; height: 18px; opacity: 1; }
+  55% { width: 22px; height: 22px; opacity: 1; }
+  100% { width: 70px; height: 70px; opacity: 0; }
+}
+@keyframes phosphor-spark {
+  0% { transform: translate(0, 0); opacity: 1; }
+  100% { transform: translate(var(--dx, 0px), var(--dy, -40px)); opacity: 0; }
+}
+@keyframes phosphor-bit {
+  from { transform: translate(0, 0); opacity: 1; }
+  to { transform: translate(var(--dx, 0px), var(--dy, 12px)); opacity: 0; }
+}
+@media (max-width: 640px) {
+  .phosphor-rain:nth-child(n + 8 of .phosphor-rain),
+  .phosphor-packet:nth-child(n + 5 of .phosphor-packet) { display: none; }
+}
+@media (forced-colors: active), print {
+  #phosphor-scene, #phosphor-crt { display: none; }
+}
+
+/* Typing effects, drawn by frontend.js phosphorTyping into the shell's
+   typing layer. Each piece runs one animation and leaves when it ends.
+   Motion moves the translate property, so a piece's static transform turns
+   it in place rather than turning its path. */
+.phosphor-typed-echo {
+  font: 700 15px var(--phosphor-font); color: var(--phosphor-ink);
+  text-shadow: -2px 0 color-mix(in srgb, var(--cyan) 70%, transparent), 2px 0 color-mix(in srgb, var(--red) 55%, transparent), 0 0 6px var(--phosphor-ink);
+  animation: phosphor-typed-echo .8s steps(6, end) both;
+}
+.phosphor-typed-cursor {
+  width: 8px; height: 15px; background: var(--phosphor-ink);
+  box-shadow: 0 0 8px var(--phosphor-ink);
+  animation: phosphor-typed-cursor .45s steps(1, end) both;
+}
+.phosphor-typed-scan {
+  width: 10px; height: 2px; background: var(--phosphor-ink);
+  box-shadow: 0 0 6px 1px var(--phosphor-ink);
+  animation: phosphor-typed-scan .7s steps(12, end) both;
+}
+.phosphor-typed-bit {
+  font: 700 12px var(--phosphor-font); color: var(--phosphor-ink);
+  animation: phosphor-typed-bit .6s ease-in both;
+}
+.phosphor-typed-granted {
+  padding: 4px 10px; font: 800 13px/1 var(--phosphor-font); letter-spacing: .14em;
+  color: var(--phosphor-ink); background: var(--bg);
+  border: 2px solid var(--phosphor-ink);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--phosphor-ink) 55%, transparent);
+  animation: phosphor-typed-granted 1.6s steps(1, end) both;
+}
+.phosphor-typed-dump {
+  font: 600 11px var(--phosphor-font); color: var(--phosphor-ink); opacity: .8;
+  animation: phosphor-typed-dump 1.8s linear both;
+}
+@keyframes phosphor-typed-echo {
+  0% { translate: -50% -100%; opacity: 1; }
+  100% { translate: calc(-50% + var(--drift)) calc(-100% - 24px); opacity: 0; }
+}
+@keyframes phosphor-typed-cursor {
+  0%, 60% { translate: 2px -110%; opacity: 1; }
+  30%, 100% { translate: 2px -110%; opacity: 0; }
+}
+@keyframes phosphor-typed-scan {
+  0% { translate: 0 -100%; opacity: 1; }
+  100% { translate: calc(var(--w) - 100%) -100%; opacity: 0; }
+}
+@keyframes phosphor-typed-bit {
+  from { translate: -50% -100%; opacity: 1; }
+  to { translate: calc(-50% + var(--dx)) calc(-100% + var(--dy)); opacity: 0; }
+}
+@keyframes phosphor-typed-granted {
+  0% { translate: 0 -120%; opacity: 0; }
+  8%, 20%, 34%, 85% { translate: 0 -120%; opacity: 1; }
+  14%, 27% { opacity: .15; }
+  100% { translate: 0 -120%; opacity: 0; }
+}
+@keyframes phosphor-typed-dump {
+  0% { translate: 0 0; clip-path: inset(0 100% 0 0); opacity: 0; }
+  10% { opacity: .8; }
+  45% { clip-path: inset(0 0 0 0); }
+  85% { translate: 0 -4px; opacity: .8; }
+  100% { translate: 0 -10px; clip-path: inset(0 0 0 0); opacity: 0; }
+}
+
+/* Typing heat (see index.html's --typing-heat): the border lights up from its
+   resting colour to the ink and on to cyan, glowing like an overdriven tube. */
+:root[data-phosphor] .newconv-prompt[data-typing-hot] { animation: none; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :root[data-phosphor] .newconv-prompt,
+  :root[data-phosphor] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    border-color: color-mix(in srgb,
+      color-mix(in oklab, var(--phosphor-ink), var(--cyan) clamp(0%, (var(--typing-heat) - .5) * 200%, 100%))
+        clamp(0%, var(--typing-heat) * 200%, 100%),
+      var(--typing-heat-rest));
+    --typing-glow:
+      0 0 calc(var(--typing-heat) * 6px) calc(var(--typing-heat) * 1px) color-mix(in srgb, var(--phosphor-ink) calc(var(--typing-heat) * 70%), transparent),
+      0 0 calc(var(--typing-heat) * 24px) calc(var(--typing-heat) * 3px) color-mix(in srgb, var(--phosphor-ink) calc(var(--typing-heat) * 30%), transparent);
+  }
+}
+
+/* The maximised terminal stage: a monitor's thick bezel around a glowing
+   tube. terminal.js boots it. */
+:root[data-phosphor] #run-terminal.terminal-staged {
+  --stage-radius: 18px;
+  border: 3px solid color-mix(in srgb, var(--phosphor-ink) 55%, var(--border));
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--heading) 10%, var(--panel)), 0 0 0 9px var(--border), 0 0 40px color-mix(in srgb, var(--phosphor-ink) 30%, transparent), inset 0 0 60px color-mix(in srgb, var(--phosphor-ink) 12%, transparent);
+}
+:root[data-phosphor] .terminal-staged #run-terminal-bar {
+  background: var(--phosphor-bar);
+  border-bottom: 1px solid var(--phosphor-ink);
+}
+:root[data-phosphor] .terminal-staged #run-terminal-title { text-transform: uppercase; letter-spacing: .1em; }
+
+:root[data-phosphor] {
+  --answer-mode-done: "[x]"; --answer-mode-now: "[>]"; --answer-mode-next: "[ ]";
+  --answer-mode-trim: var(--phosphor-bar);
+  --answer-mode-trim-height: 8px;
+  --answer-mode-on-accent: var(--phosphor-on-accent);
+  --answer-mode-radius: 4px;
+  --run-row-radius: 2px;
+  --tab-radius: 2px;
+  --composer-radius: 4px;
+  --chat-bubble-radius: 4px;
+  --card-radius: 4px;
+  --dialog-radius: 4px;
+}
+
+:root[data-phosphor] [data-part="command-palette"],
+:root[data-phosphor] orc-dialog::part(dialog) {
+  border-radius: var(--dialog-radius);
+  border-color: var(--phosphor-ink, var(--accent));
+}
+:root[data-phosphor] .am-glyph { min-width: 30px; font: 600 14px/1 var(--phosphor-font); }
+:root[data-phosphor] .am-q { font-size: 23px; letter-spacing: 0; text-shadow: var(--phosphor-heading-glow, none); }
+/* The empty alt text keeps the prompt out of what a screen reader says. */
+:root[data-phosphor] .am-q::before { content: "> " / ""; color: var(--accent); }
+
+/* Sticky notes: a sheet of green-bar printout by day, with its feed holes
+   down both sides and bars in the project's colour; a terminal window by
+   night, its text and glow in that colour. */
+:root[data-phosphor] .nc-note {
+  --note-font: var(--phosphor-font);
+  --note-paper:
+    radial-gradient(circle at 8px 11px, var(--bg) 3px, color-mix(in srgb, var(--note-tint) 45%, var(--border)) 3.6px, transparent 4.2px) 0 0 / 16px 22px repeat-y,
+    radial-gradient(circle at 8px 11px, var(--bg) 3px, color-mix(in srgb, var(--note-tint) 45%, var(--border)) 3.6px, transparent 4.2px) 100% 0 / 16px 22px repeat-y,
+    linear-gradient(to bottom, color-mix(in srgb, var(--note-tint) 14%, transparent) 50%, transparent 50%) 0 41px / 100% 44px,
+    var(--panel);
+  --note-edge: color-mix(in srgb, var(--note-tint) 30%, var(--border));
+  --note-radius: 0px;
+  --note-shadow: drop-shadow(0 1px 0 rgb(0 0 0 / .16)) drop-shadow(0 6px 9px rgb(0 0 0 / .13));
+  --note-rule: transparent;
+  --note-lean: .5;
+  --note-fold: 0px;
+  --note-tape: none;
+}
+:root[data-phosphor] .nc-note-paper { padding-inline: 24px; }
+:root[data-phosphor][data-theme="dark"] .nc-note {
+  --note-paper: var(--phosphor-scanlines), color-mix(in srgb, var(--note-tint) 7%, var(--bg));
+  --note-ink: color-mix(in srgb, var(--note-tint) 72%, var(--heading));
+  --note-edge: color-mix(in srgb, var(--note-tint) 70%, var(--bg));
+  --note-trim: inset 0 0 18px color-mix(in srgb, var(--note-tint) 14%, transparent);
+  --note-shadow: drop-shadow(0 0 5px color-mix(in srgb, var(--note-tint) 42%, transparent));
+  --note-shadow-raised: drop-shadow(0 0 11px color-mix(in srgb, var(--note-tint) 65%, transparent));
+  --note-lean: 0;
+}
+:root[data-phosphor][data-theme="dark"] .nc-note-paper { padding-inline: 15px; }
+:root[data-phosphor][data-theme="dark"] .nc-note-title::before { content: "> "; opacity: .7; }
+@media (prefers-color-scheme: dark) {
+  :root[data-phosphor]:not([data-theme="light"]) .nc-note {
+    --note-paper: var(--phosphor-scanlines), color-mix(in srgb, var(--note-tint) 7%, var(--bg));
+    --note-ink: color-mix(in srgb, var(--note-tint) 72%, var(--heading));
+    --note-edge: color-mix(in srgb, var(--note-tint) 70%, var(--bg));
+    --note-trim: inset 0 0 18px color-mix(in srgb, var(--note-tint) 14%, transparent);
+    --note-shadow: drop-shadow(0 0 5px color-mix(in srgb, var(--note-tint) 42%, transparent));
+    --note-shadow-raised: drop-shadow(0 0 11px color-mix(in srgb, var(--note-tint) 65%, transparent));
+    --note-lean: 0;
+  }
+  :root[data-phosphor]:not([data-theme="light"]) .nc-note-paper { padding-inline: 15px; }
+  :root[data-phosphor]:not([data-theme="light"]) .nc-note-title::before { content: "> "; opacity: .7; }
+}

@@ -1,0 +1,93 @@
+{
+  "id": "gemini",
+  "label": "Gemini",
+  "mark": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M12 1C10 8 8 10 1 12c7 2 9 4 11 11 2-7 4-9 11-11C16 10 14 8 12 1Z\"/></svg>",
+  "modes": [
+    {
+      "id": "gemini-4-carbon",
+      "agent": "gemini",
+      "model": "gemini-4-carbon",
+      "label": "Gemini 4 Carbon"
+    },
+    {
+      "id": "gemini-4-argon",
+      "agent": "gemini",
+      "model": "gemini-4-argon",
+      "label": "Gemini 4 Argon"
+    },
+    {
+      "id": "gemini-4-hydrogen",
+      "agent": "gemini",
+      "model": "gemini-4-hydrogen",
+      "label": "Gemini 4 Hydrogen",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "aliases": [
+        "gemini-3.8-flash"
+      ]
+    },
+    {
+      "id": "gemini-4-neon",
+      "agent": "gemini",
+      "model": "gemini-4-neon",
+      "label": "Gemini 4 Neon",
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gemini-pro-orchestrator-neon",
+      "agent": "gemini",
+      "model": "gemini-pro-orchestrator-neon",
+      "label": "Orchestrator (Neon)",
+      "fixedEffort": "high",
+      "fixedEffortModel": "gemini-4-neon"
+    },
+    {
+      "id": "claude-opus-5-5",
+      "agent": "gemini",
+      "model": "claude-opus-5-5",
+      "label": "Claude Opus 5.5"
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "agent": "gemini",
+      "model": "claude-sonnet-5-5",
+      "label": "Claude Sonnet 5.5"
+    },
+    {
+      "id": "gpt-oss-120b-medium",
+      "agent": "gemini",
+      "model": "gpt-oss-120b-medium",
+      "label": "GPT-OSS 120B (Medium)"
+    },
+    {
+      "id": "default",
+      "agent": "gemini",
+      "model": "default",
+      "label": "Gemini (CLI default)"
+    }
+  ],
+  "fast": false,
+  "effortModes": [
+    "gemini-4-carbon",
+    "gemini-4-argon",
+    "gemini-4-hydrogen",
+    "gemini-4-neon",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5"
+  ],
+  "effortLevels": [
+    "low",
+    "medium",
+    "high"
+  ],
+  "reviews": false
+}

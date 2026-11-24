@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""PostToolUse hook for a headless Claude turn: hand it the Chat messages the
+person sent while it was working.
+
+Print mode reads its prompt once, so a message sent mid-turn would otherwise
+wait for the turn to end or interrupt it. orc-ui queues such a message in the
+run's `follow-ups.json` with `steer: true`; after each tool call this hook
+takes those items, under the same lock as orc-ui's queue, and returns them as
+additional context. Anything the turn ends without reaching is sent as the
+next turn by orc-ui's ordinary queue flush.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import fcntl
+import json
+import os
+import sys
+import tempfile
+
+
+FOLLOW_UPS_FILE = "follow-ups.json"
+LEAD = ("The user sent this in Orc Chat while you were working. It is their own "
+        "message, so take it into account before your next step.")
+
+
+def read_json(path):
+    try:
+        with open(path) as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def write_follow_ups(path, state):
+    if not state.get("items") and not state.get("held"):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        return
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".follow-ups.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(state, handle, indent=2)
+            handle.write("\n")
+        os.replace(tmp_path, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
+
+
+def take_steers(run_dir):
+    """Remove and return the queued messages meant for the running turn."""
+    path = os.path.join(run_dir, FOLLOW_UPS_FILE)
+    if not os.path.exists(path):
+        return []
+    meta = read_json(os.path.join(run_dir, "meta.json")) or {}
+    with open(os.path.join(run_dir, ".follow-ups.lock"), "a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        state = read_json(path)
+        if not state or state.get("held") is True or meta.get("orchestrationQueueHeld"):
+            return []
+        items = [item for item in state.get("items") or [] if isinstance(item, dict)]
+        steers = [item for item in items
+                  if item.get("steer") is True and isinstance(item.get("text"), str)]
+        if not steers:
+            return []
+        state["items"] = [item for item in items if item not in steers]
+        write_follow_ups(path, state)
+    return [item["text"] for item in steers]
+
+
+def context(messages):
+    blocks = "\n\n".join("<orc-chat-message>\n%s\n</orc-chat-message>" % text for text in messages)
+    return "%s\n\n%s" % (LEAD, blocks)
+
+
+def main(argv):
+    if len(argv) != 2:
+        print("usage: orc-chat-steer <run-dir>", file=sys.stderr)
+        return 2
+    try:
+        messages = take_steers(argv[1])
+    except OSError as error:
+        # A hook error must not fail the agent's tool call; the message stays queued.
+        print("orc-chat-steer: %s" % error, file=sys.stderr)
+        return 0
+    if messages:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse", "additionalContext": context(messages)}}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

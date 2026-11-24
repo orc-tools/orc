@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Stop a run on a blocker only the user can clear, and resume it afterwards.
+
+    orc-escalate --run-dir <run-dir> --reason '<what the user must do>'
+    orc-escalate --run-dir <run-dir> --clear
+
+Escalating keeps the phase, sets status=escalated and records
+{"reason", "phase", "escalatedAt"} under meta.escalation, so the run shows
+the reason as Needs input. --clear sets status=running and drops the record;
+the next gate the run opens (`orc-ui open --gate ...`, or
+`orc-delivery-authority ship`) also clears it. Both log a decisions.jsonl row.
+
+A merge conflict and an orc-ship-hold hold own their own escalation and are
+refused here: resolve the conflict, or reopen Ship to release the hold.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import subprocess
+import sys
+
+BIN = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN.parent / "ui"))
+from delivery_record import DeliveryError, meta_lock, now, read_meta, write_meta  # noqa: E402
+
+
+MAX_REASON = 300
+ESCALATABLE = {"running", "awaiting-gate"}
+
+
+class EscalateError(Exception):
+    pass
+
+
+def owned_elsewhere(meta):
+    if isinstance(meta.get("mergeConflict"), dict):
+        return "the run is blocked by merge conflicts; resolve them instead"
+    if isinstance(meta.get("shipHold"), dict):
+        return "the run is held at Ship by orc-ship-hold; reopen Ship to release it"
+    return None
+
+
+def escalate(meta, reason):
+    """Return True when meta changed."""
+    if meta.get("route") == "orchestration-worker":
+        raise EscalateError("a delegated worker reports blockers through task_complete")
+    refusal = owned_elsewhere(meta)
+    if refusal:
+        raise EscalateError(refusal)
+    status = meta.get("status")
+    existing = meta.get("escalation")
+    if status == "escalated":
+        if not isinstance(existing, dict):
+            raise EscalateError("run is already escalated for another reason; "
+                                "clear it with --clear first")
+        if existing.get("reason") == reason:
+            return False
+        meta["escalation"] = {**existing, "reason": reason}
+        return True
+    if status not in ESCALATABLE:
+        raise EscalateError("run is %s; only a running run or one at a gate can be escalated"
+                            % status)
+    meta["status"] = "escalated"
+    meta["escalation"] = {"reason": reason, "phase": meta.get("phase"), "escalatedAt": now()}
+    return True
+
+
+def clear(meta):
+    """Return True when meta changed."""
+    refusal = owned_elsewhere(meta)
+    if refusal and meta.get("status") == "escalated":
+        raise EscalateError(refusal)
+    changed = meta.pop("escalation", None) is not None
+    # Older runs wrote this reason by hand.
+    changed = meta.pop("escalationReason", None) is not None or changed
+    if meta.get("status") == "escalated":
+        meta["status"] = "running"
+        changed = True
+    return changed
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="orc-escalate", description=__doc__.split("\n")[0])
+    parser.add_argument("--run-dir", required=True, type=pathlib.Path)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--reason", help="one line: what the user must do or decide")
+    action.add_argument("--clear", action="store_true",
+                        help="resume the run once the blocker is gone")
+    args = parser.parse_args(argv)
+
+    reason = None
+    if args.reason is not None:
+        reason = " ".join(args.reason.split())
+        if not reason:
+            parser.error("--reason must not be empty")
+        if len(reason) > MAX_REASON:
+            reason = reason[:MAX_REASON - 1].rstrip() + "…"
+
+    run_dir = args.run_dir.expanduser().resolve()
+    meta_path = run_dir / "meta.json"
+    try:
+        with meta_lock(run_dir.parent, read_meta(meta_path)):
+            meta = read_meta(meta_path)
+            changed = clear(meta) if args.clear else escalate(meta, reason)
+            if changed:
+                write_meta(meta_path, meta)
+    except (EscalateError, DeliveryError) as exc:
+        print("orc-escalate: %s" % exc, file=sys.stderr)
+        return 1
+
+    if changed:
+        subprocess.run(
+            [str(BIN / "orc-decision"), str(run_dir), "--phase", str(meta.get("phase") or "build"),
+             "--decision", "Escalated: %s" % reason if reason else "Resumed after escalation",
+             "--why", "orc-escalate"],
+            capture_output=True, check=False)
+    print(json.dumps({
+        "runId": meta.get("runId") or run_dir.name,
+        "phase": meta.get("phase"),
+        "status": meta.get("status"),
+        "escalation": meta.get("escalation"),
+        "changed": changed,
+    }))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,14 @@
+{
+  "apiVersion": 1,
+  "id": "tailscale",
+  "name": "Tailscale",
+  "version": "1.0.0",
+  "description": "Reach this Orc from your phone and share plans by link. Off until you turn it on.",
+  "icon": "icon.png",
+  "adoptOnUpgradeIf": ".orc/tailscale.json",
+  "pairedSwitch": false,
+  "contributes": {
+    "frontend": "frontend.js",
+    "backend": "backend.py"
+  }
+}

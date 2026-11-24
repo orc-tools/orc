@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Stamp a runtime's version.json from the release commit.
+
+The version and changelog come from VERSION and CHANGELOG.md at <ref>, the
+same files serve.py reads from the running release. A commit from before
+those files existed falls back to the v-tags reachable from <ref>
+(`--merged`), so a release never claims a version tagged after it.
+install.sh calls this when staging a release. Best-effort: git failures yield
+an empty stamp.
+
+Usage: orc-version-json <repo> <ref> <out-path>
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.realpath(__file__))), "ui"))
+import release_version  # noqa: E402
+
+TAG = re.compile(r"^v\d+\.\d+\.\d+$")
+RUN_ANNOTATION = re.compile(r"^Run:\s+([^\s]+)\s*$", re.MULTILINE)
+
+
+def git(repo, *args):
+    try:
+        res = subprocess.run(["git", "-C", repo, *args],
+                             capture_output=True, text=True, timeout=10)
+        return res.stdout if res.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def portable(repo):
+    resolved_repo = os.path.realpath(os.path.expanduser(repo))
+    home = os.path.realpath(os.path.expanduser("~"))
+    return "~" + resolved_repo[len(home):] \
+        if resolved_repo == home or resolved_repo.startswith(home + os.sep) \
+        else resolved_repo
+
+
+def compute(repo, ref):
+    current = release_version.parse(
+        git(repo, "show", "%s:%s" % (ref, release_version.VERSION_FILE)))
+    if current:
+        return {"version": release_version.label(current), "repo": portable(repo),
+                "changelog": release_version.parse_changelog(git(
+                    repo, "show", "%s:%s" % (ref, release_version.CHANGELOG_FILE)))}
+    version = ""
+    for line in git(repo, "tag", "--list", "v*.*.*", "--merged", ref,
+                    "--sort=-v:refname").splitlines():
+        if TAG.match(line.strip()):
+            version = line.strip()
+            break
+
+    changelog = []
+    raw = git(repo, "for-each-ref", "refs/tags/v*", "--merged", ref,
+              "--sort=-creatordate",
+              "--format=%(refname:short)%09%(creatordate:short)"
+              "%09%(*objectname)%09%(objectname)%0a%(contents:body)%1e")
+    for block in raw.split("\x1e"):
+        block = block.strip("\n")
+        if not block.strip():
+            continue
+        first, _, body = block.partition("\n")
+        parts = first.split("\t")
+        if len(parts) < 2 or not TAG.match(parts[0]):
+            continue
+        changes = [ln.strip()[2:].strip() for ln in body.splitlines()
+                   if ln.strip().startswith("- ")]
+        release = {"version": parts[0], "date": parts[1], "changes": changes}
+        target = (parts[2] if len(parts) > 2 else "") or \
+                 (parts[3] if len(parts) > 3 else "")
+        if re.fullmatch(r"[0-9a-fA-F]{40,64}", target):
+            release["commit"] = target.lower()
+        run = RUN_ANNOTATION.search(body)
+        if run:
+            release["runId"] = run.group(1)
+        changelog.append(release)
+    return {"version": version, "repo": portable(repo), "changelog": changelog}
+
+
+def main(argv):
+    if len(argv) != 4:
+        print("usage: orc-version-json <repo> <ref> <out-path>", file=sys.stderr)
+        return 2
+    repo, ref, out = argv[1], argv[2], argv[3]
+    stamp = compute(repo, ref)
+    # Never write an empty stamp: no reachable tags (or a transient git failure)
+    # must not clobber a previously-good version.json on a re-stamp.
+    if not stamp["version"]:
+        return 0
+    with open(out, "w") as handle:
+        json.dump(stamp, handle, indent=2)
+        handle.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

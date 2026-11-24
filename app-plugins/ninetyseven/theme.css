@@ -1,0 +1,556 @@
+/* Orcsoft 97 mode: the host sets data-ninetyseven on <html> and this file
+   turns Orc into a late-nineties desktop: grey chrome with bevelled edges,
+   navy title bars, white document wells and a teal desktop behind project
+   home, with a charcoal scheme of the same shapes at night. It re-points the
+   shell's own tokens, so every surface that reads var(--bg), var(--accent)
+   and friends follows without its own rule. The gate pages load the same file
+   through /app-plugin-themes.css.
+
+   Every block below out-specifies the swamp block it replaces:
+   :root[data-ninetyseven] beats :root, and the night blocks carry one more
+   attribute than the swamp's dark ones. Anything set in the day block that
+   differs at night is declared again in both night blocks, because the day
+   block matches there too. The palettes keep the swamp's contrast floors
+   (tests/test_ninetyseven_mode.py checks them).
+
+   --panel is the chrome (the sidebar, cards, menus and dialogs) and --bg is
+   the well that documents sit in, which is why --bg is the lighter of the two
+   by day and the darker at night. */
+:root[data-ninetyseven] {
+  color-scheme: light;
+  --bg: #ffffff; --panel: #c0c0c0; --border: #808080;
+  --text: #111111; --heading: #000000; --muted: #555555; --accent: #000080;
+  --accent-soft: #b9c4dc; --chip: #dfdfdf; --code: #ececec;
+  --green: #007000; --yellow: #6b6b00; --red: #a80000;
+  --purple: #800080; --cyan: #00527a; --orange: #b85c00;
+  --focus: #000080;
+  --ready-text: #005848;
+  --blue-text: #0000a8;
+  --ninetyseven-on-accent: #ffffff;
+  --ninetyseven-light: #ffffff; --ninetyseven-hilite: #dfdfdf;
+  --ninetyseven-shadow: #808080; --ninetyseven-dark: #0a0a0a;
+  --ninetyseven-desktop: #008080;
+  --ninetyseven-tip: #ffffe1; --ninetyseven-tip-ink: #000000;
+  --ninetyseven-sky: #e0ecf9;
+  --ninetyseven-sky-blend: multiply;
+  /* Inset bevels suit a box whose children leave its edges clear; the -out
+     pair draws the same edges outside a box whose child fills it, such as a
+     design-system button. */
+  --ninetyseven-raised: inset -1px -1px 0 var(--ninetyseven-dark), inset 1px 1px 0 var(--ninetyseven-light), inset -2px -2px 0 var(--ninetyseven-shadow), inset 2px 2px 0 var(--ninetyseven-hilite);
+  --ninetyseven-sunken: inset -1px -1px 0 var(--ninetyseven-light), inset 1px 1px 0 var(--ninetyseven-shadow), inset -2px -2px 0 var(--ninetyseven-hilite), inset 2px 2px 0 var(--ninetyseven-dark);
+  --ninetyseven-raised-out: -1px -1px 0 var(--ninetyseven-hilite), 1px 1px 0 var(--ninetyseven-shadow), -2px -2px 0 var(--ninetyseven-light), 2px 2px 0 var(--ninetyseven-dark);
+  --ninetyseven-sunken-out: -1px -1px 0 var(--ninetyseven-shadow), 1px 1px 0 var(--ninetyseven-hilite), -2px -2px 0 var(--ninetyseven-dark), 2px 2px 0 var(--ninetyseven-light);
+  --ninetyseven-title: linear-gradient(90deg, #000080, #1070c0);
+  --ninetyseven-title-ink: #ffffff;
+  --ninetyseven-font: "MS Sans Serif", "Microsoft Sans Serif", Tahoma, Geneva, Verdana, sans-serif;
+  --orc-font-sans: var(--ninetyseven-font);
+  --orc-radius-sm: 0px; --orc-radius-md: 0px; --orc-radius-chip: 0px; --orc-radius-callout: 0px;
+  --orc-radius-1: 0px; --orc-radius-2: 0px; --orc-button-radius: 0px;
+  accent-color: var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-ninetyseven]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #15171a; --panel: #2f3238; --border: #5c616b;
+    --text: #d5d8de; --heading: #ffffff; --muted: #8e949e; --accent: #8ab4f8;
+    --accent-soft: #2c3e63; --chip: #3d4149; --code: #23262b;
+    --green: #7ee07e; --yellow: #f0d060; --red: #ff7b7b;
+    --purple: #d9a0ff; --cyan: #62c8ee; --orange: #ffa64d;
+    --focus: #8ab4f8;
+    --ready-text: #4fe0b0;
+    --blue-text: #9db8ff;
+    --ninetyseven-on-accent: #0b0d10;
+    --ninetyseven-light: #6b717c; --ninetyseven-hilite: #454a53;
+    --ninetyseven-shadow: #1b1d21; --ninetyseven-dark: #000000;
+    --ninetyseven-desktop: #0a4a4a;
+    --ninetyseven-tip: #4a4630; --ninetyseven-tip-ink: #fffbe0;
+    --ninetyseven-sky: #aebfe0;
+    --ninetyseven-sky-blend: screen;
+  }
+}
+:root[data-ninetyseven][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #15171a; --panel: #2f3238; --border: #5c616b;
+  --text: #d5d8de; --heading: #ffffff; --muted: #8e949e; --accent: #8ab4f8;
+  --accent-soft: #2c3e63; --chip: #3d4149; --code: #23262b;
+  --green: #7ee07e; --yellow: #f0d060; --red: #ff7b7b;
+  --purple: #d9a0ff; --cyan: #62c8ee; --orange: #ffa64d;
+  --focus: #8ab4f8;
+  --ready-text: #4fe0b0;
+  --blue-text: #9db8ff;
+  --ninetyseven-on-accent: #0b0d10;
+  --ninetyseven-light: #6b717c; --ninetyseven-hilite: #454a53;
+  --ninetyseven-shadow: #1b1d21; --ninetyseven-dark: #000000;
+  --ninetyseven-desktop: #0a4a4a;
+  --ninetyseven-tip: #4a4630; --ninetyseven-tip-ink: #fffbe0;
+  --ninetyseven-sky: #aebfe0;
+  --ninetyseven-sky-blend: screen;
+}
+
+:root[data-ninetyseven] body {
+  font-family: var(--ninetyseven-font);
+  background-color: var(--bg);
+}
+/* Form controls take the UA's font rather than inheriting it. Zero
+   specificity so any author font-family wins, which keeps code, diffs and
+   terminals in their own monospace. */
+:where(:root[data-ninetyseven]) :where(button, input, textarea, select) {
+  font-family: var(--ninetyseven-font);
+}
+:root[data-ninetyseven] :is(h1, h2, h3) { letter-spacing: 0; }
+/* Nothing on a 1997 desktop has a round corner. The shell sets its radii rule
+   by rule, so one rule squares them all, status dots included. Spinners stay
+   round because a square ring reads as a broken box. */
+:root[data-ninetyseven] body :not([class*="spinner"]),
+:root[data-ninetyseven] body :not([class*="spinner"])::before,
+:root[data-ninetyseven] body :not([class*="spinner"])::after { border-radius: 0 !important; }
+:root[data-ninetyseven] ::selection {
+  background: var(--accent);
+  color: var(--ninetyseven-on-accent);
+}
+:root[data-ninetyseven] :is(:hover, :focus-within) { scrollbar-color: var(--border) var(--chip); }
+:root[data-ninetyseven] :is(:hover, :focus-within)::-webkit-scrollbar-thumb { background-color: var(--border); }
+
+/* The sidebar is a window of its own: a raised edge against the document
+   well, a title bar across its head and a taskbar along its foot. */
+:root[data-ninetyseven] #run-sidebar {
+  border-right-color: var(--ninetyseven-dark);
+  box-shadow: inset -1px 0 0 var(--ninetyseven-shadow), inset 1px 0 0 var(--ninetyseven-light);
+}
+:root[data-ninetyseven] #sidebar-head {
+  margin: 3px 3px 0; padding: 3px 6px;
+  background: var(--ninetyseven-title);
+}
+/* The lockup's wordmark reads the design-system tokens inside its shadow
+   root, so they are re-pointed on the lockup alone. */
+:root[data-ninetyseven] #sidebar-head #logo {
+  color: var(--ninetyseven-title-ink);
+  --orc-heading: var(--ninetyseven-title-ink); --orc-text: var(--ninetyseven-title-ink);
+  --orc-green-text: var(--ninetyseven-title-ink); --orc-muted-strong: var(--ninetyseven-title-ink);
+}
+:root[data-ninetyseven] #sidebar-head :is(small, #sidebar-close, #sidebar-collapse) { color: var(--ninetyseven-title-ink); }
+:root[data-ninetyseven] #sidebar-head :is(#focus-indicator, .link-switch) { background: var(--panel); color: var(--heading); }
+:root[data-ninetyseven] #sidebar-head > h1 { font-weight: 700; }
+/* An etched line, a dark hairline over a light one, divides the sidebar's
+   sections and underlines the tabs. */
+:root[data-ninetyseven] :is(#sidebar-usage, #radio-now) {
+  border-top-color: var(--ninetyseven-shadow);
+  box-shadow: inset 0 1px 0 var(--ninetyseven-light);
+}
+:root[data-ninetyseven] #sidebar-footer {
+  border-top-color: var(--ninetyseven-light);
+  box-shadow: 0 -1px 0 var(--ninetyseven-shadow);
+}
+:root[data-ninetyseven] #tabbar {
+  border-bottom: 1px solid var(--ninetyseven-shadow);
+  box-shadow: 0 1px 0 var(--ninetyseven-light);
+}
+:root[data-ninetyseven] #settled-shelf {
+  border-color: transparent;
+  box-shadow: var(--ninetyseven-raised);
+}
+/* The open run wears the dotted rectangle a focused list item had. */
+:root[data-ninetyseven] .run.active {
+  outline: 1px dotted var(--heading);
+  outline-offset: -1px;
+}
+:root[data-ninetyseven] #gary {
+  border-color: transparent;
+  box-shadow: var(--ninetyseven-raised);
+}
+
+/* Design-system buttons fill with --orc-green. Here every one is a grey
+   key with a raised edge that sinks while pressed, and the default action
+   wears the extra dark frame a dialog's default button had. The fill is the
+   button's own child, so the bevel sits outside it. */
+:root[data-ninetyseven] orc-button {
+  --orc-green: var(--panel);
+  --orc-button-text: var(--heading);
+  box-shadow: var(--ninetyseven-raised-out);
+}
+:root[data-ninetyseven] orc-button:is(:not([variant]), [variant="primary"]) {
+  box-shadow: var(--ninetyseven-raised-out), 0 0 0 3px var(--ninetyseven-dark);
+}
+:root[data-ninetyseven] orc-button:not([disabled], [aria-disabled="true"]):active {
+  box-shadow: var(--ninetyseven-sunken-out);
+}
+/* Toolbar buttons lie flat until the pointer finds them, as they did in the
+   office suite of the year. */
+:root[data-ninetyseven] orc-icon-button:not([disabled], [aria-disabled="true"]):hover {
+  box-shadow: -1px -1px 0 var(--ninetyseven-light), 1px 1px 0 var(--ninetyseven-shadow);
+}
+:root[data-ninetyseven] orc-icon-button:not([disabled], [aria-disabled="true"]):active {
+  box-shadow: -1px -1px 0 var(--ninetyseven-shadow), 1px 1px 0 var(--ninetyseven-light);
+}
+
+/* The gate pages pin these copy buttons to the swamp's day blue by hex rather
+   than by token, so they are named here. A finished #copy-answers keeps its
+   green. */
+:root[data-ninetyseven] body :is(#orc-copy, #copy-answers:not(.done)) {
+  background: var(--panel);
+  color: var(--heading);
+  border-color: transparent;
+  box-shadow: var(--ninetyseven-raised);
+}
+:root[data-ninetyseven] body :is(#orc-copy, #copy-answers:not(.done)):not(:disabled):hover {
+  background: color-mix(in srgb, var(--panel) 90%, var(--ninetyseven-light));
+}
+:root[data-ninetyseven] body :is(#orc-copy, #copy-answers:not(.done)):not(:disabled):active {
+  box-shadow: var(--ninetyseven-sunken);
+}
+
+/* The composer is a text field: a well sunk into the chrome. The shell draws
+   the typing glow on ::before, so the well and its inner edge go there with
+   it, and the travelling beam goes. */
+:root[data-ninetyseven] .nc-beam { display: none; }
+:root[data-ninetyseven] .newconv-prompt::before {
+  background: linear-gradient(var(--bg) 0 0) padding-box;
+  box-shadow: inset 1px 1px 0 var(--ninetyseven-dark), inset -1px -1px 0 var(--ninetyseven-hilite),
+    var(--typing-glow, 0 0 transparent);
+}
+/* What you said is a tooltip: pale yellow with a hairline frame. A queued
+   message keeps its dashed outline and a shell command its own tint. */
+:root[data-ninetyseven] .chat-row-user:not(.is-queued) .chat-bubble:not(.is-shell) {
+  background: var(--ninetyseven-tip);
+  color: var(--ninetyseven-tip-ink);
+  border: 1px solid var(--ninetyseven-dark);
+}
+
+/* Project home is the desktop. Its heading is lettered like an icon's label,
+   and two icons sit in the corner where a desktop keeps them, on windows wide
+   enough to leave that corner empty. */
+:root[data-ninetyseven] #new-view { background-color: var(--ninetyseven-desktop); }
+:root[data-ninetyseven] #new-view .nc-title {
+  color: #ffffff;
+  text-shadow: 1px 1px 0 #000000;
+}
+:root[data-ninetyseven] #new-view .nc-project-switch { text-decoration-color: #ffffff; }
+:root[data-ninetyseven] #new-view .nc-project-switch:is(:hover, :focus-visible) { color: #ffffe1; }
+:root[data-ninetyseven] #new-view .nc-tray {
+  background: var(--panel);
+  border-color: var(--ninetyseven-dark);
+}
+@media (min-width: 1400px) {
+  :root[data-ninetyseven] #new-view {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='76' height='76' viewBox='0 0 76 76' shape-rendering='crispEdges'%3E%3Crect x='20.5' y='4.5' width='35' height='28' fill='%23c0c0c0' stroke='%23000'/%3E%3Cpath d='M21 5h34v1H22v26h-1z' fill='%23fff'/%3E%3Crect x='24' y='8' width='28' height='20' fill='%23003c3c'/%3E%3Crect x='31' y='11' width='14' height='13' fill='%235a9a3a'/%3E%3Crect x='28' y='13' width='3' height='4' fill='%235a9a3a'/%3E%3Crect x='45' y='13' width='3' height='4' fill='%235a9a3a'/%3E%3Crect x='33' y='15' width='3' height='3' fill='%23000'/%3E%3Crect x='40' y='15' width='3' height='3' fill='%23000'/%3E%3Crect x='34' y='20' width='2' height='4' fill='%23fff'/%3E%3Crect x='40' y='20' width='2' height='4' fill='%23fff'/%3E%3Crect x='31' y='33' width='14' height='4' fill='%23808080'/%3E%3Crect x='13.5' y='37.5' width='49' height='10' fill='%23c0c0c0' stroke='%23000'/%3E%3Cpath d='M14 38h48v1H15v8h-1z' fill='%23fff'/%3E%3Crect x='44' y='42' width='13' height='2' fill='%23000'/%3E%3Crect x='18' y='42' width='3' height='2' fill='%23007000'/%3E%3Ctext x='38' y='65' text-anchor='middle' font-family='Tahoma, Geneva, Verdana, sans-serif' font-size='11' fill='%23000'%3EMy Swamp%3C/text%3E%3Ctext x='37' y='64' text-anchor='middle' font-family='Tahoma, Geneva, Verdana, sans-serif' font-size='11' fill='%23fff'%3EMy Swamp%3C/text%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='76' height='76' viewBox='0 0 76 76' shape-rendering='crispEdges'%3E%3Cpath d='M25.5 12.5h25l-3 35h-19z' fill='%23c0c0c0' stroke='%23000'/%3E%3Cpath d='M27 14h3l2 32h-2z' fill='%23fff'/%3E%3Crect x='22.5' y='7.5' width='31' height='5' fill='%23dfdfdf' stroke='%23000'/%3E%3Crect x='33.5' y='4.5' width='9' height='3' fill='%23c0c0c0' stroke='%23000'/%3E%3Cpath d='M34 18h2v24h-2zM40 18h2v24h-2zM46 18h1l-1 24h-2z' fill='%23808080'/%3E%3Ctext x='38' y='65' text-anchor='middle' font-family='Tahoma, Geneva, Verdana, sans-serif' font-size='11' fill='%23000'%3EBog Bin%3C/text%3E%3Ctext x='37' y='64' text-anchor='middle' font-family='Tahoma, Geneva, Verdana, sans-serif' font-size='11' fill='%23fff'%3EBog Bin%3C/text%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: 20px 20px, 20px 112px;
+  }
+}
+
+/* Controls whose own cursor already says drag, busy or unavailable keep it,
+   and text entry keeps the native I-beam. The pointing hand's hotspot is its
+   fingertip. */
+:root[data-ninetyseven], :root[data-ninetyseven] body {
+  --orc-cursor-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cg transform='translate(0 .5)'%3E%3Cpath d='M10 3.75a2.25 2.25 0 0 1 4.5 0V13.5a2.25 2.25 0 0 1 4.5 0v.75a2.25 2.25 0 0 1 4.5 0v1a2 2 0 0 1 4 0V19.5c0 3.2-2.1 5.1-5.2 5.5H14.2c-2-.4-3.6-1.5-5-3.3L4.7 17.6a2.1 2.1 0 0 1 3.1-2.8L10 17z' fill='%23fff' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M14.5 13.5v3M19 14.25v2.75M23.5 15.25v2.5' fill='none' stroke='%23000' stroke-width='1.1' stroke-linecap='round' stroke-opacity='.55'/%3E%3Crect x='12.5' y='24.25' width='11.5' height='5.5' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3C/g%3E%3C/svg%3E") 12 2, pointer;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M3.5 2.5v16l4-3.6 2.9 6.6 2.6-1.1-2.9-6.5h5.4z' fill='%23fff' stroke='%23000' stroke-width='1.2' stroke-linejoin='miter'/%3E%3C/svg%3E") 3 2, auto;
+}
+:root[data-ninetyseven] :where(a[href], button, summary, label, select, [role="button"], [role="tab"], [role="option"], [role="menuitem"], orc-button, orc-icon-button, orc-theme-toggle):not(:disabled, [disabled], [aria-disabled="true"], [aria-busy="true"], .is-busy, [draggable="true"]) {
+  cursor: var(--orc-cursor-pointer);
+}
+:root[data-ninetyseven] :where(input:not([type="checkbox"], [type="radio"], [type="range"]), textarea, [contenteditable="true"], orc-input):not(:disabled, [disabled]) {
+  cursor: text;
+}
+
+/* The empty page is a message box. Decorative text below uses the
+   `content: "…" / ""` alternative so screen readers skip it; the first
+   declaration is the fallback for engines that drop the second. */
+:root[data-ninetyseven] #empty {
+  min-width: 260px; padding: 3px 3px 18px;
+  color: var(--text); text-align: center;
+  background: var(--panel);
+  box-shadow: var(--ninetyseven-raised), 6px 6px 0 rgb(0 0 0 / .25);
+}
+:root[data-ninetyseven] #empty::before {
+  content: "Orc 97"; content: "Orc 97" / "";
+  display: block; margin-bottom: 16px; padding: 3px 6px;
+  font: 700 12px/1.3 var(--ninetyseven-font); text-align: left;
+  color: var(--ninetyseven-title-ink); background: var(--ninetyseven-title);
+}
+/* A title bar is a thin strip, so it keeps its own height and the margin under
+   it makes up the rest of the palette's banner slot. */
+:root[data-ninetyseven] #cmdk-layout::before {
+  content: "Run"; content: "Run" / "";
+  justify-content: flex-start; block-size: 22px; padding: 0 6px;
+  margin: 3px 3px calc(var(--cmdk-banner-height) - 25px);
+  font: 700 12px/1.3 var(--ninetyseven-font);
+  color: var(--ninetyseven-title-ink);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='14' viewBox='0 0 16 14' shape-rendering='crispEdges'%3E%3Crect width='16' height='14' fill='%23c0c0c0'/%3E%3Cpath d='M0 0h15v1H1v12H0z' fill='%23fff'/%3E%3Cpath d='M15 0h1v14H0v-1h15z' fill='%230a0a0a'/%3E%3Cpath d='M14 1h1v12H1v-1h13z' fill='%23808080'/%3E%3Cpath d='M4 3h2l2 2 2-2h2v1l-3 3 3 3v1h-2l-2-2-2 2H4v-1l3-3-3-3z' fill='%23000'/%3E%3C/svg%3E") right 3px center / 16px 14px no-repeat, var(--ninetyseven-title);
+}
+:root[data-ninetyseven] #cmdk-footer::after { content: " · Esc to cancel, like it is 1997"; content: " · Esc to cancel, like it is 1997" / ""; }
+
+/* The sky blends with the page as one layer: multiplied by day, so dark text
+   a cloud drifts across stays as dark as it was, and screened at night, so
+   light text a star crosses stays as light. */
+#ninetyseven-scene {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  mix-blend-mode: var(--ninetyseven-sky-blend);
+}
+.ninetyseven-thing { position: absolute; left: var(--x, 50%); top: var(--y, 50%); }
+/* A cloud from the sky the desktop booted over, in three slabs. */
+.ninetyseven-cloud {
+  left: 0; width: var(--size); height: calc(var(--size) * .4);
+  background:
+    linear-gradient(var(--ninetyseven-sky) 0 0) 50% 100% / 100% 36% no-repeat,
+    linear-gradient(var(--ninetyseven-sky) 0 0) 34% 50% / 62% 40% no-repeat,
+    linear-gradient(var(--ninetyseven-sky) 0 0) 46% 0 / 30% 40% no-repeat;
+  animation: ninetyseven-drift var(--dur) linear var(--delay) infinite;
+}
+/* A star of the screen saver's field, flying out from the middle of the
+   glass. */
+.ninetyseven-star {
+  width: var(--size); height: var(--size);
+  background: var(--ninetyseven-sky);
+  animation: ninetyseven-warp var(--dur) linear var(--delay) infinite;
+}
+/* The sky is clouds by day and the star field at night. */
+:root[data-ninetyseven][data-theme="light"] .ninetyseven-star,
+:root[data-ninetyseven][data-theme="dark"] .ninetyseven-cloud { display: none; }
+@media (prefers-color-scheme: light) {
+  :root[data-ninetyseven]:not([data-theme="dark"]) .ninetyseven-star { display: none; }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-ninetyseven]:not([data-theme="light"]) .ninetyseven-cloud { display: none; }
+}
+/* The start-up box, shown over everything as the mode turns on. Its blocks
+   fill one at a time and the whole box leaves once the last has landed. */
+#ninetyseven-splash {
+  position: fixed; inset: 0; z-index: 2147483000; overflow: hidden; pointer-events: none;
+}
+.ninetyseven-boot {
+  position: absolute; left: 50%; top: 34%; translate: -50% -50%;
+  width: 300px; padding: 3px 3px 14px;
+  font: 400 12px/1.4 var(--ninetyseven-font); color: var(--text);
+  background: var(--panel);
+  box-shadow: var(--ninetyseven-raised), 6px 6px 0 rgb(0 0 0 / .3);
+  animation: ninetyseven-boot 2.4s steps(1, end) both;
+}
+.ninetyseven-boot-title {
+  padding: 3px 6px; font-weight: 700;
+  color: var(--ninetyseven-title-ink); background: var(--ninetyseven-title);
+}
+.ninetyseven-boot-line { padding: 12px 12px 8px; }
+.ninetyseven-boot-bar {
+  display: flex; gap: 2px; height: 16px; margin: 0 12px; padding: 3px;
+  background: var(--bg);
+  box-shadow: inset 1px 1px 0 var(--ninetyseven-shadow), inset -1px -1px 0 var(--ninetyseven-light);
+}
+.ninetyseven-boot-block {
+  flex: 1; background: var(--accent); opacity: 0;
+  animation: ninetyseven-block .1s steps(1, end) calc(var(--i) * 120ms + 200ms) both;
+}
+.ninetyseven-zap {
+  position: fixed; left: var(--px); top: var(--py); translate: -50% -50%;
+  line-height: 1;
+}
+/* A click scatters eight pixels in the four colours of a waving flag. */
+.ninetyseven-pixel {
+  width: 6px; height: 6px; background: var(--tint);
+  animation: ninetyseven-pixel .7s steps(7, end) both;
+}
+/* A held press leaves a window behind at each step, the trail a frozen
+   program drew when you dragged it. Smaller and shorter-lived than a click's
+   pixels, so a long drag stays under frontend.js's cap. */
+.ninetyseven-ghost {
+  width: 30px; height: 22px;
+  background: var(--ninetyseven-title) 2px 2px / calc(100% - 4px) 6px no-repeat, var(--panel);
+  box-shadow: var(--ninetyseven-raised);
+  animation: ninetyseven-ghost .6s steps(4, end) both;
+}
+/* The composers rise over the scene, so nothing drifts under what you type.
+   Project home's composer sits inside its view's own layer, so the whole view
+   rises there and covers the scene. Composer textareas stay out: the pickers
+   in the composer's footer open over them. */
+:root[data-ninetyseven] :is(#new-view, .newconv-prompt) { z-index: 1; }
+:root[data-ninetyseven] textarea:not(.newconv-prompt textarea) { position: relative; z-index: 1; }
+/* The side panel rises too, so the scene never lies over a PR body's
+   screenshots. On a phone the panel is already a sheet over everything. */
+@media not all and (max-width: 900px) {
+  :root[data-ninetyseven] #run-diff { z-index: 1; }
+}
+@keyframes ninetyseven-drift {
+  from { translate: -110% 0; }
+  to { translate: 100vw 0; }
+}
+@keyframes ninetyseven-warp {
+  0% { translate: 0 0; scale: .3; opacity: 0; }
+  12% { opacity: .9; }
+  100% { translate: var(--dx) var(--dy); scale: 1.8; opacity: .9; }
+}
+@keyframes ninetyseven-boot {
+  0%, 92% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ninetyseven-block {
+  to { opacity: 1; }
+}
+@keyframes ninetyseven-pixel {
+  0% { transform: translate(0, 0); opacity: 1; }
+  100% { transform: translate(var(--dx, 0px), var(--dy, -40px)); opacity: 0; }
+}
+@keyframes ninetyseven-ghost {
+  from { opacity: .9; }
+  to { opacity: 0; }
+}
+@media (max-width: 640px) {
+  .ninetyseven-cloud:nth-child(n + 4 of .ninetyseven-cloud),
+  .ninetyseven-star:nth-child(n + 13 of .ninetyseven-star) { display: none; }
+}
+@media (forced-colors: active), print {
+  #ninetyseven-scene, #ninetyseven-splash { display: none; }
+}
+
+/* Typing effects, drawn by frontend.js ninetysevenTyping into the shell's
+   typing layer. Each piece runs one animation and leaves when it ends.
+   Motion moves the translate property, so a piece's static transform turns
+   it in place rather than turning its path. */
+.ninetyseven-typed-key {
+  min-width: 18px; padding: 4px 5px; text-align: center;
+  font: 700 12px/1 var(--ninetyseven-font); color: var(--heading);
+  background: var(--panel);
+  box-shadow: var(--ninetyseven-raised);
+  animation: ninetyseven-typed-key .5s steps(5, end) both;
+}
+.ninetyseven-typed-caret {
+  width: 2px; height: 15px; background: var(--heading);
+  animation: ninetyseven-typed-caret .45s steps(1, end) both;
+}
+.ninetyseven-typed-scrap {
+  width: 5px; height: 6px; background: var(--ninetyseven-light);
+  box-shadow: 1px 1px 0 var(--ninetyseven-shadow);
+  animation: ninetyseven-typed-scrap .6s steps(6, end) both;
+}
+.ninetyseven-typed-tip {
+  padding: 3px 6px;
+  font: 400 11px/1.2 var(--ninetyseven-font); color: var(--ninetyseven-tip-ink);
+  background: var(--ninetyseven-tip);
+  border: 1px solid var(--ninetyseven-dark);
+  animation: ninetyseven-typed-tip 1.8s steps(1, end) both;
+}
+@keyframes ninetyseven-typed-key {
+  0% { translate: -50% -100%; opacity: 1; }
+  100% { translate: calc(-50% + var(--drift)) calc(-100% - 22px); opacity: 0; }
+}
+@keyframes ninetyseven-typed-caret {
+  0%, 60% { translate: 2px -110%; opacity: 1; }
+  30%, 100% { translate: 2px -110%; opacity: 0; }
+}
+@keyframes ninetyseven-typed-scrap {
+  from { translate: -50% -100%; opacity: 1; }
+  to { translate: calc(-50% + var(--dx)) calc(-100% + var(--dy)); opacity: 0; }
+}
+@keyframes ninetyseven-typed-tip {
+  0% { translate: 0 calc(-100% - 6px); opacity: 0; }
+  6%, 85% { translate: 0 calc(-100% - 6px); opacity: 1; }
+  100% { translate: 0 calc(-100% - 6px); opacity: 0; }
+}
+
+/* Typing heat (see index.html's --typing-heat): the well's edge turns from
+   its resting grey to the title bar's navy, and the composer lifts off the
+   page on a hard shadow with no blur, the only kind the year could draw. */
+:root[data-ninetyseven] .newconv-prompt[data-typing-hot] { animation: none; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :root[data-ninetyseven] .newconv-prompt,
+  :root[data-ninetyseven] .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    border-color: color-mix(in srgb, var(--accent) clamp(0%, var(--typing-heat) * 100%, 100%), var(--typing-heat-rest));
+    --typing-glow: calc(var(--typing-heat) * 5px) calc(var(--typing-heat) * 5px) 0 color-mix(in srgb, var(--accent) calc(var(--typing-heat) * 55%), transparent);
+  }
+}
+
+/* The maximised terminal stage: a window with a title bar, standing on a hard
+   shadow. terminal.js opens it. */
+:root[data-ninetyseven] #run-terminal.terminal-staged {
+  --stage-radius: 0px;
+  border: 3px solid var(--panel);
+  box-shadow: -1px -1px 0 var(--ninetyseven-light), 1px 1px 0 var(--ninetyseven-dark), 9px 9px 0 rgb(0 0 0 / .35);
+}
+:root[data-ninetyseven] #run-terminal.terminal-staged::before {
+  content: "Orc Prompt"; content: "Orc Prompt" / "";
+  flex: none; padding: 3px 6px;
+  font: 700 12px/1.3 var(--ninetyseven-font);
+  color: var(--ninetyseven-title-ink);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='14' viewBox='0 0 16 14' shape-rendering='crispEdges'%3E%3Crect width='16' height='14' fill='%23c0c0c0'/%3E%3Cpath d='M0 0h15v1H1v12H0z' fill='%23fff'/%3E%3Cpath d='M15 0h1v14H0v-1h15z' fill='%230a0a0a'/%3E%3Cpath d='M14 1h1v12H1v-1h13z' fill='%23808080'/%3E%3Cpath d='M4 3h2l2 2 2-2h2v1l-3 3 3 3v1h-2l-2-2-2 2H4v-1l3-3-3-3z' fill='%23000'/%3E%3C/svg%3E") right 3px center / 16px 14px no-repeat, var(--ninetyseven-title);
+}
+:root[data-ninetyseven] .terminal-staged #run-terminal-bar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--ninetyseven-shadow);
+}
+
+:root[data-ninetyseven] {
+  --answer-mode-trim: var(--ninetyseven-title);
+  --answer-mode-trim-height: 18px;
+  --answer-mode-on-accent: var(--ninetyseven-on-accent);
+  --answer-mode-radius: 0px;
+  --run-row-radius: 0px;
+  --tab-radius: 0px;
+  --composer-radius: 0px;
+  --chat-bubble-radius: 0px;
+  --card-radius: 0px;
+  --dialog-radius: 0px;
+  --dialog-bg: var(--panel);
+  --dialog-shadow: var(--ninetyseven-raised);
+}
+
+:root[data-ninetyseven] [data-part="command-palette"],
+:root[data-ninetyseven] orc-dialog::part(dialog) {
+  background: var(--dialog-bg);
+  border-color: transparent;
+  box-shadow: var(--dialog-shadow);
+}
+
+/* Factory tab labels read as yellow InfoTips and roster rows as raised panels. */
+:root[data-ninetyseven] .factory-label {
+  border: 1px solid var(--ninetyseven-dark);
+  background: var(--ninetyseven-tip);
+  color: var(--ninetyseven-tip-ink);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: 2px 2px 0 rgb(0 0 0 / .32);
+}
+:root[data-ninetyseven] .factory-label::after { display: none; }
+:root[data-ninetyseven] .factory-label .factory-label-name { color: var(--ninetyseven-tip-ink); }
+:root[data-ninetyseven] .factory-label .factory-label-meta { color: var(--ninetyseven-tip-ink); opacity: .82; }
+:root[data-ninetyseven] .factory-label.is-hot {
+  outline: 1px dotted var(--ninetyseven-tip-ink); outline-offset: -3px;
+  box-shadow: 2px 2px 0 var(--accent);
+}
+:root[data-ninetyseven] .factory-main {
+  border-color: transparent; background: var(--panel); box-shadow: var(--ninetyseven-raised);
+}
+:root[data-ninetyseven] .factory-agent {
+  border-color: transparent; background: var(--bg); box-shadow: var(--ninetyseven-sunken);
+}
+:root[data-ninetyseven] .factory-summary {
+  background: var(--panel); box-shadow: var(--ninetyseven-sunken);
+}
+
+/* Sticky notes: a small window. The project's colour is its title bar, the
+   writing sits in a document well, and the corner is a size grip. The bar's
+   lettering is the well's colour, so the bar is deep by day and pale at
+   night. */
+:root[data-ninetyseven] { --ninetyseven-note-bar: 58%; }
+:root[data-ninetyseven][data-theme="dark"] { --ninetyseven-note-bar: 84%; }
+@media (prefers-color-scheme: dark) {
+  :root[data-ninetyseven]:not([data-theme="light"]) { --ninetyseven-note-bar: 84%; }
+}
+:root[data-ninetyseven] .nc-note {
+  --note-font: var(--ninetyseven-font);
+  --note-paper:
+    linear-gradient(90deg, color-mix(in srgb, var(--note-tint) var(--ninetyseven-note-bar), #06062a), color-mix(in srgb, var(--note-tint) calc(var(--ninetyseven-note-bar) + 14%), #06062a)) 3px 3px / calc(100% - 6px) 21px no-repeat,
+    linear-gradient(var(--bg), var(--bg)) 3px 27px / calc(100% - 6px) calc(100% - 30px) no-repeat,
+    var(--panel);
+  --note-edge-width: 0px;
+  --note-trim: var(--ninetyseven-raised);
+  --note-radius: 0px;
+  --note-shadow: drop-shadow(2px 2px 0 rgb(0 0 0 / .32));
+  --note-shadow-raised: drop-shadow(5px 5px 0 rgb(0 0 0 / .3));
+  --note-rule: transparent;
+  --note-lean: 0;
+  --note-fold: 0px;
+  --note-tape: none;
+}
+:root[data-ninetyseven] .nc-note-paper { padding: 4px 10px 8px; }
+:root[data-ninetyseven] .nc-note-head { margin: 0 -3px 8px; gap: 2px; }
+:root[data-ninetyseven] :is(.nc-note-key, .nc-note-state) {
+  border: 0; border-radius: 0; background: none; color: var(--bg);
+  font: 700 11px/1.2 var(--ninetyseven-font); letter-spacing: 0;
+}

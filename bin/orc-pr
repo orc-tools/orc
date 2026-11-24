@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Open a PR or push an approved commit for a single-repository Orc run."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+BIN = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN.parent / "ui"))
+from delivery_record import DeliveryError, meta_lock, now, read_meta, settle, write_meta
+from delivery_status import github_repo
+from linked_pr import cli_delivery_supported, linked_pr_url, query_open_pr
+from pr_body_images import local_paths
+from review_context import HOOK_GIT_ENV, PR_URL
+from run_relationships import valid_run_id
+
+
+def command(args, cwd, *, stdin=None):
+    result = subprocess.run(args, cwd=cwd, input=stdin, capture_output=True, text=True,
+                            timeout=90, env=dict(os.environ, GIT_TERMINAL_PROMPT="0",
+                                                 GH_PROMPT_DISABLED="1"))
+    if result.returncode:
+        raise DeliveryError((result.stderr or result.stdout).strip() or f"{args[0]} failed")
+    return result.stdout.strip()
+
+
+def approved_participant(run_dir, meta, expected):
+    file = run_dir / "delivery-authority.json"
+    raw = file.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise DeliveryError("delivery authority changed since Ship approval")
+    command([BIN / "orc-delivery-authority", "validate", "--run-dir", run_dir], run_dir)
+    if raw != file.read_bytes():
+        raise DeliveryError("delivery authority changed during validation")
+    participant, = json.loads(raw)["participants"]
+    repo = Path(meta["repoPath"]).expanduser().resolve()
+    if str(repo) != participant["repoPath"]:
+        raise DeliveryError("the approved repository differs from the run checkout")
+    branch = meta["branch"]
+    command(["git", "check-ref-format", "--branch", branch], repo)
+    tip = command(["git", "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}"], repo)
+    if tip != participant["head"] or tip == participant["base"]:
+        raise DeliveryError("the run branch does not point to a new approved commit")
+    command(["git", "merge-base", "--is-ancestor", participant["base"], tip], repo)
+    return repo, branch, tip
+
+
+def pr_body(run_dir, repo):
+    body = run_dir / "pr-body.md"
+    if not body.is_file() or body.is_symlink():
+        raise DeliveryError("pr-body.md must be a regular file")
+    lint = [BIN / "orc-pr-body-lint", body, "--repo", repo]
+    manifest = run_dir / "shots/manifest.json"
+    if manifest.is_file():
+        lint.extend(["--shots", manifest])
+    command(lint, repo)
+    images = local_paths(body.read_text(encoding="utf-8"), body)
+    for image in images:
+        path = image.resolve()
+        if (not any(path.is_relative_to(run_dir / folder) for folder in ("shots", "attachments"))
+                or not path.is_file()
+                or path.suffix.lower() not in {".gif", ".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov"}):
+            raise DeliveryError(f"invalid run screenshot: {image}")
+    return body, images
+
+
+def create_pr(repo, slug, base, branch, title, body, images):
+    args = ["gh", "pr", "create", "--repo", slug, "--base", base, "--head", branch,
+            "--title", title]
+    if images and "--attach" not in command(["gh", "pr", "create", "--help"], repo):
+        text = re.sub(r"(?ims)^#{2,3} Screenshots[ \t]*$.*?(?=^#{1,3} |\Z)", "",
+                      body.read_text(encoding="utf-8")).strip()
+        if local_paths(text, body):
+            raise DeliveryError("GitHub CLI 2.99 or newer is required for images outside Screenshots")
+        print("Screenshots skipped (gh < 2.99).", file=sys.stderr)
+        return command([*args, "--body-file", "-"], repo, stdin=text + "\n")
+    for image in images:
+        args.extend(["--attach", image])
+    return command([*args, "--body-file", body], repo)
+
+
+def contains(repo, ancestor, descendant):
+    return subprocess.run(["git", "merge-base", "--is-ancestor", ancestor, descendant],
+                          cwd=repo, capture_output=True).returncode == 0
+
+
+def remote_contains(repo, branch, head):
+    """Whether origin's branch already holds the approved commit, as GitHub
+    sees it now: a push made outside Orc can leave it there, or carry it under
+    later commits that a push of the approved commit would be refused over."""
+    tracking = f"refs/remotes/origin/{branch}"
+    command(["git", "fetch", "--no-tags", "origin", f"+refs/heads/{branch}:{tracking}"], repo)
+    return contains(repo, head, tracking)
+
+
+def verify_delivery(repo, url, branch, head, body=None, *, pushed_elsewhere=False):
+    fields = "state,headRefName,headRefOid" + (",body" if body else "")
+    published = json.loads(command(["gh", "pr", "view", url, "--json", fields], repo))
+    shown = published.get("headRefOid")
+    if (published.get("state") != "OPEN" or published.get("headRefName") != branch
+            or not isinstance(shown, str)
+            or (shown != head and not (pushed_elsewhere and contains(repo, head, shown)))):
+        raise DeliveryError(f"{url} does not show the approved commit on the run branch")
+    # GitHub CLI can create the PR even when an attachment upload fails.
+    if body and local_paths(published["body"], body):
+        raise DeliveryError(f"{url} still references a local screenshot; repair the PR before retrying")
+
+
+def check_pr(url, slug):
+    match = PR_URL.fullmatch(url or "")
+    if not match or match[1].casefold() != slug.casefold():
+        raise DeliveryError("the PR URL does not belong to the run's GitHub origin")
+    return url
+
+
+def pr_target(repo, branch, meta, linked):
+    origin = command(["git", "remote", "get-url", "--push", "--all", "origin"], repo)
+    slug = github_repo(origin)
+    fetch_slug = github_repo(command(["git", "remote", "get-url", "origin"], repo))
+    if not slug or not fetch_slug or slug.casefold() != fetch_slug.casefold():
+        raise DeliveryError("origin must have a single matching GitHub fetch and push repository")
+    default = command(["gh", "repo", "view", slug, "--json", "defaultBranchRef",
+                       "--jq", ".defaultBranchRef.name"], repo)
+    base = meta.get("baseBranch") or meta.get("defaultBranch") or default
+    if not default or branch in (base, default):
+        raise DeliveryError("cannot push a PR onto the base or default branch")
+    existing = query_open_pr(repo, branch, slug)
+    if existing:
+        check_pr(existing, slug)
+    if linked and check_pr(linked, slug).casefold() != (existing or "").casefold():
+        raise DeliveryError("the linked PR is no longer open on this branch")
+    return slug, base, existing
+
+
+def push_commit(repo, branch, head):
+    # A checkout can advance outside Orc's lock. Push only the reviewed object.
+    command(["git", "-c", "push.followTags=false", "-c", "remote.origin.mirror=false",
+             "push", "origin", f"{head}:refs/heads/{branch}"], repo)
+
+
+def deliver_feedback(run_dir, meta, expected, action, post_replies):
+    feedback = meta.get("prFeedback") or {}
+    if meta.get("phase") != "done" or feedback.get("commit") != expected:
+        raise DeliveryError("the reviewed feedback commit changed")
+    url = linked_pr_url(meta)
+    if not url:
+        raise DeliveryError("feedback requires a linked PR")
+    has_replies = (feedback.get("repliesFile") == "pr-replies.json"
+                   and (run_dir / "pr-replies.json").is_file() and not feedback.get("repliesPostedAt"))
+    if post_replies and not has_replies:
+        raise DeliveryError("this round has no pending replies")
+    if action == "pr-replies":
+        if not post_replies or feedback.get("state") != "pushed":
+            raise DeliveryError("posting replies requires a pushed round and approval")
+    else:
+        if feedback.get("state") != "awaiting-push":
+            raise DeliveryError("a feedback round waiting to push is required")
+        repo = Path(meta["repoPath"]).expanduser().resolve()
+        branch = meta["branch"]
+        if any(command(["git", "rev-parse", "--verify", ref], repo) != expected
+               for ref in ("HEAD", f"refs/heads/{branch}")):
+            raise DeliveryError("the branch or checkout moved past the reviewed feedback commit")
+        pr_target(repo, branch, meta, url)
+        push_commit(repo, branch, expected)
+        verify_delivery(repo, url, branch, expected)
+        feedback.update(state="pushed", pushedAt=now())
+        meta["prUrl"] = url
+        meta["status"] = "awaiting-gate" if has_replies else "complete"
+        write_meta(run_dir / "meta.json", meta)
+    if has_replies:
+        args = [BIN / "orc-pr-replies", "--run-dir", run_dir]
+        if not post_replies:
+            args.append("--zerohands-only")
+        print(command(args, run_dir), file=sys.stderr)
+    return url
+
+
+def deliver(run_dir, args):
+    path = run_dir / "meta.json"
+    with meta_lock(run_dir.parent, read_meta(path)):
+        meta = read_meta(path)
+        if (meta.get("runId") != run_dir.name or not cli_delivery_supported(meta)
+                or meta.get("status") != "awaiting-gate" or meta.get("outcome")):
+            raise DeliveryError("a single-repository v4 run waiting at its approval gate is required")
+        if args.feedback_commit:
+            return deliver_feedback(run_dir, meta, args.feedback_commit, args.action, args.post_replies)
+        if meta.get("phase") != "ship" or (meta.get("prFeedback") or {}).get("state") == "awaiting-push":
+            raise DeliveryError("a run waiting at its Ship gate is required")
+        linked = linked_pr_url(meta)
+        if args.action and args.action != ("pr-push" if linked else "pr"):
+            raise DeliveryError("the PR action changed since Ship approval")
+        repo, branch, head = approved_participant(run_dir, meta, args.authority)
+        slug, base, existing = pr_target(repo, branch, meta, linked)
+        if not linked:
+            body, images = pr_body(run_dir, repo)
+        pushed_elsewhere = bool(linked) and remote_contains(repo, branch, head)
+        if pushed_elsewhere:
+            print("The PR branch already has the approved commit; settling without a push. "
+                  "The PR body may still differ from pr-body.md.", file=sys.stderr)
+        else:
+            push_commit(repo, branch, head)
+        if not existing:
+            existing = check_pr(create_pr(repo, slug, base, branch, meta["title"], body, images), slug)
+        verify_delivery(repo, existing, branch, head, body if not linked and images else None,
+                        pushed_elsewhere=pushed_elsewhere)
+        write_meta(path, settle(read_meta(path), [existing], False))
+        return existing
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("run_id")
+    approval = parser.add_mutually_exclusive_group(required=True)
+    approval.add_argument("--feedback-commit", help="full SHA of the approved PR feedback round")
+    approval.add_argument("--authority", help="SHA-256 of the approved delivery-authority.json")
+    parser.add_argument("--action", choices=["pr", "pr-push", "pr-replies"], help="action shown at Ship")
+    parser.add_argument("--post-replies", action="store_true", help="post the approved feedback replies")
+    args = parser.parse_args()
+    if not valid_run_id(args.run_id):
+        parser.error("invalid run ID")
+    if args.feedback_commit:
+        if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", args.feedback_commit) or args.action == "pr":
+            parser.error("expected the reviewed feedback commit and a feedback action")
+    elif not re.fullmatch("[0-9a-f]{64}", args.authority) or args.post_replies or args.action == "pr-replies":
+        parser.error("expected the approved authority digest and a Ship action")
+    for key in HOOK_GIT_ENV:
+        os.environ.pop(key, None)
+    home = Path(os.environ.get("ORC_HOME", "~/.orc")).expanduser()
+    runs = Path(os.environ.get("ORC_RUNS_DIR", home / "runs")).expanduser().resolve()
+    run_dir = runs / args.run_id
+    try:
+        if run_dir.is_symlink():
+            raise DeliveryError("invalid run directory")
+        print(deliver(run_dir, args))
+    except (DeliveryError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        detail = exc.stderr if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
+        print(f"orc-pr: {detail.strip()}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

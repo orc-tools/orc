@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Set up push notifications from this Mac to the Orc iOS app.
+
+Apple accepts a notification only when it is signed with a key from the
+developer account that owns the app. This saves that key under ~/.orc/apns
+so Orc can sign with it. See docs/ios.md for where to make the key.
+"""
+
+import argparse
+import os
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ui'))
+import apns
+import device_sessions
+
+
+def status(config_dir, devices):
+    found = apns.credentials(config_dir)
+    phones = device_sessions.push_targets(devices)
+    if found is None:
+        print('Push is not set up. Run: orc-push-setup --team-id <id> --key-id <id> --key <AuthKey.p8>')
+    else:
+        print('Push is set up with key %s for team %s.' % (found['keyId'], found['teamId']))
+    if phones:
+        print('%d phone%s will be notified.' % (len(phones), '' if len(phones) == 1 else 's'))
+    else:
+        print('No phone is registered yet. Open the Orc app on your phone, sign in and allow notifications.')
+    return 0 if found is not None else 1
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('--team-id', help='your Apple developer team ID, 10 characters')
+    parser.add_argument('--key-id', help="the push key's ID, 10 characters")
+    parser.add_argument('--key', help='the AuthKey_<id>.p8 file downloaded from your Apple developer account')
+    parser.add_argument('--status', action='store_true', help='say whether push is set up and how many phones are registered')
+    parser.add_argument('--test', action='store_true', help='send a test notification to every registered phone')
+    args = parser.parse_args()
+    config_dir = os.environ.get('ORC_HOME') or os.path.join(os.path.expanduser('~'), '.orc')
+    devices = os.path.join(config_dir, 'devices.json')
+
+    if args.status:
+        return status(config_dir, devices)
+    if args.team_id or args.key_id or args.key:
+        if not (args.team_id and args.key_id and args.key):
+            parser.error('--team-id, --key-id and --key go together')
+        try:
+            apns.save_credentials(config_dir, args.team_id, args.key_id, os.path.expanduser(args.key))
+        except apns.PushError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        print('Saved. Orc signs notifications with key %s; the copy lives in %s.' % (args.key_id, apns.home(config_dir)))
+    elif not args.test:
+        parser.print_help()
+        return 1
+    if args.test:
+        result = apns.notify(config_dir, devices, 'Orc', 'Notifications from this Mac are working.', url='#bots/orchestrator')
+        if result['sent']:
+            print('Sent to %d phone%s.' % (result['sent'], '' if result['sent'] == 1 else 's'))
+        if result['failed']:
+            print('%d not delivered: %s' % (result['failed'], result['reason']), file=sys.stderr)
+        if not result['sent'] and not result['failed']:
+            print('No phone is registered yet. Open the Orc app on your phone, sign in and allow notifications.',
+                  file=sys.stderr)
+        return 0 if result['sent'] and not result['failed'] else 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

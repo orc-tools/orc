@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Back up Orc's settings to a private GitHub repository through the gh CLI.
+
+  orc-settings-backup status             Where settings are saved and the last result.
+  orc-settings-backup connect [--repo owner/name]
+      Use <owner>/<name> (default <your login>/orc-settings, created private
+      when missing) and report any backup it already holds.
+  orc-settings-backup push [--force]     Save this Mac's settings when they changed.
+  orc-settings-backup restore            Apply the backed-up settings and theme.
+  orc-settings-backup disconnect         Keep settings on this Mac only.
+
+Orc's daemon also pushes every five minutes while a backup is connected.
+"""
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import settings_backup  # noqa: E402
+
+CONFIG_DIR = Path(os.environ.get("ORC_HOME", "~/.orc")).expanduser()
+
+
+def describe(command, result):
+    if command == "status":
+        if result["provider"] == "local":
+            return "Settings are saved on this Mac only."
+        lines = ["Settings back up to %s." % result["repo"]]
+        lines.append("Last saved %s." % result["pushedAt"] if result["pushedAt"] else "Not saved yet.")
+        if result["error"]:
+            lines.append("Last attempt failed: %s" % result["error"])
+        return "\n".join(lines)
+    if command == "connect":
+        line = "%s %s for settings backup." % ("Created" if result["created"] else "Using", result["repo"])
+        backup = result["backup"]
+        if backup:
+            line += "\nIt holds a backup from %s, saved %s (theme %s, plugins %s)." % (
+                backup["machine"], backup["savedAt"], (backup["theme"] or {}).get("funMode") or "default",
+                ", ".join(backup["plugins"]) or "none")
+        return line
+    if command == "push":
+        return "Saved to %s." % result["repo"] if result["pushed"] else "No changes since the last save."
+    if command == "restore":
+        return "Restored settings from %s.\nPlugins in the backup: %s" % (
+            result["repo"], ", ".join(result["plugins"]) or "none")
+    return "Settings are saved on this Mac only now."
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("status", "connect", "push", "restore", "disconnect"):
+        command = commands.add_parser(name)
+        command.add_argument("--json", action="store_true")
+        if name == "connect":
+            command.add_argument("--repo")
+        if name == "push":
+            command.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+    try:
+        if args.command == "connect":
+            result = settings_backup.connect(CONFIG_DIR, args.repo)
+        elif args.command == "push":
+            result = settings_backup.push(CONFIG_DIR, force=args.force)
+        else:
+            result = getattr(settings_backup, args.command)(CONFIG_DIR)
+    except (settings_backup.BackupError, OSError) as error:
+        print("orc-settings-backup: %s" % error, file=sys.stderr)
+        return 1
+    print(json.dumps(result, indent=2) if args.json else describe(args.command, result))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

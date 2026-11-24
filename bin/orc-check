@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+"""Report a check you ran on your own work, so the user sees it as it happens.
+
+`orc-check run tests --label "Targeted tests" -- bin/test tests/test_auth.py`
+lists the check as running, runs the command, and ticks or fails it from the
+exit code with the last output line as its detail, in one call. It exits with
+the command's exit code. Run it after committing: a check that passed at the
+checkout's current commit fills Ship's build proof (`orc-delivery-authority
+ship-template`). `--cwd DIR` runs the command there, and `orc-devd exec <id>`
+counts as the checkout registered under that id.
+
+`orc-check start live-flow --label "Sign-in from a new device"` lists a check
+you run by hand, such as a flow in the running app, with a spinner.
+`orc-check pass live-flow --detail "Stops at the security-key step"` ticks it.
+`orc-check fail tests --label "Targeted tests" --detail "2 of 18 failed"` and
+`orc-check skip blast-radius --label "Blast-radius check" --detail "No shared boundary"`
+record a failure, or a check you left out and why. Add --on-main to a failure
+you saw fail on the base commit too, so the user knows this run did not break it.
+`orc-check skip --batch '[{"id": "rubocop", "label": "RuboCop", "detail": "No Ruby changed"}, ...]'`
+records several skipped checks in one call (`--batch -` reads the list from stdin).
+`orc-check list` prints the run's checks, and `orc-check remove ID` drops one.
+
+Give a check its --label the first time you report it. A hand-reported pass
+never fills Ship's proof, and no check holds Ship.
+"""
+import argparse
+import json
+import os
+import re
+import shlex
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import run_checks  # noqa: E402
+import run_dir_args  # noqa: E402
+
+STATUS_FOR = {"start": "running", "pass": "pass", "fail": "fail", "skip": "skip"}
+ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+LOG_MAX_BYTES = 256 * 1024
+CAPTURE_LINES_MAX = 2000
+
+_UNITTEST_FAIL_RE = re.compile(r"^(?:ERROR|FAIL):\s+(\S+)\s+\([^)]+\)")
+_PYTEST_FAIL_RE = re.compile(r"^FAILED\s+(\S+(?:::\S+|\.py))\b")
+_NODE_FAIL_RE = re.compile(r"^(?:✖|not ok \d+\s+-)\s+(.+?)(?:\s+\(\d+(?:\.\d+)?m?s\))?$")
+_PLAYWRIGHT_FAIL_RE = re.compile(
+    r"^(?:\d+\)\s+(?:\[[^\]]+\]\s+›\s+)?|[✘×]\s+(?:\d+\s+)?)(.+?)(?:\s+(?:─.*|\(\d+(?:\.\d+)?m?s\)))?$"
+)
+_FILE_FAIL_RE = re.compile(r"^FAIL\s+(\S+\.(?:py|js|mjs|cjs|ts|tsx|jsx|rb|go|rs|swift)(?::\d+)?)\b")
+_GENERIC_TAIL_RE = re.compile(
+    r"^(?:FAIL\b.*\(.*exit\s+\d+\)|FAILED\s*\(|exit\s+\d+$|Command failed\b|Tests?\s+failed\b)",
+    re.I,
+)
+_ERROR_LINE_RE = re.compile(
+    r"^(?:AssertionError|AssertionError\s*\[[^\]]+\]|TypeError|ReferenceError|SyntaxError|ValueError|"
+    r"RuntimeError|KeyError|AttributeError|ImportError|ModuleNotFoundError|Error|Exception|"
+    r"error\s+TS\d+|error\[E\d+\]|E\s+assert\b|FAIL\s+\S+)\s*:?",
+)
+
+
+def summary_line(run_dir, item):
+    return "%s: %s. This run's checks: %s." % (item["label"], item["status"],
+                                              run_checks.summary(run_checks.checks(str(run_dir))))
+
+
+def clip(text):
+    return text if len(text) <= run_checks.DETAIL_MAX else text[:run_checks.DETAIL_MAX - 1] + "…"
+
+
+def clean_line(raw):
+    # A progress bar redraws its line after \r: keep what it ended on.
+    return ANSI.sub("", raw).rstrip("\r\n").rsplit("\r", 1)[-1]
+
+
+def report(args):
+    run_dir, _status = run_dir_args.resolve(args, "orc-check")
+    if args.command == "skip" and args.batch is not None:
+        if args.id or args.label or args.detail or args.artifact:
+            raise run_checks.CheckError("Give --batch on its own: each check in it has its id, label and detail.")
+        raw = sys.stdin.read() if args.batch == "-" else args.batch
+        try:
+            reports = json.loads(raw)
+        except ValueError as error:
+            raise run_checks.CheckError("--batch takes a JSON list of {id, label, detail}: %s" % error)
+        items = run_checks.report_many(str(run_dir), reports, "skip")
+        print("Skipped %d: %s. This run's checks: %s." % (
+            len(items), ", ".join(item["label"] for item in items),
+            run_checks.summary(run_checks.checks(str(run_dir)))))
+        return
+    if not args.id:
+        raise run_checks.CheckError("Name the check, such as tests, or pass --batch.")
+    item = run_checks.report(str(run_dir), args.id, STATUS_FOR[args.command], label=args.label,
+                             detail=args.detail, artifact=args.artifact,
+                             on_main=getattr(args, "on_main", False))
+    print(summary_line(run_dir, item))
+
+
+def last_line(lines):
+    """The command's last non-blank output line, trimmed to fit a detail."""
+    for line in reversed(lines):
+        text = " ".join(clean_line(line).split())
+        if text:
+            return clip(text)
+    return ""
+
+
+def _failing_names(lines):
+    """Extract failing test or file identifiers in order, deduplicated."""
+    names = []
+    seen = set()
+    for raw in lines:
+        text = " ".join(clean_line(raw).split())
+        if not text:
+            continue
+        matched = None
+        for pattern in (_UNITTEST_FAIL_RE, _PYTEST_FAIL_RE, _NODE_FAIL_RE, _PLAYWRIGHT_FAIL_RE, _FILE_FAIL_RE):
+            hit = pattern.match(text)
+            if hit:
+                matched = hit.group(1).strip()
+                break
+        if matched and matched not in seen:
+            seen.add(matched)
+            names.append(matched)
+    return names
+
+
+def _last_error_line(lines, skip_text):
+    for raw in reversed(lines):
+        text = " ".join(clean_line(raw).split())
+        if not text or text == skip_text:
+            continue
+        if _ERROR_LINE_RE.match(text):
+            return text
+    return ""
+
+
+def failure_summary(lines, code):
+    """A concise failure detail: keeps direct single-line errors intact, and
+    enriches opaque runner summaries like `FAIL python (316s, exit 1)` with
+    the first failing test or decisive error line."""
+    tail = last_line(lines) or ("exit %d" % code)
+    names = _failing_names(lines)
+    if names and names[0] not in tail:
+        extra = " (+%d more)" % (len(names) - 1) if len(names) > 1 else ""
+        first = names[0]
+        if len(tail) <= 70:
+            return clip("%s — %s%s" % (tail, first, extra))
+        return clip("%s%s — %s" % (first, extra, tail))
+    if _GENERIC_TAIL_RE.match(tail):
+        err = _last_error_line(lines, tail)
+        if err and err not in tail:
+            return clip("%s — %s" % (tail, err))
+    return tail
+
+
+def _write_failure_log(run_dir, check_id, text):
+    if not text or not text.strip():
+        return ""
+    rel = run_checks.check_log_path(check_id)
+    dest = os.path.join(str(run_dir), rel)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    encoded = text.encode("utf-8", "replace")
+    if len(encoded) > LOG_MAX_BYTES:
+        notice = b"[earlier output omitted; showing last 256 KiB]\n"
+        tail_bytes = encoded[-(LOG_MAX_BYTES - len(notice)):]
+        newline = tail_bytes.find(b"\n")
+        if 0 <= newline < 1024:
+            tail_bytes = tail_bytes[newline + 1:]
+        encoded = notice + tail_bytes
+    tmp = dest + ".tmp.%d" % os.getpid()
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(encoded)
+        os.replace(tmp, dest)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return ""
+    return rel
+
+
+def _remove_failure_log(run_dir, check_id):
+    try:
+        os.unlink(os.path.join(str(run_dir), run_checks.check_log_path(check_id)))
+    except OSError:
+        pass
+
+
+def execute(argv, cwd):
+    """Run the command with its output passed through, keeping cleaned output
+    for failure summaries and logs. Returns (exit code, lines, log_text). A
+    command that cannot start is exit 127."""
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   stdin=subprocess.DEVNULL)
+    except OSError as error:
+        message = "%s: %s" % (argv[0], error.strerror or error)
+        print(message, file=sys.stderr)
+        return 127, [message], message + "\n"
+    lines = []
+    chunks = []
+    total_bytes = 0
+    keep_limit = LOG_MAX_BYTES * 2
+    out = sys.stdout.buffer
+    try:
+        for raw in iter(process.stdout.readline, b""):
+            out.write(raw)
+            out.flush()
+            decoded = raw.decode("utf-8", "replace")
+            cleaned = clean_line(decoded)
+            lines.append(cleaned)
+            if len(lines) > CAPTURE_LINES_MAX:
+                del lines[:-CAPTURE_LINES_MAX]
+            piece = cleaned + "\n"
+            chunks.append(piece)
+            total_bytes += len(piece.encode("utf-8", "replace"))
+            while total_bytes > keep_limit and len(chunks) > 1:
+                dropped = chunks.pop(0)
+                total_bytes -= len(dropped.encode("utf-8", "replace"))
+        code = process.wait()
+    except BaseException:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        raise
+    return code, lines, "".join(chunks)
+
+
+def run(args, argv):
+    run_dir, _status = run_dir_args.resolve(args, "orc-check")
+    if not argv:
+        raise run_checks.CheckError("Give the command after --, such as "
+                                    "`orc-check run tests --label \"Targeted tests\" -- bin/test`.")
+    cwd = os.path.abspath(os.path.expanduser(args.cwd)) if args.cwd else os.getcwd()
+    if not os.path.isdir(cwd):
+        raise run_checks.CheckError("--cwd %s is not a folder." % args.cwd)
+    command = shlex.join(argv)
+    if args.cwd:
+        command = "cd %s && %s" % (shlex.quote(args.cwd), command)
+    run_checks.report(str(run_dir), args.id, "running", label=args.label,
+                      detail=clip("`%s`" % command))
+    checkout = run_checks.checkout(str(run_dir), cwd, argv)
+    before = run_checks.commit(checkout[1]) if checkout else None
+
+    def stopped(signum, _frame):
+        raise KeyboardInterrupt(signum)
+
+    signal.signal(signal.SIGTERM, stopped)
+    try:
+        code, lines, log_text = execute(argv, cwd)
+    except KeyboardInterrupt:
+        run_checks.report(str(run_dir), args.id, "fail", detail=clip("Stopped before it finished: `%s`" % command))
+        raise SystemExit(130)
+    proof = {"command": command, "exitCode": code}
+    after = run_checks.commit(checkout[1]) if checkout else None
+    if before and before == after:
+        proof.update(participantId=checkout[0], head=before)
+    artifact = ""
+    if code == 0:
+        _remove_failure_log(run_dir, args.id)
+        detail = last_line(lines) or "exit 0"
+    else:
+        artifact = _write_failure_log(run_dir, args.id, log_text)
+        detail = failure_summary(lines, code)
+    try:
+        item = run_checks.report(str(run_dir), args.id, "pass" if code == 0 else "fail",
+                                 detail=detail, artifact=artifact, proof=proof)
+    except run_checks.CheckError as error:
+        print("orc-check: the command exited %d but its result was not recorded: %s" % (code, error),
+              file=sys.stderr)
+        raise SystemExit(code)
+    if checkout is None:
+        note = " It ran outside the run's checkouts, so Ship's proof leaves it out."
+    elif "head" not in proof:
+        note = " The checkout had uncommitted changes or moved, so Ship's proof leaves it out."
+    else:
+        note = ""
+    nudge = ""
+    if code != 0:
+        log_note = " Saved output to %s." % artifact if artifact else ""
+        nudge = ("%s Fix and rerun `orc-check run %s`, or if it fails on the base commit too "
+                 "mark it with `orc-check fail %s --on-main --detail \"...\"`." % (log_note, args.id, args.id))
+    print("orc-check: %s%s%s" % (summary_line(run_dir, item), note, nudge), file=sys.stderr)
+    raise SystemExit(code)
+
+
+def show(args):
+    run_dir, _status = run_dir_args.resolve(args, "orc-check")
+    print(json.dumps({"checks": run_checks.view(str(run_dir))}, indent=2))
+
+
+def remove(args):
+    run_dir, _status = run_dir_args.resolve(args, "orc-check")
+    item = run_checks.remove(str(run_dir), args.id)
+    print("Removed check %s: %s." % (item["id"], item["label"]))
+
+
+def split_command(argv):
+    """`orc-check run ... -- <command>`: everything after the first -- is the
+    command, which may hold its own --, as `orc-devd exec <id> -- bin/rspec` does."""
+    if "--" in argv:
+        index = argv.index("--")
+        return argv[:index], argv[index + 1:]
+    return argv, []
+
+
+def main():
+    own, command = split_command(sys.argv[1:])
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    ran = commands.add_parser("run", help="run a command and record it: run ID --label ... -- CMD")
+    ran.add_argument("id", help="a short name you reuse for this check, such as tests")
+    ran.add_argument("--label", default="", help="what the check is, in a few words")
+    ran.add_argument("--cwd", default="", help="the folder to run the command in")
+    for name, text in (("start", "list a check as running"), ("pass", "tick a check that passed"),
+                       ("fail", "mark a check that failed"),
+                       ("skip", "record a check you left out, with why in --detail")):
+        reported = commands.add_parser(name, help=text)
+        if name == "skip":
+            reported.add_argument("id", nargs="?", default="",
+                                  help="a short name you reuse for this check, such as tests")
+            reported.add_argument("--batch", help="several skipped checks as a JSON list of "
+                                                  "{id, label, detail}, or - to read it from stdin")
+        else:
+            reported.add_argument("id", help="a short name you reuse for this check, such as tests")
+        reported.add_argument("--label", default="", help="what the check is, in a few words")
+        reported.add_argument("--detail", default="",
+                              help="one line on what happened; `backticks` mark a command")
+        reported.add_argument("--artifact", default="",
+                              help="a file in the run folder that shows it, such as shots/after/sign-in.jpg")
+        if name == "fail":
+            reported.add_argument("--on-main", action="store_true",
+                                  help="it fails on the base commit too, so this run did not break it")
+        reported.set_defaults(handler=report)
+    commands.add_parser("list", help="print the run's checks as JSON").set_defaults(handler=show)
+    dropped = commands.add_parser("remove", help="drop a check that no longer applies")
+    dropped.add_argument("id")
+    dropped.set_defaults(handler=remove)
+    for subcommand in commands.choices.values():
+        run_dir_args.add_arguments(subcommand)
+    args = parser.parse_args(own)
+    if command and args.command != "run":
+        parser.error("only `orc-check run` takes a command after --")
+    try:
+        if args.command == "run":
+            run(args, command)
+        else:
+            args.handler(args)
+    except run_checks.CheckError as error:
+        raise SystemExit("orc-check: %s" % error)
+
+
+if __name__ == "__main__":
+    main()

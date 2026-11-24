@@ -1,0 +1,120 @@
+/* What is left of the artifact banner treatment once <orc-callout> paints the
+   fill and the edge: the gap below each banner, the padding and radius that
+   keep the old boxes their old size, and the handoff pin. Both surfaces read
+   this file. The shell links it (ui/index.html) and ui/serve.py inlines it into
+   the gate-page template, for the reason ui/orc-aliases.css gives. Two
+   hand-kept copies of this CSS had already drifted. It contains no dollar sign,
+   so it is safe to splice into a string.Template. */
+.md orc-callout {
+  display: block;
+  margin: 0 0 14px;
+  --orc-space-4: 10px;
+  --orc-space-5: 14px;
+  --orc-radius-callout: 8px;
+}
+.md orc-callout .orc-callout-content {
+  display: flow-root;
+  overflow: clip;
+}
+.md orc-callout blockquote { margin: 0; }
+.md orc-callout .orc-callout-content > :last-child,
+.md orc-callout blockquote > :last-child { margin-bottom: 0; }
+/* The handoff scrolls with the ledger like every other banner; only its
+   density differs. */
+.md orc-callout.needs-you {
+  margin: 0 0 16px;
+  overflow-wrap: anywhere;
+  --orc-space-4: 13px;
+  --orc-space-5: 16px;
+  --orc-radius-callout: 10px;
+}
+/* The authored <h2> stays slotted light DOM, so the landmark survives; the
+   element's own `heading` attribute would demote it to a <p>. */
+.md orc-callout.needs-you .needs-you-label {
+  display: block;
+  margin: 0 0 5px;
+  font-size: 11px;
+  line-height: 1.5;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--orange) 72%, var(--heading));
+}
+.md orc-callout.needs-you .needs-you-lede {
+  margin: 0 0 8px;
+  color: var(--heading);
+}
+/* A Needs you command's Run control, under the step that names it
+   (md-callouts.js orcMountNeedsYouCommands). */
+.md .needs-you-run { margin: 6px 0 2px; }
+.md .needs-you-run-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.md .needs-you-run-status { color: var(--muted-strong); font-size: 13px; }
+.md .needs-you-run[data-state="passed"] .needs-you-run-status { color: var(--green-text); }
+.md .needs-you-run[data-state="failed"] .needs-you-run-status,
+.md .needs-you-run[data-state="stopped"] .needs-you-run-status { color: var(--red-text); }
+.md .needs-you-run-output { margin: 6px 0 0; }
+.md .needs-you-run-output::part(summary) { color: var(--muted-strong); font-size: 13px; }
+.md .needs-you-run-output pre {
+  max-height: 16em;
+  overflow: auto;
+  margin: 4px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.md .image-comparison { min-width: 0; margin-bottom: 16px; }
+.md .image-comparison-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.md .image-comparison > .before-after {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0; margin: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.md .image-comparison > .before-after > .ba-pane {
+  border: 0; border-radius: 0; padding: 12px; min-width: 0;
+}
+.md .image-comparison > .before-after > .ba-pane + .ba-pane { border-left: 1px solid var(--border); }
+.md .image-comparison img { display: block; width: 100%; max-width: 100%; height: auto; }
+.md .image-comparison > table { width: 100%; table-layout: fixed; margin: 0; }
+.md .image-comparison > table :is(th, td) { overflow-wrap: anywhere; min-width: 0; }
+.md .image-comparison[data-layout="stacked"] > .before-after { grid-template-columns: minmax(0, 1fr); }
+.md .image-comparison[data-layout="stacked"] > .before-after > .ba-pane + .ba-pane {
+  border-left: 0; border-top: 1px solid var(--border);
+}
+.md .image-comparison[data-layout="stacked"] > table,
+.md .image-comparison[data-layout="stacked"] > table :is(tbody, tr, td) { display: block; width: auto; }
+.md .image-comparison[data-layout="stacked"] > table thead { display: none; }
+.md .image-comparison[data-layout="stacked"] > table td::before {
+  content: attr(data-comparison-label); display: block; font-weight: 600; margin-bottom: 8px;
+}
+/* Fenced code, wrapped by orcMountCodeCopy so its Copy button stays put. */
+.md .md-code { position: relative; margin: 16px 0; }
+.md > .md-code:first-child { margin-top: 0; }
+.md .md-code pre { margin: 0; padding-right: 44px; }
+/* Backed in the code's colour so a wide line scrolls out of sight beneath it. */
+.md .md-code .code-copy {
+  position: absolute; top: 7px; right: 7px;
+  border-radius: 6px; background: var(--code); box-shadow: -10px 0 8px var(--code);
+}
+/* Column resize handles for ui/table-resize.js: a strip over each header
+   cell's right border, kept inside the last cell so an untouched table never
+   gains a scrollbar. The accent line shows while it is hovered or dragged.
+   Browsers read touch-action from the cell, not its ::after, so the header
+   row leaves sideways swipes to the handle. */
+:is(.md, .chat-md) table:not(.image-comparison > table) th { position: relative; touch-action: pan-y pinch-zoom; }
+:is(.md, .chat-md) table:not(.image-comparison > table) th::after {
+  content: ""; position: absolute; z-index: 1; top: 0; bottom: 0; right: -4px; width: 8px;
+  cursor: col-resize;
+}
+:is(.md, .chat-md) table:not(.image-comparison > table) th:last-child::after { right: 0; }
+:is(.md, .chat-md) th[data-col-resize-active]::after {
+  background: linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat;
+}
+:is(.md, .chat-md) th:last-child[data-col-resize-active]::after { background-position: right; }
+/* A resized column's width is the reader's, so its text wraps anywhere to fit. */
+:is(.md, .chat-md) table[data-col-resized] :is(th, td) { box-sizing: border-box; overflow-wrap: anywhere; }
+.orc-col-resizing, .orc-col-resizing * { cursor: col-resize !important; user-select: none !important; }

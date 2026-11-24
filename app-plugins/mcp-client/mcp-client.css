@@ -1,0 +1,311 @@
+/* MCP client screen (#mcp-client): a header and a strip of tabs over the open
+   tab's pane, which fills the rest of the window: the Projects page, a
+   project's server list, or the shared MCP inspector (ui/mcp-tab.css). */
+
+#mcp-client-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+#mcp-client-view[hidden] { display: none; }
+#mcp-client-view :is(h1, h2, p) { margin: 0; }
+
+.mcpc-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  padding: 16px 22px 14px; border-bottom: 1px solid var(--border);
+}
+.mcpc-title-row { display: grid; gap: 2px; min-width: 0; }
+.mcpc-title { font-size: 18px; font-weight: 600; color: var(--heading); }
+.mcpc-title:focus { outline: none; }
+.mcpc-sub { font-size: 13px; color: var(--muted-strong); }
+.mcpc-head-actions { margin-left: auto; display: flex; gap: 8px; }
+.mcpc-head-actions:empty { display: none; }
+
+/* The list scrolls sideways. Its padding, pulled back by the margin, keeps a
+   tab's focus ring inside the scroll clip. */
+.mcpc-tabs { display: flex; align-items: center; gap: 6px; padding: 6px 22px; border-bottom: 1px solid var(--border); }
+.mcpc-tablist { display: flex; gap: 4px; min-width: 0; overflow-x: auto; padding: 3px; margin: -3px; scrollbar-width: none; }
+.mcpc-tab {
+  flex: none; display: flex; align-items: center; max-width: 220px; border-radius: var(--tab-radius, 6px);
+  color: var(--muted-strong); font-size: 13px;
+  /* Holding a tab opens its menu, so the hold must not select its name. */
+  -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+}
+.mcpc-tab:hover { background: var(--chip); color: var(--text); }
+.mcpc-tab[data-current="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  color: var(--accent-text); font-weight: 600;
+}
+.mcpc-tab-pick {
+  min-width: 0; padding: 6px 10px; border: 0; border-radius: inherit; background: none; color: inherit;
+  font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: var(--orc-cursor-pointer, pointer);
+}
+.mcpc-tab-pick:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: -1px; }
+.mcpc-tab-close {
+  flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin: 0 5px 0 -5px; padding: 0;
+  border: 0; border-radius: 4px; background: none; color: inherit; opacity: .65; cursor: var(--orc-cursor-pointer, pointer);
+}
+.mcpc-tab-close:hover { background: color-mix(in srgb, currentColor 16%, transparent); opacity: 1; }
+.mcpc-tab-close svg { width: 12px; height: 12px; }
+#mcp-client-view .mcpc-tab-rename { flex: none; width: 18ch; margin: 2px; padding: 3px 8px; font-weight: 400; }
+
+.mcpc-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mcpc-panel > [hidden] { display: none; }
+.mcpc-inspector { flex: 1; min-height: 0; display: flex; }
+.mcpc-inspector > .mcp { flex: 1; }
+/* The project's list picks the server, so the inspector shows that one. */
+.mcpc-inspector .mcp-server:not([aria-current="true"]) { display: none; }
+.mcpc-crumb { padding: 6px 16px; border-bottom: 1px solid var(--border); }
+.mcpc-crumb orc-button svg { width: 14px; height: 14px; margin-right: 2px; }
+
+.mcpc-home, .mcpc-list { flex: 1; min-height: 0; overflow: auto; padding: 18px 22px 28px; }
+.mcpc-list > * { max-width: 1080px; }
+.mcpc-note, .mcpc-list-lead { font-size: 13px; color: var(--muted-strong); }
+
+/* The Projects page: its projects and its throwaway environments, each a
+   bordered panel of rows with its own button, side by side until the page is
+   too narrow for both. */
+.mcpc-home { container-type: inline-size; }
+.mcpc-home-panels { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 3fr); align-items: stretch; gap: 16px; max-width: 1400px; }
+.mcpc-card { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.mcpc-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border); }
+.mcpc-card-head h2 { font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--heading); }
+.mcpc-card-head orc-button { margin-left: auto; }
+#mcp-client-view .mcpc-card-body { padding: 12px 16px; }
+#mcp-client-view .mcpc-card-body:has(+ :is(.mcpc-environment-list, .mcpc-nothing)) { padding-bottom: 0; }
+/* Where the first project or environment will appear. */
+#mcp-client-view .mcpc-nothing {
+  margin: 12px 16px 14px; padding: 11px 14px; border: 1px dashed var(--border); border-radius: 8px;
+  font-size: 12.5px; line-height: 1.5; color: var(--muted-strong);
+}
+.mcpc-projects + .mcpc-nothing { margin-top: 0; }
+
+.mcpc-projects, .mcpc-environment-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.mcpc-project { position: relative; display: flex; min-width: 0; }
+.mcpc-projects > .mcpc-project { border-bottom: 1px solid var(--border); }
+.mcpc-projects:last-child > .mcpc-project:last-child { border-bottom: 0; }
+/* What it is, how many servers, which agents have them, then Archive and the
+   chevron. Archive is the row's own button, laid over the last column. */
+.mcpc-project-open {
+  flex: 1; display: grid; grid-template-columns: minmax(0, 23fr) 82px minmax(0, 34fr) 52px; align-items: center; gap: 4px 14px;
+  min-width: 0; padding: 11px 12px 11px 16px; border: 0; background: none; color: var(--text);
+  font: inherit; text-align: left; cursor: var(--orc-cursor-pointer, pointer);
+}
+.mcpc-project-open:hover { background: color-mix(in srgb, var(--chip) 45%, transparent); }
+.mcpc-project-open:focus-visible, .mcpc-server-name:focus-visible, .mcpc-candidates button:focus-visible,
+.mcpc-hidden-projects > summary:focus-visible {
+  outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px;
+}
+.mcpc-project > orc-icon-button { position: absolute; top: 50%; right: 32px; translate: 0 -50%; }
+.mcpc-project-id { display: grid; min-width: 0; }
+.mcpc-project-name { font-size: 14px; font-weight: 600; line-height: 1.4; color: var(--heading); overflow-wrap: anywhere; }
+.mcpc-project-where { font-size: 12px; line-height: 1.45; color: var(--muted-strong); overflow-wrap: anywhere; }
+.mcpc-project-count { font-size: 12.5px; color: var(--text); white-space: nowrap; }
+.mcpc-project-agents { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.mcpc-chevron { flex: none; justify-self: end; color: var(--muted); }
+/* An agent's brand mark, sized to the chip's text. */
+.mcpc-agent-mark { display: inline-flex; width: 13px; height: 13px; vertical-align: -2px; }
+.mcpc-agent-own { margin-left: 5px; }
+.mcpc-agent-mark svg { width: 100%; height: 100%; }
+/* An agent's server count, set apart from its name. */
+.mcpc-count-chip b {
+  display: inline-grid; place-items: center; box-sizing: border-box; min-width: 16px; height: 16px; margin: 0 -6px 0 2px; padding: 0 4.5px;
+  border-radius: 999px; background: var(--bg); color: var(--heading); font-size: 11px; font-weight: 700; vertical-align: 1px;
+}
+
+/* An environment is a dashed box, since closing it deletes it. */
+.mcpc-environment-list { gap: 8px; padding: 12px 16px 14px; }
+.mcpc-project[data-kind="environment"] { border: 1px dashed var(--border); border-radius: 8px; overflow: hidden; }
+.mcpc-project[data-kind="environment"] .mcpc-project-open { grid-template-columns: minmax(0, 1fr) auto auto 20px; gap: 4px 8px; padding: 10px 8px 10px 14px; }
+.mcpc-project[data-kind="environment"] .mcpc-project-agents:empty { display: none; }
+
+.mcpc-hidden-projects { padding: 9px 12px 10px 16px; font-size: 13px; }
+.mcpc-hidden-projects > summary {
+  display: flex; align-items: center; gap: 6px; border-radius: 6px; list-style: none;
+  color: var(--muted-strong); font-weight: 600; cursor: var(--orc-cursor-pointer, pointer);
+}
+.mcpc-hidden-projects > summary::-webkit-details-marker { display: none; }
+.mcpc-hidden-projects > summary b { font-weight: 600; color: var(--muted); }
+.mcpc-hidden-projects > summary .mcpc-chevron { width: 14px; height: 14px; color: inherit; }
+.mcpc-hidden-projects[open] > summary .mcpc-chevron { rotate: 90deg; }
+.mcpc-hidden-projects ul { display: grid; gap: 2px; margin: 6px 0 0; padding: 0 0 0 20px; list-style: none; }
+.mcpc-hidden-projects li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.mcpc-hidden-projects orc-button { margin-left: auto; }
+
+@container (max-width: 900px) {
+  .mcpc-home-panels { grid-template-columns: minmax(0, 1fr); }
+}
+/* A narrow panel keeps the name beside the chevron and drops the facts under it. */
+@container (max-width: 560px) {
+  .mcpc-projects .mcpc-project-open { grid-template-columns: minmax(0, 1fr) 52px; }
+  .mcpc-projects .mcpc-project-count { grid-column: 1; grid-row: 2; }
+  .mcpc-projects .mcpc-project-agents { grid-column: 1; grid-row: 3; }
+  .mcpc-projects .mcpc-project-agents:empty { display: none; }
+  .mcpc-projects .mcpc-chevron { grid-column: 2; grid-row: 1 / span 3; }
+}
+
+.mcpc-servers { display: grid; margin: 12px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--border); }
+.mcpc-server {
+  display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 3fr) minmax(0, 2fr) auto; align-items: center; gap: 4px 14px;
+  padding: 9px 4px; border-bottom: 1px solid var(--border);
+}
+.mcpc-server-main { display: grid; gap: 2px; min-width: 0; }
+.mcpc-server-name { justify-self: start; max-width: 100%; font-size: 13.5px; font-weight: 600; color: var(--heading); overflow-wrap: anywhere; }
+button.mcpc-server-name {
+  padding: 0; border: 0; border-radius: 4px; background: none; font: inherit; font-size: 13.5px; font-weight: 600;
+  color: var(--accent-text); text-align: left; cursor: var(--orc-cursor-pointer, pointer);
+}
+button.mcpc-server-name:hover { text-decoration: underline; }
+.mcpc-server-address { font-family: var(--orc-font-mono); font-size: 11.5px; color: var(--muted-strong); overflow-wrap: anywhere; }
+.mcpc-server-agents { display: flex; flex-wrap: wrap; gap: 4px; }
+.mcpc-server-notes { display: grid; gap: 1px; font-size: 12px; color: var(--muted-strong); }
+.mcpc-server-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+
+.mcpc-candidates { display: grid; gap: 2px; max-height: min(42dvh, 340px); margin: 0; padding: 0; overflow: auto; list-style: none; }
+.mcpc-candidates:empty { display: none; }
+.mcpc-candidates button {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; width: 100%; padding: 6px 8px;
+  border: 0; border-radius: 6px; background: none; color: var(--text); font: inherit; text-align: left;
+  cursor: var(--orc-cursor-pointer, pointer);
+}
+.mcpc-candidates button:hover { background: var(--chip); }
+.mcpc-candidates .mcpc-project-where { grid-column: 1; }
+.mcpc-candidates .mcpc-project-count { grid-column: 2; grid-row: 1 / span 2; align-self: center; margin: 0; color: var(--muted-strong); }
+
+.mcpc-empty { flex: 1; display: grid; place-items: center; padding: 32px 16px; overflow: auto; }
+.mcpc-empty-card { display: grid; justify-items: center; gap: 10px; max-width: 520px; text-align: center; }
+.mcpc-empty-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: var(--chip); color: var(--accent); }
+.mcpc-empty-icon svg { width: 22px; height: 22px; }
+.mcpc-empty-card h2 { font-size: 17px; font-weight: 600; color: var(--heading); }
+.mcpc-empty-card p { font-size: 13px; color: var(--muted-strong); }
+.mcpc-quick-add { display: flex; gap: 8px; width: 100%; margin-top: 6px; }
+
+#mcp-client-view input:is([type="url"], [type="text"], [type="password"]) {
+  box-sizing: border-box; flex: 1; min-width: 0; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--heading);
+  font: inherit; font-size: 13px;
+}
+#mcp-client-view input:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: -1px; }
+.mcpc-field-error { font-size: 12px; color: var(--red-text, var(--red)); }
+.mcpc-field-error[hidden] { display: none; }
+
+.mcpc-dialog {
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; padding: 18px;
+  border: 1px solid var(--dialog-border-color, var(--border)); border-radius: var(--dialog-radius, 12px);
+  background: var(--dialog-bg, var(--panel)); color: var(--text);
+}
+.mcpc-dialog::backdrop { background: color-mix(in srgb, var(--bg) 65%, transparent); }
+.mcpc-editor { display: grid; gap: 12px; }
+.mcpc-editor h2 { font-size: 17px; color: var(--heading); overflow-wrap: anywhere; }
+.mcpc-field { display: grid; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--heading); }
+.mcpc-field input { width: 100%; font-weight: 400; }
+.mcpc-editor em { font-style: normal; font-weight: 400; color: var(--muted-strong); }
+.mcpc-headers { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.mcpc-headers legend { padding: 0; margin-bottom: 4px; font-size: 12.5px; font-weight: 600; color: var(--heading); }
+.mcpc-hint { font-size: 12px; color: var(--muted-strong); }
+.mcpc-header-rows { display: grid; gap: 6px; }
+.mcpc-header-rows:empty { display: none; }
+.mcpc-header-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; align-items: center; gap: 6px; }
+.mcpc-headers > orc-button { justify-self: start; }
+.mcpc-client { display: grid; gap: 8px; }
+.mcpc-client > summary { font-size: 12.5px; font-weight: 600; color: var(--heading); cursor: var(--orc-cursor-pointer, pointer); }
+.mcpc-client[open] > summary { margin-bottom: 4px; }
+.mcpc-redirect {
+  display: block; padding: 4px 8px; border-radius: 6px; background: var(--code); color: var(--text);
+  font-family: var(--orc-font-mono); font-size: 11.5px; overflow-wrap: anywhere;
+}
+.mcpc-agent-kind { justify-self: start; }
+.mcpc-editor [hidden] { display: none; }
+.mcpc-agent-ticks { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.mcpc-agent-ticks legend { padding: 0; margin-bottom: 4px; font-size: 12.5px; font-weight: 600; color: var(--heading); }
+.mcpc-hint code { font-family: var(--orc-font-mono); font-size: 11.5px; }
+.mcpc-editor-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.mcpc-remove { margin-right: auto; }
+
+/* A throwaway environment's tab: a bar that says what it is, over its
+   servers' tools with the agent chat beside them. */
+.mcpc-env-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 22px;
+  border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--muted-strong);
+}
+.mcpc-env-bar[hidden] { display: none; }
+.mcpc-env-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.mcpc-env-kind { font-weight: 600; color: var(--heading); }
+.mcpc-env-folder {
+  min-width: 0; padding: 2px 6px; border-radius: 6px; background: var(--code); color: var(--text);
+  font-family: var(--orc-font-mono); font-size: 11.5px; overflow-wrap: anywhere;
+}
+.mcpc-env-actions { margin-left: auto; display: flex; gap: 6px; }
+
+/* The servers fill the left column under the bar, and the chat the right. */
+.mcpc-panel[data-kind="environment"] {
+  display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); grid-template-rows: auto auto minmax(0, 1fr);
+}
+.mcpc-panel[data-kind="environment"] > .mcpc-env-bar { grid-column: 1 / -1; grid-row: 1; }
+.mcpc-panel[data-kind="environment"] > :is(.mcpc-list, .mcpc-empty) { grid-column: 1; grid-row: 2 / 4; }
+.mcpc-panel[data-kind="environment"] > .mcpc-crumb { grid-column: 1; grid-row: 2; }
+.mcpc-panel[data-kind="environment"] > .mcpc-inspector { grid-column: 1; grid-row: 3; min-height: 0; }
+.mcpc-env-chat { grid-column: 2; grid-row: 2 / 4; min-width: 0; min-height: 0; display: flex; border-left: 1px solid var(--border); }
+.mcpc-empty-card > orc-button { margin-top: 4px; }
+
+.mcpc-chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.mcpc-chat-head { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.mcpc-chat-head[hidden], .mcpc-chat-agent[hidden] { display: none; }
+.mcpc-chat :is(.mcpc-chat-pick, .mcpc-chat-agent) {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--heading);
+}
+.mcpc-chat select {
+  flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--heading); font: inherit; font-weight: 400;
+}
+.mcpc-chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
+.mcpc-chat-intro { font-size: 13px; color: var(--muted-strong); }
+.mcpc-chat-intro[hidden] { display: none; }
+.mcpc-chat-row-tool { margin-bottom: 4px; }
+.mcpc-chat-tool {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 12.5px; color: var(--text);
+}
+div.mcpc-chat-tool, .mcpc-chat-tool > summary {
+  display: flex; align-items: baseline; gap: 8px; padding: 6px 10px;
+}
+.mcpc-chat-tool > summary { cursor: var(--orc-cursor-pointer, pointer); }
+.mcpc-chat-tool > summary:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: -1px; border-radius: 8px; }
+.mcpc-chat-tool-name { min-width: 0; font-family: var(--orc-font-mono); font-size: 12px; color: var(--heading); overflow-wrap: anywhere; }
+.mcpc-chat-tool[data-mcp] .mcpc-chat-tool-name { color: var(--accent-text); }
+.mcpc-chat-tool-status { margin-left: auto; flex: none; font-size: 11.5px; color: var(--muted-strong); }
+.mcpc-chat-tool:is([data-status="error"], [data-status="declined"]) .mcpc-chat-tool-status { color: var(--red-text, var(--red)); }
+.mcpc-chat-tool pre {
+  margin: 0; padding: 8px 10px; border-top: 1px solid var(--border); max-height: 240px; overflow: auto;
+  font-family: var(--orc-font-mono); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.mcpc-chat-note { margin-bottom: 8px; font-size: 12px; color: var(--muted-strong); }
+.mcpc-chat-note[data-tone="error"] { color: var(--red-text, var(--red)); }
+.mcpc-chat-composer { display: grid; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--border); }
+.mcpc-chat-composer textarea {
+  box-sizing: border-box; width: 100%; min-height: 56px; max-height: 40vh; padding: 8px 10px; resize: vertical;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--heading);
+  font: inherit; font-size: 13px; line-height: 1.5;
+}
+.mcpc-chat-composer textarea:focus-visible, .mcpc-chat select:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: -1px; }
+.mcpc-chat-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.mcpc-chat-error { margin-right: auto; font-size: 12px; color: var(--red-text, var(--red)); }
+.mcpc-chat-error[hidden] { display: none; }
+
+@media (max-width: 760px) {
+  #mcp-client-view { overflow: auto; }
+  .mcpc-head { padding: 14px 16px 12px; }
+  .mcpc-tabs { padding: 6px 16px; }
+  .mcpc-tab-pick { min-height: 44px; }
+  .mcpc-tab-close { width: 32px; height: 32px; }
+  .mcpc-panel { flex: none; }
+  .mcpc-inspector { display: block; flex: none; }
+  .mcpc-home, .mcpc-list { flex: none; padding: 14px 16px 24px; overflow: visible; }
+  .mcpc-project-open { min-height: 44px; }
+  .mcpc-server { grid-template-columns: minmax(0, 1fr); }
+  .mcpc-server-actions { justify-content: flex-start; }
+  .mcpc-server-actions:empty { display: none; }
+  button.mcpc-server-name { min-height: 32px; }
+  .mcpc-candidates button { min-height: 44px; }
+  .mcpc-quick-add { flex-direction: column; }
+  .mcpc-env-bar { padding: 8px 16px; }
+  .mcpc-env-actions { margin-left: 0; flex-wrap: wrap; }
+  .mcpc-panel[data-kind="environment"] { display: flex; }
+  .mcpc-env-chat { min-height: 60dvh; border-left: 0; border-top: 1px solid var(--border); }
+  .mcpc-chat-scroll { max-height: 60dvh; }
+}

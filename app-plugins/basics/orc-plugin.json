@@ -1,0 +1,17 @@
+{
+  "apiVersion": 2,
+  "id": "basics",
+  "name": "Basics",
+  "version": "1.0.0",
+  "description": "White paper, dark ink and an accent colour of your choice.",
+  "contributes": {
+    "theme": {
+      "id": "basics",
+      "label": "Basics",
+      "description": "Just the work",
+      "css": "theme.css",
+      "icon": "icon.png",
+      "favicon": "favicon.svg"
+    }
+  }
+}
