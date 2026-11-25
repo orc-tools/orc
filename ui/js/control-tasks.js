@@ -1,26 +1,43 @@
-import { esc, fileUrl } from './core.js';
+import { esc, fileUrl, runs } from './core.js';
+import { runModelLabel } from './launch-options.js';
 
 const controlTaskSnapshots = new Map();
 const finishedTaskStates = new Set(['completed', 'failed', 'cancelled']);
 
+// A task is named by its child run's title, then the title it was delegated
+// with, then the first sentence of its prompt.
+export function controlTaskTitle(task, text) {
+  const child = task.childRunId ? runs.find(run => run.id === task.childRunId) : null;
+  const named = String(child?.meta?.title || task.request?.title || '').trim();
+  if (named) return named;
+  const line = String(text).trim().split('\n')[0];
+  return line.match(/^.+?[.!?](?=\s)/)?.[0] || line;
+}
+
 export function controlTaskRowsHtml(runId, tasks, readOnly = false) {
   if (!tasks.length) return '<p class="control-help">No automatic tasks yet.</p>';
-  return `<ul class="control-model-list">${tasks.map(task => {
+  return `<ul class="control-task-list">${tasks.map(task => {
     const selection = task.selection || {};
     const taskText = task.request?.text || task.text || task.taskId || 'Task';
-    const chosen = [selection.agent, selection.claudeAccount, selection.model].filter(Boolean).join(' · ');
-    const child = task.childRunId
-      ? `<a href="#${encodeURIComponent(task.childRunId)}">${esc(taskText)}</a>`
-      : `<span>${esc(taskText)}</span>`;
+    const title = controlTaskTitle(task, taskText);
+    const model = runModelLabel({ launchModel: selection.model, launchEffort: selection.effort });
+    const chosen = [selection.agent, selection.claudeAccount, model].filter(Boolean)
+      .map(part => `<span>${esc(part)}</span>`).join(' · ');
+    const name = task.childRunId
+      ? `<a class="control-task-title" href="#${encodeURIComponent(task.childRunId)}" title="${esc(taskText)}">${esc(title)}</a>`
+      : `<span class="control-task-title" title="${esc(taskText)}">${esc(title)}</span>`;
     const result = task.result?.path && task.childRunId
       ? `<a href="${esc(fileUrl(task.childRunId, task.result.path))}">${esc(task.result.path)}</a>${task.result.sha256 ? ` <span translate="no" title="${esc(task.result.sha256)}">${esc(task.result.sha256.slice(0, 12))}</span>` : ''}`
       : '';
     const delivery = typeof task.delivery === 'object' ? task.delivery?.state : task.delivery;
     const pendingDelivery = task.state === 'completed' && ['pending', 'sending', 'ambiguous'].includes(delivery);
     const cancellable = !readOnly && task.taskId && (!finishedTaskStates.has(task.state) || pendingDelivery);
-    return `<li><div>${child}${chosen ? `<p class="control-help">${esc(chosen)}</p>` : ''}</div>`
-      + `<div><span>${esc(task.state || 'Unknown')}</span>${task.error ? `<p class="control-help">${esc(task.error)}</p>` : ''}${delivery ? `<p class="control-help">Delivery: ${esc(delivery)}</p>` : ''}${result ? `<p>${result}</p>` : ''}</div>`
-      + (cancellable ? `<button type="button" data-task-cancel="${esc(task.taskId)}" aria-label="Stop task ${esc(taskText)}">Stop task</button>` : '<span></span>')
+    return `<li class="control-task">${name}`
+      + `<p class="control-task-meta"><span>${esc(task.state || 'unknown')}</span>${chosen ? ` · <span>${chosen}</span>` : ''}</p>`
+      + (delivery ? `<p class="control-help">Delivery: ${esc(delivery)}</p>` : '')
+      + (task.error ? `<p class="control-help control-error">${esc(task.error)}</p>` : '')
+      + (result ? `<p class="control-task-result">${result}</p>` : '')
+      + (cancellable ? `<button type="button" data-task-cancel="${esc(task.taskId)}" aria-label="Stop task ${esc(title)}">Stop task</button>` : '')
       + '</li>';
   }).join('')}</ul>`;
 }

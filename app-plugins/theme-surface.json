@@ -977,7 +977,7 @@
       },
       {
         "name": "evals-candidate-tag",
-        "what": "The label on an evals candidate run"
+        "what": "An evals candidate's model, which titles its row under the parent"
       },
       {
         "name": "state-started",
@@ -1539,6 +1539,19 @@
           "registerThemeComponents",
           "themeComponent",
           "unregisterThemeComponents"
+        ]
+      },
+      "/js/activity.js": {
+        "what": "Sound preference and quiet hours",
+        "exports": [
+          "soundsAreEnabled"
+        ]
+      },
+      "/js/sound.js": {
+        "what": "Shared audio context and playback volume",
+        "exports": [
+          "soundContext",
+          "soundVolume"
         ]
       }
     }

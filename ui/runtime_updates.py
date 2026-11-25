@@ -462,12 +462,16 @@ def release_check_due(repo, now):
 
 
 # The public repository's GitHub release listing, which the update banner
-# offers. Only the helper's minute tick asks GitHub, at most once an hour; the
+# offers. Only the helper's minute tick asks for it, at most once an hour; the
 # viewer reads the answer from release.json and never waits on the network.
 GITHUB_SOURCE = re.compile(r'^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$')
 RELEASE_TAG = re.compile(r'^v(\d+)\.(\d+)\.(\d+)$')
 RELEASE_LISTING_SECONDS = 3600
 RELEASE_FETCH_SECONDS = 10
+# Orc's update service sits in front of GitHub's listing; the public README
+# says so.
+UPDATE_SERVICE = 'https://updates.orc.tools'
+UPDATE_SERVICE_FETCH_SECONDS = 5
 # An install the banner started that has not answered in this long has died.
 RELEASE_INSTALL_SECONDS = 1800
 
@@ -499,12 +503,34 @@ def installed_version():
         return None
 
 
-def fetch_latest_tag(slug):
+def user_agent():
+    """The update check's user agent. It names the installed version and
+    nothing else, so the counts Orc's update service keeps can say which
+    versions are running."""
+    version = installed_version()
+    return 'Orc/%d.%d.%d' % version if version else 'Orc'
+
+
+def fetch_tag(url, timeout):
     import urllib.request
-    request = urllib.request.Request(f'https://api.github.com/repos/{slug}/releases/latest', headers={
-        'Accept': 'application/vnd.github+json', 'User-Agent': 'Orc'})
-    with urllib.request.urlopen(request, timeout=RELEASE_FETCH_SECONDS) as response:
-        return json.loads(response.read(1_000_000)).get('tag_name')
+    request = urllib.request.Request(url, headers={
+        'Accept': 'application/vnd.github+json', 'User-Agent': user_agent()})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        tag = json.loads(response.read(1_000_000)).get('tag_name')
+    if not release_tuple(tag):
+        raise ValueError('no release tag in the answer')
+    return tag
+
+
+def fetch_latest_tag(slug, fetch=fetch_tag):
+    """Ask Orc's update service, which answers from GitHub's listing and
+    counts roughly how many installs ask each day. Anything but a release
+    from it (down, not deployed yet, a page instead of JSON) goes to GitHub
+    directly, so the update check never depends on it."""
+    try:
+        return fetch(f'{UPDATE_SERVICE}/repos/{slug}/releases/latest', UPDATE_SERVICE_FETCH_SECONDS)
+    except Exception:  # noqa: BLE001 - any failure falls back to GitHub
+        return fetch(f'https://api.github.com/repos/{slug}/releases/latest', RELEASE_FETCH_SECONDS)
 
 
 def read_json(path):
@@ -539,8 +565,8 @@ def release_install_path():
 
 
 def check_release_listing(now, fetch=fetch_latest_tag):
-    """Ask GitHub for the public repository's latest release when the last
-    answer is an hour old. A failed ask keeps the release it knew."""
+    """Ask for the public repository's latest release when the last answer
+    is an hour old. A failed ask keeps the release it knew."""
     slug = github_slug(installed_source())
     if not slug:
         return

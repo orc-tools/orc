@@ -167,7 +167,10 @@ class Session:
 
     def call(self, method, params):
         with codex_rpc.Client(self.socket) as client:
-            return client.call(method, params)
+            try:
+                return client.call(method, params)
+            except codex_rpc.RpcRejected as error:
+                raise codex_rpc.RpcRejected("%s: %s" % (method, error)) from error
 
     def orc(self, home=None, **calls):
         """``{name: result}`` from Orc readers run in a child Python with this
@@ -692,8 +695,12 @@ def _remote_failures(s, thread):
         if resumed.get("thread", {}).get("id") != thread:
             return ["Codex's thread/resume reply no longer names the thread, which Orc's scoped resume relies on"]
         return _turn_failures(s, thread)
-    except (OSError, codex_rpc.RpcError, ValueError, TypeError, AttributeError) as error:
+    except codex_rpc.RpcTimeout as error:
+        return ["A call Orc makes on Codex's control socket timed out: %s" % error]
+    except codex_rpc.RpcRejected as error:
         return ["Codex's app server refused a call Orc makes on its control socket: %s" % error]
+    except (OSError, codex_rpc.RpcError, ValueError, TypeError, AttributeError) as error:
+        return ["A call Orc makes on Codex's control socket failed: %s" % error]
 
 
 def _turn_failures(s, thread):

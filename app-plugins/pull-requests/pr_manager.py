@@ -1,6 +1,6 @@
 """The PR manager page: the viewer's open pull requests and the review
 requests waiting on someone, read from GitHub (`gh api graphql`) and from the
-team's Slack review channel. Reads change nothing. The three writes each
+team's Slack review channels. Reads change nothing. The three writes each
 follow a click on the page: merging a PR, asking GitHub for your own review,
 and putting your eyes reaction on a PR's Slack post.
 
@@ -56,6 +56,7 @@ GITHUB_TIMEOUT = 45
 SEARCH_PAGES = 3
 LINKED_BATCH = 40
 GITHUB_WORKERS = 4
+SLACK_WORKERS = 2
 SLACK_READ_CALLS = 4
 READ_CHANNEL = "mcp__slack__slack_read_channel"
 GET_REACTIONS = "mcp__slack__slack_get_reactions"
@@ -89,6 +90,8 @@ DEFAULTS = {
     "githubOrgs": [],
     "repoScope": None,
 }
+VISIBLE_LISTS = ("now", "waiting", "reviewed", "own", "stale", "team-reviews")
+BOARD_COLUMNS = ("repo", "author", "size", "ticket", "checks")
 # First match wins, so a PR that is approved but has new feedback or a
 # conflict lands in Needs your action; the page shows Ready to merge first.
 DEFAULT_SECTIONS = [
@@ -324,6 +327,33 @@ def _effective_scope(opts):
     return {"mode": "selected", "orgs": list(orgs), "repos": []} if orgs else {"mode": "all", "orgs": [], "repos": []}
 
 
+def normalize_slack_channel(value):
+    channel = value.strip().lstrip("#").lower() if isinstance(value, str) else ""
+    return channel if SLACK_CHANNEL_NAME_RE.fullmatch(channel) else None
+
+
+def validate_choices(value, field, allowed=None, required=False):
+    if not isinstance(value, list) or (required and not value):
+        raise PrManagerError(400, "%s must be %slist." % (field, "a non-empty " if required else "a "))
+    choices = []
+    for item in value:
+        if allowed is None:
+            item = normalize_slack_channel(item)
+            if item is None:
+                raise PrManagerError(400, "%s must contain Slack channel names, such as review-requests." % field)
+        elif item not in allowed:
+            raise PrManagerError(400, "Unknown %s option: %r." % (field, item))
+        choices.append(item)
+    return list(dict.fromkeys(choices))
+
+
+BOARD_CHOICES = {
+    "visibleLists": (VISIBLE_LISTS, True),
+    "columns": (BOARD_COLUMNS, False),
+    "slackChannels": (None, False),
+}
+
+
 def settings(config):
     raw = config.get("prManager") if isinstance(config, dict) else None
     raw = raw if isinstance(raw, dict) else {}
@@ -333,6 +363,14 @@ def settings(config):
         if isinstance(value, str) and value.strip():
             result[key] = value.strip()
     result["slackChannel"] = result["slackChannel"].lstrip("#")
+    for field, (allowed, required) in BOARD_CHOICES.items():
+        try:
+            result[field] = validate_choices(raw[field], field, allowed, required)
+        except (KeyError, PrManagerError):
+            result[field] = list(allowed) if allowed is not None else [result["slackChannel"]]
+    if result["slackChannels"] and result["slackChannels"][0] != result["slackChannel"]:
+        result["slackChannel"] = result["slackChannels"][0]
+        result["slackChannelId"] = None
     if type(raw.get("useSlack")) is bool:
         result["useSlack"] = raw["useSlack"]
     days = raw.get("lookbackDays")
@@ -441,13 +479,13 @@ def _content_items(event):
     return [item for item in content if isinstance(item, dict)] if isinstance(content, list) else []
 
 
-def parse_stream(output):
+def parse_stream(output, channel_name=None, channel_id=None):
     """The Slack facts in a `claude -p --output-format stream-json` stream:
     whether Slack was connected, the channel read, and every read_channel
     result's message text."""
-    found = {"connected": None, "channelId": None, "messages": [], "domains": [],
+    found = {"connected": None, "channelId": channel_id, "messages": [], "domains": [],
              "readCalls": 0, "toolErrors": [], "reactionTool": None}
-    read_ids = set()
+    reads = {}
     for event in _stream_events(output):
         if event.get("type") == "system" and event.get("subtype") == "init":
             found["connected"] = _slack_connected(event)
@@ -457,28 +495,31 @@ def parse_stream(output):
         for item in _content_items(event):
             if event.get("type") == "assistant" and item.get("type") == "tool_use" \
                     and item.get("name") == READ_CHANNEL:
-                read_ids.add(item.get("id"))
-                channel = (item.get("input") or {}).get("channel_id")
-                if isinstance(channel, str) and re.fullmatch(r"[CG][A-Z0-9]+", channel):
-                    found["channelId"] = channel
-            elif event.get("type") == "user" and item.get("type") == "tool_result":
+                inputs = item.get("input")
+                target = inputs.get("channel_id") if isinstance(inputs, dict) else None
+                reads[item.get("id")] = target if isinstance(target, str) and SLACK_CHANNEL_ID_RE.fullmatch(target) else None
+            elif event.get("type") == "user" and item.get("type") == "tool_result" \
+                    and item.get("tool_use_id") in reads:
                 for text in _tool_result_texts(item.get("content")):
-                    found["domains"] += SLACK_DOMAIN_RE.findall(text.replace("\\/", "/"))
-                    channel = CHANNEL_RE.search(text)
-                    if channel and item.get("tool_use_id") in read_ids:
-                        found["channelId"] = channel[2]
-                    if item.get("tool_use_id") not in read_ids:
-                        continue
                     if item.get("is_error"):
                         found["toolErrors"].append(text)
                         continue
-                    found["readCalls"] += 1
                     try:
                         payload = json.loads(text)
                     except ValueError:
                         payload = None
                     messages = payload.get("messages") if isinstance(payload, dict) else text
+                    header = CHANNEL_RE.match(messages.lstrip()) if isinstance(messages, str) else None
+                    target = reads[item["tool_use_id"]]
+                    reported_id = header[2] if header else target
+                    if (header and ((target and target != reported_id) or
+                                    (channel_name and header[1].lower() != channel_name.lower())) or
+                            (found["channelId"] and found["channelId"] != reported_id)):
+                        continue
+                    found["channelId"] = reported_id
+                    found["readCalls"] += 1
                     if isinstance(messages, str):
+                        found["domains"] += SLACK_DOMAIN_RE.findall(messages.replace("\\/", "/"))
                         found["messages"].append(messages)
     return found
 
@@ -526,7 +567,8 @@ def fetch_slack(opts, channel_id=None, now=None, previous=None, open_keys=()):
     now = time.time() if now is None else now
     channel_id = opts.get("slackChannelId") or channel_id
     tools = [READ_CHANNEL] if channel_id else [READ_CHANNEL, SEARCH_CHANNELS]
-    found = parse_stream(slack_session(opts, tools, slack_prompt(opts, channel_id, now), "Slack can't be read"))
+    found = parse_stream(slack_session(opts, tools, slack_prompt(opts, channel_id, now), "Slack can't be read"),
+                         opts["slackChannel"], channel_id)
     if found["connected"] is False:
         raise SlackNotConnected()
     if not found["readCalls"]:
@@ -541,7 +583,7 @@ def fetch_slack(opts, channel_id=None, now=None, previous=None, open_keys=()):
                 seen.add((post["ts"], post["postedBy"]))
                 posts.append(post)
     posts.sort(key=lambda post: post["epoch"])
-    name_reactors(posts, previous, opts, found["channelId"] or channel_id, open_keys)
+    name_reactors(posts, previous, opts, found["channelId"], open_keys)
     return {"posts": posts, "channel": opts["slackChannel"], "channelId": found["channelId"] or channel_id,
             "domain": found["domains"][0] if found["domains"] else None,
             "reactionTool": found["reactionTool"]}
@@ -1460,11 +1502,10 @@ def permalink(domain, channel_id, ts):
     return "https://%s/archives/%s/p%s" % (domain, channel_id, ts.replace(".", ""))
 
 
-def slack_by_pr(posts, opts, channel_id, domain):
+def slack_by_pr(posts, opts):
     """Each linked PR's Slack summary: its earliest post, and the strongest
     state any post reached."""
-    if not domain and opts.get("slackWorkspaceUrl"):
-        domain = re.sub(r"^https?://", "", opts["slackWorkspaceUrl"]).strip("/") or None
+    workspace = re.sub(r"^https?://", "", opts.get("slackWorkspaceUrl") or "").strip("/")
     grouped = collections.defaultdict(list)
     for post in sorted(posts, key=lambda p: p["epoch"]):
         for link in post["links"]:
@@ -1484,16 +1525,55 @@ def slack_by_pr(posts, opts, channel_id, domain):
         by = [who for post, _ in entries for name in marks for who in (post.get("reactedBy") or {}).get(name) or []]
         result[key] = {"tag": tag, "tags": sorted({t for _, t in entries}),
                        "postedAt": iso(first["epoch"]), "postedBy": first["postedBy"],
-                       "permalink": permalink(domain, channel_id, first["ts"]),
+                       "channel": first["channel"],
+                       "permalink": permalink(first["domain"] or workspace, first["channelId"], first["ts"]),
                        "reactions": [{"name": n, "count": c} for n, c in reactions.items()],
                        "state": state, "by": list(dict.fromkeys(by))}
     return result
 
 
-def slack_shown(state, opts):
-    """Whether the page shows anything from Slack: off when the user turned
-    Slack off, or when the last read found Slack not connected."""
-    return opts.get("useSlack", True) and state["slack"].get("connected") is not False
+def slack_channels(state, opts):
+    """Select current channels in settings order and read single-channel caches from older versions."""
+    slack = state["slack"]
+    reads = slack.get("channels")
+    if reads is None:
+        name = (slack.get("data") or {}).get("channel")
+        reads = {name: slack} if name else {}
+    return {name: reads.get(name, {}) for name in opts["slackChannels"]}
+
+
+def slack_metadata(state, opts):
+    channels = slack_channels(state, opts)
+    connected = not channels or any(read.get("connected") is not False for read in channels.values())
+    enabled = opts.get("useSlack", True)
+    shown = enabled and opts.get("repoScope") is not None and bool(channels) and connected
+    errors = [(name, read["error"]) for name, read in channels.items() if read.get("error")] if shown else []
+    error = " ".join("#%s: %s" % (name, err) if len(channels) > 1 else err for name, err in errors)
+    times = [read["fetchedAt"] for read in channels.values() if read.get("fetchedAt")] if shown else []
+    return {"channel": opts["slackChannel"], "channels": list(channels), "lookbackDays": opts["lookbackDays"],
+            "enabled": enabled, "connected": connected, "shown": shown,
+            "ok": not errors, "error": error or None, "fetchedAt": max(times, default=None)}
+
+
+def slack_posts(channels):
+    posts = []
+    for name, read in channels.items():
+        if read.get("connected") is False:
+            continue
+        data = read.get("data") or {}
+        posts.extend(dict(post, channel=name, channelId=data.get("channelId"), domain=data.get("domain"),
+                          reactionTool=data.get("reactionTool"))
+                     for post in data.get("posts") or [])
+    return posts
+
+
+def visible_slack_posts(state, opts):
+    return slack_posts(slack_channels(state, opts)) if slack_metadata(state, opts)["shown"] else []
+
+
+def slack_due(read, now, stale_after):
+    attempted = read.get("attemptedAt")
+    return attempted is None or now - attempted > stale_after
 
 
 def stale_rows(posts, slack, records, orc_runs, requested_keys, now):
@@ -1544,7 +1624,7 @@ def needs_rereview(row):
 def empty_state():
     return {"version": 1, "attemptedAt": None, "fetchedAt": None,
             "github": {"ok": True, "error": None, "fetchedAt": None, "data": None},
-            "slack": {"ok": True, "error": None, "fetchedAt": None, "data": None},
+            "slack": {"channels": {}},
             "orcRuns": {}, "reviewRuns": {}}
 
 
@@ -1554,12 +1634,8 @@ def assemble(state, opts, refreshing, now=None):
     scope = _effective_scope(opts)
     github = {group: [r for r in data.get(group) or [] if in_scope(r["repo"], scope)]
               for group in ("mine", "requested", "reviewed", "linked")}
-    slack_data = state["slack"].get("data") or {}
     viewer = data.get("viewer")
-    shown = slack_shown(state, opts)
-    # Slack turned off or not connected leaves no trace on the page: no
-    # posts means no Slack state on any row, no team tags and no stale list.
-    posts = (slack_data.get("posts") or []) if shown else []
+    posts = visible_slack_posts(state, opts)
     notices = []
     sections = DEFAULT_SECTIONS
     if opts.get("sections") is not None:
@@ -1572,7 +1648,7 @@ def assemble(state, opts, refreshing, now=None):
         for record in github[group]:
             records[key_for_url(record["url"])] = record
     requested_keys = {key_for_url(r["url"]) for r in github["requested"]}
-    slack = slack_by_pr(posts, opts, slack_data.get("channelId"), slack_data.get("domain"))
+    slack = slack_by_pr(posts, opts)
     orc_runs = state.get("orcRuns") or {}
     posted = {key: records[key] for key in slack
               if key in records and records[key]["state"] == "OPEN" and not records[key]["isDraft"]
@@ -1619,14 +1695,12 @@ def assemble(state, opts, refreshing, now=None):
         "viewer": {"login": viewer} if viewer else None,
         "onboardingComplete": opts.get("repoScope") is not None,
         "repoScope": opts.get("repoScope"),
+        "visibleLists": opts["visibleLists"],
+        "columns": opts["columns"],
         "refreshing": refreshing,
         "fetchedAt": state.get("fetchedAt"),
         "github": {k: state["github"].get(k) for k in ("ok", "error", "fetchedAt")},
-        "slack": {**({k: state["slack"].get(k) for k in ("ok", "error", "fetchedAt")} if shown
-                     else {"ok": True, "error": None, "fetchedAt": None}),
-                  "channel": opts["slackChannel"], "lookbackDays": opts["lookbackDays"],
-                  "enabled": opts.get("useSlack", True), "connected": state["slack"].get("connected") is not False,
-                  "shown": shown},
+        "slack": slack_metadata(state, opts),
         "team": {"detected": detect_team(posts, authors, viewer),
                  "tags": sorted({link["tag"] for post in posts for link in post["links"]})},
         "notices": notices,
@@ -1648,44 +1722,53 @@ def assemble(state, opts, refreshing, now=None):
     }
 
 
-def refresh_state(previous, opts, runs_dir, now=None, force=False, slack=True):
+def refresh_slack_channel(name, read, opts, now, open_keys, sources_changed):
+    if sources_changed is not None and sources_changed.is_set():
+        return
+    channel_opts = {**opts, "slackChannel": name,
+                    "slackChannelId": opts["slackChannelId"] if name == opts["slackChannel"] else None}
+    data = read.get("data") or {}
+    read["attemptedAt"] = now
+    try:
+        fresh = fetch_slack(channel_opts, data.get("channelId"), now, data.get("posts"), open_keys)
+        read.update(error=None, fetchedAt=iso(now), data=fresh, connected=True)
+    except SlackNotConnected as error:
+        read.update(error=str(error), connected=False)
+    except SourceError as error:
+        read.update(error=str(error))
+    except Exception as error:   # a parser bug must not take GitHub down with it
+        read.update(error="Slack could not be read: %s." % error)
+
+
+def refresh_state(previous, opts, runs_dir, now=None, force=False, slack=True, sources_changed=None):
     """A new state from GitHub, and from Slack, unless slack is False, when
     forced or its read is SLACK_STALE_SECONDS old: each Slack read costs a
     Claude session, while a merged PR should leave the list within a minute. A source that fails keeps
     its last good data and reports why."""
     now = time.time() if now is None else now
-    read_slack = slack and opts.get("useSlack", True) and (force or now - (previous["slack"].get("attemptedAt") or 0) > SLACK_STALE_SECONDS)
     state = json.loads(json.dumps(previous))
     state["attemptedAt"] = now
-    previous_slack = previous["slack"].get("data") or {}
+    channels = slack_channels(state, opts)
+    state["slack"] = {"channels": channels}
     previous_linked = (previous["github"].get("data") or {}).get("linked") or []
+    linked_keys = {link["key"] for post in visible_slack_posts(state, opts) for link in post["links"]}
     scope = _effective_scope(opts)
     orgs, repos = scope["orgs"], scope["repos"]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         searching = pool.submit(search_github, orgs, repos)
-        open_keys = {key_for_url(r["url"]) for r in previous_linked if r["state"] not in ("MERGED", "CLOSED")}
-        # A channel ID learned for another channel name would read the old channel.
-        known_id = previous_slack.get("channelId") if previous_slack.get("channel") == opts["slackChannel"] else None
-        reading = pool.submit(fetch_slack, opts, known_id, now,
-                              previous_slack.get("posts"), open_keys) if read_slack else None
         # Slack is the slow source, so PRs it linked last time load alongside it.
+        open_keys = {key_for_url(r["url"]) for r in previous_linked if r["state"] not in ("MERGED", "CLOSED")}
         prefetching = pool.submit(fetch_linked, [
             r["url"] for r in previous_linked if r["state"] != "MERGED" and in_scope(r["repo"], scope)
+            and key_for_url(r["url"]) in linked_keys
         ])
-        if reading:
-            state["slack"]["attemptedAt"] = now
-            try:
-                state["slack"].update(ok=True, error=None, fetchedAt=iso(now), data=reading.result(),
-                                      connected=True)
-            except SlackNotConnected as error:
-                state["slack"].update(ok=False, error=str(error), connected=False)
-            except SourceError as error:
-                state["slack"].update(ok=False, error=str(error))
-            except Exception as error:   # a parser bug must not take GitHub down with it
-                state["slack"].update(ok=False, error="Slack could not be read: %s." % error)
-        posts = (state["slack"].get("data") or {}).get("posts") or []
+        if slack and opts.get("useSlack", True) and opts.get("repoScope") is not None:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=SLACK_WORKERS) as slack_pool:
+                for name, read in channels.items():
+                    if force or slack_due(read, now, SLACK_STALE_SECONDS):
+                        slack_pool.submit(refresh_slack_channel, name, read, opts, now, open_keys, sources_changed)
         try:
-            github = fetch_github(searching.result(), posts, opts.get("linearWorkspace"),
+            github = fetch_github(searching.result(), visible_slack_posts(state, opts), opts.get("linearWorkspace"),
                                   state["github"].get("data"), prefetching.result(), orgs, repos)
             state["github"] = {"ok": True, "error": None, "fetchedAt": iso(now), "data": github}
         except SourceError as error:
@@ -1735,6 +1818,8 @@ class Manager:
         self._lock = threading.Lock()
         self._state = None
         self._refreshing = False
+        self._sources_changed = threading.Event()
+        self._refresh_pending = False
         self._details = {}
         self._remotes = {}
         self._repos_cache = None
@@ -1754,16 +1839,23 @@ class Manager:
                 self._state = empty_state()
         return self._state
 
-    def request_refresh(self, force=False, slack=True, stale_after=GITHUB_STALE_SECONDS):
-        slack = slack and self.options()[0].get("useSlack", True)
+    def request_refresh(self, force=False, slack=True, stale_after=GITHUB_STALE_SECONDS, after_save=False):
+        opts, _config = self.options()
+        if opts.get("repoScope") is None:
+            return False
+        slack = slack and opts.get("useSlack", True)
         with self._lock:
             state = self._state_locked()
             now = self.clock()
             stale = state.get("attemptedAt") is None or now - state["attemptedAt"] > stale_after
             # The assistant's GitHub-only refreshes keep attemptedAt fresh, so
             # Slack goes by its own last read.
-            stale = stale or (slack and now - (state["slack"].get("attemptedAt") or 0) > SLACK_STALE_SECONDS)
-            if self._refreshing or not (force or stale):
+            stale = stale or (slack and any(slack_due(read, now, SLACK_STALE_SECONDS)
+                                            for read in slack_channels(state, opts).values()))
+            if self._refreshing:
+                self._refresh_pending = self._refresh_pending or after_save
+                return False
+            if not (force or stale):
                 return False
             self._refreshing = True
         self._start(lambda: self._refresh(force, slack))
@@ -1772,17 +1864,27 @@ class Manager:
     def _refresh(self, force=False, slack=True):
         with self._lock:
             previous = self._state_locked()
+            sources_changed = self._sources_changed
         try:
             opts, _config = self.options()
-            state = refresh_state(previous, opts, self.runs_dir, self.clock(), force, slack)
-            self._save(state)
+            state = refresh_state(previous, opts, self.runs_dir, self.clock(), force, slack, sources_changed)
         except Exception as error:
             state = json.loads(json.dumps(previous))
             state["attemptedAt"] = self.clock()
             state["github"].update(ok=False, error="The PR refresh failed: %s." % error)
         with self._lock:
+            if sources_changed.is_set():
+                state["slack"] = self._state_locked()["slack"]
+            try:
+                self._save(state)
+            except OSError as error:
+                state["github"].update(ok=False, error="The PR refresh could not be saved: %s." % error)
             self._state = state
-            self._refreshing = False
+            pending = self._refresh_pending
+            self._refresh_pending = False
+            self._refreshing = pending
+        if pending:
+            self._start(lambda: self._refresh(force=True))
 
     def _save(self, state):
         _write_json(self.cache_path, state)
@@ -1867,19 +1969,15 @@ class Manager:
             return {}
         with self._lock:
             state = self._state_locked()
-            slack = state["slack"]
-            data = slack.get("data") or {}
-            attempted = slack.get("attemptedAt")
-            shown = slack_shown(state, opts)
+            reads = slack_channels(state, opts).values()
         if not opts.get("useSlack", True):
             return {}
-        if attempted is not None and self.clock() - attempted > RUN_LIST_SLACK_STALE_SECONDS:
+        now = self.clock()
+        if any(read.get("attemptedAt") is not None and slack_due(read, now, RUN_LIST_SLACK_STALE_SECONDS)
+               for read in reads):
             self.request_refresh()
-        if not shown:
-            return {}
-        posts = slack_by_pr(data.get("posts") or [], opts, data.get("channelId"), data.get("domain"))
-        return {key: dict(post, channel=opts["slackChannel"]) for key, post in posts.items()
-                if in_scope(key, scope)}
+        posts = slack_by_pr(visible_slack_posts(state, opts), opts)
+        return {key: post for key, post in posts.items() if in_scope(key, scope)}
 
     def approved_by_you(self):
         """Keys, like key_for_url, of the open PRs by others whose latest
@@ -2016,28 +2114,44 @@ class Manager:
         }
 
     def save_repo_scope(self, raw_scope, update_config):
-        """Save the page's Settings: the repository scope and, when sent,
-        whether the page uses Slack and which channel it reads."""
+        """Validate the scope and the supplied board preferences before updating config."""
         scope = validate_repo_scope(raw_scope)
         use_slack = raw_scope.get("useSlack")
         if use_slack is not None and type(use_slack) is not bool:
             raise PrManagerError(400, "useSlack must be true or false.")
         channel = raw_scope.get("slackChannel")
         if channel is not None:
-            channel = channel.strip().lstrip("#").lower() if isinstance(channel, str) else None
-            if not channel or not SLACK_CHANNEL_NAME_RE.fullmatch(channel):
+            channel = normalize_slack_channel(channel)
+            if channel is None:
                 raise PrManagerError(400, "slackChannel must be a Slack channel name, such as review-requests.")
+        choices = {field: validate_choices(raw_scope[field], field, allowed, required)
+                   for field, (allowed, required) in BOARD_CHOICES.items() if field in raw_scope}
+
+        source_changed = False
 
         def apply(config):
+            nonlocal source_changed
             raw = config.get("prManager")
             pr_cfg = dict(raw) if isinstance(raw, dict) else {}
+            current = settings(config)
             pr_cfg["repoScope"] = scope
             if use_slack is not None:
                 pr_cfg["useSlack"] = use_slack
-            if channel is not None and channel != settings(config)["slackChannel"]:
-                pr_cfg["slackChannel"] = channel
-                # The saved ID belongs to the old channel; the next read looks the new one up.
-                pr_cfg.pop("slackChannelId", None)
+            pr_cfg.update(choices)
+            if "slackChannels" in choices:
+                primary = next(iter(choices["slackChannels"]), current["slackChannel"])
+            else:
+                primary = channel or current["slackChannel"]
+                if channel is not None and (channel != current["slackChannel"] or not current["slackChannels"]):
+                    pr_cfg.pop("slackChannels", None)
+            if "slackChannels" in choices or channel is not None:
+                if primary != current["slackChannel"] or current["slackChannelId"] is None:
+                    pr_cfg.pop("slackChannelId", None)
+                pr_cfg["slackChannel"] = primary
+            updated = settings({"prManager": pr_cfg})
+            if updated["useSlack"] and not updated["slackChannels"]:
+                raise PrManagerError(400, "Add a review channel or turn off Slack.")
+            source_changed = any(current[key] != updated[key] for key in ("repoScope", "useSlack", "slackChannels"))
             config["prManager"] = pr_cfg
             return config
 
@@ -2045,8 +2159,16 @@ class Manager:
             update_config(apply)
         except OSError as error:
             raise PrManagerError(500, "Could not save repository settings: %s" % error) from None
-        self._details.clear()
-        return self.snapshot(force=True)
+        if source_changed:
+            with self._lock:
+                opts, _config = self.options()
+                state = self._state_locked()
+                self._state = {**state, "slack": {"channels": slack_channels(state, opts)}}
+                self._sources_changed.set()
+                self._sources_changed = threading.Event()
+                self._details.clear()
+            self.request_refresh(force=True, after_save=True)
+        return self.snapshot()
 
     def prepare_review_worktree(self, project, repo, number, base_ref):
         return prepare_review_worktree(project, repo, number, base_ref)
@@ -2128,8 +2250,11 @@ class Manager:
         if not match:
             raise PrManagerError(400, "Use a GitHub pull request URL like https://github.com/owner/repo/pull/1.")
         now = self.clock()
+        opts, config = self.options()
+        with self._lock:
+            state = self._state_locked()
         cached = self._details.get(url)
-        if cached and now - cached[0] < DETAIL_CACHE_SECONDS:
+        if cached and now - cached[0] < DETAIL_CACHE_SECONDS and cached[2] == opts and cached[3] is state:
             return cached[1]
         owner, name, number = match[1], match[2], int(match[3])
         try:
@@ -2160,13 +2285,15 @@ class Manager:
         viewer = (data.get("viewer") or {}).get("login") or cached_github.get("viewer")
         rollup = _rollup(node, "checkRollup")
         result = {**{k: v for k, v in record.items() if k != "reviews"},
-                  "slack": None, "orcRun": (state.get("orcRuns") or {}).get(key),
+                  "slack": slack_by_pr(visible_slack_posts(state, opts), opts).get(key),
+                  "orcRun": (state.get("orcRuns") or {}).get(key),
                   "reviewRequestedFromYou": viewer is not None and viewer.lower() in
                   {r.lower() for r in record["requestedReviewers"]},
                   "waitingSince": None,
                   "viewer": {"login": viewer} if viewer else None,
                   "slackChannel": opts["slackChannel"],
-                  "slackShown": slack_shown(state, opts),
+                  "slackChannels": opts["slackChannels"],
+                  "slackShown": assembled["slack"]["shown"],
                   # Markdown, for Review in Orc's QA steps (qa_steps.seeded_document).
                   "body": body,
                   "bodyHtml": node.get("bodyHTML") or "",
@@ -2178,16 +2305,12 @@ class Manager:
                   "review": self.review_availability(record["repo"], config),
                   "merge": merge_availability(record, node.get("id"), node.get("headRefOid"),
                                               repo.get("viewerDefaultMergeMethod"))}
-        slack = slack_by_pr((state["slack"].get("data") or {}).get("posts") or [], opts,
-                            (state["slack"].get("data") or {}).get("channelId"),
-                            (state["slack"].get("data") or {}).get("domain"))
-        result["slack"] = slack.get(key) if result["slackShown"] else None
         if known:
             result["waitingSince"] = known.get("waitingSince")
             result["actionReasons"] = known.get("actionReasons") or []
             result["reviewRequestedFromYou"] = result["reviewRequestedFromYou"] or known["reviewRequestedFromYou"]
         self._details = {u: v for u, v in self._details.items() if now - v[0] < DETAIL_CACHE_SECONDS}
-        self._details[url] = (now, result)
+        self._details[url] = (now, result, opts, state)
         return result
 
     def merge(self, url, head):
@@ -2243,32 +2366,34 @@ class Manager:
         if not opts.get("useSlack", True):
             raise PrManagerError(409, "Slack is turned off in the Pull requests settings.")
         with self._lock:
-            slack = self._state_locked()["slack"].get("data") or {}
-        linking = sorted((post for post in slack.get("posts") or []
-                          if any(link["key"] == key for link in post["links"])), key=lambda post: post["epoch"])
-        if not linking:
-            raise PrManagerError(409, "This pull request has no post in #%s to react to." % opts["slackChannel"])
-        ts = linking[0]["ts"]
+            state = self._state_locked()
+            target = min((post for post in visible_slack_posts(state, opts)
+                          if any(link["key"] == key for link in post["links"])),
+                         key=lambda post: post["epoch"], default=None)
+        if target is None:
+            names = ", ".join("#" + name for name in opts["slackChannels"]) or "the selected Slack channels"
+            raise PrManagerError(409, "This pull request has no post in %s to react to." % names)
+        ts, channel, channel_id = target["ts"], target["channel"], target["channelId"]
         try:
-            added = add_slack_reaction(opts, opts.get("slackChannelId") or slack.get("channelId"), ts,
-                                       slack.get("reactionTool"))
+            added = add_slack_reaction(opts, channel_id, ts, target["reactionTool"])
         except SourceError as error:
             raise PrManagerError(502, str(error)) from None
         with self._lock:
+            opts, _config = self.options()
             state = self._state_locked()
-            data = state["slack"].get("data") or {}
-            for post in data.get("posts") or []:
-                if post["ts"] == ts and any(link["key"] == key for link in post["links"]):
-                    mine = next((r for r in post["reactions"] if r["name"] == PICKED_UP_REACTION), None)
-                    # Already there and already counted, or there since the
-                    # last read: either way the post has at least this one.
-                    if mine:
-                        mine["count"] += 1 if added else 0
-                    else:
-                        post["reactions"].append({"name": PICKED_UP_REACTION, "count": 1})
-            self._save(state)
-        self._details.pop(url, None)
-        summary = slack_by_pr(data.get("posts") or [], opts, data.get("channelId"), data.get("domain"))
+            selected = slack_channels(state, opts).get(channel) or {}
+            data = selected.get("data") or {}
+            posts = (data.get("posts") or []) if data.get("channelId") == channel_id else []
+            post = next((post for post in posts if post["ts"] == ts), None)
+            if post is not None:
+                mine = next((r for r in post["reactions"] if r["name"] == PICKED_UP_REACTION), None)
+                if mine:
+                    mine["count"] += int(added)
+                else:
+                    post["reactions"].append({"name": PICKED_UP_REACTION, "count": 1})
+                self._save(state)
+            self._details.clear()
+            summary = slack_by_pr(visible_slack_posts(state, opts), opts)
         return {"slack": summary.get(key)}
 
     def _repo_projects(self, config):

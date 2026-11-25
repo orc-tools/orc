@@ -398,11 +398,15 @@ Other supported contributions:
   (see Calendar's meeting flashcards).
   `extendChatComposer(render)` from `/js/chat.js` adds buttons to a run's Chat
   composer, left of the microphone. `render({runId, mode, meta, slot,
-  setStatus})` runs when Chat mounts and whenever the run's mode, phase or
-  status changes; the package owns its elements in `slot`, gives a toggle the
-  pressed look with the `is-active` class, and `setStatus(text, tone)` keeps a
-  line under the prompt until it passes `''`. The returned function
-  unregisters (see Auto merge).
+  setStatus, setPlanStart, showAutoMerge})` runs when Chat mounts and whenever
+  the run's mode, phase or status changes; the package owns its elements in
+  `slot`, gives a toggle the pressed look with the `is-active` class, and
+  `setStatus(text, tone)` keeps a line under the prompt until it passes `''`. A
+  package that starts the build once a plan is ready passes
+  `setPlanStart(true)`, so Chat's Planning bar says so instead of asking for
+  Start work, and `false` when it no longer will. `showAutoMerge(enabled)` is
+  Auto merge's own: it draws that flip's badge at once and returns
+  `{id, takeBack}`. The returned function unregisters (see Auto merge).
   `extendChatBanners(render)` from `/js/chat.js` adds cards above a run's Chat
   composer. `render({runId, agent, meta, data, slot, onSettled})` runs when
   Chat draws; the package owns its elements in `slot` and may return
@@ -605,9 +609,19 @@ The bundled **Auto merge** package (`auto-merge`) is on by default
 (`onByDefault` and `adoptOnUpgrade`). It adds a ship button leftmost in each
 run's Chat composer, off for every run until someone presses it. A run with it
 on takes its project's Ship action (merge and push, merge or open the PR) once
-it reaches Ship, through core's `ship_at_landing_stop`. Each run's choice
+it reaches Ship, through core's `ship_at_landing_stop`. Turning Auto merge on in
+a planning run's Chat also starts the build automatically as soon as the plan
+finishes (through core's `start_plan_at_plan_stop`, carrying Auto merge onto
+the launched build run(s)) so it builds and ships without waiting for Start
+work. Each run's choice
 lives in its `auto-merge-choice.json`, and the last attempt in
-`auto-merge-attempt.json`. It also puts a ship button in the new-run
+`auto-merge-attempt.json`. Each time the choice changes, `set_enabled` or the
+toggle's POST also adds `{id, at, enabled}` to `auto-merge-changes.json` (the
+latest 200), which Chat's payload carries as `autoMergeChanges` and Chat shows
+as a green **Auto merge on** or red **Auto merge off** badge where it happened.
+The POST may send the `changeId` its page already drew the badge with, and
+answers with the `change` it recorded, null when nothing changed. Only the
+user sees the badges: the agent gets no message. It also puts a ship button in the new-run
 composer's slot (`.nc-startbar-auto-merge`). Each browser remembers that
 button's choice, off until first pressed, and while it is on the composer
 skips the plan, launches a change run (`mode: "orc"`) with `autoMerge: true`,

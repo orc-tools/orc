@@ -25,12 +25,12 @@ import app_plugins
 import claude_accounts
 import harnesses
 import headless_session
+from keyed_locks import KeyedLocks
 
 CACHE_SECONDS = 60
 REFRESH_SECONDS = 30
 PROBE_SECONDS = 20
-_LOCKS = {}
-_LOCKS_GUARD = threading.Lock()
+_provider_lock = KeyedLocks()
 _CACHE = {}
 _LAST_GOOD = {}
 # Claude reset grants come from Anthropic's usage endpoint, which rate limits
@@ -515,11 +515,6 @@ def read_provider(provider, refresh=False, account=None):
                       if last and last[0] == email(provider, account) else {**result, 'message': failure})
         _CACHE[key] = (time.monotonic(), result)
         return result
-
-
-def _provider_lock(key):
-    with _LOCKS_GUARD:
-        return _LOCKS.setdefault(key, threading.Lock())
 
 
 def _reset_outcome(result):

@@ -19,6 +19,22 @@ function fits() {
 
 const overflowed = () => [...footer.querySelectorAll(':scope > [data-overflowed]')];
 
+// Each button names itself under its icon, so the row reads without hovering:
+// a plugin's short `data-caption`, else its label. Screen readers already hear
+// the label, so the caption stays out of the accessibility tree.
+function caption(item) {
+  const text = item.dataset.caption || item.getAttribute('label') || item.getAttribute('aria-label') || '';
+  let span = item.querySelector(':scope > .footer-caption');
+  if (!text) { span?.remove(); return; }
+  if (!span) {
+    span = document.createElement('span');
+    span.className = 'footer-caption';
+    span.setAttribute('aria-hidden', 'true');
+    item.append(span);
+  }
+  if (span.textContent !== text) span.textContent = text;
+}
+
 function menuRow(item) {
   const href = item.getAttribute('href');
   const row = document.createElement(href ? 'a' : 'button');
@@ -48,7 +64,10 @@ function fillMenu() {
 function layout() {
   const before = overflowed();
   const items = [...footer.children].filter(item => item !== more);
-  for (const item of items) delete item.dataset.overflowed;
+  for (const item of items) {
+    caption(item);
+    delete item.dataset.overflowed;
+  }
   more.hidden = true;
   if (!fits()) {
     more.hidden = false;
@@ -73,4 +92,8 @@ for (const type of ['pointerdown', 'keydown']) {
 orcRegisterOverlayCloser('sidebar-more', () => more.close?.('programmatic', false));
 
 new ResizeObserver(layout).observe(footer);
-new MutationObserver(layout).observe(footer, { childList: true });
+// A renamed button (Settings reads Close settings while open) keeps its caption in step.
+// The More menu's own rows are rebuilt as it opens, which must not lay the row out again.
+new MutationObserver(records => {
+  if (records.some(record => !more.contains(record.target))) layout();
+}).observe(footer, { childList: true, subtree: true, attributeFilter: ['label', 'aria-label', 'data-caption'] });

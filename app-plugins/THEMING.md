@@ -431,7 +431,7 @@ Shadow-DOM `part` names exposed on `<orc-*>` design-system and composer controls
 | `.focus-tag` | The label on the active run in Queue mode |
 | `.pushed-tag` | The label on a run whose branch is pushed |
 | `.live-tag` | The label on a run with a live preview |
-| `.evals-candidate-tag` | The label on an evals candidate run |
+| `.evals-candidate-tag` | An evals candidate's model, which titles its row under the parent |
 | `.state-started` | State class: started |
 | `.state-waiting` | State class: waiting on another run |
 | `.state-working` | State class: working |
@@ -534,3 +534,5 @@ Orc's own page modules a theme's frontend or terminal module may import by URL. 
 | `/js/motion.js` | Motion preferences | `animationsOff`, `reducedMotion` |
 | `/js/core.js` | Announcements and artifact frames | `announce`, `syncOpenArtifactThemes` |
 | `/js/theme-components.js` | Safe DOM builder and replaceable component registry | `el`, `registerThemeComponents`, `themeComponent`, `unregisterThemeComponents` |
+| `/js/activity.js` | Sound preference and quiet hours | `soundsAreEnabled` |
+| `/js/sound.js` | Shared audio context and playback volume | `soundContext`, `soundVolume` |

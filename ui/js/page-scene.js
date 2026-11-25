@@ -37,6 +37,13 @@ export function restoreScroll(layer) {
   });
 }
 
+// The copies hold still. A theme's sky, twinkles and spinning planets would
+// otherwise play on in every copy, and WebKit repaints a moving copy's
+// running animations on every frame: the orbit liftoff dropped a quarter of its
+// frames in Orc.app. A scene layer's own motion is script-driven, so the rule
+// covers everything under it.
+export const stillCopies = scope => `${scope}, ${scope}::before, ${scope}::after { animation:none !important; }`;
+
 // Scenes cover the main column and leave the run sidebar in view, except
 // where the sidebar is the narrow-screen overlay.
 export function sceneLeft() {
@@ -65,7 +72,7 @@ export function staticClone(node, view, scroller) {
     // go in as a style.
     clone = plain(node);
     const style = document.createElement('style');
-    style.textContent = node.shadowRoot.adoptedStyleSheets.flatMap(sheet => [...sheet.cssRules].map(rule => rule.cssText)).join('\n');
+    style.textContent = [...node.shadowRoot.adoptedStyleSheets.flatMap(sheet => [...sheet.cssRules].map(rule => rule.cssText)), stillCopies('*')].join('\n');
     const root = clone.attachShadow({ mode: 'open', clonable: true });
     root.append(style);
     // restoreScroll cannot reach into a shadow root, so nothing in one is left out.

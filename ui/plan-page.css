@@ -109,6 +109,8 @@
 /* Focus lands here when a Start gives way to Starting…; the heading needs no ring. */
 .plan-work-title:focus { outline: none; }
 .plan-start-all { justify-self: start; }
+/* Start work leads; Start each step sits beside it, quiet. */
+.plan-start-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-self: start; }
 
 .plan-steps { display: grid; margin: 0; padding: 0; list-style: none; }
 .plan-step {
@@ -194,6 +196,8 @@
 /* Dimmed like any disabled button, but busy rather than refused. */
 orc-button[data-plan-starting]::part(button) { cursor: progress; }
 .plan-step-here { color: var(--accent-text); font-weight: 600; }
+/* A stacked step's Merge waits for the step it builds on. */
+.plan-step-hold { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
 .plan-step-error { margin: 0; color: var(--red-text, var(--red)); font-size: 12px; overflow-wrap: anywhere; }
 .plan-step-body > orc-button { margin-top: 4px; }
 /* A plan one run builds has no name to sit under. */
@@ -394,10 +398,6 @@ button.plan-notes-quote:hover { color: var(--accent-text); }
   display: flex; align-items: center; gap: 8px; margin: 0 0 0 -18px;
   color: var(--heading); font-size: 13px; font-weight: 600;
 }
-.plan-notes-spinner {
-  flex: none; width: 10px; height: 10px; border-radius: 999px;
-  border: 2px solid var(--control-border, var(--border)); border-top-color: var(--accent);
-}
 .plan-notes-revising-meta {
   margin: 0; color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums;
 }
@@ -438,7 +438,7 @@ button.plan-notes-quote:hover { color: var(--accent-text); }
   background-size: 200% 100%; background-position: 50% 0;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .plan-notes-spinner, :is(.plan-note-pin, .plan-note-mark).is-working::after { animation: plan-wait 900ms linear infinite; }
+  :is(.plan-note-pin, .plan-note-mark).is-working::after { animation: plan-wait 900ms linear infinite; }
   .plan-notes-revising-bar, .plan-page[data-plan-revising]::before { animation: plan-sweep 1.6s ease-in-out infinite; }
 }
 @keyframes plan-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }

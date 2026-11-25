@@ -39,8 +39,14 @@ export function createToolTabs({ pane, runId, data, onSelect, onClose, updateCut
     choices.hidden = !open;
     trigger.setAttribute('aria-expanded', String(open));
     if (open) {
-      choices.style.left = Math.min(0, innerWidth - picker.getBoundingClientRect().left - choices.offsetWidth - 5) + 'px';
+      const rect = picker.getBoundingClientRect();
+      const spaceBelow = innerHeight - rect.bottom - 10;
+      const spaceAbove = rect.top - 10;
+      choices.dataset.side = choices.offsetHeight > spaceBelow && spaceAbove > spaceBelow ? 'above' : 'below';
+      choices.style.left = Math.min(0, innerWidth - rect.left - choices.offsetWidth - 5) + 'px';
       choices.firstElementChild.focus();
+    } else {
+      delete choices.dataset.side;
     }
     updateCutouts();
   }

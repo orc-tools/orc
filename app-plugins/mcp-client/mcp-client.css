@@ -66,7 +66,8 @@
 .mcpc-card { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
 .mcpc-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border); }
 .mcpc-card-head h2 { font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--heading); }
-.mcpc-card-head orc-button { margin-left: auto; }
+.mcpc-card-head:has(#mcpc-environments-title) { justify-content: space-between; padding-inline: 16px; }
+.mcpc-card-head:has(#mcpc-projects-title) orc-button { margin-left: auto; }
 #mcp-client-view .mcpc-card-body { padding: 12px 16px; }
 #mcp-client-view .mcpc-card-body:has(+ :is(.mcpc-environment-list, .mcpc-nothing)) { padding-bottom: 0; }
 /* Where the first project or environment will appear. */
@@ -74,6 +75,8 @@
   margin: 12px 16px 14px; padding: 11px 14px; border: 1px dashed var(--border); border-radius: 8px;
   font-size: 12.5px; line-height: 1.5; color: var(--muted-strong);
 }
+#mcp-client-view .mcpc-card-body:has(+ .mcpc-nothing) { padding-top: 10px; }
+#mcp-client-view .mcpc-card-body + .mcpc-nothing { margin: 8px 16px 12px; padding: 8px 12px; }
 .mcpc-projects + .mcpc-nothing { margin-top: 0; }
 
 .mcpc-projects, .mcpc-environment-list { display: grid; margin: 0; padding: 0; list-style: none; }

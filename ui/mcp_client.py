@@ -21,6 +21,8 @@ import time
 import urllib.parse
 from collections.abc import Mapping
 
+from keyed_locks import KeyedLocks
+
 __all__ = [
     "Connection",
     "McpError",
@@ -842,13 +844,9 @@ class Sessions:
         self._clock = clock
         self._factory = factory
         self._lock = threading.Lock()
-        self._key_locks: dict = {}
+        self._key_lock = KeyedLocks()
         self._connections: dict = {}
         self._specs: dict = {}
-
-    def _key_lock(self, key) -> threading.Lock:
-        with self._lock:
-            return self._key_locks.setdefault(key, threading.Lock())
 
     def _pop(self, key):
         with self._lock:

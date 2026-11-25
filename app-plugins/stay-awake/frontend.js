@@ -15,6 +15,7 @@ export function activate({ signal, base }) {
   button.type = 'button';
   button.id = 'stay-awake';
   button.setAttribute('aria-label', 'Stay awake');
+  button.dataset.caption = 'Awake';
   button.setAttribute('aria-pressed', 'false');
   button.title = 'Stay awake: off';
   button.innerHTML = CUP;

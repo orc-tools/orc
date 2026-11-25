@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -240,11 +241,11 @@ def socket_path(name):
 
 def call(path, method, params=None, timeout=5):
     try:
-        with socket.socket(socket.AF_UNIX) as conn:
+        with socket.socket(socket.AF_UNIX) as conn, conn.makefile("rb") as stream:
             conn.settimeout(timeout)
             conn.connect(path)
             conn.sendall(json.dumps({"id": "orc", "method": method, "params": params or {}}).encode() + b"\n")
-            line = conn.makefile("rb").readline()
+            line = stream.readline()
     except OSError as error:
         raise HerdrError("cannot reach herdr: %s" % error) from error
     try:
@@ -388,12 +389,11 @@ def watch_tabs(socket_for, publish, alive, state_of=tab_state):
                 panes = _pane_ids(snapshot(path))
             subscriptions = [{"type": kind} for kind in TAB_EVENTS]
             subscriptions += [{"type": "pane.agent_status_changed", "pane_id": pane} for pane in panes]
-            with socket.socket(socket.AF_UNIX) as conn:
+            with socket.socket(socket.AF_UNIX) as conn, conn.makefile("rb") as stream:
                 conn.settimeout(REFRESH_SECONDS)
                 conn.connect(path)
                 conn.sendall(json.dumps({"id": "orc-events", "method": "events.subscribe",
                                          "params": {"subscriptions": subscriptions}}).encode() + b"\n")
-                stream = conn.makefile("rb")
                 if "error" in json.loads(stream.readline() or b"{}"):
                     raise HerdrError("herdr refused the subscription")
                 event = {}
@@ -418,14 +418,11 @@ def watch_tabs(socket_for, publish, alive, state_of=tab_state):
 
 
 _FEED_LOCK = threading.Lock()
-_SOCKETS = {}
+_socket_for_session = lru_cache(maxsize=32)(socket_path)
 
 
 def session_socket(orc_dir=None):
-    name = session_name(orc_dir)
-    if name not in _SOCKETS:
-        _SOCKETS[name] = socket_path(name)
-    return _SOCKETS[name]
+    return _socket_for_session(session_name(orc_dir))
 
 
 def client_owner(orc_dir=None):
@@ -436,8 +433,9 @@ def client_owner(orc_dir=None):
 def _publish(shell, state):
     with shell.lock:
         shell.tabs = state
-        for ws in tuple(shell.clients):
-            ws.send_json(dict(state, type="tabs"))
+        clients = tuple(shell.clients)
+    for ws in clients:
+        ws.send_json(dict(state, type="tabs"))
 
 
 _SERVER_LOCK = threading.Lock()

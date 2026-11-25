@@ -326,7 +326,7 @@
 /* The lamp says a session is live by pulsing, so the row's own dot goes. */
 :root[data-orbit] .run .session-status.running { display: none; }
 :root[data-orbit] .run:has(.session-status.running) .name::before { animation: orbit-lamp 1.8s ease-in-out infinite; }
-:root[data-orbit] .run :is(.state-tag, .unread-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+:root[data-orbit] .run :is(.state-tag, .unread-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .run-age) {
   font: 500 10px/1.5 var(--orbit-mono); letter-spacing: .06em; text-transform: uppercase;
 }
 /* The Settled shelf is the planet's horizon, closed and open: finished runs

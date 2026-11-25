@@ -221,7 +221,9 @@ export function planStepStates(steps, rows, findRun) {
   for (const row of launches) {
     const run = row.childRunId ? findRun(row.childRunId) : null;
     const entry = { id: row.childRunId || '', run, launch: row.state, error: row.error || '', at: row.requestedAt || '',
-      waitsOn: Array.isArray(row.waitsOn) ? row.waitsOn : [] };
+      waitsOn: Array.isArray(row.waitsOn) ? row.waitsOn : [],
+      // A stacked step builds on the branch of the steps it waits on.
+      stackedOn: Array.isArray(row.stackedOn) ? row.stackedOn : [] };
     const number = Number.isInteger(row.planStep) ? row.planStep : states.length === 1 ? 1 : 0;
     // A whole-plan launch that failed is told once, above the steps.
     if (row.planWhole === true && row.state === 'failed') wholeError = row.error || ' ';
@@ -282,12 +284,36 @@ function planMarkdown(text) {
   return text ? markdownHtml(text) : '';
 }
 
-function planRunLine(entry, here) {
+function planRunLine(entry, here, view = null, steps = []) {
   if (here) return '<p class="plan-step-here">This run</p>';
   const shown = presentRun(entry.run).state;
   const title = entry.run.meta?.title || entry.id;
   const call = planChatCall(shown);
-  return `<a class="plan-step-run" href="#${encodeURIComponent(entry.id)}">${dotHtml(entry.run.meta || {})}<span class="plan-step-run-state">${esc(shown.label)}</span><span class="plan-step-run-title" title="${esc(title)}">${esc(title)}</span></a>${call ? planChatButtonHtml(call, entry.id, 'size="compact"') : ''}`;
+  const merge = view && call?.merge ? planMergeHtml(entry, view, steps) : '';
+  // Until then, a stacked step says whose branch it builds on.
+  const below = !merge && planMergeHold(entry, steps);
+  const stacked = below ? `<p class="plan-step-hold">Builds on step ${below}'s branch</p>` : '';
+  return `<a class="plan-step-run" href="#${encodeURIComponent(entry.id)}">${dotHtml(entry.run.meta || {})}<span class="plan-step-run-state">${esc(shown.label)}</span><span class="plan-step-run-title" title="${esc(title)}">${esc(title)}</span></a>${merge || (call ? planChatButtonHtml(call, entry.id, 'size="compact"') : '')}${stacked}`;
+}
+
+const planStepMerged = step => !!step?.runs.some(entry => ['merged', 'merged-to-parent'].includes(entry.run?.meta?.status));
+
+// A step's run at Ship merges from the plan page, in stack order: a step
+// stacked on another waits until that one merges. The host's merge checks
+// still decide (/api/merge-candidates), and Chat keeps the full Ship bar.
+export function planMergeHold(entry, steps) {
+  return (entry.stackedOn || []).find(number => !planStepMerged(steps[number - 1])) || 0;
+}
+
+function planMergeHtml(entry, view, steps) {
+  const held = planMergeHold(entry, steps);
+  const state = view.merging.get(entry.id);
+  const name = esc(entry.run.meta?.title || entry.id);
+  if (held) {
+    return `<orc-button variant="primary" size="compact" disabled>Merge<span class="sr-only"> ${name}</span></orc-button><p class="plan-step-hold">Merges once step ${held} merges</p>`;
+  }
+  if (state?.pending) return `<orc-button variant="primary" size="compact" disabled data-plan-merging><span class="plan-start-ring" aria-hidden="true"></span>Merging…</orc-button>`;
+  return `<orc-button variant="primary" size="compact" data-plan-merge="${esc(entry.id)}">Merge<span class="sr-only"> ${name}</span></orc-button>${state?.error ? `<p class="plan-step-error" role="alert">Could not merge${esc(planFailure(state.error))}</p>` : ''}`;
 }
 
 // When a run the plan started needs you, the plan page says so and points
@@ -299,7 +325,8 @@ export function planChatCall(shown) {
     // A finished run reads Ready; its detail says how it delivers.
     const pr = shown.detail === 'Ready for PR';
     return {
-      tone: 'ready', title: 'Work done', label: shown.detail || shown.label,
+      // Only a run that can merge now gets Merge; a queued one is on its way.
+      tone: 'ready', title: 'Work done', label: shown.detail || shown.label, merge: shown.detail === 'Ready to merge',
       button: pr ? 'Go to Chat to open the PR' : 'Go to Chat to merge',
       text: pr ? 'The build is finished. Open its PR from Chat.' : 'The build is finished. Merge it from Chat.',
     };
@@ -307,7 +334,7 @@ export function planChatCall(shown) {
   if (shown?.key === 'blocked') {
     return {
       tone: 'ask', title: 'Building', label: shown.label, button: 'Go to Chat to answer',
-      text: shown.label === 'Needs input' ? 'The build has a question for you in Chat.' : 'The build needs you in Chat.',
+      text: shown.label === 'Needs input' || /questions? for you$/.test(shown.label) ? 'The build has a question for you in Chat.' : 'The build needs you in Chat.',
     };
   }
   return null;
@@ -330,7 +357,7 @@ function planNoteHtml(note) {
   return `<p class="plan-step-talk">${verb} ${esc(note.peerLabel)}: <q>${esc(note.text || '')}</q>${status ? ` · <span class="plan-step-talk-state">${esc(status)}</span>` : ''}</p>`;
 }
 
-function planStepHtml(step, view, count, whole, wholeStarting) {
+function planStepHtml(step, view, count, whole, wholeStarting, steps) {
   const single = count === 1;
   const name = step.title || 'this plan';
   // While Orc revises the plan its Starts stay in place, greyed out.
@@ -360,7 +387,7 @@ function planStepHtml(step, view, count, whole, wholeStarting) {
   return `<li class="plan-step" data-state="${state}" data-plan-step="${step.number}">
     <span class="plan-step-mark" aria-hidden="true">${step.state === 'done' ? PLAN_CHECK_ICON : step.number}</span>
     <div class="plan-step-body">
-      ${head}${step.runs.map(entry => planRunLine(entry, entry.id === view.viewerId)).join('')}${talk}
+      ${head}${step.runs.map(entry => planRunLine(entry, entry.id === view.viewerId, view, steps)).join('')}${talk}
       ${waiting}${wait}${failure}${primary}
     </div>
   </li>`;
@@ -413,12 +440,17 @@ function planWorkHtml(view, planRun) {
   const opened = perRepo && steps.some(step => step.state !== 'todo' && step.state !== 'failed');
   const note = offered && !chosen && !opened
     ? (perRepo ? `<p class="plan-start-note">Start work opens one run per repository on ${esc(agent)}, each with its own PR. A step that waits starts by itself.</p>`
-      : `<p class="plan-start-note">Start opens a change run${project ? ` in ${esc(project)}` : ''} on ${esc(agent)}, with this plan as its settled brief.</p>`)
+      : `<p class="plan-start-note">Start opens a change run${project ? ` in ${esc(project)}` : ''} on ${esc(agent)}, with this plan as its settled brief.${whole ? ' Start each step opens one per step, and a step that waits builds on the branch of the step it waits on.' : ''}</p>`)
     : meta.status === 'cancelled' ? '<p class="plan-start-note">This plan was cancelled, so it starts no more work.</p>'
     : opened ? '<p class="plan-start-note">Start work opened one run per repository. Each opens its own PR.</p>' : '';
+  // Start work builds the whole plan in one run. Beside it, a quiet Start
+  // each step opens one run per step, as a plan across repositories does.
+  const held = view.posting !== null || view.revising ? ' disabled' : '';
+  const each = !perRepo
+    ? `<orc-button class="plan-start-each" variant="ghost" size="compact" data-plan-start-each${held}>Start each step</orc-button>` : '';
   const start = wholeStarting ? planStartingButton('class="plan-start-all" variant="primary"')
     : whole && (view.canStart || view.revising)
-      ? `<orc-button class="plan-start-all" variant="primary" data-plan-start="0"${view.posting !== null || view.revising ? ' disabled' : ''}>Start work</orc-button>` : '';
+      ? `<div class="plan-start-row"><orc-button class="plan-start-all" variant="primary" data-plan-start="0"${held}>Start work</orc-button>${each}</div>` : '';
   const failure = whole && (view.failures.has(0) || wholeError)
     ? `<p class="plan-step-error" role="alert">Could not start a run${esc(planFailure((view.failures.get(0) || wholeError).trim()))}</p>` : '';
   const others = loose.length
@@ -426,7 +458,7 @@ function planWorkHtml(view, planRun) {
   const building = build ? planBuildingHtml(build, planRun) : '';
   if (buildOnly) return building;
   return `${building}<h2 class="plan-work-title" tabindex="-1">${esc(planProgress(steps))}</h2>${start}${failure}
-    <ol class="plan-steps" data-count="${steps.length}" aria-label="Steps">${steps.map(step => planStepHtml(step, view, steps.length, whole, wholeStarting)).join('')}</ol>
+    <ol class="plan-steps" data-count="${steps.length}" aria-label="Steps">${steps.map(step => planStepHtml(step, view, steps.length, whole, wholeStarting, steps)).join('')}</ol>
     ${note}${others}`;
 }
 
@@ -562,7 +594,8 @@ function planJump(view, id) {
 }
 
 // Which control of a step holds focus, so a repaint can hand it back.
-const PLAN_FOCUS = { start: '[data-plan-start]:not([disabled])', run: '.plan-step-run', name: '.plan-step-name' };
+const PLAN_FOCUS = { start: '[data-plan-start]:not([disabled])', merge: '[data-plan-merge]:not([disabled])',
+  run: '.plan-step-run', name: '.plan-step-name' };
 // A Start that gave way to Starting… hands focus to the panel's heading.
 const PLAN_FOCUS_TITLE = '.plan-work-title';
 
@@ -572,7 +605,7 @@ function planRepaintWork(view, planRun) {
   const html = planWorkHtml(view, planRun);
   if (view.workHtml === html) return;
   const held = host.contains(document.activeElement) ? document.activeElement : null;
-  const wasStart = !!held?.matches('[data-plan-start]');
+  const wasStart = !!held?.matches('[data-plan-start], [data-plan-start-each]');
   const step = held?.closest('.plan-step')?.dataset.planStep;
   const kind = held && Object.keys(PLAN_FOCUS).find(key => held.matches(PLAN_FOCUS[key].replace(':not([disabled])', '')));
   view.workHtml = html;
@@ -582,16 +615,17 @@ function planRepaintWork(view, planRun) {
   // Start gives way to the step's run, so focus follows the step: to the
   // same control when it is still there, else to what replaced it.
   const row = host.querySelector(`.plan-step[data-plan-step="${step}"]`);
-  const order = kind === 'name' ? ['name'] : kind === 'start' ? ['start', 'run', 'name'] : ['run', 'start', 'name'];
+  const order = kind === 'name' ? ['name'] : kind === 'start' ? ['start', 'run', 'name']
+    : kind === 'merge' ? ['merge', 'run', 'name'] : ['run', 'start', 'name'];
   (order.map(key => row?.querySelector(PLAN_FOCUS[key])).find(Boolean) || host.querySelector(PLAN_FOCUS_TITLE))
     ?.focus({ preventScroll: true });
 }
 
-async function planStart(view, number) {
+async function planStart(view, number, each = false) {
   if (view.posting !== null || !view.canStart) return;
-  // Step 0 is the whole plan, built in one run.
+  // Step 0 is the whole plan, built in one run, or with `each` one run per step.
   const step = view.model.steps[number - 1];
-  const name = number === 0 ? 'the whole plan' : step?.title || 'this plan';
+  const name = each ? 'each step' : number === 0 ? 'the whole plan' : step?.title || 'this plan';
   // An agent this project cannot run would only fail at the server.
   if (view.builds?.blocker) {
     view.failures.set(number, view.builds.blocker);
@@ -610,7 +644,7 @@ async function planStart(view, number) {
   try {
     const response = await fetch(`/runs/${encodeURIComponent(view.planId)}/planning-start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...(sent ? { step: sent } : {}), ...view.builds?.choices() }),
+      body: JSON.stringify({ ...(sent ? { step: sent } : each ? { each: true } : {}), ...view.builds?.choices() }),
     });
     reply = await response.json().catch(() => null);
     if (!response.ok) failure = reply?.error || `the server answered ${response.status}`;
@@ -629,9 +663,41 @@ async function planStart(view, number) {
     view.failures.set(number, failure);
     announce(`Could not start a run for ${name}${planFailure(failure)}`);
   } else {
-    announce(`Run started for ${name}`);
+    announce(each ? 'Runs started for each step' : `Run started for ${name}`);
   }
   view.sync();
+}
+
+// Merge on a step's run: the same host checks and queue as the merge plan
+// (merge-plan.js), bound to the proof the host names for the run now.
+async function planMerge(view, runId) {
+  if (view.merging.get(runId)?.pending) return;
+  view.merging.set(runId, { pending: true });
+  view.repaint();
+  let error = '';
+  try {
+    const found = await fetch(`/api/merge-candidates?run=${encodeURIComponent(runId)}`, { cache: 'no-store' })
+      .then(response => (response.ok ? response.json() : null));
+    const candidate = found?.candidates?.[0];
+    if (!candidate?.eligible) error = candidate?.reason || 'Orc could not check the merge';
+    else {
+      const response = await fetch('/api/merge-batch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runs: [{ runId, digest: candidate.digest }] }),
+      });
+      const reply = await response.json().catch(() => null);
+      const result = reply?.results?.[0];
+      if (!response.ok || !result?.queued) error = result?.error || reply?.error || `the server answered ${response.status}`;
+    }
+  } catch {
+    error = 'Orc could not be reached';
+  }
+  if (!view.alive) return;
+  // A queued merge keeps Merging… until the run list shows it merging.
+  view.merging.set(runId, error ? { error } : { pending: true });
+  announce(error ? `Could not merge${planFailure(error)}` : 'Merge started');
+  if (!error) refresh({ force: true });
+  view.repaint();
 }
 
 // A run is building the plan, or about to: one that was cancelled or deleted
@@ -655,7 +721,7 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
   const view = {
     root, scroller, layout, prefix: `plan-${layout}`, planId: planRun.id, viewerId: viewer.id,
     source: '', sourceKey: '', mediaSig: '', model: null, workHtml: '', alive: true, loading: 0,
-    posting: null, failures: new Map(), canStart: false, planRun, jumped: '',
+    posting: null, failures: new Map(), merging: new Map(), canStart: false, planRun, jumped: '',
     repaint: () => planRepaintWork(view, view.planRun),
     // Repaint from the listed plan, which carries a held Start (plan-starts.js).
     sync: () => {
@@ -704,6 +770,10 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
   root.addEventListener('click', event => {
     const start = event.target.closest?.('[data-plan-start]');
     if (start && !start.hasAttribute('disabled')) return void planStart(view, Number(start.dataset.planStart));
+    const each = event.target.closest?.('[data-plan-start-each]');
+    if (each && !each.hasAttribute('disabled')) return void planStart(view, 0, true);
+    const merge = event.target.closest?.('[data-plan-merge]');
+    if (merge && !merge.hasAttribute('disabled')) return void planMerge(view, merge.dataset.planMerge);
     const chat = event.target.closest?.('[data-plan-open-chat]');
     if (chat) {
       location.hash = `${encodeURIComponent(chat.dataset.planOpenChat)}/${CHAT_KEY}`;

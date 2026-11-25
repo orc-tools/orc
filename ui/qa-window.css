@@ -141,6 +141,13 @@ button:disabled { cursor: default; opacity: .5; }
 .qa-rail-foot { padding: 14px 20px 18px; border-top: 1px solid var(--qa-line); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .qa-rail-foot > span { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); line-height: 1.4; }
 .qa-rail-foot .qa-error { flex-basis: 100%; margin: 0; }
+/* With Add to your review or Send to the agent beside Finish, the words take
+   a row of their own under the buttons. */
+.qa-rail-foot > span.qa-foot-full { flex-basis: 100%; }
+/* Where a failed step went, and Retest once the run has a new commit. */
+.qa-meta.qa-sent { color: var(--muted-strong, var(--muted)); }
+.qa-inline-link { color: var(--accent); background: none; border: 0; padding: 0; font: inherit; border-radius: 3px; }
+.qa-inline-link:hover:not(:disabled) { text-decoration: underline; }
 
 /* ---------- pane ---------- */
 .qa-pane { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; position: relative; }
@@ -194,7 +201,7 @@ label.qa-url { cursor: text; }
 .qa-fix-err { color: var(--red); }
 .qa-fix-path { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .qa-fix-path .mono { overflow-wrap: anywhere; }
-.qa-fix + .qa-btn { align-self: center; }
+.qa-fix-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 
 .qa-setup { width: min(440px, 100%); text-align: left; color: var(--text); font-size: 12.5px; }
 .qa-setup h2 { margin: 0 0 8px; text-align: center; color: var(--heading); font-size: 15px; font-weight: 600; }
@@ -415,6 +422,7 @@ label.qa-url { cursor: text; }
 .qa-tool-strip .qa-glyph { width: 26px; height: 25px; border: 0; }
 .qa-tool-choices, .qa-capture-notice { position: absolute; z-index: 5; top: calc(100% + 5px); padding: 4px; background: var(--panel); color: var(--heading); border: 1px solid var(--border); border-radius: 7px; }
 .qa-tool-choices { left: 0; min-width: 137px; }
+.qa-tool-choices[data-side="above"] { top: auto; bottom: calc(100% + 5px); }
 .qa-tool-choices button { display: block; width: 100%; padding: 6px 9px; color: inherit; font: inherit; background: none; border: 0; border-radius: 4px; text-align: left; }
 .qa-tool-choices button:is(:hover,:focus-visible) { background: var(--accent-soft); }
 .qa-capture-notice { right: 0; width: max-content; max-width: min(260px, 80vw); padding: 4px 8px; font-size: 12px; }

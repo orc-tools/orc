@@ -1,5 +1,6 @@
 import { launchToggleTooltip } from './control-tooltip.js';
 import { boltIcon, fastLabel, launchTakesUltrafast } from './launch-options.js';
+import { launchToggleNameCss } from './launch-icon-toggle.js';
 
 const NEXT_SPEED = new Map([[false, true], [true, 'ultrafast'], ['ultrafast', false]]);
 const FAST_HINT = 'quicker responses, billed at a higher rate';
@@ -34,11 +35,14 @@ class OrcFastToggle extends HTMLElement {
           :is(input:checked + label, button[data-active]) { border-color: Highlight; background: Highlight; }
           :is(input:checked + label, button[data-active]) .bolt { fill: none; stroke: HighlightText; }
         }
+        /* The new-run composer's toggle names its speed when on, as the other
+           launch toggles do; elsewhere Fast stays a round icon. */
+        ${launchToggleNameCss(':host([named]) :is(input:checked + label, button[data-active])')}
       </style>
       <input id="fast" type="checkbox" part="input" aria-describedby="hint">
-      <label for="fast" part="button">${BOLT}</label>
+      <label for="fast" part="button">${BOLT}<span class="name" part="name" aria-hidden="true"></span></label>
       <button type="button" part="button" aria-describedby="hint" hidden>
-        <span class="bolts">${BOLT}${BOLT}</span>
+        <span class="bolts">${BOLT}${BOLT}</span><span class="name" part="name" aria-hidden="true"></span>
       </button>`;
     this.input = this.shadowRoot.querySelector('input');
     this.label = this.shadowRoot.querySelector('label');
@@ -83,6 +87,7 @@ class OrcFastToggle extends HTMLElement {
     this.input.checked = Boolean(this.speed);
     this.button.toggleAttribute('data-active', this.input.checked);
     this.toggleAttribute('data-ultrafast', this.speed === 'ultrafast');
+    for (const tag of this.shadowRoot.querySelectorAll('.name')) tag.textContent = fastLabel(this.speed);
     this.input.setAttribute('aria-label', `Fast mode${subject}`);
     this.button.setAttribute('aria-label', name);
     if (this.supportsUltrafast) this.tooltip.set(`Speed${subject}: ${current}`, this.reason || `next: ${next}`);

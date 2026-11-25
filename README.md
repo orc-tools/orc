@@ -106,6 +106,11 @@ before you first install from a terminal. A `git clone` of this repository
 works too: run `bash install.sh` inside it, and it follows the branch you
 cloned.
 
+The hourly check asks `updates.orc.tools`, which answers from this
+repository's release listing and counts roughly how many installs check each
+day. It sends nothing else: no ID, only the Orc version in the request's user
+agent. If it can't be reached, Orc asks GitHub directly.
+
 A copy unpacked from an archive can't update itself. Install it again with
 the latest Orc Installer to turn updates on.
 

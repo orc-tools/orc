@@ -939,7 +939,8 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
     .evals-spinner { animation-duration: 2.4s; }
     .evals-skeleton span { animation: none; }
   }
-  .evals-candidate-tag { min-width: 0; overflow: hidden; color: var(--heading); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  /* An Evals candidate's row title: its model, in the row's own title type. */
+  .evals-candidate-tag { color: inherit; font: inherit; }
   .evals-tag { display: inline-flex; align-items: center; gap: 3px; color: var(--yellow-text); font-size: 11px; font-weight: 600; }
   /* on an orchestrating run the tag opens its collapsed workers; a pill
      like .pr-tag gives it a hit area a pointer can land on */
@@ -2156,8 +2157,9 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   #run-diff-scope { flex-shrink: 0; }
   #run-diff-scope::part(trigger) { min-height: 28px; }
   /* Trimmed to its capitals, the value already sits on the middle, so it
-     skips the theme font's nudge. */
-  #run-diff-scope::part(value) { min-block-size: 0; top: 0; text-box: trim-both cap alphabetic; }
+     skips the theme font's nudge. The equal padding keeps that and leaves
+     room for descenders, which the value's own clipping would cut. */
+  #run-diff-scope::part(value) { min-block-size: 0; top: 0; padding-block: .3em; text-box: trim-both cap alphabetic; }
   #run-diff-summary {
     flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: 12px; color: var(--muted-strong);
@@ -2627,22 +2629,33 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
     #run-diff-scope::part(trigger) { min-height: 44px; font-size: 16px; }
   }
 
-  /* App destinations sit under the run list, as in T3 Code's sidebar footer.
+  /* App destinations sit under the run list, each icon over its name.
      Nothing in the row shrinks: sidebar-footer.js moves what does not fit
      into the More menu, and it measures the buttons at full size. */
-  #sidebar-footer { display: flex; align-items: center; gap: 4px; padding: 6px 7px; border-top: 1px solid var(--border); }
+  #sidebar-footer { display: flex; align-items: center; justify-content: space-between; gap: 0; padding: 2px 3px; border-top: 1px solid var(--border); }
   #sidebar-footer > * { flex-shrink: 0; }
   #sidebar-footer > [data-overflowed] { display: none; }
+  #sidebar-footer > orc-icon-button::part(button), #sidebar-more::part(trigger) {
+    flex-direction: column; gap: 1px; inline-size: auto; min-inline-size: 30px; block-size: auto; min-block-size: 36px; padding: 3px 2px;
+  }
+  #sidebar-more::part(trigger) { display: flex; align-items: center; justify-content: center; }
+  #sidebar-footer .footer-caption { font-size: 10px; font-weight: 500; line-height: 12px; letter-spacing: 0.01em; white-space: nowrap; }
+  [data-sidebar-collapsed] #sidebar-footer .footer-caption { display: none; }
+  [data-sidebar-collapsed] #sidebar-footer > orc-icon-button::part(button) { inline-size: 1.875rem; min-block-size: 0; block-size: 1.875rem; padding: 0; }
   /* Plugin toggles (Stay awake, Usage) are plain buttons, sized like the
      compact orc-icon-buttons beside them. */
   #sidebar-footer > :where(button[aria-pressed]) {
-    display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
-    border: 1px solid transparent; border-radius: 8px; background: none; color: var(--muted-strong);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+    min-width: 30px; min-height: 36px; padding: 3px 2px;
+    border: 1px solid transparent; border-radius: 8px; background: none; color: var(--muted-strong); font: inherit;
     cursor: var(--orc-cursor-pointer, pointer); transition: background-color 120ms ease, color 120ms ease;
   }
   #sidebar-footer > :where(button[aria-pressed]):hover { background: var(--button-hover); color: var(--heading); }
   #sidebar-footer > :where(button[aria-pressed]):focus-visible { outline: 1px solid var(--focus); outline-offset: 3px; color: var(--heading); }
-  @media (pointer: coarse) { #sidebar-footer > :where(button[aria-pressed]) { width: 44px; height: 44px; } }
+  @media (pointer: coarse) {
+    #sidebar-footer > :where(button[aria-pressed]) { min-width: 44px; min-height: 44px; }
+    #sidebar-footer > orc-icon-button::part(button), #sidebar-more::part(trigger) { min-inline-size: 44px; min-block-size: 44px; }
+  }
   #sidebar-more { --orc-menu-min-width: 172px; }
   #sidebar-more[hidden] { display: none; }
   #sidebar-more svg { flex: none; color: var(--muted-strong); }
@@ -3140,8 +3153,10 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   /* Project home's composer, sized and rounded like a chat prompt: the
      toolbar replaces the footer's hint line, so the divider above it goes. */
   .nc-startbar .newconv-prompt { z-index: 1; border-radius: var(--composer-radius, 16px); }
-  #nc-prompt { min-height: 0; padding: 16px 18px 6px; font-size: 15px; }
-  .nc-startbar .newconv-prompt footer { border-top: 0; padding: 4px 10px 10px; }
+  #nc-prompt { min-height: 0; max-height: 40vh; overflow-y: auto; padding: 16px 18px 6px; font-size: 15px; }
+  /* The launch icon toggles (ui/js/launch-icon-toggle.js) read this
+     container's width to drop their on-state name where it would wrap the row. */
+  .nc-startbar .newconv-prompt footer { border-top: 0; padding: 4px 10px 10px; container: launch-bar / inline-size; }
   /* Soft always-on focus cue that lives in the beam itself: focus lights a
      faint green rim under the sweeping gradient (plus the speed-up in the
      motion block). Keyboard focus still gets the full ring above. */
@@ -4083,10 +4098,10 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   </div>
   <section id="sidebar-usage" aria-label="Subscription usage" hidden><div data-usage-summary></div></section>
   <nav id="sidebar-footer" data-part="sidebar-footer" aria-label="Orc">
-    <orc-icon-button id="settings-btn" href="#settings" label="Settings" size="compact"><svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,82a46,46,0,1,0,46,46A46.06,46.06,0,0,0,128,82Zm0,80a34,34,0,1,1,34-34A34,34,0,0,1,128,162ZM214,130.84c.06-1.89.06-3.79,0-5.68L229.33,106a6,6,0,0,0,1.11-5.29A105.34,105.34,0,0,0,219.76,74.9a6,6,0,0,0-4.53-3l-24.45-2.71q-1.93-2.07-4-4l-2.72-24.46a6,6,0,0,0-3-4.53,105.65,105.65,0,0,0-25.77-10.66A6,6,0,0,0,150,26.68l-19.2,15.37c-1.89-.06-3.79-.06-5.68,0L106,26.67a6,6,0,0,0-5.29-1.11A105.34,105.34,0,0,0,74.9,36.24a6,6,0,0,0-3,4.53L69.23,65.22q-2.07,1.94-4,4L40.76,72a6,6,0,0,0-4.53,3,105.65,105.65,0,0,0-10.66,25.77A6,6,0,0,0,26.68,106l15.37,19.2c-.06,1.89-.06,3.79,0,5.68L26.67,150.05a6,6,0,0,0-1.11,5.29A105.34,105.34,0,0,0,36.24,181.1a6,6,0,0,0,4.53,3l24.45,2.71q1.94,2.07,4,4L72,215.24a6,6,0,0,0,3,4.53,105.65,105.65,0,0,0,25.77,10.66,6,6,0,0,0,5.29-1.11L125.16,214c1.89.06,3.79-.06,5.68,0l19.21,15.38a6,6,0,0,0,3.75,1.31,6.2,6.2,0,0,0,1.54-.2,105.34,105.34,0,0,0,25.76-10.68,6,6,0,0,0,3-4.53l2.71-24.45q2.07-1.93,4-4l24.46-2.72a6,6,0,0,0,4.53-3,105.49,105.49,0,0,0,10.66-25.77,6,6,0,0,0-1.11-5.29Zm-3.1,41.63-23.64,2.63a6,6,0,0,0-3.82,2,75.14,75.14,0,0,1-6.31,6.31,6,6,0,0,0-2,3.82l-2.63,23.63A94.28,94.28,0,0,1,155.14,218l-18.57-14.86a6,6,0,0,0-3.75-1.31h-.36a78.07,78.07,0,0,1-8.92,0,6,6,0,0,0-4.11,1.3L100.87,218a94.13,94.13,0,0,1-17.34-7.17L80.9,187.21a6,6,0,0,0-2-3.82,75.14,75.14,0,0,1-6.31-6.31,6,6,0,0,0-3.82-2l-23.63-2.63A94.28,94.28,0,0,1,38,155.14l14.86-18.57a6,6,0,0,0,1.3-4.11,78.07,78.07,0,0,1,0,8.92,6,6,0,0,0-1.3-4.11L38,100.87a94.13,94.13,0,0,1,7.17-17.34L68.79,80.9a6,6,0,0,0,3.82-2,75.14,75.14,0,0,1,6.31-6.31,6,6,0,0,0,2-3.82l2.63-23.63A94.28,94.28,0,0,1,100.86,38l18.57,14.86a6,6,0,0,0,4.11,1.3,78.07,78.07,0,0,1,8.92,0,6,6,0,0,0,4.11-1.3L155.13,38a94.13,94.13,0,0,1,17.34,7.17l2.63,23.64a6,6,0,0,0,2,3.82,75.14,75.14,0,0,1,6.31,6.31,6,6,0,0,0,3.82,2l23.63,2.63A94.28,94.28,0,0,1,218,100.86l-14.86,18.57a6,6,0,0,0-1.3,4.11,78.07,78.07,0,0,1,0,8.92,6,6,0,0,0,1.3,4.11L218,155.13A94.13,94.13,0,0,1,210.85,172.47Z"/></svg></orc-icon-button>
+    <orc-icon-button id="settings-btn" href="#settings" label="Settings" data-caption="Settings" size="compact"><svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,82a46,46,0,1,0,46,46A46.06,46.06,0,0,0,128,82Zm0,80a34,34,0,1,1,34-34A34,34,0,0,1,128,162ZM214,130.84c.06-1.89.06-3.79,0-5.68L229.33,106a6,6,0,0,0,1.11-5.29A105.34,105.34,0,0,0,219.76,74.9a6,6,0,0,0-4.53-3l-24.45-2.71q-1.93-2.07-4-4l-2.72-24.46a6,6,0,0,0-3-4.53,105.65,105.65,0,0,0-25.77-10.66A6,6,0,0,0,150,26.68l-19.2,15.37c-1.89-.06-3.79-.06-5.68,0L106,26.67a6,6,0,0,0-5.29-1.11A105.34,105.34,0,0,0,74.9,36.24a6,6,0,0,0-3,4.53L69.23,65.22q-2.07,1.94-4,4L40.76,72a6,6,0,0,0-4.53,3,105.65,105.65,0,0,0-10.66,25.77A6,6,0,0,0,26.68,106l15.37,19.2c-.06,1.89-.06,3.79,0,5.68L26.67,150.05a6,6,0,0,0-1.11,5.29A105.34,105.34,0,0,0,36.24,181.1a6,6,0,0,0,4.53,3l24.45,2.71q1.94,2.07,4,4L72,215.24a6,6,0,0,0,3,4.53,105.65,105.65,0,0,0,25.77,10.66,6,6,0,0,0,5.29-1.11L125.16,214c1.89.06,3.79-.06,5.68,0l19.21,15.38a6,6,0,0,0,3.75,1.31,6.2,6.2,0,0,0,1.54-.2,105.34,105.34,0,0,0,25.76-10.68,6,6,0,0,0,3-4.53l2.71-24.45q2.07-1.93,4-4l24.46-2.72a6,6,0,0,0,4.53-3,105.49,105.49,0,0,0,10.66-25.77,6,6,0,0,0-1.11-5.29Zm-3.1,41.63-23.64,2.63a6,6,0,0,0-3.82,2,75.14,75.14,0,0,1-6.31,6.31,6,6,0,0,0-2,3.82l-2.63,23.63A94.28,94.28,0,0,1,155.14,218l-18.57-14.86a6,6,0,0,0-3.75-1.31h-.36a78.07,78.07,0,0,1-8.92,0,6,6,0,0,0-4.11,1.3L100.87,218a94.13,94.13,0,0,1-17.34-7.17L80.9,187.21a6,6,0,0,0-2-3.82,75.14,75.14,0,0,1-6.31-6.31,6,6,0,0,0-3.82-2l-23.63-2.63A94.28,94.28,0,0,1,38,155.14l14.86-18.57a6,6,0,0,0,1.3-4.11,78.07,78.07,0,0,1,0,8.92,6,6,0,0,0-1.3-4.11L38,100.87a94.13,94.13,0,0,1,7.17-17.34L68.79,80.9a6,6,0,0,0,3.82-2,75.14,75.14,0,0,1,6.31-6.31,6,6,0,0,0,2-3.82l2.63-23.63A94.28,94.28,0,0,1,100.86,38l18.57,14.86a6,6,0,0,0,4.11,1.3,78.07,78.07,0,0,1,8.92,0,6,6,0,0,0,4.11-1.3L155.13,38a94.13,94.13,0,0,1,17.34,7.17l2.63,23.64a6,6,0,0,0,2,3.82,75.14,75.14,0,0,1,6.31,6.31,6,6,0,0,0,3.82,2l23.63,2.63A94.28,94.28,0,0,1,218,100.86l-14.86,18.57a6,6,0,0,0-1.3,4.11,78.07,78.07,0,0,1,0,8.92,6,6,0,0,0,1.3,4.11L218,155.13A94.13,94.13,0,0,1,210.85,172.47Z"/></svg></orc-icon-button>
     <orc-icon-button id="stats-btn" href="#stats" label="Activity" size="compact"><svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,202H214V40a6,6,0,0,0-6-6H152a6,6,0,0,0-6,6V82H96a6,6,0,0,0-6,6v42H48a6,6,0,0,0-6,6v66H32a6,6,0,0,0,0,12H224a6,6,0,0,0,0-12ZM158,46h44V202H158ZM102,94h44V202H102ZM54,142H90v60H54Z"/></svg></orc-icon-button>
     <orc-icon-button id="servers-btn" href="#servers" label="Servers" size="compact"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="7" rx="1.5"/><rect x="3.5" y="13" width="17" height="7" rx="1.5"/><path d="M7.5 7.5h.01M7.5 16.5h.01M11.5 7.5h5M11.5 16.5h5"/></svg></orc-icon-button>
-    <orc-menu id="sidebar-more" label="More" trigger-label="More" title="More" size="compact" no-chevron hidden><svg slot="trigger" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></orc-menu>
+    <orc-menu id="sidebar-more" label="More" trigger-label="More" title="More" size="compact" no-chevron hidden><svg slot="trigger" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg><span slot="trigger" class="footer-caption" aria-hidden="true">More</span></orc-menu>
   </nav>
 </aside>
 <orc-dialog id="run-rename-dialog" heading="Rename run">
@@ -4203,7 +4218,7 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   <div id="run-panel-diff" class="run-panel-view" role="tabpanel" aria-labelledby="run-panel-tab-diff">
     <div id="run-diff-bar">
       <orc-select id="run-diff-scope" aria-label="Diff scope" size="compact">
-        <option value="turn" selected>Since last turn</option>
+        <option value="turn" selected>Last code change</option>
         <option value="branch">Branch</option>
       </orc-select>
       <span id="run-diff-summary"></span>
@@ -4393,6 +4408,15 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
 <orc-dialog id="view-prompt-dialog" heading="Original prompt">
   <p id="view-prompt-run" slot="description"></p>
   <pre id="view-prompt-content" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:60vh;overflow:auto;font:inherit;user-select:text" tabindex="0"></pre>
+</orc-dialog>
+<orc-dialog id="deploy-log-dialog" heading="Deploy log">
+  <p id="deploy-log-meta" slot="description"><span class="chat-deploy-dot" aria-hidden="true"></span><span><span class="sr-only" data-deploy-state></span><span data-deploy-facts translate="no"></span></span></p>
+  <pre id="deploy-log-text" tabindex="0" aria-label="Deploy log" translate="no" autofocus></pre>
+  <div id="deploy-log-actions" slot="footer">
+    <span id="deploy-log-status" class="sr-only" role="status"></span>
+    <orc-button id="deploy-log-copy" variant="ghost" size="compact">Copy log</orc-button>
+    <orc-button id="deploy-log-close" variant="ghost" size="compact">Close</orc-button>
+  </div>
 </orc-dialog>
 <orc-dialog id="link-pr-dialog" heading="Link PR">
   <orc-input id="link-pr-input" type="url" aria-label="PR URL" placeholder="https://github.com/org/repo/pull/123"></orc-input>

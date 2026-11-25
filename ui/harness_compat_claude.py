@@ -3,8 +3,10 @@
 Orc's own readers. ``harness_compat.clis`` registers it."""
 import contextlib
 import json
+import os
 import queue
 import shlex
+import signal
 import subprocess
 import time
 import uuid
@@ -35,8 +37,14 @@ OUTPUT_TOKENS = 17
 EXPECTED_TOKENS = {"input": 11, "output": 17, "cacheRead": 13, "cache5m": 5, "cache1h": 7}
 THINKING = "Compat thinking."
 STEER = "Compat steer note."
-# How long Claude Code may take to stop on Orc's SIGINT before Orc escalates.
-INTERRUPT_SECONDS = 3.0
+# Stop is pressed this many times. Claude Code's own shutdown can take a couple
+# of seconds right after a turn starts, so one slow stop is not a break.
+STOP_ATTEMPTS = 3
+# A stop on SIGINT slower than this is slow; one that needs Orc to escalate
+# (after headless_session.INTERRUPT_GRACE_SECONDS) ignored the signal.
+SLOW_STOP_SECONDS = 3.0
+# How long a shell command may outlive the Stop or Kill that ended its turn.
+COMMAND_EXIT_SECONDS = 3.0
 
 
 class Claude:
@@ -131,7 +139,7 @@ def probe(binary):
         failures += conversation
         if finished:
             for step in (thinking_failures, steer_failures, subagent_failures, failed_tool_failures,
-                         interrupt_failures, run_mcp_failures, launch_failures):
+                         interrupt_failures, shell_command_failures, run_mcp_failures, launch_failures):
                 failures += step(claude)
         for step in (auth_failures, catalog_failures):
             failures += step(claude)
@@ -325,10 +333,10 @@ def failed_tool_failures(claude):
     return failures
 
 
-def interrupt_failures(claude):
-    """Stop pressed while a model request is in flight, then the turn
-    resumed, then the conversation compacted."""
-    session_id = str(uuid.uuid4())
+def _stop_held_turn(claude, session_id):
+    """Start a turn, press Stop while its model request is in flight, and
+    return ``(result, last signal sent, seconds)``, or None when the turn
+    never asked the model."""
     claude.reset()
     claude.server.script.put("hold")
     headless_session.start_turn(str(claude.run_dir), agent="claude", argv=claude.sandboxed(claude.argv(session_id)),
@@ -337,20 +345,55 @@ def interrupt_failures(claude):
         claude.server.take(timeout=COMMAND_SECONDS)
     except queue.Empty:
         headless_session.interrupt(str(claude.run_dir), wait=0.2)
-        return ["A Claude turn never sent its model request, so the interrupt could not be checked"]
-    started = time.monotonic()
-    stopped = headless_session.interrupt(str(claude.run_dir), wait=INTERRUPT_SECONDS)
+        return None
+    report, started = {}, time.monotonic()
+    stopped = headless_session.interrupt(str(claude.run_dir), report=report)
     elapsed = time.monotonic() - started
     claude.server.release.set()
-    state = headless_session.turn_state(str(claude.run_dir)) or {}
+    headless_session.turn_state(str(claude.run_dir))
     claude.server.release.clear()
+    return stopped, report.get("signal"), elapsed
+
+
+def stop_failures(stops):
+    """What ``stops``, each ``(result, last signal, seconds)``, say about how
+    Claude Code takes Orc's Stop: a failure only when it ignored the SIGINT,
+    or was slow every time."""
+    timings = ", ".join("%.1f" % seconds for _, _, seconds in stops)
+    if any(result != "stopped" for result, _, _ in stops):
+        return ["Orc's Stop button could not end a Claude Code turn (%s; %s seconds)"
+                % (", ".join(result for result, _, _ in stops), timings)]
+    ignored = [stop for stop in stops if stop[1] != "SIGINT"]
+    if ignored:
+        return ["Claude Code ignored the SIGINT Orc's Stop button sends: %d of %d stops ended only on %s after "
+                "%.0f seconds (%s seconds)" % (len(ignored), len(stops), ignored[0][1],
+                                               headless_session.INTERRUPT_GRACE_SECONDS, timings)]
+    if all(seconds >= SLOW_STOP_SECONDS for _, _, seconds in stops):
+        return ["Claude Code was slow to stop on the SIGINT Orc's Stop button sends: every one of %d stops took "
+                "%.0f seconds or more (%s seconds)" % (len(stops), SLOW_STOP_SECONDS, timings)]
+    return []
+
+
+def interrupt_failures(claude):
+    """Stop pressed while a model request is in flight, several times, then
+    the first turn resumed, then the conversation compacted."""
+    session_id = str(uuid.uuid4())
+    first = _stop_held_turn(claude, session_id)
+    if first is None:
+        return ["A Claude turn never sent its model request, so the interrupt could not be checked"]
+    state = headless_session.turn_state(str(claude.run_dir)) or {}
     failures = []
-    if stopped != "stopped" or elapsed >= INTERRUPT_SECONDS:
-        failures.append("Claude Code did not stop on the SIGINT Orc's Stop button sends (%s after %.1f seconds)"
-                        % (stopped, elapsed))
     if state.get("outcome") != "interrupted":
         failures.append("An interrupted Claude turn read as %s, not interrupted" % state.get("outcome"))
     transcript = claude.transcript(session_id)
+    stops = [first]
+    for _ in range(STOP_ATTEMPTS - 1):
+        stop = _stop_held_turn(claude, str(uuid.uuid4()))
+        if stop is None:
+            failures.append("A Claude turn never sent its model request, so the interrupt could not be checked")
+            break
+        stops.append(stop)
+    failures = stop_failures(stops) + failures
     if transcript is None:
         return failures + ["Claude Code wrote no transcript for an interrupted turn"]
     items, _ = read_items("claude", transcript)
@@ -373,6 +416,66 @@ def interrupt_failures(claude):
         failures.append("Claude Code no longer marks a compaction in its transcript the way Orc's chat reader "
                         "shows it (a compact_boundary record)")
     return failures
+
+
+def shell_command_failures(claude):
+    """Stop, then Kill, pressed while a turn's Bash tool command runs. Claude
+    Code starts the command in a process group of its own, so it must not
+    outlive either."""
+    failures = []
+    for action, sig in (("Stop", signal.SIGINT), ("Kill", signal.SIGKILL)):
+        ready = claude.root / ("command-%s.pid" % action.lower())
+        ready.unlink(missing_ok=True)
+        command = ("python3 -c \"import os,time;open('%s.tmp','w').write(str(os.getpid()));"
+                   "os.rename('%s.tmp','%s');time.sleep(60)\"" % (ready, ready, ready))
+        claude.reset()
+        claude.server.script.put(("tool", "Bash", {"command": command, "description": "Compat wait"}))
+        claude.server.script.put(("text", "Compat command done."))
+        headless_session.start_turn(
+            str(claude.run_dir), agent="claude", prompt="Run the command.", cwd=str(claude.work), env=claude.env,
+            argv=claude.sandboxed(claude.argv(str(uuid.uuid4()), extra=["--allowedTools", "Bash"])))
+        deadline = time.monotonic() + COMMAND_SECONDS
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not ready.exists():
+            headless_session.interrupt(str(claude.run_dir), wait=0.2, sig=signal.SIGKILL)
+            failures.append("A Claude turn never ran its Bash tool command, so %s could not be checked "
+                            "for leftover processes" % action)
+            continue
+        pid = int(ready.read_text())
+        try:
+            group = os.getpgid(pid)
+        except ProcessLookupError:
+            group = None
+        stopped = headless_session.interrupt(str(claude.run_dir), sig=sig)
+        survivors = _leftovers(pid, group)
+        if stopped != "stopped":
+            failures.append("Orc's %s could not end a Claude turn running a Bash tool command (%s)"
+                            % (action, stopped))
+        if survivors:
+            failures.append("A Claude Bash tool command outlived Orc's %s (%d process%s left running)"
+                            % (action, len(survivors), "" if len(survivors) == 1 else "es"))
+            for survivor in survivors:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(survivor, signal.SIGKILL)
+    return failures
+
+
+def _leftovers(pid, group):
+    """The command ``pid`` and the rest of its process ``group`` still running
+    once they have had COMMAND_EXIT_SECONDS to exit."""
+    deadline = time.monotonic() + COMMAND_EXIT_SECONDS
+    while True:
+        members = headless_session._process_group_members(group) if group else {}
+        if members is headless_session._UNKNOWN:
+            members = {}
+        left = {member for member, (_, zombie) in members.items() if not zombie}
+        seen = headless_session._process_started(pid)
+        if seen and seen is not headless_session._UNKNOWN and not seen[1]:
+            left.add(pid)
+        if not left or time.monotonic() >= deadline:
+            return sorted(left)
+        time.sleep(0.1)
 
 
 def run_mcp_failures(claude):

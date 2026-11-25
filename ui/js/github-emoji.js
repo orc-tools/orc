@@ -90,9 +90,30 @@ function caretPoint(textarea) {
   document.body.append(mirror);
   const box = mirror.getBoundingClientRect();
   const mark = marker.getBoundingClientRect();
-  const point = { left: mark.left - box.left, top: mark.bottom - box.top };
+  const point = { left: mark.left - box.left, top: mark.top - box.top, bottom: mark.bottom - box.top };
   mirror.remove();
-  return { left: point.left - textarea.scrollLeft, top: point.top - textarea.scrollTop };
+  return {
+    left: point.left - textarea.scrollLeft,
+    top: point.top - textarea.scrollTop,
+    bottom: point.bottom - textarea.scrollTop,
+  };
+}
+
+function clipBounds(textarea) {
+  const viewport = window.visualViewport;
+  let left = viewport?.offsetLeft || 0;
+  let top = viewport?.offsetTop || 0;
+  let right = left + (viewport?.width || innerWidth);
+  let bottom = top + (viewport?.height || innerHeight);
+  for (let el = textarea.parentElement; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    if (!/^(auto|scroll|clip|hidden)$/.test(getComputedStyle(el).overflowY)) continue;
+    const rect = el.getBoundingClientRect();
+    left = Math.max(left, rect.left);
+    top = Math.max(top, rect.top);
+    right = Math.min(right, rect.right);
+    bottom = Math.min(bottom, rect.bottom);
+  }
+  return { left: left + 8, top: top + 8, right: Math.max(left + 8, right - 8), bottom: Math.max(top + 8, bottom - 8) };
 }
 
 // The suggestion list under the caret in a PR card's editor. Arrow keys move,
@@ -115,12 +136,64 @@ export function wireEmojiSuggest(textarea) {
   let active = 0;
   let start = -1;
   let typed = '';
+  let openListeners = null;
 
+  const stopOpenListeners = () => {
+    openListeners?.abort();
+    openListeners = null;
+  };
   const close = () => {
+    stopOpenListeners();
     menu.hidden = true;
+    delete menu.dataset.side;
+    menu.style.maxHeight = '';
     matches = [];
     textarea.setAttribute('aria-expanded', 'false');
     textarea.removeAttribute('aria-activedescendant');
+  };
+  const position = () => {
+    if (menu.hidden) return;
+    if (!textarea.isConnected) return close();
+    const point = caretPoint(textarea);
+    const field = textarea.getBoundingClientRect();
+    const bounds = clipBounds(textarea);
+    const caretTop = field.top + Math.max(0, Math.min(point.top, textarea.offsetHeight));
+    const caretBottom = field.top + Math.max(0, Math.min(point.bottom, textarea.offsetHeight));
+    menu.style.maxHeight = '';
+    const menuRect = menu.getBoundingClientRect();
+    const spaceBelow = Math.max(0, bounds.bottom - caretBottom - 4);
+    const spaceAbove = Math.max(0, caretTop - bounds.top - 4);
+    const flip = menuRect.height > spaceBelow && spaceAbove > spaceBelow;
+    const available = flip ? spaceAbove : spaceBelow;
+    if (menuRect.height > available && available > 0) {
+      menu.style.maxHeight = `${Math.max(40, Math.floor(available))}px`;
+    }
+    const height = menu.offsetHeight;
+    const width = menu.offsetWidth;
+    const y = flip
+      ? Math.max(bounds.top, caretTop - height - 4)
+      : Math.min(caretBottom + 4, Math.max(bounds.top, bounds.bottom - height));
+    const rawX = field.left + Math.min(point.left, textarea.clientWidth - 40);
+    const x = Math.max(bounds.left, Math.min(rawX, Math.max(bounds.left, bounds.right - width)));
+    const offsetParent = menu.offsetParent;
+    const form = offsetParent?.getBoundingClientRect() || { left: 0, top: 0 };
+    menu.style.left = `${x - form.left - (offsetParent?.clientLeft || 0)}px`;
+    menu.style.top = `${y - form.top - (offsetParent?.clientTop || 0)}px`;
+    menu.dataset.side = flip ? 'above' : 'below';
+  };
+  const startOpenListeners = () => {
+    if (openListeners) return;
+    openListeners = new AbortController();
+    const { signal } = openListeners;
+    const onScroll = event => {
+      if (event.target === menu || menu.contains(event.target)) return;
+      position();
+    };
+    window.addEventListener('resize', position, { signal, passive: true });
+    window.addEventListener('scroll', onScroll, { signal, capture: true, passive: true });
+    textarea.addEventListener('scroll', position, { signal, passive: true });
+    window.visualViewport?.addEventListener('resize', position, { signal, passive: true });
+    window.visualViewport?.addEventListener('scroll', position, { signal, passive: true });
   };
   const pick = index => {
     const name = matches[index];
@@ -148,12 +221,8 @@ export function wireEmojiSuggest(textarea) {
     active = 0;
     render();
     menu.hidden = false;
-    const point = caretPoint(textarea);
-    // The menu's containing block is the editor form (position: relative).
-    const form = menu.offsetParent?.getBoundingClientRect() || { left: 0, top: 0 };
-    const field = textarea.getBoundingClientRect();
-    menu.style.left = `${field.left - form.left + Math.min(point.left, textarea.clientWidth - 40)}px`;
-    menu.style.top = `${field.top - form.top + Math.min(point.top, textarea.offsetHeight) + 4}px`;
+    position();
+    startOpenListeners();
     textarea.setAttribute('aria-expanded', 'true');
   };
 

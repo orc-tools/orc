@@ -42,17 +42,42 @@ export function flipCardPreference(storageKey, field) {
   try { localStorage.setItem(storageKey, JSON.stringify(preference)); } catch {}
 }
 
+// What differs between an open card's header and its folded row, so the copy's
+// header can ease from one to the other instead of keeping its open size and
+// jumping when the real card returns.
+const HEADER_STYLE = [
+  ['', ['borderRadius']],
+  ['.chat-card-head', ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'columnGap', 'borderBottomWidth']],
+  ['.chat-card-head h2', ['fontSize']],
+  ['.chat-card-dot', ['width', 'height', 'boxShadow']],
+  ['.chat-card-fold svg', ['transform']],
+];
+
+const headerPart = (card, selector) => (selector ? card.querySelector(selector) : card);
+
+function headerStyle(card) {
+  return HEADER_STYLE.map(([selector, properties]) => {
+    const node = headerPart(card, selector);
+    const style = node && getComputedStyle(node);
+    return style && Object.fromEntries(properties.map(property => [property, style[property]]));
+  });
+}
+
 // The chat box is pinned to the bottom, so the folded row lands below where the
 // card stood. A copy of the open card travels between the two places while the
-// real one waits unseen. `ghostClass` names the copy for its card's own rules.
-export function animateCardFold(host, repaint, ghostClass) {
+// real one waits unseen, its header easing to the other state's size and
+// places. `ghostClass` names the copy for its card's own rules.
+export function animateCardFold(host, repaint, ghostClass, onAfterPaint) {
   const before = host.querySelector('.chat-card');
   const first = before.getBoundingClientRect();
   const wasOpen = !before.hasAttribute('data-folded');
+  const from = headerStyle(before);
   repaint();
+  onAfterPaint?.();
   const card = host.querySelector('.chat-card');
   if (!card?.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const last = card.getBoundingClientRect();
+  const to = headerStyle(card);
   const ghost = wasOpen ? before : card.cloneNode(true);
   const origin = host.getBoundingClientRect();
   const box = rect => ({
@@ -71,6 +96,10 @@ export function animateCardFold(host, repaint, ghostClass) {
   host.append(ghost);
   const timing = { ...CARD_FOLD_TIMING, fill: 'both' };
   body.forEach(node => node.animate({ opacity: wasOpen ? [1, 0] : [0, 1] }, timing));
+  HEADER_STYLE.forEach(([selector], index) => {
+    const node = headerPart(ghost, selector);
+    if (node && from[index] && to[index]) node.animate([from[index], to[index]], timing);
+  });
   const settle = () => { ghost.remove(); card.style.opacity = ''; };
   ghost.animate([box(first), box(last)], timing).finished.then(settle, settle);
 }

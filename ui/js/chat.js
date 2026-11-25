@@ -9,6 +9,7 @@ import './effort-slider.js';
 import './fast-toggle.js';
 import './model-picker.js';
 import { undoSettingChange } from './chat-settings.js';
+import { requestDevServerSetup } from './settings.js';
 import { $, CHAT_KEY, announce, calendarAvailable, esc, flashcardMeeting, FLASHCARD_ASK, isFlashcardRun, parseFlashcardPrompt, fileUrl, linkHtml, hasOwnedLivePane, isDone, isHeadlessRun, isQuestionRun, isReadOnlyRun, isShipReady, mergeWrappingUp, reviewsForRun, runState, runs, sessionStatus, showInCalendar, showToast } from './core.js';
 import { autoGrow, bindPromptComposer, composerText, promptComposerHtml } from './prompt-composer.js';
 import { bindDictation, cancelDictation } from './dictation.js';
@@ -19,6 +20,7 @@ import { revealDiffPanel } from './diff-panel.js';
 import { openQueueDialog, postOpenTerminal, reflectRunChange, resumeId } from './dialogs.js';
 import { openRunFile } from './files-panel.js';
 import { bindChatLinkMenu } from './chat-link-menu.js';
+import { deployRowHtml, openDeployLog } from './deploy-card.js';
 import { refresh, restoreFailedLaunchPrompt } from './activity.js';
 import { ROWS_EARLIER, ROWS_SHOWN, attachmentUrl, catchUpState, chatRows, chatWorking, formatElapsed, isVideoAttachment, pairedChatRows, runFolderClips, splitAttachments, summarizeWork, windowStart, workLabel } from './chat-timeline.js';
 import { ncAgents, runModelLabel, sessionModelBadge, sessionSpeedHtml, switchDividerLabel } from './launch-options.js';
@@ -26,10 +28,10 @@ import { knownHarness } from './harnesses.js';
 import { createLaunchSelection, launchModelFor, projectCloudAvailability } from './launch-selection.js';
 import { failedFirstLaunch, isSettledSession, rescueExpectedOwner, switchBlocker } from './run-rescue.js';
 import { launchAttempts } from './launch-attempts.js';
-import { chatChecksReady, conflictResolutionWaitingText, deployHoldsRun, isConflictResolutionPending, isPlanReady, isPlanRevealPending, isPlanningComplete, isSidebarDone, openManualSteps, pairedPlanOf, prHasUnpushedCommits, prNeedsAttention, prPushButton, prPushPending, prRepliesPending, shipGateMissing, showsWaitingOnYou, tasksRunning, tasksWaitingText } from './run-presentation.js';
+import { chatChecksReady, conflictResolutionWaitingText, deployHoldsRun, isConflictResolutionPending, isDraftingPlan, isPlanReady, isPlanRevealPending, isPlanningComplete, isSidebarDone, manualStepsDue, openManualSteps, pairedPlanOf, prHasUnpushedCommits, prNeedsAttention, prPushButton, prPushPending, prRepliesPending, shipGateMissing, showsWaitingOnYou, tasksRunning, tasksWaitingText } from './run-presentation.js';
 import { planUnseen, revealPlan, revealedMeta } from './plan-reveal.js';
 import { feedbackBatchModel, openNoteImages, planNotesCount, planNotesTurn, sentNotesHtml } from './plan-notes.js';
-import { clearRunWarning, isSettledByHand, settleWithScene } from './filters.js';
+import { clearRunWarning, isSettledByHand, settleWithScene, stepsWarningShown } from './filters.js';
 import { codexFollowupExtension } from './codex-followups.js';
 import { forkIntoComposer } from './control.js';
 import { subagentRowHtml, subagentSummary } from './chat-subagents.js';
@@ -58,7 +60,14 @@ const ORC_ENTRY = /^[/$]orc(?::run|:orc)?$/;
 const FOLLOW_SLACK_PX = 40;
 const SESSIONS_MAX = 12;
 const ICON = (body, extra = '') => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra}>${body}</svg>`;
+// Auto merge's ship, for its badges here and its package's buttons.
+export const SHIP_PATHS = [
+  '<path d="M2 12h14l6-2-2.5 5.5A3 3 0 0 1 16.8 17H6.2a3 3 0 0 1-2.8-1.9L2 12Z"/>',
+  '<path d="M5 12V8h8l3 4M8 8V4h3v4"/>',
+  '<path d="M2 21c2.5 0 2.5-1.5 5-1.5s2.5 1.5 5 1.5 2.5-1.5 5-1.5 2.5 1.5 5 1.5"/>',
+].join('');
 const ICONS = {
+  ship: ICON(SHIP_PATHS),
   notes: ICON('<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>'),
   gitMerge: ICON('<circle cx="6" cy="5" r="3"/><path d="M6 8v10M18 8a6 6 0 0 1-6 6H6"/><circle cx="6" cy="21" r="2"/><circle cx="18" cy="5" r="3"/>'),
   command: ICON('<path d="M4 17l6-5-6-5"/><path d="M12 19h8"/>'),
@@ -107,7 +116,7 @@ function sessionFor(runId) {
     sessions.set(runId, session);
     for (const id of sessions.keys()) {
       if (sessions.size <= SESSIONS_MAX) break;
-      if (id !== runId && !(mounted && mounted.runId === id)) sessions.delete(id);
+      if (id !== runId && mounted?.runId !== id && !sessions.get(id).sending && !sessions.get(id).outbox.some(entry => entry.chatSubmission)) sessions.delete(id);
     }
   }
   return session;
@@ -151,6 +160,16 @@ launchAttempts.subscribe(attempt => {
 });
 
 // ---------- mounting ----------
+function unmountChat() {
+  const previous = mounted;
+  if (!previous) return;
+  mounted = null;
+  previous.dispose();
+  pollController?.abort();
+  clearTimeout(pollTimer);
+  syncTicker(false);
+}
+
 export function mountChat(run, container) {
   const session = sessionFor(run.id);
   if (!clipPlayback(run.id)) stopClips();
@@ -160,6 +179,7 @@ export function mountChat(run, container) {
     schedulePoll(0);
     return;
   }
+  unmountChat();
   session.revealedMessage = null;
   session.shownFrom = undefined;
   session.wholeChat = false;
@@ -182,7 +202,7 @@ export function mountChat(run, container) {
     <div class="chat-composer"><div class="chat-lane">
       <div class="chat-secrets" hidden></div>
       <div class="chat-plugin-banners" hidden></div>
-      <div class="chat-plan-ready" role="region" aria-label="Plan" hidden><span>This run has a plan.</span><orc-button variant="ghost" size="compact" data-chat-action="view-plan">View plan</orc-button></div>
+      <div class="chat-plan-bar" role="region" aria-label="Plan" hidden><span class="status-spinner" aria-hidden="true" hidden></span><p class="chat-plan-text" role="status"><span class="chat-plan-say"></span><span class="chat-plan-note"></span></p><orc-button variant="ghost" size="compact" data-chat-action="view-plan" hidden>View plan</orc-button></div>
       <div class="chat-steps-row">
         <div class="chat-checks" hidden></div>
         <div class="chat-steps" hidden></div>
@@ -192,7 +212,7 @@ export function mountChat(run, container) {
         <div class="chat-flashcard" role="region" aria-label="Flashcard" hidden><orc-button variant="primary" size="compact" data-chat-action="show-calendar">Show in Calendar</orc-button></div>
       </div>
       <div class="chat-catch-up" hidden></div>
-      <div class="chat-done" role="region" aria-label="Run done" hidden><span>This run is done.</span><orc-button variant="primary" size="compact" data-chat-action="settle">Settle</orc-button></div>
+      <div class="chat-done" role="region" aria-label="Run done" hidden><p class="chat-done-text"><span class="chat-done-say">This run is done.</span> <span class="chat-done-idle" hidden></span></p><span class="chat-done-actions"><orc-button class="chat-done-catch-up" variant="ghost" size="compact" data-chat-action="catch-up" hidden>Catch me up</orc-button><orc-button class="chat-done-main" variant="primary" size="compact" data-chat-action="settle">Settle</orc-button></span></div>
       <p class="chat-ship-hold" role="status" hidden></p>
       <p class="chat-ship-missing" role="status" hidden>${ICONS.error}<span>${esc(agent)} stopped before opening Ship, so there is no Yeet or Merge button yet. Ask it to finish Ship.</span></p>
       <p class="chat-tasks-waiting" role="status" hidden></p>
@@ -236,13 +256,11 @@ export function mountChat(run, container) {
   </section>`;
   const root = container.querySelector(':scope > .chat');
   root.querySelector('.chat-scroll').append(questions, $('answer-card'));
-  // A poll still out for another run would hold the loop until it returns.
-  if (mounted && mounted.runId !== run.id) pollController?.abort();
   // Attachments belong to this run's draft, not to whichever Chat the
   // shared textarea id happens to be in next.
   $('chat-prompt').dataset.orcAttachmentKey = `chat:${run.id}`;
-  mounted = { runId: run.id, root, session, run, view: { working: false, starting: false, mode: 'idle' } };
-  wireChat(root, session);
+  mounted = { runId: run.id, root, session, run, cardClips: new Map(), view: { working: false, starting: false, mode: 'idle' } };
+  mounted.dispose = wireChat(root, session);
   ensureChatConfig({ maxAgeMs: CHAT_CONFIG_MAX_AGE_MS });
   renderChat();
   scrollToEnd(true);
@@ -348,6 +366,7 @@ async function loadPublishedAnswer(session, run) {
 }
 
 function applyPayload(session, data) {
+  if (data.reset || data.items?.length) session.orderedItems = null;
   if (data.reset) {
     session.items.clear();
     session.order = [];
@@ -373,12 +392,41 @@ function applyPayload(session, data) {
     checks: Array.isArray(data.checks) ? data.checks : [],
     prUpdates: Array.isArray(data.prUpdates) ? data.prUpdates : [],
     settingChanges: Array.isArray(data.settingChanges) ? data.settingChanges : [],
+    autoMergeChanges: Array.isArray(data.autoMergeChanges) ? data.autoMergeChanges : [],
     deploy: data.deploy || null,
     catchUp: data.catchUp || null,
   };
+  for (const change of session.data.autoMergeChanges) session.pressedAutoMerge?.delete(change.id);
   const now = Date.now();
-  session.outbox = session.outbox.filter(entry => promptCount(session, entry.text) <= entry.seen
-    && (entry.state === 'sending' || now - entry.at < OUTBOX_TTL_MS));
+  const recorded = new Set((data.items || []).map(item => item.chatSubmission).filter(Boolean));
+  session.outbox = session.outbox.filter(entry => entry.chatSubmission
+    ? !recorded.has(entry.chatSubmission)
+    : promptCount(session, entry.text) <= entry.seen && (entry.state === 'sending' || now - entry.at < OUTBOX_TTL_MS));
+}
+
+// 32 hex characters. crypto.randomUUID is missing over plain http, such as a phone on LAN.
+const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+
+// A fresh delivery ID follows this send through the queue and transcript,
+// even when the same run submits identical answers in two rounds.
+export function showSendingAnswers(runId, gateAnswers) {
+  const id = randomId();
+  const session = sessionFor(runId);
+  const entry = { id, chatSubmission: id, gateAnswers, state: 'sending' };
+  session.outbox.push(entry);
+  session.follow = true;
+  if (chatMounted(runId)) renderChat();
+  return { id, finish(delivered) {
+    if (delivered) entry.state = 'sent';
+    else {
+      session.outbox = session.outbox.filter(other => other !== entry);
+      session.expanded.delete(`answers:${id}`);
+    }
+    if (chatMounted(runId)) {
+      renderChat();
+      schedulePoll(0);
+    }
+  } };
 }
 
 // Transcripts split skill commands from arguments and attachment references
@@ -407,7 +455,7 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------- derived state ----------
 function orderedItems(session) {
-  return session.order.map(id => session.items.get(id)).filter(Boolean);
+  return session.orderedItems ??= session.order.map(id => session.items.get(id)).filter(Boolean);
 }
 
 // A headless run takes a message between turns too: sending starts the next.
@@ -467,9 +515,28 @@ export function reportSeen(runId, action) {
 }
 
 // Redrawn only when what it says changes, so a poll never takes focus off its button.
-function renderCatchUp(host, session, state) {
+function renderCatchUp(host, done, session, state) {
   const busy = session.catchUpBusy === true;
   const error = session.catchUpError || '';
+  const label = busy ? 'Catching up…' : error ? 'Try again' : 'Catch me up';
+  const idleText = error || (state?.offer ? `Nothing has happened here for ${state.days} days.` : '');
+  // A finished run says both on one line: This run is done, how long it has
+  // been quiet, then Catch me up beside Settle. Its nodes stay put, so a poll
+  // that only changes their words keeps focus where it is.
+  const merged = Boolean(state?.offer) && !done.hidden;
+  const idle = done.querySelector('.chat-done-idle');
+  const button = done.querySelector('.chat-done-catch-up');
+  idle.hidden = button.hidden = !merged;
+  if (merged && error) idle.setAttribute('role', 'alert');
+  else idle.removeAttribute('role');
+  const said = merged ? idleText : '';
+  if (idle.textContent !== said) idle.textContent = said;
+  if (merged) {
+    button.dataset.days = state.days;
+    button.toggleAttribute('disabled', busy);
+    if (button.textContent !== label) button.textContent = label;
+    state = null;
+  }
   const key = !state ? '' : state.summary ? `summary:${state.summary.at}` : `offer:${state.days}:${busy}:${error}`;
   host.hidden = !state;
   if (host.dataset.key === key) return;
@@ -483,8 +550,8 @@ function renderCatchUp(host, session, state) {
     return;
   }
   host.innerHTML = `<div class="chat-catch-up-offer" role="region" aria-label="Catch up">
-    <span${error ? ' role="alert"' : ''}>${esc(error || `Nothing has happened here for ${state.days} days.`)}</span>
-    <orc-button variant="ghost" size="compact" data-chat-action="catch-up" data-days="${state.days}"${busy ? ' disabled' : ''}>${busy ? 'Catching up…' : error ? 'Try again' : 'Catch me up'}</orc-button></div>`;
+    <span${error ? ' role="alert"' : ''}>${esc(idleText)}</span>
+    <orc-button variant="ghost" size="compact" data-chat-action="catch-up" data-days="${state.days}"${busy ? ' disabled' : ''}>${label}</orc-button></div>`;
 }
 
 async function catchUp(runId, body) {
@@ -687,6 +754,15 @@ function markdownParser(breaks, followups = false, user = false) {
       // A table spans the column like every other block. Its wrapper scrolls
       // sideways when it is too wide, so the table itself never has to shrink.
       table(token) {
+        token.header.forEach((header, column) => {
+          if (header.text.trim().toLowerCase() !== 'status') return;
+          for (const row of token.rows) {
+            const prefix = row[column]?.tokens[0];
+            if (prefix?.type !== 'text') continue;
+            const label = /^\p{Extended_Pictographic}\uFE0F? +\p{L}+(?:(?: +\p{L}+){1,2}(?=[.!:]|$))?/u;
+            prefix.text = prefix.text.replace(label, match => match.replace(/ /g, '\u00a0'));
+          }
+        });
         return `<div class="chat-table">${marked.Renderer.prototype.table.call(this, token)}</div>`;
       },
       image(token) {
@@ -706,7 +782,7 @@ function markdownParser(breaks, followups = false, user = false) {
 // shows as one too. The skill list loads on first need and rerenders the chat.
 let skillsVersion = 0;
 function transcriptSkill(name) {
-  const skills = mounted?.session.skillInvocation;
+  const skills = mounted?.skillInvocation;
   const skill = skills?.skill(name);
   if (!skill) skills?.preload();
   return skill;
@@ -793,7 +869,8 @@ function displayCommand(text) {
   return replaceOutsideCode(questionReplyAnswers(text) ?? text ?? '', /(?<=^|\s)\$(orc(?:[:-][\w:.-]+)?)(?=\s|$)/g, (_, name) => `/${name}`);
 }
 
-function pendingMessageHtml(entry) {
+function pendingMessageHtml(entry, expanded) {
+  if (entry.gateAnswers) return gateAnswersHtml(entry, expanded, true);
   const item = splitAttachments(entry.displayText || entry.text);
   const text = displayCommand(item.text);
   return `${text ? `<div class="chat-md">${markdownHtml(text, { breaks: true, user: true })}</div>` : ''}${attachmentsHtml(item)}`;
@@ -901,15 +978,15 @@ const GATE_ANSWER_TABS = {
 
 // Answers sent from a gate page arrive as one long numbered block. Show a
 // one-line summary that opens to each question and its answer.
-function gateAnswersHtml(item, expanded) {
+function gateAnswersHtml(item, expanded, pending = false) {
   const { label, runId, answers, notes } = item.gateAnswers;
-  const key = `answers:${item.id}`;
+  const key = `answers:${item.chatSubmission || item.id}`;
   const open = expanded.has(key);
   const tab = GATE_ANSWER_TABS[label];
   const count = answers.length === 1 ? '1 answer' : `${answers.length} answers`;
   const summary = [answers.length ? count : '', notes ? 'notes' : ''].filter(Boolean).join(' + ');
   const toggle = `<button type="button" class="chat-gate-answers-toggle chat-toggle" data-toggle="${esc(key)}" data-focus-key="toggle:${esc(key)}" aria-expanded="${open}"><span class="chat-gate-answers-title">${esc(label)} answers</span><span class="chat-gate-answers-count">${esc(summary)}</span>${ICONS.chevron}</button>`;
-  const link = label === 'Clarification'
+  const link = pending ? '' : label === 'Clarification'
     ? `<button type="button" class="chat-gate-answers-link" data-view-questions="${esc(item.id)}" data-question-run="${esc(runId)}" data-focus-key="questions:${esc(item.id)}">View questions</button>`
     : tab ? `<a class="chat-gate-answers-link" href="#${encodeURIComponent(runId)}/${tab}">Open ${esc(label)}</a>` : '';
   const body = open ? `<ol class="chat-gate-answers-list">${answers.map(entry => `<li><div class="chat-gate-answers-question">${esc(entry.question)}</div><div class="chat-md">${markdownHtml(entry.answer, { breaks: true, user: true })}</div></li>`).join('')}</ol>${notes ? `<div class="chat-gate-answers-notes"><div class="chat-gate-answers-question">Notes</div><div class="chat-md">${markdownHtml(notes, { breaks: true, user: true })}</div></div>` : ''}` : '';
@@ -1018,7 +1095,7 @@ function userRowHtml(row, context) {
   const commandName = (item.command || '').replace(/^\$/, '/');
   const command = commandName && !ORC_ENTRY.test(commandName)
     ? `<span class="chat-command" data-skill-ref="${esc(commandName.slice(1))}" tabindex="0">${esc(commandName)}</span>` : '';
-  if (command) mounted?.session.skillInvocation?.preload();
+  if (command) mounted?.skillInvocation?.preload();
   const attachments = attachmentsHtml(item);
   const forwarded = forwardedBadge(item);
   const meetingPrompt = !item.promptFile?.body && !item.attachments?.length && isFlashcardRun(mounted?.run)
@@ -1181,16 +1258,11 @@ function workRowHtml(row, expanded) {
   </div>`;
 }
 
-// Each card's play button plays that card's clips. They are kept per card
-// for the click, since a run-folder clip and a changed file play from
-// different places.
-const cardClips = new Map(); // row id -> { clips, runFolder }
-
 function clipsHtml(row) {
   const runId = mounted?.runId;
   const clips = row.clips;
   if (!clips?.length || !runId) return { button: '', status: '' };
-  cardClips.set(row.id, { clips, runFolder: new Set(row.runFolderClips || []) });
+  mounted.cardClips.set(row.id, { clips, runFolder: new Set(row.runFolderClips || []) });
   const playing = clipPlayback(runId);
   const error = clipError(runId);
   const many = clips.length > 1;
@@ -1276,7 +1348,7 @@ function rowHtml(row, context) {
       <button type="button" class="chat-fold chat-toggle" data-toggle="${esc(row.id)}" data-focus-key="toggle:${esc(row.id)}" aria-expanded="${row.expanded}">${esc(row.label)}${ICONS.chevron}</button>${time ? `<span class="chat-fold-time">${time}</span>` : ''}</div>`;
     }
     case 'working': return `<div class="chat-row chat-row-working"><span class="chat-working">${row.since
-      ? `Working for <span class="chat-working-time" data-since="${esc(row.since)}">${esc(formatElapsed(Date.now() - Date.parse(row.since)))}</span>`
+      ? `${context.planning ? 'Planning' : 'Working'} for <span class="chat-working-time" data-since="${esc(row.since)}">${esc(formatElapsed(Date.now() - Date.parse(row.since)))}</span>`
       : esc(row.label || `Starting ${context.agent}…`)}</span></div>`;
     case 'live': return row.quiet
       ? '<div class="chat-row chat-row-thinking is-quiet" aria-hidden="true"><div class="chat-work-line"></div></div>'
@@ -1305,14 +1377,12 @@ function rowHtml(row, context) {
         ? `<a class="chat-pr-update" href="${esc(item.url)}" target="_blank" rel="noopener" data-focus-key="${esc(row.id)}">${body}</a>`
         : `<div class="chat-pr-update">${body}</div>`}${timeHtml(item.at)}</div>`;
     }
-    case 'setting-change': {
-      const item = row.item;
-      const undo = item.undoneAt
-        ? '<span class="chat-setting-undone">Undone</span>'
-        : `<button type="button" class="chat-action chat-setting-undo" data-chat-action="undo-setting" data-change="${esc(item.id)}" data-focus-key="${esc(row.id)}">Undo</button>`;
-      return `<div class="chat-row chat-row-setting-change"><div class="chat-setting-change">`
-        + `<span class="chat-setting-change-mark" aria-hidden="true">${ICONS.check}</span>`
-        + `<span class="chat-setting-change-text">${esc(item.line || '')}</span>${undo}</div>${timeHtml(item.at)}</div>`;
+    case 'setting-change': return settingChangeRowHtml(row);
+    case 'auto-merge': {
+      const { enabled, at } = row.item;
+      const date = new Date(at || '');
+      const when = Number.isNaN(date.getTime()) ? '' : ` title="${esc(FULL_TIME.format(date))}"`;
+      return `<div class="chat-row chat-row-badge"><span class="chat-system-badge is-${enabled ? 'on' : 'off'}"${when}>${ICONS.ship}<span>Auto merge ${enabled ? 'on' : 'off'}</span></span></div>`;
     }
     case 'earlier': return `<div class="chat-row chat-row-divider chat-row-earlier">
       <button type="button" class="chat-fold" data-chat-action="earlier" data-focus-key="earlier">Show earlier messages</button></div>`;
@@ -1332,18 +1402,18 @@ function rowHtml(row, context) {
       ? `<div class="chat-callout-actions"><button type="button" class="chat-action" data-chat-action="back">Back to the composer</button>${context.canSwitch ? '<button type="button" class="chat-action" data-chat-action="switch-model" data-focus-key="switch-launch">Switch model or account</button>' : ''}</div>`
       : '<button type="button" class="chat-action" data-chat-action="open-session">Open terminal</button>'}</orc-callout></div>`;
     case 'background': return backgroundRowHtml(row);
-    case 'deploy': return deployRowHtml(row, context.expanded);
+    case 'deploy': return deployRowHtml(row.deploy);
     case 'turn-failed': return `<div class="chat-row chat-row-launch is-failed"><orc-callout variant="red"><p>${esc(row.text)}</p><div class="chat-callout-actions"><button type="button" class="chat-action" data-chat-action="retry" data-turn="${esc(String(row.turn))}" data-focus-key="retry:${esc(String(row.turn))}">Retry</button>${context.canSwitch ? `<button type="button" class="chat-action" data-chat-action="switch-model" data-focus-key="switch-turn:${esc(String(row.turn))}">Switch model or account</button>` : ''}</div></orc-callout></div>`;
     case 'queue-held': return queueHeldHtml(row, context);
     case 'start-after-waiting': return `<div class="chat-row chat-row-notice"><orc-callout variant="orange"><p>Waiting for <a href="#${encodeURIComponent(row.targetRunId)}">${esc(row.targetTitle)}</a> to finish before branching, so this run starts cleanly on its changes.</p><button type="button" class="chat-action" data-chat-action="start-now" data-focus-key="start-now">Start now</button></orc-callout></div>`;
     case 'queued': return `<div class="chat-row chat-row-user is-queued${row.stranded ? ' is-stranded' : ''}" data-part="transcript-message">
       <div class="chat-bubble-head"><span class="chat-bubble-label">${esc(queuedMessageStatus(row, context))}</span></div>
-      <div class="chat-bubble" data-part="chat-bubble">${forwardedBadge(row.entry)}${pendingMessageHtml(row.entry)}</div>
+      <div class="chat-bubble" data-part="chat-bubble">${forwardedBadge(row.entry)}${pendingMessageHtml(row.entry, context.expanded)}</div>
       <div class="chat-meta"><button type="button" class="chat-unqueue" ${context.runPause ? 'disabled' : ''} data-send-now="${esc(row.entry.id)}" data-focus-key="send-now:${esc(row.entry.id)}" title="Stops ${esc(context.agent)}'s turn and sends this now">Send now</button>${row.stranded ? `<button type="button" class="chat-unqueue" data-unqueue="${esc(row.entry.id)}" data-to-composer="1" data-focus-key="recompose:${esc(row.entry.id)}">Move to the composer</button>` : ''}<button type="button" class="chat-unqueue" data-unqueue="${esc(row.entry.id)}" data-focus-key="unqueue:${esc(row.entry.id)}">Remove from queue</button></div>
     </div>`;
     case 'outbox': return `<div class="chat-row chat-row-user is-outbox" data-part="transcript-message">
       <div class="chat-bubble-head"><span class="chat-bubble-label">${row.entry.state === 'sending' ? 'Sending…' : 'Sent'}</span></div>
-      <div class="chat-bubble" data-part="chat-bubble">${pendingMessageHtml(row.entry)}</div>
+      <div class="chat-bubble" data-part="chat-bubble">${pendingMessageHtml(row.entry, context.expanded)}</div>
     </div>`;
     case 'empty': return `<div class="chat-row chat-row-empty"><p>${esc(row.text)}</p></div>`;
     default: return '';
@@ -1445,6 +1515,55 @@ function syncFloatingRow() {
   mounted.root.style.setProperty('--chat-float', `${floating ? row.offsetHeight : 0}px`);
 }
 
+// Switches .chat into single-container scroll when pinned cards and the reply
+// box exceed the height above a docked terminal. Uses the normal clamped height
+// in both states so entering and leaving overflow share the exact same threshold
+// and never oscillate.
+function syncComposerOverflow() {
+  if (!mounted) return false;
+  const root = mounted.root;
+  const available = root.clientHeight;
+  if (available <= 0) return false;
+  const body = root.querySelector('.chat-body');
+  const reviews = root.querySelector('.chat-reviews');
+  const composer = root.querySelector('.chat-composer');
+  const row = root.querySelector('.chat-steps-row');
+  const wasOverflow = root.hasAttribute('data-composer-overflow');
+  const outerY = (element, includeHeight = true) => {
+    if (!element || element.hidden) return 0;
+    const style = getComputedStyle(element);
+    const margins = (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+    if (includeHeight) return element.offsetHeight + margins;
+    return margins + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+  };
+  let total = outerY(body, false) + outerY(reviews, true) + outerY(composer, true);
+  if (wasOverflow) {
+    total -= 12;
+    const cap = Math.min(window.innerHeight * 0.46, 440);
+    for (const card of composer.querySelectorAll('.chat-card:not([data-folded]):not(.chat-card-ghost)')) {
+      if (card.offsetHeight > cap) total -= (card.offsetHeight - cap);
+    }
+  } else if (row && getComputedStyle(row).position === 'absolute') {
+    total += row.offsetHeight;
+  }
+  const overflow = total > available + 1;
+  if (overflow !== wasOverflow) {
+    root.toggleAttribute('data-composer-overflow', overflow);
+    if (!overflow) root.scrollTop = 0;
+  }
+  return overflow;
+}
+
+function revealOpenedCard(root, card) {
+  if (!card || !root.hasAttribute('data-composer-overflow')) return;
+  const rootRect = root.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const pad = 16;
+  if (cardRect.top < rootRect.top + pad || cardRect.bottom > rootRect.bottom) {
+    root.scrollTop = Math.max(0, root.scrollTop + (cardRect.top - rootRect.top) - pad);
+  }
+}
+
 function atEnd(scroller) {
   return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_SLACK_PX;
 }
@@ -1541,8 +1660,41 @@ async function rebuildBar(frame, runId) {
   if (frame.isConnected) reloadBar(frame, fresh);
 }
 
-// The plan bar offers the plan only while it waits at its gate for Start work.
-// Once work has started the run's Plan tab keeps it one click away.
+// The plan bar says Planning while the agent writes the plan, then offers the
+// plan while it waits at its gate for Start work. Once work has started the
+// run's Plan tab keeps it one click away.
+const PLAN_NOTES = {
+  asked: 'Nothing is built until you read the plan and press Start work.',
+  automatic: 'The build starts by itself when the plan is ready.',
+};
+
+// The agent is at work on a plan and nothing waits on the user.
+function chatPlanning(run, { working, waitingOnYou }) {
+  const meta = run.meta || {};
+  return working && !waitingOnYou && isDraftingPlan(meta)
+    && meta.status !== 'awaiting-gate' && !showsWaitingOnYou(meta)
+    && runState(meta, run.files || []).key === 'working';
+}
+
+function syncPlanBar(bar, target, planning, automatic) {
+  const reveal = target?.kind === 'reveal';
+  bar.hidden = !target && !planning;
+  if (bar.hidden) return;
+  const [name, say, note] = planning ? ['Planning', 'Planning', PLAN_NOTES[automatic ? 'automatic' : 'asked']]
+    : reveal ? ['Plan ready', 'The plan is ready.', ''] : ['Plan', 'This run has a plan.', ''];
+  bar.classList.toggle('is-planning', planning);
+  bar.setAttribute('aria-label', name);
+  bar.querySelector('.status-spinner').hidden = !planning;
+  // A live region: writing the same words again could read them out again.
+  for (const [part, text] of [['.chat-plan-say', say], ['.chat-plan-note', note]]) {
+    const node = bar.querySelector(part);
+    if (node.textContent !== text) node.textContent = text;
+  }
+  const button = bar.querySelector('orc-button');
+  button.hidden = planning;
+  button.setAttribute('variant', reveal ? 'primary' : 'ghost');
+}
+
 function chatPlanTarget(run) {
   if (!run) return null;
   const meta = revealedMeta(run);
@@ -1609,6 +1761,8 @@ async function loadPlanPart(buildId, part) {
       if (!response.ok) break;
       const data = await response.json();
       part.supported = data.supported !== false;
+      part.autoMergeChanges = data.autoMergeChanges || [];
+      if (data.reset || data.items?.length) part.orderedItems = null;
       if (data.reset) {
         part.items.clear();
         part.order = [];
@@ -1671,6 +1825,31 @@ function showEarlier() {
     first.focus({ preventScroll: true });
   }
   announce('Showing earlier messages');
+}
+
+// A setting this run changed, with Undo. A saved Live dev server also has
+// Edit, which opens the project's dev server settings, and shows the saved
+// commands underneath.
+function settingChangeRowHtml(row) {
+  const item = row.item;
+  const devServer = item.key === 'devServer' && typeof item.project === 'string';
+  const undo = item.undoneAt
+    ? '<span class="chat-setting-undone">Undone</span>'
+    : `<button type="button" class="chat-action chat-setting-undo" data-chat-action="undo-setting" data-change="${esc(item.id)}" data-focus-key="${esc(row.id)}">Undo</button>`;
+  const edit = devServer
+    ? `<a class="chat-action chat-setting-edit" href="#settings/project/${esc(encodeURIComponent(item.project))}" data-chat-action="edit-dev-server" data-project="${esc(item.project)}" data-focus-key="${esc(row.id)}:edit">Edit</a>`
+    : '';
+  const detail = devServer ? [
+    item.command && `<span><code translate="no">${esc(item.command)}</code></span>`,
+    item.install && `<span>Install <code translate="no">${esc(item.install)}</code></span>`,
+    Array.isArray(item.copy) && item.copy.length && `<span>Copies <code translate="no">${item.copy.map(esc).join('</code>, <code translate="no">')}</code></span>`,
+  ].filter(Boolean).join('') : '';
+  return `<div class="chat-row chat-row-setting-change"><div class="chat-setting-change">`
+    + `<span class="chat-setting-change-mark" aria-hidden="true">${ICONS.check}</span>`
+    + `<span class="chat-setting-change-text">${esc(item.line || '')}</span>`
+    + `<span class="chat-setting-actions">${edit}${undo}</span>`
+    + (detail ? `<span class="chat-setting-detail">${detail}</span>` : '')
+    + `</div>${timeHtml(item.at)}</div>`;
 }
 
 // Returns whether the agent is working, which also paces the poll.
@@ -1752,22 +1931,21 @@ function renderChat() {
   shipHold.textContent = holdReason
     ? `Not ready to ship: ${holdReason}. Reply here to agree or ask for the change; Ship returns once it is ready again.`
     : '';
-  renderSecretRequests(root.querySelector('.chat-secrets'), {
+  const secretsHost = root.querySelector('.chat-secrets');
+  const checksHost = root.querySelector('.chat-checks');
+  const stepsHost = root.querySelector('.chat-steps');
+  const catchUpHost = root.querySelector('.chat-catch-up');
+  const prevSecrets = secretsHost.hidden ? 0 : secretsHost.children.length;
+  const wasChecksOpen = !checksHost.hidden && !checksHost.hasAttribute('data-folded');
+  const wasStepsOpen = !stepsHost.hidden && !stepsHost.hasAttribute('data-folded');
+  const wasCatchUpSummary = !catchUpHost.hidden && Boolean(catchUpHost.dataset.key?.startsWith('summary:'));
+  renderSecretRequests(secretsHost, {
     runId, agent: chatAgentName(meta), requests: session.data.secretRequests || [],
     onSettled: () => { schedulePoll(0); refresh({ force: true }); },
   });
   const bannerWaiting = syncBannerExtensions();
   // A finished flashcard's delivery is the card in Calendar, where Open PR would be.
   root.querySelector('.chat-flashcard').hidden = !(calendarAvailable() && flashcardMeeting(meta) && isQuestionRun(run));
-  const planBar = root.querySelector('.chat-plan-ready');
-  const planTarget = chatPlanTarget(run);
-  const planReveal = planTarget?.kind === 'reveal';
-  planBar.hidden = !planTarget;
-  if (planTarget) {
-    planBar.setAttribute('aria-label', planReveal ? 'Plan ready' : 'Plan');
-    planBar.querySelector('span').textContent = planReveal ? 'The plan is ready.' : 'This run has a plan.';
-    planBar.querySelector('orc-button').setAttribute('variant', planReveal ? 'primary' : 'ghost');
-  }
   const items = orderedItems(session);
   const launch = launchAttempts.observe(runId, { run, items,
     launch: session.data.launch, startPrompt: session.data.startPrompt });
@@ -1775,6 +1953,11 @@ function renderChat() {
   const working = chatWorking({ items, starting, sessionRunning: sessionStatus(meta) === 'running',
     sessionIdle: isHeadlessRun(meta) && meta.sessionActivity === 'idle' });
   mounted.view = { working, starting, mode: composerMode(run, session, working, starting) };
+  const waitingOnYou = !!meta.pendingQuestion || (session.data.secretRequests || []).length > 0 || bannerWaiting;
+  const planTarget = chatPlanTarget(run);
+  const planning = !planTarget && chatPlanning(run, { working,
+    waitingOnYou: waitingOnYou || launch.state === 'needs-trust' });
+  syncPlanBar(root.querySelector('.chat-plan-bar'), planTarget, planning, !!session.planStarters?.size);
   // At Ship one card at most stands open above the line the rest fold onto: a
   // failed check first, then the steps. Chat shows failed checks only once the
   // run reaches Ship (or after), never during Build or Verify, since the agent
@@ -1782,14 +1965,23 @@ function renderChat() {
   // The steps card's buttons outlive this render, so they fold the checks as
   // they are then.
   root.querySelector('.chat-steps-row').toggleAttribute('data-ship', ready);
-  mounted.stepsCard = manualStepsCard(runId, session.data.manualSteps || []);
+  // Steps for the user wait the same way, unless a refused settle asked for
+  // them, after which they stay through the ticks that clear its warning.
+  if (stepsWarningShown(runId)) mounted.stepsAsked = true;
+  const steps = manualStepsDue(meta, run.files || []) || mounted.stepsAsked ? session.data.manualSteps || [] : [];
+  mounted.stepsCard = manualStepsCard(runId, steps);
   const canFixInRun = !isSidebarDone(meta, run.files || [])
     && !['cancelled', 'merging', 'merging-to-parent'].includes(meta.status)
     && !isReadOnlyRun(meta)
     && (mounted.view.mode === 'idle' || mounted.view.mode === 'working');
-  mounted.checksCard = renderChecksCard(root.querySelector('.chat-checks'), { runId, checks: session.data.checks || [], working,
+  mounted.checksCard = renderChecksCard(checksHost, { runId, checks: session.data.checks || [], working,
     show: chatChecksReady(meta, run.files || []),
     onToggle: renderChat,
+    onAfterFold: () => {
+      syncComposerOverflow();
+      syncFloatingRow();
+      if (!checksHost.hidden && !checksHost.hasAttribute('data-folded')) revealOpenedCard(root, checksHost);
+    },
     // Red failures on an open run go back to this run's agent first; on-main
     // failures and finished runs start a new run.
     onFixInRun: canFixInRun ? text => {
@@ -1822,8 +2014,8 @@ function renderChat() {
         }
       } catch { /* next poll reconciles */ }
     } });
-  renderManualSteps(root.querySelector('.chat-steps'), {
-    runId, agent: chatAgentName(meta), steps: session.data.manualSteps || [],
+  renderManualSteps(stepsHost, {
+    runId, agent: chatAgentName(meta), steps,
     covered: ready && mounted.checksCard.open,
     onUncover: () => mounted.checksCard.fold(), onToggle: renderChat,
     onStartRun: step => {
@@ -1839,6 +2031,7 @@ function renderChat() {
       }
     },
   });
+  syncComposerOverflow();
   syncFloatingRow();
   // Settling would strand commits the PR is still missing, so push them first.
   const push = prHasUnpushedCommits(meta);
@@ -1853,22 +2046,26 @@ function renderChat() {
     // A deploy still going or failed is not done: its card carries Retry deploy.
     || deployHoldsRun(meta.deploy);
   const stepsLeft = session.loaded ? effectiveOpenSteps(runId, session.data.manualSteps) : openManualSteps(meta);
-  const doneButton = done.querySelector('orc-button');
+  const doneButton = done.querySelector('.chat-done-main');
   done.setAttribute('aria-label', push ? 'Unpushed commits' : 'Run done');
-  done.querySelector('span').textContent = push ? 'Commits not on the PR yet.'
+  done.querySelector('.chat-done-say').textContent = push ? 'Commits not on the PR yet.'
     : stepsLeft ? 'This run is done. Tick off your steps above to settle it.' : 'This run is done.';
   doneButton.dataset.chatAction = push ? 'push' : 'settle';
   doneButton.textContent = push ? pushLabel(meta) : 'Settle';
   doneButton.toggleAttribute('disabled', push ? pushUnderway : stepsLeft > 0);
-  renderCatchUp(root.querySelector('.chat-catch-up'), session,
+  renderCatchUp(catchUpHost, done, session,
     session.loaded ? catchUpState(items, session.data.catchUp, { working: working || starting }) : null);
   const agent = chatAgentName(meta);
   const launchPrompt = launch.prompt ? splitAttachments(launch.prompt) : null;
+  const queued = (session.data.queued || []).filter(entry => entry.id !== session.sendingNow);
+  const queuedAnswers = new Set(queued.map(entry => entry.chatSubmission).filter(Boolean));
+  const recordedAnswers = queuedAnswers.size ? new Set(items.map(item => item.chatSubmission)) : null;
   let rows = chatRows(items, {
+    cache: session.timelineCache ??= { completed: new WeakMap() },
     working, expanded: session.expanded, agentName: agent,
     startPrompt: launch.startPrompt || launchPrompt,
-    launch, outbox: session.outbox,
-    queued: (session.data.queued || []).filter(entry => entry.id !== session.sendingNow).map(entry => ({
+    launch, outbox: session.outbox.filter(entry => !queuedAnswers.has(entry.chatSubmission)),
+    queued: queued.filter(entry => !entry.chatSubmission || !recordedAnswers?.has(entry.chatSubmission)).map(entry => ({
       ...entry, stranded: meta.harness !== 'codex' && !takesFollowUp(run)
         && !(entry.source === 'chat' ? CHAT_QUEUE_STATUSES : QUEUE_STATUSES).includes(meta.status),
     })),
@@ -1877,7 +2074,7 @@ function renderChat() {
     hasDiff: (run.files || []).some(file => file.path === 'diff.patch'),
     diffFiles: runDiffFiles(run),
     folderClips: runFolderClips(run.files),
-    waitingOnYou: !!meta.pendingQuestion || (session.data.secretRequests || []).length > 0 || bannerWaiting,
+    waitingOnYou,
     queueError: session.data.queueHeld ? null : session.data.queueError || null,
     turnFailure: session.data.turnFailure || null,
     permissionFallback: session.data.permissionFallback || null,
@@ -1885,6 +2082,7 @@ function renderChat() {
     detailed: true,
     prUpdates: session.data.prUpdates || [],
     settingChanges: session.data.settingChanges || [],
+    autoMergeChanges: [...session.data.autoMergeChanges || [], ...session.pressedAutoMerge?.values() || []],
     deploy: session.data.deploy || null,
     pauses: session.data.pauses || [],
     background: meta.headlessTurn?.replied ? { tasks: meta.headlessTurn.backgroundTasks || [],
@@ -1893,10 +2091,12 @@ function renderChat() {
   const paired = pairedPlanPart(session, run);
   if (paired) {
     const planAgent = chatAgentName(paired.plan.meta);
-    const planItems = paired.part.order.map(id => paired.part.items.get(id)).filter(Boolean);
+    const planItems = orderedItems(paired.part);
     rows = pairedChatRows(chatRows(planItems, {
+      cache: paired.part.timelineCache ??= { completed: new WeakMap() },
       expanded: session.expanded, agentName: planAgent, supported: paired.part.supported,
       transcriptState: paired.part.loaded ? 'ready' : 'waiting', detailed: true,
+      autoMergeChanges: paired.part.autoMergeChanges || [],
     }), rows, { planLabel: runModelLabel(paired.plan.meta, planAgent), buildLabel: runModelLabel(meta, agent) });
   }
   if (session.loaded && prNeedsAttention(meta)) reportSeen(runId, 'pr-updates-seen');
@@ -1913,8 +2113,9 @@ function renderChat() {
       targetTitle: meta.startAfter.title || meta.startAfter.runId || 'earlier run',
     });
   }
-  const context = { expanded: session.expanded, agent, runId, queueHeld: session.data.queueHeld, runPause: session.data.runPause, focusPaused: session.data.focusPaused, queueError: session.data.queueError, canSwitch: mounted.view.mode !== 'readonly' };
+  const context = { expanded: session.expanded, agent, runId, planning, queueHeld: session.data.queueHeld, runPause: session.data.runPause, focusPaused: session.data.focusPaused, queueError: session.data.queueError, canSwitch: mounted.view.mode !== 'readonly' };
   const shipDiff = ready ? rows.findIndex(row => row.kind === 'files' && row.fromDiff && row.hasDiff) : -1;
+  mounted.cardClips.clear();
   const shipFiles = shipDiff === -1 ? { media: '', diff: '' }
     : shipFilesHtml(rows.splice(shipDiff, 1)[0], { panelOpen: !$('run-diff').hidden });
   for (const [part, html] of [['.chat-ship-media', shipFiles.media], ['.chat-ship-diff', shipFiles.diff]]) {
@@ -1980,6 +2181,14 @@ function renderChat() {
   }
   syncGutter();
   syncComposer();
+  syncComposerOverflow();
+  syncFloatingRow();
+  const openedCard = (!wasChecksOpen && !checksHost.hidden && !checksHost.hasAttribute('data-folded') && checksHost)
+    || (!wasStepsOpen && !stepsHost.hidden && !stepsHost.hasAttribute('data-folded') && stepsHost)
+    || (secretsHost.children.length > prevSecrets && secretsHost.lastElementChild)
+    || (!wasCatchUpSummary && !catchUpHost.hidden && catchUpHost.dataset.key?.startsWith('summary:') && catchUpHost)
+    || null;
+  if (openedCard) revealOpenedCard(root, openedCard);
   if (newMergeNotice) scrollToEnd(true);
   const deploying = session.data?.deploy?.state === 'running';
   syncTicker(working || agentsRunning || deploying);
@@ -2020,6 +2229,25 @@ function saveDraft(runId, text, attachments = []) {
 }
 const saveComposerDraft = (runId, prompt) =>
   saveDraft(runId, prompt.value, window.orcTextareaAttachments?.(prompt) || []);
+
+window.addEventListener('orc:chat-draft-attachment', ({ detail: { runId, reference, added } }) => {
+  const attachments = readDraftAttachments(runId).filter(path => path !== reference);
+  if (added) attachments.push(reference);
+  saveDraft(runId, readDraft(runId), attachments);
+  if (chatMounted(runId)) window.orcRestoreAttachments?.($('chat-prompt'), attachments);
+});
+
+function restoreFailedDraft(runId, text, attachments) {
+  const prompt = chatMounted(runId) ? $('chat-prompt') : null;
+  const draft = (prompt?.value ?? readDraft(runId)) || text;
+  const existing = (prompt && window.orcTextareaAttachments?.(prompt)) ?? readDraftAttachments(runId);
+  const references = [...new Set([...existing, ...attachments])];
+  saveDraft(runId, draft, references);
+  if (!prompt) return;
+  prompt.value = draft;
+  window.orcRestoreAttachments?.(prompt, references);
+  autoGrow(prompt);
+}
 
 // A status message belongs to the run it is about, so a reply that fails
 // after the reader moved on is not painted into another run's composer.
@@ -2199,6 +2427,9 @@ function openChatSwitcher({ focusPicker = false } = {}) {
   session.switcherOpen = true;
   ensureChatConfig();
   syncComposer();
+  syncComposerOverflow();
+  syncFloatingRow();
+  revealOpenedCard(mounted.root, $('chat-switcher'));
   queueMicrotask(() => {
     if (!mounted?.session.switcherOpen) return;
     if (focusPicker) $('chat-model-picker')?.shadowRoot?.querySelector('summary')?.focus({ preventScroll: true });
@@ -2213,6 +2444,8 @@ function closeChatSwitcher({ restoreFocus = false } = {}) {
   session.switcherOpen = false;
   session.switcherError = '';
   syncComposer();
+  syncComposerOverflow();
+  syncFloatingRow();
   if (restoreFocus) {
     const badge = $('chat-effort');
     if (badge && !badge.hidden && !badge.disabled) badge.focus({ preventScroll: true });
@@ -2273,6 +2506,7 @@ async function submitChatSwitcher() {
   const accountChanged = agent === 'claude' && prevHarness === 'claude'
     && Boolean(switchedAccount) && switchedAccount !== prevAccount;
   if (!session.items.has(dividerId)) {
+    session.orderedItems = null;
     session.order.push(dividerId);
     session.items.set(dividerId, {
       id: dividerId,
@@ -2390,7 +2624,7 @@ function syncComposer() {
   // Hidden, the buttons had no width to measure.
   if (showDelivery && !shown) syncDeliveryWidth(delivery);
   send.hidden = mode === 'readonly' || showStop;
-  send.disabled = session.sending || !typed
+  send.disabled = session.sending || window.orcTextareaUploading?.(prompt) || !typed
     || !['idle', 'working', 'answered', 'question'].includes(mode);
   if (stop) stop.hidden = !showStop;
   const message = {
@@ -2417,10 +2651,14 @@ function syncComposer() {
 }
 
 // Plugins add buttons to the composer's action row through
-// extendChatComposer(render). `render` gets {runId, mode, meta, slot, setStatus}
-// when Chat mounts and whenever the run's mode, phase or status changes; it
-// owns its own elements in `slot`, and setStatus(text, tone) puts a lasting
-// line under the prompt ('' clears it). The returned function unregisters.
+// extendChatComposer(render). `render` gets {runId, mode, meta, slot, setStatus,
+// setPlanStart, showAutoMerge} when Chat mounts and whenever the run's mode,
+// phase or status changes; it owns its own elements in `slot`, and
+// setStatus(text, tone) puts a lasting line under the prompt ('' clears it).
+// setPlanStart(true) says this run's plan starts its build by itself.
+// showAutoMerge(enabled) draws that flip's badge at once and returns
+// {id, takeBack}: the badge stays until the conversation brings the flip saved
+// under `id`, or takeBack() removes it. The returned function unregisters.
 const composerExtensions = new Set();
 
 function composerContext(render) {
@@ -2435,6 +2673,22 @@ function composerContext(render) {
       if (text) session.extensionStatus.set(render, { text, tone });
       else session.extensionStatus.delete(render);
       if (chatMounted(runId)) syncComposer();
+    },
+    setPlanStart(automatic) {
+      session.planStarters ||= new Set();
+      if (session.planStarters.has(render) === automatic) return;
+      if (automatic) session.planStarters.add(render);
+      else session.planStarters.delete(render);
+      if (chatMounted(runId)) renderChat();
+    },
+    showAutoMerge(enabled) {
+      const id = randomId();
+      session.pressedAutoMerge ||= new Map();
+      session.pressedAutoMerge.set(id, { id, at: new Date().toISOString(), enabled });
+      if (chatMounted(runId)) renderChat();
+      return { id, takeBack() {
+        if (session.pressedAutoMerge.delete(id) && chatMounted(runId)) renderChat();
+      } };
     },
   };
 }
@@ -2453,8 +2707,11 @@ export function extendChatComposer(render) {
   if (mounted?.root.isConnected) render(composerContext(render));
   return () => {
     composerExtensions.delete(render);
-    for (const session of sessions.values()) session.extensionStatus?.delete(render);
-    if (mounted?.root.isConnected) syncComposer();
+    for (const session of sessions.values()) {
+      session.extensionStatus?.delete(render);
+      session.planStarters?.delete(render);
+    }
+    if (mounted?.root.isConnected) renderChat();
   };
 }
 
@@ -2493,7 +2750,7 @@ export function extendChatBanners(render) {
 async function sendChat() {
   if (!mounted || mounted.session.sending) return;
   if (mounted.view.mode === 'question') return sendAnswer();
-  const { runId, session } = mounted;
+  const { runId, session, skillInvocation } = mounted;
   const prompt = $('chat-prompt');
   const typed = composerText(prompt.value).trim();
   const attachments = window.orcTextareaAttachments?.(prompt) || [];
@@ -2503,27 +2760,18 @@ async function sendChat() {
   cancelDictation(prompt);
   session.sending = true;
   prompt.value = '';
+  window.orcClearAttachments?.(prompt);
   autoGrow(prompt);
   saveDraft(runId, '');
   const sentQuestions = markSentQuestions(runId);
   syncComposer();
-  const text = await session.skillInvocation(draft);
-  await postChat(runId, session, text, displayCommand(session.skillInvocation.mentions(draft)), {
+  const displayText = displayCommand(skillInvocation.mentions(draft));
+  const text = await skillInvocation(draft);
+  await postChat(runId, session, text, displayText, {
     sentQuestions,
     // The typed text comes back unless something new was typed meanwhile,
     // and it survives in the draft even if the reader has moved on.
-    failed(here) {
-      if (!readDraft(runId) && !readDraftAttachments(runId)) saveDraft(runId, typed, attachments);
-      const current = here ? $('chat-prompt') : null;
-      if (current && !current.value.trim()) {
-        current.value = typed;
-        autoGrow(current);
-      }
-    },
-    sent() {
-      window.orcClearAttachments?.($('chat-prompt'));
-      saveComposerDraft(runId, $('chat-prompt'));
-    },
+    failed() { restoreFailedDraft(runId, typed, attachments); },
   });
 }
 
@@ -2536,7 +2784,7 @@ function typeInTerminal(command) {
   postOpenTerminal(mounted.runId, command);
 }
 
-async function postChat(runId, session, text, displayText, { failed, sent, sentQuestions = markSentQuestions(runId) } = {}) {
+async function postChat(runId, session, text, displayText, { failed, sentQuestions = markSentQuestions(runId) } = {}) {
   const entry = { id: ++outboxSeq, text, displayText,
     state: 'sending', at: Date.now(), seen: promptCount(session, text) };
   session.outbox.push(entry);
@@ -2559,13 +2807,12 @@ async function postChat(runId, session, text, displayText, { failed, sent, sentQ
       setStatus(session, `${body.error}. Check the conversation before sending it again.`, 'error', 12000);
     } else {
       releaseSentQuestions(runId, sentQuestions);
-      failed?.(here);
+      failed?.();
       setStatus(session, body.error || 'Message not sent. Try again.', 'error');
     }
     if (here) announce(`Message not sent: ${body.error || 'try again'}`);
   } else {
     settleSentQuestions(runId, sentQuestions);
-    if (here) sent?.();
     // Sending un-settles a settled run on the host; move its sidebar row now.
     refresh({ force: true });
     if (body.state === 'launched') {
@@ -2598,6 +2845,7 @@ async function sendAnswer() {
   cancelDictation(prompt);
   session.sending = true;
   prompt.value = '';
+  window.orcClearAttachments?.(prompt);
   autoGrow(prompt);
   saveDraft(runId, '');
   const sentQuestions = markSentQuestions(runId);
@@ -2613,12 +2861,7 @@ async function sendAnswer() {
   const here = chatMounted(runId);
   if (!response || !response.ok) {
     releaseSentQuestions(runId, sentQuestions);
-    if (!readDraft(runId) && !readDraftAttachments(runId)) saveDraft(runId, typed, attachments);
-    const current = here ? $('chat-prompt') : null;
-    if (current && !current.value.trim()) {
-      current.value = typed;
-      autoGrow(current);
-    }
+    restoreFailedDraft(runId, typed, attachments);
     setStatus(session, body.error || 'Answer not sent. Try again.', 'error');
     if (here) {
       announce(`Answer not sent: ${body.error || 'try again'}`);
@@ -2628,54 +2871,11 @@ async function sendAnswer() {
   }
   settleSentQuestions(runId, sentQuestions);
   if (here) {
-    window.orcClearAttachments?.($('chat-prompt'));
-    saveComposerDraft(runId, $('chat-prompt'));
     announce('Answer sent');
     syncComposer();
     schedulePoll(250);
   }
   refresh({ force: true });
-}
-
-// The run's Deploy after merge: Deploying with its clock, then Deployed or
-// Deploy failed. A failure shows the end of the log, Retry deploy and Dismiss;
-// a dismissed one shrinks to a grey line that keeps Show log and Retry deploy.
-const DEPLOY_TITLES = { queued: 'Waiting to deploy', running: 'Deploying', deployed: 'Deployed', failed: 'Deploy failed' };
-export function deployRowHtml(row, expanded = new Set()) {
-  const deploy = row.deploy;
-  const live = deploy.state === 'queued' || deploy.state === 'running';
-  const logKey = 'deploy-log';
-  const open = expanded.has(logKey) && !!deploy.log;
-  if (deploy.state === 'failed' && deploy.dismissedAt) {
-    const links = [
-      deploy.log && `<button type="button" class="chat-deploy-link chat-toggle" data-toggle="${logKey}" data-focus-key="toggle:${logKey}" aria-expanded="${open}">${open ? 'Hide log' : 'Show log'}</button>`,
-      '<button type="button" class="chat-deploy-link" data-chat-action="deploy-retry" data-focus-key="deploy-retry">Retry deploy</button>',
-    ].filter(Boolean);
-    return `<div class="chat-row chat-row-deploy is-failed is-dismissed">
-    <div class="chat-deploy-head"><span class="chat-deploy-dot" aria-hidden="true"></span><span class="chat-deploy-title">Deploy failed · dismissed</span><span class="chat-deploy-meta">${links.join(' · ')}</span></div>
-    ${open ? `<pre class="chat-deploy-log is-full chat-mono" tabindex="0">${esc(deploy.log)}</pre>` : ''}
-  </div>`;
-  }
-  const took = Date.parse(deploy.finishedAt) - Date.parse(deploy.startedAt);
-  const meta = [];
-  if (deploy.state === 'running' && deploy.startedAt) {
-    meta.push(`<span class="chat-working-time" data-since="${esc(deploy.startedAt)}">${esc(formatElapsed(Date.now() - Date.parse(deploy.startedAt)))}</span>`);
-  }
-  if (deploy.state === 'failed' && Number.isInteger(deploy.exitCode)) meta.push(`exit ${deploy.exitCode}`);
-  if (!live && Number.isFinite(took) && took > 0) meta.push(esc(formatElapsed(took)));
-  const toggle = label => `<button type="button" class="chat-deploy-link chat-toggle" data-toggle="${logKey}" data-focus-key="toggle:${logKey}" aria-expanded="${open}">${open ? 'Hide log' : label}</button>`;
-  if (deploy.state === 'deployed' && deploy.log) meta.push(toggle('Show log'));
-  const where = [deploy.branch && `on ${deploy.branch}`, deploy.commit && `at ${deploy.commit}`].filter(Boolean).join(' ');
-  const covered = deploy.coveredBy
-    ? `<p class="chat-deploy-note">One deploy covered this run and <a href="#${encodeURIComponent(deploy.coveredBy)}">${esc(deploy.coveredByTitle || deploy.coveredBy)}</a>, merged close together.</p>` : '';
-  const failed = deploy.state === 'failed';
-  return `<div class="chat-row chat-row-deploy is-${esc(deploy.state)}"${failed ? ' role="alert"' : live ? ' role="status"' : ''}>
-    <div class="chat-deploy-head"><span class="chat-deploy-dot" aria-hidden="true"></span><span class="chat-deploy-title">${DEPLOY_TITLES[deploy.state] || 'Deploy'}</span>${meta.length ? `<span class="chat-deploy-meta">${meta.join(' · ')}</span>` : ''}</div>
-    ${deploy.command ? `<div class="chat-deploy-cmd chat-mono" translate="no">${esc(deploy.command)}${where ? ` · ${esc(where)}` : ''}</div>` : ''}${covered}
-    ${failed && deploy.tail && !open ? `<pre class="chat-deploy-log chat-mono">${esc(deploy.tail)}</pre>` : ''}
-    ${open ? `<pre class="chat-deploy-log is-full chat-mono" tabindex="0">${esc(deploy.log)}</pre>` : ''}
-    ${failed ? `<div class="chat-deploy-actions"><button type="button" class="chat-action is-primary" data-chat-action="deploy-retry" data-focus-key="deploy-retry">Retry deploy</button>${deploy.log ? toggle('Show full log').replace('chat-deploy-link chat-toggle', 'chat-action chat-toggle') : ''}<button type="button" class="chat-deploy-dismiss" data-chat-action="deploy-dismiss" data-focus-key="deploy-dismiss">Dismiss</button></div>` : ''}
-  </div>`;
 }
 
 // The deploy card's Retry deploy and Dismiss: one POST each, then a poll so
@@ -2747,6 +2947,10 @@ async function unqueue(itemId, recompose = false) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) return setStatus(session, body.error || 'Could not remove that message', 'error');
     session.data.queued = Array.isArray(body.items) ? body.items : [];
+    if (entry?.chatSubmission) {
+      session.outbox = session.outbox.filter(other => other.chatSubmission !== entry.chatSubmission);
+      session.expanded.delete(`answers:${entry.chatSubmission}`);
+    }
     if (recompose && entry && chatMounted(runId)) {
       const prompt = $('chat-prompt');
       prompt.value = prompt.value.trim() ? `${prompt.value.trimEnd()}\n\n${entry.text}` : entry.text;
@@ -2783,8 +2987,11 @@ async function sendNow(itemId) {
   const item = (session.data.queued || []).find(entry => entry.id === itemId);
   if (!item) return;
   const text = item.text || '';
-  const entry = { id: ++outboxSeq, text, state: 'sending', at: Date.now(), seen: promptCount(session, text) };
-  session.outbox.push(entry);
+  const existing = item.chatSubmission && session.outbox.find(entry => entry.chatSubmission === item.chatSubmission);
+  const entry = existing || { id: ++outboxSeq, text, gateAnswers: item.gateAnswers, chatSubmission: item.chatSubmission,
+    at: Date.now(), seen: promptCount(session, text) };
+  entry.state = 'sending';
+  if (!existing) session.outbox.push(entry);
   session.sendingNow = itemId;
   session.follow = true;
   const sentQuestions = markSentQuestions(runId);
@@ -2855,7 +3062,7 @@ function toggleClips(runId, rowId) {
   const playing = clipPlayback(runId);
   if (playing?.paused) { setClipsPaused(false); return; }
   if (playing) { stopClips(); return; }
-  const card = cardClips.get(rowId);
+  const card = mounted.cardClips.get(rowId);
   if (!card?.clips.length) return;
   playClips(runId, card.clips, (id, path) => clipUrl(id, path, card.runFolder.has(path)));
 }
@@ -2867,7 +3074,7 @@ document.addEventListener('orc:side-panel', () => { if (mounted?.root.isConnecte
 
 async function chatAction(action, button) {
   if (!mounted) return;
-  const { runId } = mounted;
+  const { runId, run, session } = mounted;
   if (action === 'back') {
     restoreFailedLaunchPrompt(runId);
     location.hash = 'new';
@@ -2888,9 +3095,12 @@ async function chatAction(action, button) {
   if (action === 'assets') { revealDiffPanel('assets'); return; }
   if (action === 'retry') { retryTurn(runId, Number(button.dataset.turn), button); return; }
   if (action === 'stop-background') { stopChat(null, button); return; }
+  if (action === 'deploy-log') { openDeployLog(runId, mounted.session.data.deploy); return; }
   if (action in DEPLOY_ACTIONS) { deployAction(runId, action, button); return; }
   if (action === 'switch-model') { openChatSwitcher({ focusPicker: true }); return; }
   if (action === 'undo-setting') { undoChatSetting(runId, button); return; }
+  // The link itself opens the project's page; this rings its Live dev server.
+  if (action === 'edit-dev-server') { requestDevServerSetup(button.dataset.project); return; }
   if (action === 'show-calendar') {
     const meeting = flashcardMeeting(mounted.run.meta);
     if (!meeting) return;
@@ -2917,7 +3127,6 @@ async function chatAction(action, button) {
     return;
   }
   if (action === 'push') {
-    const { session, run } = mounted;
     if (session.sending) return;
     const meta = run.meta || {};
     const { label, postReplies } = prPushButton(meta);
@@ -2947,7 +3156,6 @@ async function chatAction(action, button) {
   }
   if (action === 'post-replies') {
     // A pushed round whose replies did not all go out: the round card's retry.
-    const { session, run } = mounted;
     if (session.sending) return;
     trackUsage('chat.post-replies', 'Chat › Push comments');
     const meta = run.meta || {};
@@ -2986,10 +3194,10 @@ async function chatAction(action, button) {
     try {
       const response = await fetch(`/runs/${encodeURIComponent(runId)}/start-now`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) setStatus(mounted.session, body.error || 'Could not start the run', 'error');
+      if (!response.ok) setStatus(session, body.error || 'Could not start the run', 'error');
       else { announce('Run started'); refresh({ force: true }).catch(() => {}); schedulePoll(0); }
     } catch {
-      if (mounted) setStatus(mounted.session, 'Could not start the run', 'error');
+      setStatus(session, 'Could not start the run', 'error');
     } finally {
       button.disabled = false;
     }
@@ -3002,11 +3210,11 @@ async function chatAction(action, button) {
   try {
     const response = await fetch(`/runs/${encodeURIComponent(runId)}/${endpoint}`, { method: 'POST' });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) setStatus(mounted.session, body.error || failure, 'error');
+    if (!response.ok) setStatus(session, body.error || failure, 'error');
     else if (resuming) { announce('Queue resumed'); schedulePoll(0); }
     else announce('Terminal opened');
   } catch (error) {
-    if (mounted) setStatus(mounted.session, failure, 'error');
+    setStatus(session, failure, 'error');
   } finally {
     button.disabled = false;
   }
@@ -3028,14 +3236,15 @@ function wireChat(root, session) {
   prompt.value = readDraft(runId);
   window.orcRestoreAttachments?.(prompt, readDraftAttachments(runId));
   prompt.setAttribute('aria-describedby', 'chat-status');
-  session.skillInvocation = bindChatSkills(prompt, runId, { onCatalog: () => {
+  const skillInvocation = mounted.skillInvocation = bindChatSkills(prompt, runId, { onCatalog: () => {
     skillsVersion += 1;
-    if (mounted?.runId === runId) renderChat();
+    if (chatMounted(runId)) renderChat();
   } });
-  bindSkillRefs(root, name => session.skillInvocation.skill(name) ?? (session.skillInvocation.preload(), null));
-  bindChatLinkMenu(root, () => mounted.run, revealInFinder);
+  bindSkillRefs(root, name => skillInvocation.skill(name) ?? (skillInvocation.preload(), null));
+  const run = mounted.run;
+  const disposeLinkMenu = bindChatLinkMenu(root, () => chatMounted(runId) ? mounted.run : run, revealInFinder);
   bindPromptComposer(prompt);
-  bindDictation(prompt, { owner: () => runId });
+  const disposeDictation = bindDictation(prompt, { owner: () => runId });
   // bindDictation prepends the mic; plugin buttons go in front of it.
   const pluginActions = root.querySelector('.chat-plugin-actions');
   pluginActions.parentElement.prepend(pluginActions);
@@ -3128,12 +3337,15 @@ function wireChat(root, session) {
   // Expanding a row or an image loading changes the height without a render.
   // Composer and panel resizing can shrink the viewport without changing rows.
   const resizeObserver = new ResizeObserver(() => {
-    if (!root.isConnected) { resizeObserver.disconnect(); return; }
+    if (!root.isConnected) return;
+    syncComposerOverflow();
     syncGutter();
     syncFloatingRow();
     if (session.follow) scroller.scrollTop = scroller.scrollHeight;
   });
+  resizeObserver.observe(root);
   resizeObserver.observe(scroller);
+  resizeObserver.observe(root.querySelector('.chat-composer'));
   resizeObserver.observe(root.querySelector('.chat-steps-row'));
   resizeObserver.observe(root.querySelector('.chat-rows'));
   resizeObserver.observe($('pending-q'));
@@ -3232,6 +3444,17 @@ function wireChat(root, session) {
     const action = event.target.closest('[data-chat-action]');
     if (action) chatAction(action.dataset.chatAction, action);
   });
+  const removalObserver = new MutationObserver(() => {
+    if (!root.isConnected) unmountChat();
+  });
+  removalObserver.observe(document.body, { childList: true, subtree: true });
+  return () => {
+    removalObserver.disconnect();
+    resizeObserver.disconnect();
+    skillInvocation.dispose();
+    disposeLinkMenu();
+    disposeDictation?.();
+  };
 }
 
 // The Chat tab's own key, re-exported for the modules that only import here.

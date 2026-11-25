@@ -106,8 +106,28 @@
 .control-rescue textarea { resize: vertical; }
 .control-rescue orc-accordion::part(panel) { display: grid; gap: 10px; padding-top: 10px; }
 .control-rescue button { justify-self: start; min-height: 44px; }
-[data-control-tasks] .control-model-list li { align-items: start; }
-[data-control-tasks] .control-model-list button { align-self: start; }
+/* A delegated task is a stacked card that fits the narrow third column: what
+   it is, then its state and who runs it, then whatever came back. */
+.control-task-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.control-task {
+  display: grid; justify-items: start; gap: 3px; min-width: 0; padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--cp-edge) 75%, transparent); border-radius: var(--orc-radius-sm, 8px);
+  background: var(--cp-well); font-size: 12px;
+}
+.control-task > * { max-width: 100%; }
+.control-task-title {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  color: var(--heading); font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: break-word;
+}
+a.control-task-title { text-decoration: none; }
+a.control-task-title:hover { text-decoration: underline; }
+.control-task-meta { margin: 0; color: var(--muted-strong); line-height: 1.45; }
+/* Whole parts wrap between the dots, so a model never breaks in the middle. */
+.control-task-meta span span, .control-task-meta > span:first-child { white-space: nowrap; }
+.control-task-meta::first-letter { text-transform: uppercase; }
+.control-task-result { margin: 0; overflow-wrap: anywhere; color: var(--muted-strong); }
+.control-task-result a { color: var(--heading); }
+.control-task button { margin-top: 5px; }
 /* A rail key keeps the inset ring it has in Settings: an outer one would
    reach its neighbour and the rail's clipped edge. */
 .control-center button:focus-visible, .control-center a:not(.cp-key):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -150,6 +170,13 @@
 }
 .control-copy-row dd { grid-column: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; word-break: normal; color: var(--heading); font: 12px/1.5 "JetBrains Mono", monospace; }
 .control-copy-row orc-copy-button { min-width: 58px; grid-row: 1 / span 2; grid-column: 2; }
+/* The folder and the last part share a line when both fit; otherwise the
+   last part takes the next one. The folder is one line that loses its left
+   end: right-to-left gives the ellipsis that side, and the isolate keeps the
+   path's own order and its slashes where they belong. */
+.control-path { display: flex; flex-wrap: wrap; min-width: 0; }
+.control-path-dir, .control-path-name { flex: 0 1 auto; min-width: 0; }
+.control-path-dir { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; color: var(--muted-strong); }
 .control-model-groups { display: grid; gap: 12px; }
 .control-model-group h6 { margin: 0 0 6px; color: var(--muted-strong); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
 .control-model-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
@@ -158,12 +185,14 @@
 .control-model-list span { color: var(--muted-strong); }
 .control-actions, .control-danger { display: flex; align-items: center; flex-wrap: wrap; gap: 14px 8px; }
 .control-script-icon { flex: none; margin-inline-end: 6px; vertical-align: -2px; }
-.control-status-options {
-  display: flex; flex-wrap: wrap; gap: 8px; padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--cp-edge) 75%, transparent); border-radius: var(--orc-radius-sm, 8px); background: var(--cp-well);
-}
+.control-status-now { display: grid; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.control-status-now-label { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--control-status-color, var(--heading)); font-size: 14px; font-weight: 600; }
+.control-status-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.control-status-now .control-help { padding-inline-start: 16px; }
+.control-status-manual { margin: 0; color: var(--muted-strong); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.control-status-options { display: flex; flex-wrap: wrap; gap: 4px 6px; }
 .control-status-options label {
-  flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 4px 12px;
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 4px 10px;
   border: 1px solid transparent; border-radius: 6px; color: var(--muted-strong); font-size: 12.5px; font-weight: 500;
   cursor: var(--orc-cursor-pointer, pointer); transition: color .15s ease, background-color .15s ease, border-color .15s ease;
 }

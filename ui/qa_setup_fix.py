@@ -17,6 +17,74 @@ import run_terminal
 TAIL_LINES = 14
 TAIL_BYTES = 16 * 1024
 
+# The prefix a package manager puts on each line of its error output, so the
+# cause reads without it.
+TOOL_PREFIX = re.compile(r"^\s*(?:npm (?:error|ERR!)|pnpm:?|yarn error|error:?|ERROR:?|fatal:)\s*", re.I)
+# Lines that say an error happened without saying why.
+NOISE = re.compile(r"^(?:code \S+|errno \S+|syscall \S+|path \S+|A complete log of this run can be found in"
+                   r"|\$ )", re.I)
+ERROR_MARK = re.compile(r"^\s*(?:npm (?:error|ERR!)|error\b|ERR_|fatal\b|\w*Error\b)", re.I)
+TOOL_LOG = re.compile(r"A complete log of this run can be found in:?\s+(\S+)")
+
+# Failures any project can hit, which Orc fixes without a plugin. Same shape
+# as an app plugin's `qaSetupFixes`, matched after them.
+BUILTIN_FIXES = [{
+    "plugin": None, "id": "npm-lock-out-of-sync",
+    "match": r"`npm ci` can only install packages when your package\.json and",
+    "reason": "npm ci: package-lock.json is out of sync with package.json",
+    "explain": "npm install rebuilds the lock file and installs; Orc then starts the app. "
+               "It may change package-lock.json in the worktree, which stays yours to keep or drop.",
+    "command": "npm install",
+}]
+LOCK_MISMATCH = re.compile(r"Invalid: lock file's (\S+)@(\S+) does not satisfy \S+@(\S+)")
+
+
+def failure_lines(text, count=TAIL_LINES):
+    """The lines of a failed command's output that say why it failed: blank
+    lines, bare `npm error` prefixes and npm's usage block dropped, then the
+    last `count`. npm ci prints its whole usage after a lock-file mismatch,
+    which would otherwise push the cause out of view."""
+    lines = []
+    usage = False
+    for line in text.splitlines():
+        line = line.rstrip()[:400]
+        bare = TOOL_PREFIX.sub("", line, count=1).strip()
+        if not bare:
+            continue
+        if bare == "Usage:" and lines:
+            usage = True
+            lines.pop()  # the command's one-line description above it
+            continue
+        if usage:
+            usage = not bare.startswith('Run "npm help')
+            continue
+        lines.append(line)
+    return lines[-count:]
+
+
+def failure_headline(lines):
+    """The one line that says why a command failed: the first error line that
+    says more than a code, else the last line that does. Never npm's closing
+    'A complete log of this run can be found in…'."""
+    said = [TOOL_PREFIX.sub("", line, count=1).strip() for line in lines]
+    useful = [(line, bare) for line, bare in zip(lines, said) if bare and not NOISE.match(bare)]
+    if not useful:
+        return None
+    marked = [bare for line, bare in useful if ERROR_MARK.match(line)]
+    headline = (marked or [useful[-1][1]])[0]
+    # The first sentence, when the line goes on to say what to do about it.
+    first = re.match(r"(.{20,}?[.!])\s+[A-Z]", headline)
+    return (first.group(1) if first else headline)[:200]
+
+
+def tool_log(lines):
+    """The full log a tool such as npm wrote elsewhere, when its output names one."""
+    for line in reversed(lines or []):
+        found = TOOL_LOG.search(line)
+        if found:
+            return found.group(1)
+    return None
+
 
 def log_tail(path, count=TAIL_LINES):
     """The last `count` non-blank lines of a log, right-stripped but with their
@@ -49,8 +117,18 @@ def match_fix(lines, fixes):
             first = text.count("\n", 0, found.start())
             last = text.count("\n", 0, max(found.start(), found.end() - 1))
             return {key: fix[key] for key in ("plugin", "id", "reason", "explain", "command") if key in fix} \
-                | {"lines": [first, last]}
+                | {"lines": [first, last], "explain": _explain(fix, text)}
     return None
+
+
+def _explain(fix, text):
+    """A fix's explanation, with the versions an npm lock-file mismatch names."""
+    found = LOCK_MISMATCH.search(text) if fix.get("id") == "npm-lock-out-of-sync" else None
+    if not found:
+        return fix.get("explain")
+    name, locked, wanted = found.groups()
+    return "The worktree's lock file asks for %s %s, but package.json needs %s. %s" % (
+        name, locked, wanted, fix["explain"])
 
 
 class FixRun:
@@ -73,11 +151,16 @@ _RUNS = {}
 _LOCK = threading.Lock()
 
 
+TERMINAL = {"id": "terminal", "command": "Terminal"}
+
+
 def start(run_id, fix, cwd, on_success, shell_factory=None):
     """Runs `fix["command"]` for `run_id` in a fresh PTY, replacing any
     earlier fix run. `on_success()` runs after a clean exit and returns an
-    error text or None."""
-    argv = [os.environ.get("SHELL") or "/bin/sh", "-l", "-c", fix["command"]]
+    error text or None. The `TERMINAL` fix is a login shell of its own, for
+    sorting out by hand what no fix knows."""
+    login = os.environ.get("SHELL") or "/bin/sh"
+    argv = [login, "-l"] if fix is TERMINAL else [login, "-l", "-c", fix["command"]]
     shell = (shell_factory or run_terminal.Shell)(cwd, None, argv)
     run = FixRun(fix, shell)
     with _LOCK:

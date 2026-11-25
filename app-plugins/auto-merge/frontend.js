@@ -3,15 +3,10 @@
 // the moment it reaches its Ship stop; the server's watch loop does that, so
 // the page can close.
 import { announce } from '/js/core.js';
-import { extendChatComposer } from '/js/chat.js';
+import { SHIP_PATHS, extendChatComposer } from '/js/chat.js';
 import { defineLaunchIconToggle } from '/js/launch-icon-toggle.js';
 import { shortcutMatches } from '/js/shortcuts.js';
 
-const SHIP_PATHS = [
-  '<path d="M2 12h14l6-2-2.5 5.5A3 3 0 0 1 16.8 17H6.2a3 3 0 0 1-2.8-1.9L2 12Z"/>',
-  '<path d="M5 12V8h8l3 4M8 8V4h3v4"/>',
-  '<path d="M2 21c2.5 0 2.5-1.5 5-1.5s2.5 1.5 5 1.5 2.5-1.5 5-1.5 2.5 1.5 5 1.5"/>',
-].join('');
 const SHIP_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SHIP_PATHS}</svg>`;
 
 defineLaunchIconToggle('orc-auto-merge-toggle', {
@@ -90,6 +85,8 @@ export function activate({ signal }) {
     if (!button || !latest) return;
     button.hidden = latest.mode === 'readonly' || !view || view.available === false;
     const on = !!view?.enabled;
+    // Chat keeps the last answer until the server's arrives.
+    if (view) latest.setPlanStart(on);
     button.classList.toggle('is-active', on);
     button.control?.setAttribute('aria-pressed', String(on));
     const error = view?.error && !latest.meta?.mergeQueued && view.error !== 'run is already queued'
@@ -116,24 +113,32 @@ export function activate({ signal }) {
     saving = true;
     view = { ...view, enabled, error: null };
     paint();
+    const badge = context.showAutoMerge(enabled);
     let error = null, body = {};
     try {
       const response = await fetch(stateUrl(context.runId), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }), signal,
+        body: JSON.stringify({ enabled, changeId: badge.id }), signal,
       });
       body = await response.json().catch(() => ({}));
       if (!response.ok) error = body.error || 'Could not change Auto merge';
     } catch (_) {
-      if (signal.aborted) return;
+      if (signal.aborted) return badge.takeBack();
       error = 'Could not reach Orc';
     }
     saving = false;
+    // Another window may already have set it: nothing changed, so no badge.
+    if (error || body.change === null) badge.takeBack();
     if (latest?.runId !== context.runId) return;
     view = error ? before : body;
     paint();
     if (error) context.setStatus(error, 'error');
-    else announce(view.enabled ? `Auto merge on. When the run is done, Orc ${ACTIONS[view.action] || 'ships it'}.` : 'Auto merge off.');
+    else if (!view.enabled) announce('Auto merge off.');
+    else if (context.meta?.route === 'planning-session') {
+      announce(`Auto merge on. Once the plan is ready, Orc starts the build and ${ACTIONS[view.action] || 'ships it'}.`);
+    } else {
+      announce(`Auto merge on. When the run is done, Orc ${ACTIONS[view.action] || 'ships it'}.`);
+    }
   };
 
   const render = context => {

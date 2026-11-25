@@ -176,11 +176,6 @@
   gap: 4px; height: 15px; padding: 0 6px; font-size: 10.5px; line-height: 15px;
 }
 :root[data-grand-theft-orc] .run .unread-tag .dot { width: 5px; height: 5px; }
-:root[data-grand-theft-orc] .run:has(.evals-candidate-tag) { padding-bottom: 26px; }
-:root[data-grand-theft-orc] .run .evals-candidate-tag {
-  position: absolute; inset: auto 10px 7px;
-  color: var(--muted-strong); font-weight: 500; line-height: 15px;
-}
 :root[data-grand-theft-orc] .run.fork-child .name { font-size: 13px; line-height: 17.5px; font-weight: 560; }
 /* The tree lines start above the row's edge and the gap before it, so the trunk runs unbroken between the cards. */
 :root[data-grand-theft-orc] .run.fork-child::before { top: -3px; bottom: auto; height: 20px; border-width: 0 0 1px 1px; }

@@ -22,7 +22,8 @@
 .chat #pending-q .pq-answer .pq-label { font-size: 11px; margin-bottom: 4px; }
 .chat {
   position: relative; flex: 1; min-width: 0; min-height: 0;
-  display: flex; flex-direction: column; background: var(--bg);
+  display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior: contain; background: var(--bg);
 }
 .chat {
   /* The lanes' left padding holds the message times in the gutter. While the
@@ -40,13 +41,13 @@
 }
 .chat > :is(.chat-body, .chat-reviews, .chat-composer) { box-sizing: border-box; width: var(--chat-pane); margin-inline: auto; }
 .chat-lane { width: 100%; max-width: 832px; margin: 0 auto; box-sizing: border-box; }
-.chat-body { position: relative; flex: 1; min-height: 0; display: flex; }
+.chat-body { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
 .chat-scroll {
   flex: 1; min-width: 0; overflow-x: hidden; overflow-y: auto;
   overscroll-behavior: contain; padding: 20px 22px 12px var(--chat-left);
 }
 @supports selector(::-webkit-scrollbar) {
-  #content .chat-scroll { scrollbar-width: auto; scrollbar-color: auto; }
+  #content > .chat, #content .chat-scroll { scrollbar-width: auto; scrollbar-color: auto; }
 }
 .chat-rows { display: flex; flex-direction: column; }
 .chat-row { min-width: 0; }
@@ -66,16 +67,24 @@
 
 /* ---------- messages ---------- */
 .chat-row-user { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.chat-row-merge { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+:is(.chat-row-merge, .chat-row-badge) { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+/* Inside a turn's log a badge stands off the lines around it, as a reply does. */
+:is(.chat-row-work, .chat-row-notice) + .chat-row-badge { margin-top: 8px; }
+/* A button (Orc's own step, in purple) opens what it names; a plain badge is a
+   record, such as Auto merge turned on or off. */
 .chat-system-badge {
+  --badge-color: var(--purple-text);
   display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--purple-text) 28%, var(--border));
-  border-radius: 6px; background: color-mix(in srgb, var(--purple-text) 9%, var(--panel));
-  color: var(--purple-text); font-size: 11px; font-weight: 500; line-height: 16px;
-  white-space: nowrap; font-family: inherit; cursor: var(--orc-cursor-pointer, pointer);
+  border: 1px solid color-mix(in srgb, var(--badge-color) 28%, var(--border));
+  border-radius: 6px; background: color-mix(in srgb, var(--badge-color) 9%, var(--panel));
+  color: var(--badge-color); font-size: 11px; font-weight: 500; line-height: 16px;
+  white-space: nowrap; font-family: inherit;
 }
-.chat-system-badge:hover { background: color-mix(in srgb, var(--purple-text) 16%, var(--panel)); }
-.chat-system-badge:focus-visible { outline: 2px solid var(--purple-text); outline-offset: 3px; }
+.chat-system-badge.is-on { --badge-color: var(--green-text); }
+.chat-system-badge.is-off { --badge-color: var(--red-text); }
+button.chat-system-badge { cursor: var(--orc-cursor-pointer, pointer); }
+button.chat-system-badge:hover { background: color-mix(in srgb, var(--badge-color) 16%, var(--panel)); }
+button.chat-system-badge:focus-visible { outline: 2px solid var(--badge-color); outline-offset: 3px; }
 .chat-system-badge svg { width: 12px; height: 12px; flex: none; }
 /* Orc handing a batch of notes to the session (notesHandoffHtml in
    ui/js/chat.js): its badge opens to the notes and Orc's answers. */
@@ -522,15 +531,23 @@ a.chat-pr-update:hover { background: color-mix(in srgb, var(--accent) 14%, trans
 .chat-row-setting-change { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
 .chat-row-setting-change > .chat-time { flex: none; font-size: 11px; color: var(--muted-strong); }
 .chat-setting-change {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px;
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center; column-gap: 10px; row-gap: 2px;
   padding: 7px 8px 7px 12px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--panel);
 }
+.chat-setting-change:has(> .chat-setting-detail) { padding-bottom: 9px; }
 .chat-setting-change-mark { flex: none; display: inline-flex; color: var(--green, var(--accent)); }
 .chat-setting-change-mark svg { width: 16px; height: 16px; }
 .chat-setting-change-text { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
-.chat-setting-undo { flex: none; }
-.chat-setting-undone { flex: none; font-size: 12px; color: var(--muted-strong); padding: 0 8px; }
+.chat-setting-actions { display: flex; align-items: center; gap: 6px; }
+.chat-setting-edit { text-decoration: none; display: inline-flex; align-items: center; }
+.chat-setting-undone { font-size: 12px; color: var(--muted-strong); padding: 0 8px; }
+.chat-setting-detail {
+  grid-column: 2 / 4; display: flex; flex-wrap: wrap; column-gap: 16px; row-gap: 2px;
+  font-size: 12px; color: var(--muted-strong); min-width: 0;
+}
+.chat-setting-detail code { color: var(--text); overflow-wrap: anywhere; }
 .chat-row-notice { display: flex; align-items: center; gap: 6px; }
 .chat-row-notice > .chat-work-line { flex: 1; min-width: 0; }
 .chat-row-notice > .chat-time { flex: none; font-size: 11px; color: var(--muted-strong); }
@@ -588,8 +605,8 @@ a.chat-pr-update:hover { background: color-mix(in srgb, var(--accent) 14%, trans
   animation: chat-pulse 1.6s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) { .chat-row-deploy.is-running .chat-deploy-dot { animation: none; } }
-.chat-row-deploy.is-deployed .chat-deploy-dot { background: var(--green); }
-.chat-row-deploy.is-failed .chat-deploy-dot { background: var(--red); }
+:is(.chat-row-deploy, #deploy-log-meta).is-deployed .chat-deploy-dot { background: var(--green); }
+:is(.chat-row-deploy, #deploy-log-meta).is-failed .chat-deploy-dot { background: var(--red); }
 .chat-deploy-title { flex: 1; min-width: 0; font-weight: 600; color: var(--heading); }
 .chat-deploy-meta { flex: none; font-size: 12px; color: var(--muted-strong); }
 .chat-deploy-link {
@@ -604,7 +621,6 @@ a.chat-pr-update:hover { background: color-mix(in srgb, var(--accent) 14%, trans
   background: var(--bg); font-size: 12px; line-height: 1.5; color: var(--text);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.chat-deploy-log.is-full { max-height: 320px; overflow: auto; }
 .chat-deploy-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 0 18px; }
 /* Dismiss is the quiet way out: plain text at the far end of the actions. */
 .chat-deploy-dismiss {
@@ -613,9 +629,34 @@ a.chat-pr-update:hover { background: color-mix(in srgb, var(--accent) 14%, trans
 }
 .chat-deploy-dismiss:hover { color: var(--heading); }
 .chat-deploy-dismiss:disabled { opacity: .6; cursor: default; }
+/* Show log: the log in a window over the app, scrolled to its end. The body
+   holds still so only the log itself scrolls. */
+#deploy-log-dialog { --orc-dialog-max-width: 860px; }
+#deploy-log-dialog::part(dialog) { height: min(76vh, 720px); }
+#deploy-log-dialog::part(body) { display: flex; min-height: 0; overflow: hidden; }
+#deploy-log-dialog > #deploy-log-meta {
+  display: flex; align-items: baseline; gap: 10px; margin: 0; padding: 12px 16px 4px;
+  font-family: var(--orc-font-mono); font-size: 12px; color: var(--muted-strong); overflow-wrap: anywhere;
+}
+#deploy-log-text {
+  flex: 1; min-width: 0; margin: 0; padding: 10px 12px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);
+  font: 12.5px/1.6 var(--orc-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
+#deploy-log-text:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+#deploy-log-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* Copy log is the quiet one beside Close. */
+#deploy-log-copy { --orc-control-border: transparent; --orc-button-text: var(--muted-strong); }
+#deploy-log-copy::part(button):not(:hover) { background: transparent; }
+@media (max-width: 640px) {
+  #deploy-log-dialog { --orc-dialog-max-width: 100vw; --orc-dialog-max-height: 100dvh; --orc-dialog-margin: 0; }
+  #deploy-log-dialog::part(dialog) { width: 100vw; height: 100dvh; border-width: 0; border-radius: 0; }
+  #deploy-log-dialog::part(header) { padding-top: calc(16px + var(--orc-safe-top, env(safe-area-inset-top))); }
+  #deploy-log-dialog::part(footer) { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+}
 /* Dismissed: one grey line that keeps its log and Retry deploy. */
 .chat-row-deploy.is-dismissed { padding: 10px 14px; }
-.chat-row-deploy.is-dismissed .chat-deploy-dot { background: var(--muted); }
+:is(.chat-row-deploy, #deploy-log-meta).is-dismissed .chat-deploy-dot { background: var(--muted); }
 .chat-row-deploy.is-dismissed .chat-deploy-title { font-weight: 400; color: var(--text); }
 .chat-row-deploy.is-dismissed .chat-deploy-meta { color: var(--muted); }
 .chat-action.is-primary { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 600; }
@@ -852,19 +893,36 @@ a.chat-pr-update:hover { background: color-mix(in srgb, var(--accent) 14%, trans
 .chat-catch-up orc-callout p { margin: 0 0 6px; font-size: 13px; line-height: 1.5; }
 .chat-catch-up-head { display: flex; align-items: baseline; gap: 8px; }
 .chat-catch-up-offer orc-button { flex: none; }
-.chat-plan-ready, .chat-done, .chat-catch-up-offer {
+.chat-plan-bar, .chat-done, .chat-catch-up-offer {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 8px;
   padding: 8px 8px 8px 14px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--bg); color: var(--text); font-size: 13px; font-weight: 600; line-height: 1.4;
 }
-.chat-plan-ready[hidden], .chat-done[hidden] { display: none; }
+.chat-plan-bar[hidden], .chat-done[hidden] { display: none; }
 .chat-flashcard { order: 3; margin: 0 0 8px auto; display: flex; }
 .chat-flashcard[hidden] { display: none; }
 .chat-flashcard-meeting { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 6px 0 0; font-size: 0.93em; }
 .chat-flashcard-meeting dt { color: var(--muted-strong); }
 .chat-flashcard-meeting dd { margin: 0; overflow-wrap: anywhere; }
 .chat-flashcard-invite { margin: 8px 0 0; padding-left: 10px; border-left: 2px solid var(--border); color: var(--muted-strong); font-size: 0.93em; white-space: pre-wrap; }
-.chat-plan-ready orc-button, .chat-done orc-button { flex: none; }
+.chat-plan-bar orc-button, .chat-done orc-button { flex: none; }
+/* Both states are one height, so the bar does not jump when the plan is ready.
+   On a phone the planning note takes two lines inside it. */
+.chat-plan-bar { min-height: 48px; }
+.chat-plan-bar.is-planning {
+  justify-content: flex-start; gap: 10px; padding: 4px 14px;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.chat-plan-bar .status-spinner { width: 12px; height: 12px; }
+.chat-plan-text { display: flex; align-items: center; gap: 10px; min-width: 0; margin: 0; }
+.chat-plan-say { flex: none; }
+.chat-plan-note { color: var(--muted-strong); font-weight: 400; }
+.chat-plan-note:empty { display: none; }
+.chat-done-text { min-width: 0; margin: 0; }
+.chat-done-idle { color: var(--muted-strong); font-weight: 400; }
+.chat-done-idle[hidden], .chat-done-catch-up[hidden] { display: none; }
+.chat-done-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
 .chat-ship-missing {
   display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 0 8px;
@@ -974,12 +1032,19 @@ a.chat-pr-update:hover { background: color-mix(in srgb, var(--accent) 14%, trans
    the timeline, so messages show between the card and the buttons. chat.js
    sets --chat-float to the row's height, which the timeline pads its end by. */
 .chat-composer > .chat-lane { position: relative; }
-.chat:not(:has(> .chat-reviews:not([hidden]))) .chat-composer > .chat-lane:not(:has(> .chat-plan-ready:not([hidden]))) .chat-steps-row:has(> .chat-delivery:not([hidden])):not(:has(> :is(.chat-checks, .chat-steps):not([hidden], [data-folded]))) {
+.chat:not([data-composer-overflow]):not(:has(> .chat-reviews:not([hidden]))) .chat-composer > .chat-lane:not(:has(> .chat-plan-bar:not([hidden]))) .chat-steps-row:has(> .chat-delivery:not([hidden])):not(:has(> :is(.chat-checks, .chat-steps):not([hidden], [data-folded]))) {
   position: absolute; left: 0; right: 0; bottom: 100%; z-index: 1; pointer-events: none;
 }
 .chat-steps-row > * { pointer-events: auto; }
 .chat-scroll { padding-bottom: calc(12px + var(--chat-float, 0px)); }
 .chat-jump { bottom: calc(10px + var(--chat-float, 0px)); }
+/* When open cards and the reply box exceed the space above a docked terminal,
+   .chat scrolls as one container: cards expand naturally without nested
+   scrollbars, and .chat-lane adds 12px top room (4px + 12px = 16px) without
+   changing .chat-composer's own padding. */
+.chat[data-composer-overflow] .chat-composer > .chat-lane { padding-top: 12px; }
+.chat[data-composer-overflow] .chat-card:not(.chat-card-ghost) { max-height: none; }
+.chat[data-composer-overflow] .chat-card:not(.chat-card-ghost) .chat-card-list { overflow-y: visible; }
 /* --chat-card-tone colours a card's edge, head and dot while it has something to say. */
 .chat-card {
   --chat-card-tone: var(--orange);
@@ -1035,7 +1100,10 @@ a.chat-pr-update:hover { background: color-mix(in srgb, var(--accent) 14%, trans
 .chat-card[data-folded] h2 { overflow: hidden; margin-block: -.3em; padding-block: .3em; font-size: 13px; text-overflow: ellipsis; }
 .chat-card[data-folded] .chat-card-dot { width: 8px; height: 8px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--chat-card-tone) 22%, transparent); }
 .chat-card-ghost { position: absolute; z-index: 5; box-sizing: border-box; max-height: none; pointer-events: none; }
-.chat-card-ghost .chat-card-head { flex: none; }
+/* The copy's heading keeps to one line as the folded row's does, so only its
+   size and place change on the way. */
+.chat-card-ghost .chat-card-head { flex: none; white-space: nowrap; }
+.chat-card-ghost h2 { overflow: hidden; margin-block: -.3em; padding-block: .3em; text-overflow: ellipsis; }
 .chat-card-ghost .chat-card-list { box-sizing: border-box; overflow: hidden; }
 .chat-step-start { display: block; margin: 8px 0 0 28px; }
 /* The runs a follow-up started stand where its Start run was. */

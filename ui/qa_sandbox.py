@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import errno
 import glob
 import json
 import os
@@ -21,6 +22,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -335,13 +337,20 @@ def cleanup_paths(paths: list[str] | tuple[str, ...] | None) -> None:
     for path in paths or ():
         if not path:
             continue
-        try:
-            if os.path.isdir(path) and not os.path.islink(path):
-                shutil.rmtree(path, ignore_errors=True)
-            else:
-                os.unlink(path)
-        except OSError:
-            pass
+        for delay in (0, .02, .08, .2):
+            if delay:
+                time.sleep(delay)
+            try:
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path)
+                else:
+                    os.unlink(path)
+                break
+            except OSError as error:
+                # A sandbox helper can finish writing while its tree is
+                # being removed. Retry only a transient directory race.
+                if error.errno not in (errno.ENOTEMPTY, errno.EBUSY):
+                    break
 
 
 def _close_entry(entry: tuple[run_terminal.Shell, list[str]]) -> None:
@@ -352,7 +361,7 @@ def _close_entry(entry: tuple[run_terminal.Shell, list[str]]) -> None:
         cleanup_paths(paths)
 
 
-def _start_terminal(cwd: str, urls: dict[str, str] | None) -> tuple[run_terminal.Shell, list[str]]:
+def _start_terminal(cwd: str, urls: dict[str, str] | None, *, on_exit=None) -> tuple[run_terminal.Shell, list[str]]:
     if not cwd or not os.path.isdir(cwd):
         raise SandboxError("This run's checkout is not on this computer.")
     node = find_node()
@@ -363,7 +372,7 @@ def _start_terminal(cwd: str, urls: dict[str, str] | None) -> tuple[run_terminal
         raise SandboxError("QA sandbox runtime is unavailable.")
     argv = [node, bundle, "--config", cfg_path, "--shell"]
     try:
-        return run_terminal.Shell(cwd, argv=argv, environ=env), paths
+        return run_terminal.Shell(cwd, argv=argv, environ=env, on_exit=on_exit), paths
     except BaseException:
         cleanup_paths(paths)
         raise
@@ -381,7 +390,8 @@ def terminal_tab(run_id: str, tab_id: str, cwd: str, urls: dict[str, str] | None
         yield entry[0]
     finally:
         with _shells_lock:
-            if _tab_sessions.pop(key, None) is not None:
+            if _tab_sessions.get(key) is entry:
+                del _tab_sessions[key]
                 _close_entry(entry)
 
 
@@ -403,7 +413,15 @@ def get_terminal_shell(
                 return shell
             del _qa_shells[key]
             _close_entry(existing)
-        entry = _start_terminal(cwd, urls)
+        def forget(exited):
+            with _shells_lock:
+                entry = _qa_shells.get(key)
+                if entry is None or entry[0] is not exited:
+                    return
+                del _qa_shells[key]
+            cleanup_paths(entry[1])
+
+        entry = _start_terminal(cwd, urls, on_exit=forget)
         _qa_shells[key] = entry
         return entry[0]
 

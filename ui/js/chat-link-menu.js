@@ -20,9 +20,11 @@ function pathOnDisk(run, path) {
 }
 
 function closeLinkMenu({ refocus = false } = {}) {
-  if (linkMenu.hidden) return;
+  const target = linkMenuTarget;
+  if (!target) return;
+  linkMenuTarget = null;
   linkMenu.hidden = true;
-  if (refocus) linkMenuTarget.link.focus();
+  if (refocus) target?.link.focus();
 }
 
 function renderLinkMenuRows(rows) {
@@ -65,7 +67,8 @@ function fileLinkRows(link, run, revealInFinder) {
 linkMenu.addEventListener('click', event => {
   const index = event.target.closest('[data-row]')?.dataset.row;
   if (index === undefined) return;
-  const row = linkMenuTarget.rows[index];
+  const row = linkMenuTarget?.rows[index];
+  if (!row) return;
   // WebKit only allows a clipboard write that starts inside the click itself
   const copied = row.copy && navigator.clipboard.writeText(row.copy);
   closeLinkMenu({ refocus: true });
@@ -101,4 +104,5 @@ export function bindChatLinkMenu(root, currentRun, revealInFinder) {
     const rebuild = () => fileLinkRows(link, currentRun(), revealInFinder);
     openLinkMenu(link, rebuild(), event.clientX, event.clientY, rebuild);
   });
+  return closeLinkMenu;
 }

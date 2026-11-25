@@ -16,7 +16,7 @@ import { selectReview } from './review-panel.js';
 import { EVALS_KEY, EVALS_REPORT } from './evals-panel.js';
 import { isPlanRevealPending, isPlanTabHidden, isPlanningComplete, isProjectRedirect, planOf, presentRun, runGroupOf } from './run-presentation.js';
 import { chatMounted, chatTabAvailable, sessionTakesChat, updateChatRun } from './chat.js';
-import { FACTORY_KEY, factoryMounted, unmountFactory, updateFactoryRun } from './factory.js';
+import { FACTORY_KEY, factoryMounted, unmountFactory, updateFactoryRun } from './secondary-screens.js';
 import { factoryVisualsEnabled } from './motion.js';
 import { MCP_KEY, mcpMounted, mcpTabAvailable, unmountMcp, updateMcpRun } from './mcp-tab.js';
 import { planPageMounted, planPageShows, unmountPlanPage, updatePlanPage } from './plan-page.js';

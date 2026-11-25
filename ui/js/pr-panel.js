@@ -18,6 +18,8 @@ import { agentWorking } from './run-presentation.js';
 
 let prPanelShow = () => {};
 export function showPrPanel(run) { prPanelShow(run); }
+let prPanelRetire = () => {};
+export function retirePrPanelUnlessRun(runId) { prPanelRetire(runId); }
 
 const PR_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M6 9v12"/></svg>';
 const EXTERNAL_ICON = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>';
@@ -228,7 +230,7 @@ function sanitizePrDom(root, { allowRelative = false } = {}) {
   });
 }
 
-function bindFileReferences(root, runId, { editable = false } = {}) {
+function bindFileReferences(root, runId, { editable = false, signal } = {}) {
   const decorate = () => {
     root.querySelectorAll('code').forEach(code => {
       const path = !code.closest('pre, a') && fileReferencePath(code.textContent);
@@ -256,8 +258,8 @@ function bindFileReferences(root, runId, { editable = false } = {}) {
     openRunFile(runId, path, fileReferenceLines(code.textContent));
     revealDiffPanel('files');
   };
-  root.addEventListener('click', activate, true);
-  root.addEventListener('keydown', activate, true);
+  root.addEventListener('click', activate, { capture: true, signal });
+  root.addEventListener('keydown', activate, { capture: true, signal });
   if (!editable) decorate();
 }
 
@@ -297,8 +299,13 @@ function ensureEditorStyles() {
   return editorStyles;
 }
 
-function retryPrImages(container) {
+function retryPrImages(container, signal) {
   const attempts = new WeakMap();
+  const timers = new Set();
+  signal.addEventListener('abort', () => {
+    timers.forEach(timer => clearTimeout(timer));
+    timers.clear();
+  }, { once: true });
   container.addEventListener('error', event => {
     const image = event.target;
     if (!(image instanceof HTMLImageElement)) return;
@@ -313,12 +320,14 @@ function retryPrImages(container) {
     next.searchParams.set('orc-image-retry', String(count + 1));
     const retrySource = next.pathname + next.search + next.hash;
     attempts.set(image, { source: retrySource, count: count + 1 });
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
       if (image.isConnected && image.getAttribute('src') === source) {
         image.setAttribute('src', retrySource);
       }
     }, 500 * 2 ** count);
-  }, true);
+    timers.add(timer);
+  }, { capture: true, signal });
 }
 
 const TABLE_DELIMITER_ROW = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
@@ -344,116 +353,215 @@ function separateGluedTables(markdown) {
   return out.join('\n');
 }
 
-// A poll must not remount the editor over unsaved typing.
-function mountPrBodyEditor(host, runId, key, text, onSaved, onSaveState) {
-  let current = text;
+// A write can outlive its editor. Keep only unsettled writes here so a
+// remount sees the latest draft and queues its updates behind earlier writes.
+const pendingPrBodySaves = new Map();
+const prBodySaveKey = (runId, path) => JSON.stringify([runId, path]);
+// A failed write belongs to the user's draft even after its editor closes.
+// Keep the text in this tab if browser storage is full or unavailable.
+const unstoredPrDrafts = new Map();
+function failedPrDraft(key) {
+  if (unstoredPrDrafts.has(key)) return unstoredPrDrafts.get(key);
+  try { return JSON.parse(sessionStorage.getItem('orc-pr-draft:' + key)); } catch { return null; }
+}
+function rememberPrDraft(key, draft) {
+  try {
+    if (draft) sessionStorage.setItem('orc-pr-draft:' + key, JSON.stringify(draft));
+    else sessionStorage.removeItem('orc-pr-draft:' + key);
+    unstoredPrDrafts.delete(key);
+  } catch {
+    if (draft) unstoredPrDrafts.set(key, draft);
+    else unstoredPrDrafts.delete(key);
+  }
+}
+
+function newPrBodySave(runId, path, text, size, onChange) {
+  const key = prBodySaveKey(runId, path);
+  const draft = failedPrDraft(key);
+  const save = { runId, text: draft?.text ?? text, size, savedText: text, message: draft?.message ?? '',
+    locked: false, request: null, updateEditor: null, write };
+
+  function notify() {
+    save.updateEditor?.();
+    onChange(runId);
+  }
+
+  function write(text) {
+    if (save.locked) return;
+    save.text = text;
+    save.message = 'Saving…';
+    const request = (save.request || Promise.resolve()).then(async () => {
+      if (save.locked) return;
+      try {
+        const data = await savePrBody(runId, path, text);
+        save.size = data.size;
+        save.savedText = text;
+        if (save.request === request) save.message = 'Saved';
+      } catch (error) {
+        if (error.status === 409) save.locked = true;
+        if (save.locked || save.request === request) save.message = `Save failed: ${error.message}`;
+      }
+    }).finally(() => {
+      if (save.request !== request) return;
+      save.request = null;
+      rememberPrDraft(key, save.message.startsWith('Save failed') ? { text: save.text, message: save.message } : null);
+      pendingPrBodySaves.delete(key);
+      notify();
+    });
+    save.request = request;
+    pendingPrBodySaves.set(key, save);
+    notify();
+    return request;
+  }
+
+  return save;
+}
+
+function mountPrBodyEditor(host, runId, key, save, updateDelivery) {
+  const lifetime = new AbortController();
+  const { signal } = lifetime;
   let crepeEditor = null;
   let saveTimer = null;
-  let saving = false;
-  let revision = 0;
-  let saveChain = Promise.resolve();
-  let locked = false; // a 409 means the run went read-only mid-edit — stop trying
-  const handle = { busy: () => saveTimer !== null || saving || locked };
 
-  const getLiveText = () => {
-    if (crepeEditor) return crepeEditor.getMarkdown();
-    return host.querySelector('.pr-body-editor textarea')?.value ?? current;
+  host.innerHTML = bodyBarHtml(host.dataset.title, save.savedText, true) + '<div class="pr-body-editor md-editor" aria-busy="true"></div>';
+  const mountPoint = host.querySelector('.pr-body-editor');
+  const status = host.querySelector('.pr-body-save');
+  const copy = host.querySelector('.pr-copy');
+  const saveMessage = () => saveTimer !== null && !save.locked ? 'Unsaved changes' : save.message;
+  const pending = () => saveTimer !== null || !!save.request || save.message.startsWith('Save failed');
+  const updateEditor = () => {
+    const message = saveMessage();
+    status.textContent = message;
+    status.toggleAttribute('data-failed', message.startsWith('Save failed'));
+    copy.setAttribute('value', save.savedText);
   };
-  const setSaveState = message => {
-    const el = host.querySelector('.pr-body-save');
-    if (!el) return;
-    el.textContent = message;
-    onSaveState(message !== 'Saved');
-    el.toggleAttribute('data-failed', /^Save failed/.test(message));
+  const flushSave = () => {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if (save.locked) return;
+    let text;
+    try {
+      text = crepeEditor ? crepeEditor.getMarkdown() : mountPoint.querySelector('textarea').value;
+    } catch (error) {
+      save.message = `Save failed: ${error.message}`;
+      save.updateEditor?.();
+      updateDelivery(runId);
+      return;
+    }
+    return save.write(text);
   };
   const queueSave = () => {
-    if (locked) return;
+    if (save.locked) return;
     clearTimeout(saveTimer);
-    const scheduledRevision = ++revision;
-    setSaveState('Unsaved changes');
-    saveTimer = setTimeout(async () => {
-      saveTimer = null;
-      saving = true;
-      current = getLiveText();
-      setSaveState('Saving…');
-      try {
-        const textToSave = current;
-        const request = saveChain.then(() => savePrBody(runId, key, textToSave));
-        saveChain = request.catch(() => {});
-        const data = await request;
-        if (scheduledRevision === revision) {
-          setSaveState('Saved');
-          host.querySelector('.pr-copy')?.setAttribute('value', textToSave);
-        }
-        onSaved(data.size);
-      } catch (error) {
-        if (error.status === 409) locked = true;
-        setSaveState(`Save failed: ${error.message}`);
-      } finally {
-        if (scheduledRevision === revision) saving = false;
-      }
-    }, 600);
+    saveTimer = setTimeout(flushSave, 600);
+    updateEditor();
+    updateDelivery(runId);
+  };
+  save.updateEditor = updateEditor;
+  updateEditor();
+  retryPrImages(mountPoint, signal);
+
+  const destroy = editor => {
+    void editor.destroy().catch(error => console.warn('Could not destroy PR body editor', error));
   };
 
   async function mountRendered() {
-    host.innerHTML = bodyBarHtml(host.dataset.title, current, true) + '<div class="pr-body-editor md-editor" aria-busy="true"></div>';
-    const mountPoint = host.querySelector('.pr-body-editor');
-    retryPrImages(mountPoint);
     try {
       // Lazy: the editor bundle is by far the largest thing orc-ui serves.
       const [{ Crepe, fileReferencePlugin, htmlCommentPlugin, keepTightLists }] = await Promise.all([import('/vendor/orc-editor.min.js'), ensureEditorStyles()]);
-      if (host.querySelector('.pr-body-editor') !== mountPoint) return;
-      mountPoint.innerHTML = '';
+      if (signal.aborted) return;
       // Resolve only the displayed URL so editing preserves authored paths.
       const images = { proxyDomURL: url => artifactUrl(url, runId, key) };
-      crepeEditor = new Crepe({
-        root: mountPoint, defaultValue: separateGluedTables(current),
+      const editor = new Crepe({
+        root: mountPoint, defaultValue: separateGluedTables(save.text),
         featureConfigs: { [Crepe.Feature.ImageBlock]: images },
       });
-      keepTightLists(crepeEditor.editor);
-      crepeEditor.editor.use(fileReferencePlugin(fileReferencePath));
-      crepeEditor.editor.use(htmlCommentPlugin());
-      await crepeEditor.create();
-      if (host.querySelector('.pr-body-editor') !== mountPoint) return;
-      mountPoint.removeAttribute('aria-busy');
+      keepTightLists(editor.editor);
+      editor.editor.use(fileReferencePlugin(fileReferencePath));
+      editor.editor.use(htmlCommentPlugin());
+      await editor.create();
+      // Milkdown waits for creation inside destroy(), so a retired mount
+      // cleans up here once it can be destroyed.
+      if (signal.aborted) {
+        destroy(editor);
+        return;
+      }
+      crepeEditor = editor;
       const editable = mountPoint.querySelector('[contenteditable="true"]');
       if (editable) {
         editable.setAttribute('aria-label', 'PR body');
-        bindFileReferences(editable, runId, { editable: true });
-        editable.addEventListener('input', queueSave);
+        bindFileReferences(editable, runId, { editable: true, signal });
+        editable.addEventListener('input', queueSave, { signal });
       }
     } catch {
-      mountPoint.removeAttribute('aria-busy');
+      if (signal.aborted) return;
+      if (crepeEditor) destroy(crepeEditor);
+      crepeEditor = null;
       mountPoint.innerHTML = '<p class="ticket-editor-fallback" role="alert">The rich editor could not load, so this is plain markdown.</p>' +
         '<textarea aria-label="PR body" rows="16"></textarea>';
       const area = mountPoint.querySelector('textarea');
-      area.value = current;
-      area.addEventListener('input', queueSave);
+      area.value = save.text;
+      area.addEventListener('input', queueSave, { signal });
     }
+    mountPoint.removeAttribute('aria-busy');
   }
 
   mountRendered();
-  return handle;
+  return {
+    pending,
+    dispose() {
+      lifetime.abort();
+      save.updateEditor = null;
+      try {
+        if (saveTimer !== null) flushSave();
+      } finally {
+        if (crepeEditor) destroy(crepeEditor);
+        crepeEditor = null;
+      }
+    },
+  };
 }
 
 const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Picked up', approved: 'Approved' };
 
 (() => {
-  const view = $('run-panel-pr');
   const body = $('run-pr-body');
-  const states = new Map();
-  let shownRunId = null;
   let shownRun = null;
+  let shownState = null;
   let paintedSignature = null;
-  let paintSeq = 0;
+  let bodyLoads = null;
 
-  function stateOf(id) {
-    if (!states.has(id)) {
-      states.set(id, { closed: new Set(['checks']), url: null,
-        detail: null, detailAt: 0, error: null, stat: null, statKey: null, editors: new Map(),
-        verification: null, verificationOpen: null, verificationHtml: '', verificationLoading: false });
+  function retireEditors(state) {
+    bodyLoads?.abort();
+    bodyLoads = null;
+    const editors = state.editors;
+    state.editors = new Map();
+    for (const entry of editors.values()) entry.handle?.dispose();
+    return editors;
+  }
+
+  prPanelRetire = runId => {
+    if (!shownState || shownRun?.id === runId) return;
+    const state = shownState;
+    shownRun = null;
+    shownState = null;
+    paintedSignature = null;
+    state.loads.abort();
+    retireEditors(state);
+    body.replaceChildren();
+  };
+
+  function updateDelivery(runId) {
+    if (shownRun?.id !== runId) return;
+    const saving = [...shownState.editors.values()].some(entry => entry.handle?.pending())
+      || [...pendingPrBodySaves.values()].some(save => save.runId === runId)
+      || (prBodyEditable(shownRun) && prBodyPaths(shownRun).some(path => failedPrDraft(prBodySaveKey(runId, path))));
+    const actions = body.querySelector('.pr-delivery');
+    if (actions) actions.hidden = saving;
+    const chatActions = document.querySelector('.chat-delivery iframe');
+    if (chatActions?.getAttribute('src') === `/runs/${encodeURIComponent(runId)}/chat-delivery`) {
+      chatActions.hidden = saving;
     }
-    return states.get(id);
   }
 
   function sectionHtml(state, id, title, inner, actions = '') {
@@ -570,14 +678,14 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
   async function loadVerification(run, state) {
     if (state.verificationLoading) return;
     state.verificationLoading = true;
-    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/checks`, { cache: 'no-store' }).catch(() => null);
+    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/checks`, { cache: 'no-store', signal: state.loads.signal }).catch(() => null);
     const data = response?.ok ? await response.json().catch(() => null) : null;
     state.verificationLoading = false;
-    if (!data) return;
+    if (!data || shownState !== state) return;
     state.verification = data;
-    const host = shownRunId === run.id && body.querySelector('.pr-verification-host');
+    const host = body.querySelector('.pr-verification-host');
     const was = state.verificationHtml;
-    if (!host || verificationHtml(run, state) === was) return;
+    if (!host || verificationHtml(shownRun, state) === was) return;
     const held = host.contains(document.activeElement);
     host.innerHTML = state.verificationHtml;
     if (held) host.querySelector('.pr-verification-head')?.focus({ preventScroll: true });
@@ -628,28 +736,27 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     return out;
   }
 
-  async function loadBodies(run, state, paths, editable, seq) {
+  async function loadBodies(run, state, paths, editable, previousEditors, signal) {
     for (const path of paths) {
       const host = body.querySelector(`.pr-body-host[data-body="${CSS.escape(path)}"]`);
       if (!host) continue;
-      const text = await fetch(fileUrl(run.id, path)).then(r => (r.ok ? r.text() : null)).catch(() => null);
-      if (seq !== paintSeq || !host.isConnected) return;
-      host.removeAttribute('aria-busy');
+      const pending = pendingPrBodySaves.get(prBodySaveKey(run.id, path));
+      const previous = previousEditors.get(path)?.save;
+      let save = editable ? pending ?? previous : null;
+      let text = save?.text;
       const size = run.files.find(file => file.path === path)?.size ?? null;
+      if (!save) {
+        if (pending) await pending.request;
+        if (signal.aborted) return;
+        text = await fetch(fileUrl(run.id, path), { signal }).then(r => (r.ok ? r.text() : null)).catch(() => null);
+      }
+      if (signal.aborted) return;
+      host.removeAttribute('aria-busy');
       if (text === null) { host.innerHTML = '<p class="pr-error" role="status">Couldn\'t load this body.</p>'; continue; }
       if (editable) {
-        const entry = { size, media: mediaSignature(run), handle: null };
-        entry.handle = mountPrBodyEditor(host, run.id, path, text, saved => { entry.size = saved; }, pending => {
-          entry.pending = pending;
-          const actions = body.querySelector('.pr-delivery');
-          const saving = [...state.editors.values()].some(editor => editor.pending);
-          if (actions) actions.hidden = saving;
-          const chatActions = document.querySelector('.chat-delivery iframe');
-          if (chatActions?.getAttribute('src') === `/runs/${encodeURIComponent(run.id)}/chat-delivery`) {
-            chatActions.hidden = saving;
-          }
-        });
-        state.editors.set(path, entry);
+        save ??= newPrBodySave(run.id, path, text, size, updateDelivery);
+        const handle = mountPrBodyEditor(host, run.id, path, save, updateDelivery);
+        state.editors.set(path, { media: mediaSignature(run), handle, save });
       } else {
         host.innerHTML = bodyBarHtml(host.dataset.title, text) +
           `<div class="md">${renderPrMarkdown(text, { allowRelative: true })}</div>`;
@@ -658,8 +765,9 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
         bindFileReferences(host, run.id);
         resolveRelativeUrls(host, run.id, path);
         externalizeLinks(host);
-        state.editors.set(path, { size, media: mediaSignature(run), handle: null });
+        state.editors.set(path, { size, media: mediaSignature(run) });
       }
+      updateDelivery(run.id);
     }
   }
 
@@ -670,7 +778,8 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     state.statKey = key;
     state.stat = null;
     if (!patch) return true;
-    const text = await fetch(fileUrl(run.id, 'diff.patch')).then(r => (r.ok ? r.text() : null)).catch(() => null);
+    const text = await fetch(fileUrl(run.id, 'diff.patch'), { signal: state.loads.signal }).then(r => (r.ok ? r.text() : null)).catch(() => null);
+    if (shownState !== state || state.statKey !== key) return false;
     state.stat = text === null ? null : prDiffStat(text);
     return true;
   }
@@ -679,17 +788,22 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     if (!force && state.url === url && Date.now() - state.detailAt < 30_000) return false;
     state.url = url;
     state.detailAt = Date.now();
-    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/pull-request?${new URLSearchParams({ url })}`).catch(() => null);
+    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/pull-request?${new URLSearchParams({ url })}`,
+      { signal: state.loads.signal }).catch(() => null);
     const data = response ? await response.json().catch(() => null) : null;
+    if (shownState !== state || !resolvePrUrls(shownRun.meta).urls.includes(url) || state.url !== url) return false;
     if (response?.ok && data) { state.detail = data; state.error = null; }
     else { state.detail = null; state.error = data?.error || "Orc couldn't reach the host"; }
     return true;
   }
 
   function paint(run, state, paths, editable) {
-    const seq = ++paintSeq;
     const scrollTop = body.scrollTop;
-    state.editors = new Map();
+    const previousEditors = retireEditors(state);
+    for (const [path, entry] of previousEditors) {
+      if (editable && entry.handle?.pending()) previousEditors.set(path, { save: entry.save });
+      else previousEditors.delete(path);
+    }
     const content = summaryHtml(run, state, paths, editable);
     const ready = run.meta?.lifecycleVersion === 4 && run.meta.phase === 'ship'
       && run.meta.status === 'awaiting-gate' && paths.length > 0;
@@ -706,7 +820,11 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
       externalizeLinks(node);
     });
     body.scrollTop = scrollTop;
-    if (!state.detail) loadBodies(run, state, paths, editable, seq);
+    if (!state.detail) {
+      bodyLoads = new AbortController();
+      loadBodies(run, state, paths, editable, previousEditors, bodyLoads.signal);
+    }
+    updateDelivery(run.id);
   }
 
   // An editor keeps its text across polls; only a body rewritten from outside
@@ -715,15 +833,18 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     const media = mediaSignature(run);
     for (const [path, entry] of state.editors) {
       const size = run.files.find(file => file.path === path)?.size ?? null;
-      if (size === entry.size && media === entry.media) continue;
-      if (entry.handle?.busy()) continue;
+      if (size === (entry.save ? entry.save.size : entry.size) && media === entry.media) continue;
+      if (entry.handle?.pending()) continue;
       return true;
     }
     return false;
   }
 
   prPanelShow = async run => {
-    const state = stateOf(run.id);
+    prPanelRetire(run.id);
+    const state = shownState ??= { loads: new AbortController(), closed: new Set(['checks']), url: null,
+      detail: null, detailAt: 0, error: null, stat: null, statKey: null, editors: new Map(),
+      verification: null, verificationOpen: null, verificationHtml: '', verificationLoading: false };
     const paths = prBodyPaths(run);
     const urls = resolvePrUrls(run.meta).urls;
     const editable = prBodyEditable(run);
@@ -744,11 +865,9 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     // Names behind a Slack reaction repaint the panel without a new PR read.
     const slackBy = (run.meta?.slackReviewPosts || []).map(post => post.by || []);
     const signature = JSON.stringify([run.id, paths, urls, editable, run.meta?.phase, run.meta?.status, reviewKey, slackBy]);
-    const fresh = shownRunId !== run.id || signature !== paintedSignature || view.dataset.painted !== '1';
-    shownRunId = run.id;
+    const fresh = signature !== paintedSignature;
     shownRun = run;
     paintedSignature = signature;
-    view.dataset.painted = '1';
     if (fresh) {
       paint(run, state, paths, editable);
     } else if (!state.detail && bodiesChangedOutside(run, state)) {
@@ -756,10 +875,11 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     } else if (deliveryChanged) {
       body.querySelector('.pr-delivery')?.contentWindow?.location.reload();
     }
+    updateDelivery(run.id);
     loadVerification(run, state);
     const statChanged = !urls.length && await loadStat(run, state);
     const detailChanged = urls.length > 0 && await loadDetail(run, state, urls[0]);
-    if (shownRunId !== run.id || paintedSignature !== signature) return;
+    if (shownState !== state || paintedSignature !== signature) return;
     if (detailChanged || (statChanged && !body.querySelector('.pr-body-editor, .pr-body-host[aria-busy]'))) {
       paint(run, state, paths, editable);
     } else if (statChanged) {
@@ -768,12 +888,8 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     }
   };
 
-  function currentRunState() {
-    return shownRunId ? stateOf(shownRunId) : null;
-  }
-
   body.addEventListener('click', event => {
-    const state = currentRunState();
+    const state = shownState;
     if (!state) return;
     // The file count is the way to the diff those files are in.
     if (event.target.closest('.pr-stat')) {
@@ -797,7 +913,7 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     }
     if (event.target.closest('[data-pr-retry]')) {
       state.detailAt = 0;
-      view.dataset.painted = '0';
+      paintedSignature = null;
       prPanelShow(shownRun);
     }
   });

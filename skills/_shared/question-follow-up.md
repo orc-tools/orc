@@ -10,7 +10,8 @@ changes in place.
 An answered run is terminal until a follow-up asks for work; a merged run
 stays terminal. Work on an answered question continues in the same run, in
 the conversation that wrote the answer; work on a merged run starts a child
-run with its summary as context. There is no button to press: the answering
+run with its summary as context, unless it changes no project files (In-chat
+below). There is no button to press: the answering
 agent decides, or a merged run's own agent. A Chat message on an answered or merged run reaches it as
 `/orc --answer-follow-up <run-id> --quoted-prompt '<message>'` while its
 session is live. An ended session is never reopened: the message goes
@@ -20,9 +21,19 @@ states the choice. Classify the message with `question-runs.md` before acting;
 every Work message builds, so starting work for a read-only question is the
 costly mistake:
 
+- **In-chat (merged runs only).** The ask changes no tracked project file:
+  an Orc or project setting such as the deploy command, a git remote
+  or upstream, running a script or the deploy. Do it in the same conversation
+  from the project's checkout and start no run; a merged run has no branch,
+  checks or Ship to carry it, and none is needed. Ask first before publishing
+  anything the user did not name, such as creating a repository or choosing
+  its visibility. Reply with what changed and where, so the chat is the
+  record. If it turns out to need a project-file change partway, say so, keep
+  what is done, and start the code part as Work.
 - **Work.** The message asks Orc to make a mutation, alone or mixed with a
   question, including a bare go-ahead such as "do it" for a change the answer
-  describes. Run the hook's exact `POST /runs/<run-id>/follow-up` command. On
+  describes. On a merged run, Work means a change to project files, however
+  small: it gets its own run so it is checked and shipped. Run the hook's exact `POST /runs/<run-id>/follow-up` command. On
   an answered question it carries `"takeOver": true`: a reply with
   `state: continued` means the run is now a change run, so follow the reply's
   `instructions` and continue this turn as `/orc:run --launch-run <run-id>`

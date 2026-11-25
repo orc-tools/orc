@@ -9,15 +9,19 @@ import base64
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import threading
 import time
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 import qa_sandbox
 import qa_steps
+import run_terminal
+from keyed_locks import KeyedLocks
 
 OUTPUT_DIR = "qa/output"
 SHOTS_DIR = "qa/shots"
@@ -26,13 +30,19 @@ MAX_SHOT_BYTES = 8 * 1024 * 1024
 MAX_SHOTS_PER_STEP = 6
 MAX_BODY_BYTES = 256 * 1024
 STOP_GRACE_SECONDS = 5
+# A failed step goes to your review of a colleague's pull request, or to your
+# own run's agent, never both: which one is the server's call (the run's kind),
+# so a colleague's step text never reaches an agent that edits code.
+TARGETS = ("review", "agent")
+FAILURE_TAIL_LINES = 12
+FAILURE_TAIL_CHARS = 2000
+MAX_PAGE = 2000
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
 IMAGE_TYPES = {"image/png": (b"\x89PNG\r\n\x1a\n", "png"), "image/jpeg": (b"\xff\xd8\xff", "jpg")}
 
 # One lock per run: a verdict, a finishing command and a comparison all rewrite
 # the same results file.
-_locks = {}
-_locks_guard = threading.Lock()
+run_lock = KeyedLocks(threading.RLock)
 # The command each step is running now, by (run id, step id). A command is its
 # own process group and outlives a server restart, which forgets this table:
 # such a command is found again by the pid and start time its result recorded
@@ -49,9 +59,10 @@ class ActionError(Exception):
         self.status, self.message = status, message
 
 
-def run_lock(run_id):
-    with _locks_guard:
-        return _locks.setdefault(run_id, threading.RLock())
+def sentence(text):
+    """A lower-case reason from elsewhere as a sentence the window shows."""
+    text = str(text).strip()
+    return text[:1].upper() + text[1:] + ("" if text.endswith((".", "!", "?")) else ".")
 
 
 def now_iso():
@@ -112,13 +123,22 @@ def _change(run_dir, run_id, document, step_id, change, kind=None, seen=None):
     return step
 
 
-def set_verdict(run_dir, run_id, document, step_id, verdict, seen=None):
+def set_verdict(run_dir, run_id, document, step_id, verdict, seen=None, page=None):
+    """Records pass, fail or nothing. A failure keeps `page`, the app page the
+    window was on when you pressed Fail, as a path in the app; any other
+    verdict forgets it and where the failure was sent, so failing the step
+    again offers it again."""
     if verdict is not None and verdict not in qa_steps.VERDICTS:
         raise ActionError(400, "A verdict is pass, fail or nothing.")
 
     def change(entry):
         entry["verdict"] = verdict
         entry["checkedAt"] = now_iso() if verdict else None
+        if verdict != "fail":
+            entry.pop("sent", None)
+            entry.pop("page", None)
+        elif _page_path(page):
+            entry["page"] = page
     _change(run_dir, run_id, document, step_id, change, seen=seen)
 
 
@@ -193,10 +213,192 @@ def set_finished(run_dir, run_id, finished):
         qa_steps.write_results(run_dir, results)
 
 
+# ---------- failed steps, sent on ----------
+
+def _page_path(page):
+    return isinstance(page, str) and len(page) <= MAX_PAGE and qa_steps.root_relative(page)
+
+
+def _sent(stored):
+    sent = stored.get("sent")
+    return sent if isinstance(sent, dict) and sent.get("to") in TARGETS else None
+
+
+def unsent_failures(document, results):
+    """(number, step, stored result) for each failed step not sent yet."""
+    found = []
+    for number, step in enumerate((document or {}).get("steps", []), 1):
+        stored = qa_steps.result_for(results, step)
+        if stored.get("verdict") == "fail" and not _sent(stored):
+            found.append((number, step, stored))
+    return found
+
+
+def shot_files(run_dir, shots):
+    """The screenshots a result names that this module could have made and
+    that still sit in the run's qa/shots folder, as full paths. results.json
+    is in a folder the run's agent can write, and these get copied and
+    uploaded to GitHub, so nothing else is."""
+    folder = os.path.realpath(os.path.join(run_dir, SHOTS_DIR))
+    found = []
+    for path in shots if isinstance(shots, list) else []:
+        if not isinstance(path, str) or not qa_steps.SHOT_PATH.fullmatch(path):
+            continue
+        full = os.path.realpath(os.path.join(run_dir, path))
+        if os.path.dirname(full) == folder and os.path.isfile(full) and full not in found:
+            found.append(full)
+    return found
+
+
+def failure(run_dir, number, step, stored):
+    """What one failed step carries: its words, your note and screenshots, the
+    page it failed on, and a command's last lines of output or an MCP call's
+    differences."""
+    tail = None
+    if step["kind"] == "command" and isinstance(stored.get("command"), dict):
+        lines = output_tail(run_dir, step["id"]).splitlines()[-FAILURE_TAIL_LINES:]
+        tail = "\n".join(lines)[-FAILURE_TAIL_CHARS:] or None
+    record = stored.get("mcp") if step["kind"] == "mcp" and isinstance(stored.get("mcp"), dict) else {}
+    differences = [item["label"] for item in record.get("differences") or []
+                   if isinstance(item, dict) and isinstance(item.get("label"), str)][:qa_steps.MAX_DIFFERENCES + 1]
+    page = stored.get("page") if _page_path(stored.get("page")) else (
+        step.get("path") if step["kind"] == "page" else None)
+    note = stored.get("note") if isinstance(stored.get("note"), str) else ""
+    return {"id": step["id"], "number": number, "kind": step["kind"], "title": step["title"],
+            "expect": step.get("expect"), "command": step.get("command"),
+            "tool": step["mcp"]["tool"] if step["kind"] == "mcp" else None,
+            "note": note.strip()[:qa_steps.MAX_NOTE] or None, "page": page, "tail": tail,
+            "differences": differences, "shots": shot_files(run_dir, stored.get("shots"))}
+
+
+def stage_shots(files, target_run_dir):
+    """Copies screenshots into a run's attachments folder, the one place a
+    drafted review and Chat take pictures from, each as qa-<its name>.
+    Returns their paths in that run, as attachments/<name>."""
+    root = os.path.realpath(target_run_dir)
+    folder = os.path.join(root, "attachments")
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    if os.path.realpath(folder) != folder:
+        raise ActionError(409, "This run's attachments folder is not one Orc can use.")
+    staged = []
+    for full in files:
+        name = "qa-" + os.path.basename(full)
+        target = os.path.join(folder, name)
+        if os.path.islink(target):
+            raise ActionError(409, "This run's attachments folder is not one Orc can use.")
+        shutil.copyfile(full, target)
+        staged.append("attachments/" + name)
+    return staged
+
+
+def _code(text):
+    """Text as inline code that nothing in it can close."""
+    text = str(text).replace("\n", " ")
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return fence + pad + text + pad + fence
+
+
+def _fenced(text):
+    """Lines in a code block that no line of them can close."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return "%s\n%s\n%s" % (fence, text, fence)
+
+
+def _evidence(item, saw_label):
+    """The lines both a review comment and the agent's message carry about
+    one failure, after its title."""
+    lines = []
+    if item["expect"]:
+        lines.append("Expected: %s" % item["expect"])
+    if saw_label and item["note"]:
+        lines.append("%s: %s" % (saw_label, item["note"]))
+    if item["page"]:
+        lines.append("Page: %s" % _code(item["page"]))
+    if item["kind"] == "command" and item["command"]:
+        lines.append("Command: %s" % _code(item["command"]))
+    if item["differences"]:
+        lines.append("Differences from main: %s" % "; ".join(item["differences"]))
+    if item["tail"]:
+        lines.append("Last lines of its output:\n%s" % _fenced(item["tail"]))
+    return lines
+
+
+def review_comment(item, images):
+    """A failure as a comment in your drafted review: your note first, as if
+    you typed it, then what the step expected and where it failed. The step's
+    title is the comment's header, which the review prints above it."""
+    body = "\n".join([item["note"] or "This didn't work when I tested it.", ""] + _evidence(item, None)).strip()
+    return {"id": "qa-" + item["id"], "header": item["title"],
+            "finding": "Step %d failed in your QA." % item["number"], "body": body, "images": images}
+
+
+def agent_message(items, attachments):
+    """The failures as one Chat message to the run's agent. `attachments`
+    holds each failure's screenshots as full paths, by step id, which Chat
+    shows as pictures and the agent can open."""
+    count = len(items)
+    parts = ["I tested this in the QA window and %s failed. Fix %s, then commit." % (
+        "1 step" if count == 1 else "%d steps" % count, "it" if count == 1 else "each one")]
+    pictures = []
+    for item in items:
+        shots = attachments.get(item["id"]) or []
+        lines = ["Step %d: %s" % (item["number"], item["title"])] + _evidence(item, "What I saw")
+        if shots:
+            lines.append("Screenshots: %d, attached below." % len(shots) if len(shots) > 1
+                         else "Screenshot: attached below.")
+        parts.append("\n".join(lines))
+        pictures += ["[Image attachment: %s]" % path for path in shots]
+    return "\n\n".join(parts + (["\n".join(pictures)] if pictures else []))
+
+
+def send_failures(run_dir, run_id, document, shown, to, deliver, commit=None):
+    """Sends the failed steps the window showed, `shown` as [{id, hash}], to
+    `to`. `deliver(failures)` takes them to your review or the run's agent
+    and raises ActionError when it cannot; only after it returns are they
+    marked sent, so a failure that did not go is offered again. One the window
+    showed that is no longer an unsent failure, or whose words changed, is
+    refused: only what you read goes. Returns how many went."""
+    if to not in TARGETS:
+        raise ActionError(400, "Failures go to your review or to the agent.")
+    if not isinstance(shown, list) or not shown or len(shown) > qa_steps.MAX_STEPS:
+        raise ActionError(400, "Name the failed steps the window showed.")
+    with run_lock(run_id):
+        results = qa_steps.read_results(run_dir)
+        unsent = {step["id"]: (number, step, stored) for number, step, stored in unsent_failures(document, results)}
+        picked = []
+        for item in shown:
+            found = unsent.get(item.get("id")) if isinstance(item, dict) else None
+            if found is None or item.get("hash") != qa_steps.step_hash(found[1]):
+                raise ActionError(409, "Your failed steps changed since you looked. Check them again.")
+            if found not in picked:
+                picked.append(found)
+        deliver([failure(run_dir, *found) for found in picked])
+        sent = {"to": to, "at": now_iso(), **({"commit": commit} if commit else {})}
+        for _number, step, _stored in picked:
+            qa_steps.entry_for(results, step)["sent"] = dict(sent)
+        qa_steps.write_results(run_dir, results)
+    return len(picked)
+
+
+def retest(run_dir, run_id, document, step_id, seen=None):
+    """Clears a failure you sent so the step can be checked again, keeping the
+    old result beside it as `previous`."""
+    def change(entry):
+        if entry.get("verdict") != "fail" or not _sent(entry):
+            raise ActionError(409, "Only a failure you sent can be tested again.")
+        entry["previous"] = {key: entry.get(key) for key in ("verdict", "note", "checkedAt", "page", "shots", "sent")}
+        for key in ("verdict", "note", "checkedAt", "page", "sent"):
+            entry.pop(key, None)
+        entry["shots"] = []
+    _change(run_dir, run_id, document, step_id, change, seen=seen)
+
+
 def command_running(run_id, step_id):
     with _running_guard:
-        process = _running.get((run_id, step_id))
-    return process is not None and process.poll() is None
+        return (run_id, step_id) in _running
 
 
 def orphan_alive(command):
@@ -247,7 +449,7 @@ def run_command(run_dir, run_id, document, step_id, cwd, env=None, seen=None):
     step = _step(document, step_id, "command", seen)
     if not cwd or not os.path.isdir(cwd):
         raise ActionError(409, "This run's checkout is not on this computer.")
-    with run_lock(run_id):
+    with run_lock(run_id), ExitStack() as rollback:
         if command_running(run_id, step_id) or orphan_alive(_stored_command(run_dir, step_id)):
             raise ActionError(409, "This command is already running.")
         try:
@@ -256,42 +458,43 @@ def run_command(run_dir, run_id, document, step_id, cwd, env=None, seen=None):
             )
         except qa_sandbox.SandboxError as error:
             raise ActionError(503, str(error)) from None
+        rollback.callback(qa_sandbox.cleanup_paths, cleanup)
         folder = os.path.join(run_dir, OUTPUT_DIR)
         os.makedirs(folder, exist_ok=True)
         started, clock = now_iso(), time.monotonic()
-        log = open(os.path.join(folder, step_id + ".log"), "wb")
         sandbox_meta = {"engine": qa_sandbox.ENGINE_NAME, "network": "localhost", "writes": "scratch-only"}
-        try:
-            process = subprocess.Popen(
-                argv, cwd=cwd, env=sandbox_env, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        except OSError as error:
-            log.write(("Could not start: %s\n" % error).encode())
-            log.close()
-            qa_sandbox.cleanup_paths(cleanup)
-            state = {"state": "failed", "exitCode": None, "startedAt": started, "durationMs": 0,
-                     "sandbox": sandbox_meta}
-        else:
-            log.close()
-            with _running_guard:
-                _running[(run_id, step_id)] = process
-            state = {"state": "running", "exitCode": None, "startedAt": started, "durationMs": None,
-                     "pid": process.pid, "sandbox": sandbox_meta}
+        with open(os.path.join(folder, step_id + ".log"), "wb") as log:
+            try:
+                process = subprocess.Popen(argv, cwd=cwd, env=sandbox_env, stdin=subprocess.DEVNULL,
+                                           stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            except OSError as error:
+                process = None
+                log.write(("Could not start: %s\n" % error).encode())
+                state = {"state": "failed", "exitCode": None, "startedAt": started, "durationMs": 0, "sandbox": sandbox_meta}
+            else:
+                rollback.callback(run_terminal.stop_process, process)
+                state = {"state": "running", "exitCode": None, "startedAt": started, "durationMs": None,
+                         "pid": process.pid, "sandbox": sandbox_meta}
         results = qa_steps.read_results(run_dir)
         qa_steps.entry_for(results, step)["command"] = state
         qa_steps.write_results(run_dir, results)
-    if state["state"] == "running":
-        threading.Thread(target=_await_command, name="orc-qa-command", daemon=True,
-                         args=(run_dir, run_id, step["id"], process, clock, cleanup)).start()
+        if process is not None:
+            # The waiter takes ownership only after the running state is on disk.
+            with _running_guard:
+                _running[(run_id, step_id)] = process
+                try:
+                    threading.Thread(target=_await_command, name="orc-qa-command", daemon=True,
+                                     args=(run_dir, run_id, step_id, process, clock, cleanup)).start()
+                except BaseException:
+                    del _running[(run_id, step_id)]
+                    raise
+            rollback.pop_all()
 
 
 def _await_command(run_dir, run_id, step_id, process, clock, cleanup=()):
     try:
         code = process.wait()
         with run_lock(run_id):
-            with _running_guard:
-                if _running.get((run_id, step_id)) is process:
-                    del _running[(run_id, step_id)]
             results = qa_steps.read_results(run_dir)
             stored = results["steps"].get(step_id)
             command = stored.get("command") if isinstance(stored, dict) else None
@@ -305,6 +508,11 @@ def _await_command(run_dir, run_id, step_id, process, clock, cleanup=()):
             qa_steps.write_results(run_dir, results)
     finally:
         qa_sandbox.cleanup_paths(cleanup)
+        # A stopped command's terminal state and scratch cleanup must be
+        # visible before a new invocation can take its place.
+        with _running_guard:
+            if _running.get((run_id, step_id)) is process:
+                del _running[(run_id, step_id)]
 
 
 def run_in_terminal(run_dir, run_id, document, step_id, cwd, urls=None, seen=None):
@@ -480,13 +688,53 @@ def _mcp_view(stored):
             "differences": record.get("differences") or [], "rows": record.get("rows") or []}
 
 
+def _shot_views(run_id, shots):
+    return [{"path": path, "url": "/runs/%s/%s" % (run_id, path)}
+            for path in shots if isinstance(path, str) and qa_steps.SHOT_PATH.fullmatch(path)] \
+        if isinstance(shots, list) else []
+
+
+def _sent_view(stored, head):
+    """Where a failure went, and for one sent to the agent whether the run has
+    a new commit since, so it is worth testing again. A checkout whose head is
+    unknown, then or now, never offers Retest."""
+    sent = _sent(stored)
+    if not sent or stored.get("verdict") != "fail":
+        return None
+    commit = sent.get("commit")
+    retest = bool(sent["to"] == "agent" and isinstance(commit, str) and commit
+                  and head and head() not in (None, commit))
+    return {"to": sent["to"], "at": sent.get("at"), "retest": retest}
+
+
+def _previous_view(run_id, stored):
+    """The result a Retest set aside."""
+    previous = stored.get("previous")
+    if not isinstance(previous, dict) or previous.get("verdict") not in qa_steps.VERDICTS:
+        return None
+    note = previous.get("note")
+    return {"verdict": previous["verdict"], "note": note if isinstance(note, str) else None,
+            "checkedAt": previous.get("checkedAt") if isinstance(previous.get("checkedAt"), str) else None,
+            "shots": _shot_views(run_id, previous.get("shots"))}
+
+
 def payload(run_dir, run_id, document, *, run, app, main, review, writing, mcp_server=None, mcp_hash=None,
-            meta=None):
+            meta=None, delivery=None):
     """Everything the QA window draws. `run`, `app`, `main` and `review` are
     built by the server, which knows the run's project and its servers. A
     page step with no page of its own opens the page in the run's `meta`
-    that matches it best (qa_steps.fallback_paths)."""
+    that matches it best (qa_steps.fallback_paths). `delivery` says where
+    failed steps go, {target, state, head}: `state` is "open" when they can
+    go now, and `head` reads the run's commit for Retest."""
     results = qa_steps.read_results(run_dir)
+    head = None
+    if delivery and callable(delivery.get("head")):
+        read_head, cached = delivery["head"], []
+
+        def head():
+            if not cached:
+                cached.append(read_head())
+            return cached[0]
     steps, checked = [], 0
     root = app.get("url") if app.get("state") == "running" else None
     fallback = qa_steps.fallback_paths((document or {}).get("steps", []), meta or {})
@@ -511,15 +759,18 @@ def payload(run_dir, run_id, document, *, run, app, main, review, writing, mcp_s
         checked += bool(verdict)
         view["result"] = {
             "verdict": verdict, "note": stored.get("note"), "checkedAt": stored.get("checkedAt"),
-            "shots": [{"path": path, "url": "/runs/%s/%s" % (run_id, path)}
-                      for path in stored.get("shots") or []
-                      if isinstance(path, str) and qa_steps.SHOT_PATH.fullmatch(path)],
+            "shots": _shot_views(run_id, stored.get("shots")),
             "command": _command_view(run_dir, run_id, step, stored) if step["kind"] == "command" else None,
-            "mcp": _mcp_view(stored) if step["kind"] == "mcp" else None}
+            "mcp": _mcp_view(stored) if step["kind"] == "mcp" else None,
+            "sent": _sent_view(stored, head), "previous": _previous_view(run_id, stored)}
         steps.append(view)
+    failures = None
+    if delivery and delivery.get("target") in TARGETS and steps:
+        failures = {"target": delivery["target"], "state": delivery.get("state") or "none",
+                    "count": len(unsent_failures(document, results))}
     return {"run": run, "app": app, "main": main, "review": review,
             "source": (document or {}).get("source"), "writing": bool(writing and not steps),
             # The pull request's own QA items, which the review has not typed yet.
             "seeded": bool(steps and (document or {}).get("seeded")),
             "steps": steps, "progress": {"checked": checked, "total": len(steps)},
-            "finishedAt": results["finishedAt"] if steps else None}
+            "finishedAt": results["finishedAt"] if steps else None, "failures": failures}

@@ -33,7 +33,7 @@ import { mountShortcutSettings, shortcutSettingsHtml } from './shortcut-settings
 import { openRun } from './artifact.js';
 import { MAXIMISE_ICON, copyButtonHtml, openTextStage } from './text-stage.js';
 import { renderEmptyStateSlot } from './theme-components.js';
-import { factoryShowing, unmountFactory } from './factory.js';
+import { factoryShowing, unmountFactory } from './secondary-screens.js';
 import { themeAllowsCharacterMotion } from './character-motion.js';
 import { CONTROL_KEY, parentAgent } from './control.js';
 import { $, CHAT_KEY, POWER_MODES, RUN_MODE_LABEL, announce, esc, focusRunDestination, gateNoun, isOrcApp, isQuestionRun, mergeWrappingUpUntil, powerModeOf, runningLabel, reviewsForRun, runs, sessionActivity, setFocusRunDestination, setPowerMode, setRuns, setSidebarProjectOrder, setSidebarStatusOrder, showsMergedTerminalLabel, carrySoundState, soundKindForStates, soundStateOf, statusActivity, statusOrderFromConfigPayload, toast } from './core.js';
@@ -60,7 +60,7 @@ import { enabledHarnesses } from './harnesses.js';
 import { factoryVisualsEnabled, onFactoryVisualsChange, reducedMotion } from './motion.js';
 import { sceneLeft } from './page-scene.js';
 import { canChangeScreen, changeScreen, screenSwapped } from './screen-change.js';
-import { SETTINGS_TABS_SAVING_THEMSELVES, SETTINGS_TABS_WITHOUT_CONFIG, settingsTabViewPanelsHtml, syncSettingsTabView, setSettingsDeferredData, settingsDeferredData, settingsPanelHtml, settingsTabFromHash, settingsTabsHtml, wireSettingsTabs, projBoolFields, RETIRED_PROJECT_KEYS, SHIP_ACTIONS, defaultShipAction, projectShipOverride, shipActionLabel, shipDefaultCardHtml, SHIP_ACTION_SETTINGS_HASH, writeDefaultShipAction, writeOfferOtherShipActions, writePrPushAction, prPushActionOf, writeProjectShipAction, RUNS_AT_ONCE_OPTIONS, projectRunsAtOnce, writeProjectRunsAtOnce, projectGeneratedFiles, writeProjectGeneratedFiles, generatedFileRuleRowHtml, projectDeployCommand, writeProjectDeployCommand, closeSettingsToOrigin, flushSettingsSave, focusSettingsHeading, hideChangelog, hideSettings, mergedRepoEntry, normPath, projectDeleteBlockersHtml, projectDeleteCountsHtml, projectFieldChecked, projectIndexRowHtml, busiestProjectRuns, sortSettingsProjects, projectKeyFromSettingsHash, projectName, projectOrderFromConfigPayload, projectSearchMatches, revealSettingsAnchor, scheduleSettingsSave, setSettingsData, setSettingsDirty, setSettingsPendingConfig, setSettingsRenderedHash, setSettingsReturnAnnouncement, setSettingsReturnFocusProject, setSettingsSaveQueued, setSettingsSaveTimer, setSettingsSaving, settingsControlNeedsDebounce, settingsData, settingsDirty, settingsPendingConfig, settingsRenderedHash, settingsReturnAnnouncement, settingsReturnFocusProject, settingsRevision, settingsSaveQueued, settingsSaveTimer, settingsSaving, settingsSkeletonHtml, settingsStatusBarHtml, paintSettingsStatus, paintSettingsSaved, settingsViewActive, showChangelog, showSettings, wireProjectDeleteRunLinks, writeProjectBoolean } from './settings.js';
+import { SETTINGS_TABS_SAVING_THEMSELVES, SETTINGS_TABS_WITHOUT_CONFIG, settingsTabViewPanelsHtml, syncSettingsTabView, setSettingsDeferredData, settingsDeferredData, settingsPanelHtml, settingsTabFromHash, settingsTabsHtml, wireSettingsTabs, projBoolFields, RETIRED_PROJECT_KEYS, SHIP_ACTIONS, defaultShipAction, devServerSetupUnused, projectShipOverride, ringDevServerSetup, shipActionLabel, shipDefaultCardHtml, SHIP_ACTION_SETTINGS_HASH, writeDefaultShipAction, writeOfferOtherShipActions, writePrPushAction, prPushActionOf, writeProjectShipAction, RUNS_AT_ONCE_OPTIONS, projectRunsAtOnce, writeProjectRunsAtOnce, projectGeneratedFiles, writeProjectGeneratedFiles, generatedFileRuleRowHtml, projectDeployCommand, writeProjectDeployCommand, closeSettingsToOrigin, flushSettingsSave, focusSettingsHeading, hideChangelog, hideSettings, keepDevServerSetupInView, mergedRepoEntry, normPath, projectDeleteBlockersHtml, projectDeleteCountsHtml, projectFieldChecked, projectIndexRowHtml, busiestProjectRuns, sortSettingsProjects, projectKeyFromSettingsHash, projectName, projectOrderFromConfigPayload, projectSearchMatches, revealSettingsAnchor, scheduleSettingsSave, setSettingsData, setSettingsDirty, setSettingsPendingConfig, setSettingsRenderedHash, setSettingsReturnAnnouncement, setSettingsReturnFocusProject, setSettingsSaveQueued, setSettingsSaveTimer, setSettingsSaving, settingsControlNeedsDebounce, settingsData, settingsDirty, settingsPendingConfig, settingsRenderedHash, settingsReturnAnnouncement, settingsReturnFocusProject, settingsRevision, settingsSaveQueued, settingsSaveTimer, settingsSaving, settingsSkeletonHtml, settingsStatusBarHtml, paintSettingsStatus, paintSettingsSaved, settingsViewActive, showChangelog, showSettings, wireProjectDeleteRunLinks, writeProjectBoolean } from './settings.js';
 import { deactivateInstructions, instructionsPanelHtml, mountInstructionsSettings } from './instructions.js';
 import { activateOrchestrate, deactivateOrchestrate, orchestratePanelHtml } from './orchestrate.js';
 function showStats() {
@@ -381,7 +381,7 @@ function buildNewConversation(view, presetAgent) {
                 <orc-effort-slider id="nc-effort"></orc-effort-slider>
               </div>
               <div class="newconv-field nc-startbar-fast">
-                <orc-fast-toggle id="nc-fast"></orc-fast-toggle>
+                <orc-fast-toggle id="nc-fast" named></orc-fast-toggle>
               </div>
               <div class="newconv-field nc-startbar-permission">
                 <orc-permission-toggle id="nc-permission"></orc-permission-toggle>
@@ -826,20 +826,25 @@ function ncSyncIntent() {
   if (copy) set(copy, 'variant', !ncLaunchable() ? 'primary' : 'ghost');
   if (status && !status.classList.contains('launching') && !status.classList.contains('error')) {
     const evalsBlocker = ncLaunchable() && ncSelection?.evalsBlocker;
-    const verb = promptMeeting() ? 'make the flashcard' : ncStartMode() === 'orc-plan' ? 'plan' : 'start';
+    // Auto merge is the one way the person skips the plan themselves, so the
+    // hint says so; a draft that only a build takes just starts.
+    const verb = promptMeeting() ? 'make the flashcard'
+      : ncStartMode() === 'orc-plan' ? 'plan'
+      : ncAutoMergeOn() ? 'start without a plan' : 'start';
+    const openVerb = { 'make the flashcard': 'make it', 'start without a plan': 'start' }[verb] || verb;
     const hint = ncSelection?.blocker ? ncSelection.blocker
       : evalsBlocker ? `${evalsBlocker} · Add a candidate below`
       : ncLaunchable()
         ? ncStartsInBackground()
-          ? `Enter to ${verb} in the background · ⌘Enter to ${verb === 'make the flashcard' ? 'make it' : verb} and open · Shift+Enter for a new line`
+          ? `Enter to ${verb} in the background · ⌘Enter to ${openVerb} and open · Shift+Enter for a new line`
           : `Enter to ${verb} · ⌘Enter in the background · Shift+Enter for a new line`
         : `${ncLaunchUnavailableReason(ncLaunchCache.backend)}, so Enter copies the prompt · Shift+Enter for a new line`;
     // Why Start is disabled stays readable on a touch screen, where the
     // keyboard hints are hidden.
     status.classList.toggle('blocked', Boolean(ncSelection?.blocker || evalsBlocker));
-    // Enter writes a plan where it used to build, or a meeting's flashcard,
-    // so the hint leads with that.
-    const lead = /^Enter to (?:plan|make the flashcard)(?: in the background)?/.exec(hint)?.[0] || '';
+    // Enter writes a plan where it used to build, a meeting's flashcard, or
+    // skips the plan because Auto merge is on, so the hint leads with that.
+    const lead = /^Enter to (?:plan|make the flashcard|start without a plan)(?: in the background)?/.exec(hint)?.[0] || '';
     if (status.textContent !== hint || Boolean(status.querySelector('strong')) !== Boolean(lead) || status.childElementCount > (lead ? 1 : 0)) {
       const strong = document.createElement('strong');
       strong.textContent = lead;
@@ -1029,7 +1034,7 @@ export async function loadSettings({ useCache = false } = {}) {
     const data = await fetchConfigData({ fresh: !useCache });
     if (useCache && (revision !== settingsRevision || settingsDirty || settingsSaving)) return;
     // A refresh must not replace a control while the user is editing it.
-    if (warm && $('settings-body')?.contains(document.activeElement)) return;
+    if (warm && $('settings-body')?.contains(document.activeElement) && !devServerSetupUnused()) return;
     const unchanged = warm && JSON.stringify(data) === JSON.stringify(settingsData);
     // Run counts change with every new run, so a refresh nearly always differs.
     // Rebuilding the form under Themes would reload every theme preview.
@@ -1097,7 +1102,7 @@ function projectDetailControlsHtml(p, repos, defaultAction, defaultInstructions 
   const name = projectName(p.path);
   const runTotal = Number(p.runCount) || 0;
   const runSummary = `${new Intl.NumberFormat().format(runTotal)} run${runTotal === 1 ? '' : 's'} recorded`;
-  return `<div class="project-detail settings-masonry" data-project-settings-key="${esc(p.key || p.path)}">
+  return `<div class="project-detail" data-project-settings-key="${esc(p.key || p.path)}">
     <div class="project-detail-head cp-module">
       ${projectIconHtml(p.path, name)}
       <div class="project-detail-heading">
@@ -1108,6 +1113,7 @@ function projectDetailControlsHtml(p, repos, defaultAction, defaultInstructions 
         <code class="project-detail-path" translate="no">${esc(p.path)}</code>
       </div>
     </div>
+    <div class="project-detail-col">
     <div class="settings-card"><fieldset class="settings-fieldset">
       <legend class="settings-label">Delivery</legend>
       <div class="settings-field">
@@ -1142,6 +1148,14 @@ function projectDetailControlsHtml(p, repos, defaultAction, defaultInstructions 
         <p class="settings-hint" id="hint-proj-deploy">Once a run’s merge reaches origin, Orc runs this in the project’s own checkout, on the new main. The run shows Deploying, then Deployed or Deploy failed with its log and Retry. Leave it empty to deploy by hand.</p>
       </div>
     </fieldset></div>
+    <div class="settings-card"><fieldset class="settings-fieldset" aria-describedby="hint-proj-agent">
+      <legend class="settings-label">Agents</legend>
+      <div class="project-control-grid">${controls('agent')}</div>
+      <p class="settings-hint" id="hint-proj-agent">Include Claude Code’s credit line in this project’s commits and PRs. Saved to the repository’s <code translate="no">.claude/settings.local.json</code> straight away.</p>
+      ${harnessSections}
+    </fieldset></div>
+    </div>
+    <div class="project-detail-col">
     <div class="settings-card"><fieldset class="settings-fieldset">
       <legend class="settings-label">Runs &amp; workspace</legend>
       <div class="settings-field proj-wt-wrap">
@@ -1160,12 +1174,6 @@ function projectDetailControlsHtml(p, repos, defaultAction, defaultInstructions 
         </div>
         <p class="settings-hint">With a limit, this project’s other runs wait in a queue and start when a run stops for you or reaches Ship. Use it when the agent’s account would hit its usage limit or the Mac slows down with many builds at once. Queue mode still runs one at a time across all projects. Saved on this computer only: your other computers keep their own limit.</p>
       </div>
-    </fieldset></div>
-    <div class="settings-card"><fieldset class="settings-fieldset" aria-describedby="hint-proj-agent">
-      <legend class="settings-label">Agents</legend>
-      <div class="project-control-grid">${controls('agent')}</div>
-      <p class="settings-hint" id="hint-proj-agent">Include Claude Code’s credit line in this project’s commits and PRs. Saved to the repository’s <code translate="no">.claude/settings.local.json</code> straight away.</p>
-      ${harnessSections}
     </fieldset></div>
     <div class="settings-card"><fieldset class="settings-fieldset proj-verify" id="proj-verify" aria-describedby="hint-proj-verify">
       <legend class="settings-label">Verification</legend>
@@ -1199,6 +1207,7 @@ function projectDetailControlsHtml(p, repos, defaultAction, defaultInstructions 
       <div><orc-button id="project-delete-open" class="danger" variant="ghost" size="compact">Delete project…</orc-button></div>
       <div id="project-delete-preview" role="status" aria-live="polite" aria-atomic="true"></div>
     </fieldset></div>
+    </div>
   </div>
   ${settingsStatusBarHtml()}`;
 }
@@ -1267,6 +1276,7 @@ async function loadProjectCommandSuggestions(project) {
     slot.hidden = !suggestion?.command;
     slot.suggestion = suggestion;
   }
+  keepDevServerSetupInView();
 }
 
 function wireProjectDevServer(project, markDirty) {
@@ -1279,7 +1289,10 @@ function wireProjectDevServer(project, markDirty) {
     fields.hidden = !toggle.checked;
     if (toggle.checked && !$('proj-dev-command').value.trim()) $('proj-dev-command').focus();
   });
-  $('proj-wt')?.addEventListener('change', () => { block.hidden = $('proj-wt').value === 'off'; });
+  $('proj-wt')?.addEventListener('change', () => {
+    block.hidden = $('proj-wt').value === 'off';
+    ringDevServerSetup();
+  });
   view.addEventListener('click', event => {
     const use = event.target.closest('[data-proj-suggest-use]');
     const dismiss = event.target.closest('[data-proj-suggest-dismiss]');
@@ -1738,6 +1751,8 @@ export function renderSettingsForm({ focusPlugin = null } = {}) {
     ${githubSettingsHtml()}
     <div class="settings-plugin-accounts" data-plugin-accounts></div>
     ${secretSettingsHtml()}
+    </div>
+    <div class="settings-account-devices">
     ${devicesSettingsHtml()}
     ${linkSettingsHtml()}
     </div>`, 'settings-account')}
@@ -2745,7 +2760,9 @@ function staysOnScreen(fromFamily, toFamily) {
 }
 
 let lastPointerDown = null;
-if (typeof addEventListener === 'function') addEventListener('pointerdown', e => { lastPointerDown = e; }, { capture: true, passive: true });
+if (typeof addEventListener === 'function') addEventListener('pointerdown', ({ clientX, clientY, timeStamp }) => {
+  lastPointerDown = { clientX, clientY, timeStamp };
+}, { capture: true, passive: true });
 let viewTransitionRouted = true;
 // Both screens of a change share the docked sidebar, so it sits the blur out
 // in a layer of its own. That layer paints over the page's, so the sidebar

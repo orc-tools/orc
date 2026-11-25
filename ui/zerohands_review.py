@@ -21,6 +21,7 @@ import time
 from typing import Any
 
 from app_plugins import Registry
+from stat_cache import keep_recent
 
 RUN_LIMIT = 100
 CACHE_SECONDS = 30
@@ -94,13 +95,12 @@ def _running_reviewers(repo: str, run_id: int, now: float) -> list[str]:
         if name and name not in names:
             names.append(name)
     with _lock:
-        _jobs_cache[run_id] = (now, names)
+        keep_recent(_jobs_cache, run_id, (now, names), RUN_LIMIT)
     return names
 
 
 def _comment_count(review_id: str) -> int | None:
-    """Inline comments on one posted review. A posted review never changes, so
-    its count is kept for the life of the server."""
+    """Inline comments on a posted review, reused while it is in the cache."""
     with _lock:
         if review_id in _comment_counts:
             return _comment_counts[review_id]
@@ -112,7 +112,7 @@ def _comment_count(review_id: str) -> int | None:
     except (KeyError, TypeError, ValueError):
         return None
     with _lock:
-        _comment_counts[review_id] = count
+        keep_recent(_comment_counts, review_id, count, RUN_LIMIT)
     return count
 
 

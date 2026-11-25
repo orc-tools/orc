@@ -15,7 +15,7 @@ import { CHAT_KEY, mountChat } from './chat.js';
 import { mediaKind } from './chat-timeline.js';
 import { mediaUrl } from './assets-panel.js';
 import { clipPlayback, onClipChange, stopClips } from './clip-player.js';
-import { FACTORY_KEY, mountFactory, unmountFactory } from './factory.js';
+import { FACTORY_KEY, loadFactory, unmountFactory } from './secondary-screens.js';
 import { MCP_KEY, mountMcp, unmountMcp } from './mcp-tab.js';
 import { mountPlanPage, planPageShows, unmountPlanPage } from './plan-page.js';
 import { $, IMG, LABELS, TAB_LABELS, VID, adrLabel, announce, artifactPageUnloading, esc, externalizeLinks, fileUrl, highlightSeverity, pendingArtifactFocus, renderedArtifactKey, resolveRelativeUrls, runs, setPendingArtifactFocus, styleTldrs, submitChord, syncArtifactTheme, versionedFileUrl } from './core.js';
@@ -1646,8 +1646,12 @@ export async function loadFile(run, key, load) {
   if (key !== MCP_KEY) unmountMcp();
   if (!planPageShows(run, key)) unmountPlanPage();
   if (key === FACTORY_KEY) {
-    if (!commitArtifactRender(load)) return;
-    mountFactory(run, c);
+    try {
+      const factory = await loadFactory();
+      if (commitArtifactRender(load)) factory.mountFactory(run, c);
+    } catch (error) {
+      if (artifactLoadCanWrite(load)) c.textContent = 'Could not open Factory: ' + error.message;
+    }
     return;
   }
   if (key === MCP_KEY) {

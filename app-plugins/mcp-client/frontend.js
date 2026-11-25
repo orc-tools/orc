@@ -1373,6 +1373,7 @@ export async function activate({ signal, base, commands, view }) {
   button.id = 'mcp-client-btn';
   button.setAttribute('href', `#${HASH}`);
   button.setAttribute('label', 'MCP client');
+  button.dataset.caption = 'MCP';
   button.setAttribute('size', 'compact');
   button.innerHTML = MCP_CLIENT_ICON;
   if ($('skills-btn')) $('skills-btn').after(button);

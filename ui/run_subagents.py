@@ -1,6 +1,6 @@
 """Read-only subagent names, lifecycle and usage from local transcripts."""
 
-from contextlib import closing
+import threading
 from datetime import datetime
 import math
 from pathlib import Path
@@ -436,21 +436,58 @@ class Summary:
             agent["resultBytes"] = size(result[1])
 
 
+CODEX_CHILDREN_SQL = """
+    WITH RECURSIVE children(id) AS (
+        SELECT child_thread_id FROM thread_spawn_edges WHERE parent_thread_id = ?
+        UNION
+        SELECT e.child_thread_id FROM thread_spawn_edges e JOIN children c ON e.parent_thread_id = c.id
+        LIMIT 128
+    )
+    SELECT t.id, t.rollout_path FROM threads t JOIN children c ON t.id = c.id
+    WHERE t.id != ?
+                """
+
+
+class CodexChildIndex:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.connection = None
+        self.identity = None
+        self.version = None
+        self.owners = {}
+
+    def children(self, db, owner):
+        with self.lock:
+            stat = db.stat()
+            identity = (db, stat.st_dev, stat.st_ino)
+            if identity != self.identity:
+                connection = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=0.1,
+                                             check_same_thread=False)
+                if self.connection is not None:
+                    self.connection.close()
+                self.connection = connection
+                self.identity = identity
+                self.owners.clear()
+            # data_version on the same connection observes commits in WAL mode
+            # too, even when the parent's own transcript hasn't changed.
+            version = self.connection.execute("PRAGMA data_version").fetchone()[0]
+            if version != self.version:
+                self.owners.clear()
+                self.version = version
+            if owner not in self.owners:
+                if len(self.owners) >= 512:
+                    self.owners.clear()
+                self.owners[owner] = tuple(self.connection.execute(CODEX_CHILDREN_SQL, (owner, owner)))
+            return self.owners[owner]
+
+
+_CODEX_CHILD_INDEX = CodexChildIndex()
+
+
 def codex_children(owner):
     for db in sorted(codex_questions.home().glob("state_*.sqlite"), reverse=True)[:3]:
         try:
-            with closing(sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=0.1)) as conn:
-                rows = conn.execute("""
-                    WITH RECURSIVE children(id) AS (
-                        SELECT child_thread_id FROM thread_spawn_edges WHERE parent_thread_id = ?
-                        UNION
-                        SELECT e.child_thread_id FROM thread_spawn_edges e JOIN children c ON e.parent_thread_id = c.id
-                        LIMIT 128
-                    )
-                    SELECT t.id, t.rollout_path FROM threads t JOIN children c ON t.id = c.id
-                    WHERE t.id != ?
-                """, (owner, owner)).fetchall()
-            return rows
+            return _CODEX_CHILD_INDEX.children(db, owner)
         except (OSError, sqlite3.Error):
             continue
     return []
@@ -473,17 +510,20 @@ def snapshot(harness, path, summary, reader_for, locate, active, billed=None):
             if ident not in paths:
                 paths[ident] = locate("codex", ident)
         candidates = []
-        root = codex_questions.home() / "sessions"
+        root = (codex_questions.home() / "sessions").resolve()
         for ident, child_path in paths.items():
-            if child_path and Path(child_path).resolve().is_relative_to(root.resolve()):
-                candidates.append((ident, Path(child_path)))
+            if child_path:
+                resolved = Path(child_path).resolve()
+                if resolved.is_relative_to(root):
+                    candidates.append((ident, resolved))
     else:
         rows.update({value["id"]: dict(value) for value in summary.calls.values()})
         folder = Path(path).parent / Path(path).stem / "subagents"
         candidates = [(p.stem.removeprefix("agent-"), p) for p in sorted(folder.glob("agent-*.jsonl"))
                       if p.resolve().is_relative_to(folder.resolve())]
+    parent_path = Path(path).resolve() if candidates else None
     for ident, child_path in candidates:
-        if child_path.resolve() == Path(path).resolve():
+        if (child_path if harness == "codex" else child_path.resolve()) == parent_path:
             continue
         child = reader_for(harness, child_path)
         with child.lock:

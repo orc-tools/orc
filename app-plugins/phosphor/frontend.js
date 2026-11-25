@@ -4,6 +4,8 @@
 // worms, CRT glass with boot sequence, glyph bursts and typing echoes.
 
 import { defineFunMode } from '/js/fun-modes.js';
+import { soundsAreEnabled } from '/js/activity.js';
+import { soundContext, soundVolume } from '/js/sound.js';
 import { reducedMotion } from '/js/motion.js';
 
 const PHOSPHOR_GLYPHS = '0123456789ABCDEF<>{}[]/=+*#%&@~^|:;!?';
@@ -127,6 +129,52 @@ function phosphorTrailBit(x, y, { zap, layerWithRoom }) {
   }));
 }
 
+const HI75_INPUT = 'html[data-phosphor] #run-terminal.terminal-staged:not(.terminal-stage-pending) .xterm-helper-textarea:focus';
+let hi75Samples;
+
+function loadHi75(context) {
+  if (!hi75Samples) {
+    hi75Samples = fetch(new URL('./hi75.mp3', import.meta.url))
+      .then(response => {
+        if (!response.ok) throw new Error('Hi75 audio unavailable');
+        return response.arrayBuffer();
+      })
+      .then(bytes => context.decodeAudioData(bytes))
+      .catch(() => { hi75Samples = null; });
+  }
+  return hi75Samples;
+}
+
+async function phosphorTerminalSound(event) {
+  const input = event.target;
+  if (!input.matches?.(HI75_INPUT) || !soundsAreEnabled() || !soundVolume()) return;
+  const { key } = event;
+  if (event.type === 'keydown' && (event.repeat || event.isComposing || event.metaKey || event.ctrlKey || event.altKey
+      || (key.length !== 1 && key !== 'Enter' && key !== 'Backspace'))) return;
+  try {
+    const context = soundContext();
+    if (!context) return;
+    const samples = loadHi75(context);
+    if (event.type === 'focusin') return;
+    const pressed = performance.now();
+    if (context.state !== 'running') context.resume().catch(() => {});
+    const buffer = await samples;
+    // A cold download or a blocked audio device must never replay a backlog of keystrokes.
+    if (!buffer || context.state !== 'running' || performance.now() - pressed > 80
+        || !input.matches(HI75_INPUT) || !soundsAreEnabled()) return;
+    const first = key === 'Enter' ? 14 : key === ' ' ? 8 : 0;
+    const take = first + Math.floor(Math.random() * (first === 0 ? 8 : 6));
+    const source = context.createBufferSource();
+    const gain = context.createGain();
+    source.buffer = buffer;
+    gain.gain.value = soundVolume() * (key === 'Enter' ? 0.42 : 0.28);
+    source.connect(gain).connect(context.destination);
+    source.start(0, take * 0.25, 0.25);
+  } catch {
+    // Typing still works when the browser cannot play audio.
+  }
+}
+
 const PHOSPHOR_HEX = '0123456789ABCDEF';
 
 function phosphorTyping({ kind, data, x, streak, fieldRect, spawn, topEdge }) {
@@ -180,5 +228,8 @@ export const setPhosphor = phosphorMode.set;
 export const togglePhosphor = phosphorMode.toggle;
 export const leavePhosphor = phosphorMode.leave;
 export function activate(ctx) {
+  for (const type of ['focusin', 'keydown']) {
+    window.addEventListener(type, phosphorTerminalSound, { capture: true, signal: ctx?.signal });
+  }
   return phosphorMode.activate(ctx);
 }

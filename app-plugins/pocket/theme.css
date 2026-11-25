@@ -267,7 +267,7 @@
 /* The light says a session is live by pulsing, so the row's own dot goes. */
 :root[data-pocket] .run .session-status.running { display: none; }
 :root[data-pocket] .run:has(.session-status.running) .name::before { animation: pocket-led 1.8s ease-in-out infinite; }
-:root[data-pocket] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+:root[data-pocket] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .run-age) {
   font: 700 9.5px/1.6 var(--pocket-sans); letter-spacing: .12em; text-transform: uppercase;
 }
 /* The Settled shelf is one more tile, pinned to the foot of the list. The

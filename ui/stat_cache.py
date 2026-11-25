@@ -1,6 +1,14 @@
-"""Text of small files that hot loops reread, revalidated by one stat."""
+"""Cache helpers for frequently read data."""
 import os
 import threading
+
+
+def keep_recent(entries, key, value, limit):
+    """Keep the last `limit` writes. The caller owns the mapping and its lock."""
+    entries.pop(key, None)
+    entries[key] = value
+    if len(entries) > limit:
+        del entries[next(iter(entries))]
 
 
 def file_key(path):

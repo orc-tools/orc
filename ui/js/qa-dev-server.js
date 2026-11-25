@@ -7,9 +7,14 @@ export const NEW_CONV_HANDOFF_KEY = 'orcNewConvHandoff';
 
 const nameOf = project => project.split('/').filter(Boolean).pop() || project;
 
+const shellQuote = text => `'${String(text).replaceAll("'", "'\\''")}'`;
+
+// The run saves what it finds itself (orc-setting dev-server), so Chat shows
+// the saved line with Edit and Undo instead of a command to paste. A dev
+// server already saved is never replaced without asking.
 export function devServerAgentPrompt(project) {
   const name = nameOf(project);
-  return `Figure out the local dev server command for ${name} by checking the README, package.json, and other standard project files. Tell me what command to use for Orc's Live dev server (including {port} if it supports a port flag, plus any install command or env files to copy into worktrees).`;
+  return `Figure out the local dev server command for ${name} by checking the README, package.json, and other standard project files. Use {port} if it supports a port flag, plus any install command or env files to copy into worktrees. Then save it as ${name}'s Live dev server with \`orc-setting dev-server --project ${shellQuote(project)} --command '<command>' [--install '<command>'] [--copy <file>]\` and tell me what you saved. If ${name} already has a dev server saved, tell me what you would change and ask before replacing it.`;
 }
 
 export function queueAgentDevServerSetup(project, { runId = '', openRun }) {

@@ -28,7 +28,7 @@ import { preloadScenes } from './theme-scenes.js';
 import { factoryBytesText, factoryLabelSlots } from './factory-labels.js';
 import { createFactoryChart } from './factory-chart.js';
 
-export const FACTORY_KEY = '__factory__';
+import { FACTORY_KEY } from './secondary-screens.js';
 
 const FACTORY_POLL_MS = 2000;
 const FACTORY_CATCH_UP_MS = 400;

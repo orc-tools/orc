@@ -107,6 +107,8 @@ GATE_ANSWER_LINE = re.compile(r"(\d+)\. (.*?)\?: (.*)\Z", re.S)
 CLARIFICATION_ANSWERS = re.compile(
     r"Clarification review \(([A-Za-z0-9][A-Za-z0-9._-]{0,120})\):\nIntent: answer clarification\n"
     r"(.*?)(?:\nAnswer manifest: \S+)?\Z", re.S)
+CHAT_SUBMISSION = re.compile(r"\nChat submission: ([0-9a-f]{32})"
+                            r"(?=\nAnswer manifest: clarification-review/manifests/(clarification-[\w.-]+)\.json\Z)")
 EXIT_CODE = re.compile(r"\AExit code (\d+)")
 LEGACY_EXEC_CMD = re.compile(r"\"cmd\"\s*:\s*(\"(?:[^\"\\]|\\.)*\")")
 LEGACY_EXEC_PREAMBLE = re.compile(r"\AScript completed\nWall time [^\n]*\nOutput:\n")
@@ -276,6 +278,13 @@ def prompt_file_body(text):
     return "".join(lines[closing + 1:]).strip() or None
 
 
+def chat_submission(text):
+    if text.startswith("Clarification review (") and (match := CHAT_SUBMISSION.search(text)):
+        return text[:match.start()] + text[match.end():], {
+            "chatSubmission": match[1], "chatManifest": match[2]}
+    return text, {}
+
+
 def queued_view(items):
     """Queued follow-ups as Chat shows them: an answered question's
     ``/orc --answer-follow-up`` wrapper reads as the message it carries.
@@ -290,7 +299,8 @@ def queued_view(items):
             r"\s*[/$]orc(?::run)?\s+(--answer-follow-up\s.+)", text, re.S)
         text = unwrap_launch(match.group(1)) if match else text
         text, source = unwrap_forwarded(text or "")
-        view.append(dict(item, text=text, **({"forwardedFrom": source} if source else {})))
+        text, submission = chat_submission(text)
+        view.append(dict(item, text=text, **submission, **({"forwardedFrom": source} if source else {})))
     return view
 
 
@@ -300,6 +310,26 @@ def split_attachments(text):
     if not paths:
         return text, []
     return ATTACHMENT_REFERENCE.sub("", text).strip(), paths
+
+
+def user_message(uid, at, text, *, command=None, steer=False):
+    text, submission = (text, {}) if command else chat_submission(text)
+    answers = None if command else gate_answers(text)
+    text, attachments = split_attachments(text)
+    item = {"id": uid, "kind": "user", "at": at, "text": clip(text, TEXT_LIMIT), **submission}
+    if steer:
+        item["steer"] = True
+    else:
+        body = prompt_file_body(text)
+        if body:
+            item["promptFile"] = {"body": clip(body, TEXT_LIMIT)}
+    if command:
+        item["command"] = command
+    if answers:
+        item["gateAnswers"] = answers
+    if attachments:
+        item["attachments"] = attachments[:12]
+    return item
 
 
 def display_path(path, cwd=None):
@@ -513,6 +543,7 @@ class Reader:
         self.last_turn_start = None
         self.codex_legacy = False
         self.packed_read = False
+        self.summary_stamp = None
         self.summary = run_subagents.Summary()
         self.mcp_calls = {}
         self.unreadable = 0
@@ -558,6 +589,9 @@ class Reader:
         """Parse whatever the agent appended since the last poll."""
         packed = str(self.path).endswith(".gz")
         try:
+            if self.summary_only and self.summary_stamp is not None and not self.behind:
+                if self.summary_stamp == self._file_stamp(os.stat(self.path)):
+                    return True
             with open(self.path, "rb") as raw:
                 stat = os.fstat(raw.fileno())
                 identity = (stat.st_dev, stat.st_ino)
@@ -609,9 +643,15 @@ class Reader:
                 self.behind = remaining <= 0 and (
                     self.offset < size if size is not None else bool(stream.peek(1)))
                 self.packed_read = packed and not self.behind
+                if self.summary_only:
+                    self.summary_stamp = self._file_stamp(stat)
         except (OSError, EOFError):
             return False
         return True
+
+    @staticmethod
+    def _file_stamp(stat):
+        return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
 
     def _unreadable(self, record):
         """Skip a record this reader cannot parse, which usually means the
@@ -816,13 +856,7 @@ class Reader:
         elif self._note_item(uid, at, text):
             self._add(self._note_item(uid, at, text, steer=True))
         else:
-            text, attachments = split_attachments(text)
-            item = {"id": uid, "kind": "user", "at": at, "text": clip(text, TEXT_LIMIT), "steer": True}
-            answers = gate_answers(text)
-            if answers:
-                item["gateAnswers"] = answers
-            if attachments:
-                item["attachments"] = attachments[:12]
+            item = user_message(uid, at, text, steer=True)
             if origin.get("kind") not in (None, "human"):
                 item["source"] = origin["kind"]
             self._add(item)
@@ -843,14 +877,8 @@ class Reader:
             if note:
                 self._add(note)
                 continue
-            text, attachments = split_attachments(message.strip())
-            if not text and not attachments:
-                continue
-            item = {"id": "%s:%d" % (uid, index), "kind": "user", "at": at,
-                    "text": clip(text, TEXT_LIMIT), "steer": True}
-            if attachments:
-                item["attachments"] = attachments[:12]
-            self._add(item)
+            if message.strip():
+                self._add(user_message("%s:%d" % (uid, index), at, message.strip(), steer=True))
 
     @staticmethod
     def _note_item(uid, at, text, **extra):
@@ -876,20 +904,9 @@ class Reader:
             text = draft.group(1).strip()
             command = None
         text, forwarded = unwrap_forwarded(text)
-        text, attachments = split_attachments(text)
-        item = {"id": uid, "kind": "user", "at": at, "text": clip(text, TEXT_LIMIT)}
-        body = prompt_file_body(text)
-        if body:
-            item["promptFile"] = {"body": clip(body, TEXT_LIMIT)}
+        item = user_message(uid, at, text, command=command)
         if forwarded:
             item["forwardedFrom"] = forwarded
-        if command:
-            item["command"] = command
-        answers = None if command else gate_answers(text)
-        if answers:
-            item["gateAnswers"] = answers
-        if attachments:
-            item["attachments"] = attachments[:12]
         if images:
             item["imageCount"] = images
         if origin not in (None, "human"):

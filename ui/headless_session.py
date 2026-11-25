@@ -435,30 +435,71 @@ def _turn_process_alive(state, reuse_match=False):
     return alive
 
 
-def _process_group_members(pgid):
+def _process_table():
+    """Every process as ``{pid: (ppid, pgid, started epoch or None, zombie)}``,
+    or _UNKNOWN when ps could not say."""
     try:
         out = subprocess.run(
-            ["ps", "-A", "-o", "pid=,pgid=,stat=,lstart="],
+            ["ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,lstart="],
             capture_output=True, text=True, timeout=2,
             env={**os.environ, "LC_ALL": "C", "TZ": "UTC"})
     except (OSError, subprocess.TimeoutExpired):
         return _UNKNOWN
     if out.returncode != 0:
         return _UNKNOWN
-    members = {}
+    table = {}
     for line in out.stdout.splitlines():
         fields = line.split()
-        if len(fields) < 2:
-            return _UNKNOWN
-        if fields[1] != str(pgid):
-            continue
         try:
-            started = datetime.strptime(" ".join(fields[3:8]), "%a %b %d %H:%M:%S %Y")
-            members[int(fields[0])] = (started.replace(tzinfo=timezone.utc).timestamp(),
-                                       fields[2].startswith("Z"))
+            pid, ppid, pgid = int(fields[0]), int(fields[1]), int(fields[2])
         except (ValueError, IndexError):
             return _UNKNOWN
-    return members
+        try:
+            started = datetime.strptime(" ".join(fields[4:9]), "%a %b %d %H:%M:%S %Y")
+            started = started.replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            started = None
+        table[pid] = (ppid, pgid, started, len(fields) > 3 and fields[3].startswith("Z"))
+    return table
+
+
+def _group_members(table, pgid):
+    """``{pid: (started, zombie)}`` for the members of process group ``pgid``,
+    or _UNKNOWN when one of them could not be identified."""
+    members = {pid: (row[2], row[3]) for pid, row in table.items() if row[1] == pgid}
+    return _UNKNOWN if any(started is None for started, _ in members.values()) else members
+
+
+def _process_group_members(pgid):
+    table = _process_table()
+    return table if table is _UNKNOWN else _group_members(table, pgid)
+
+
+def _group_commands(table, pgid):
+    """The live processes descended from group ``pgid`` that run in a group of
+    their own, as ``{pid: started}``. Claude Code starts each shell command
+    that way, so signaling the turn's group never reaches them."""
+    children = {}
+    for pid, row in table.items():
+        children.setdefault(row[0], []).append(pid)
+    queue = [pid for pid, row in table.items() if row[1] == pgid]
+    seen, commands = set(queue), {}
+    while queue:
+        for child in children.get(queue.pop(), ()):
+            if child in seen or child <= 1:
+                continue
+            seen.add(child)
+            queue.append(child)
+            _, _, started, zombie = table[child]
+            if started is not None and not zombie:
+                commands[child] = started
+    return commands
+
+
+def _live_commands(commands, table):
+    """The ``commands`` still running as the same processes."""
+    return {pid: started for pid, started in commands.items()
+            if pid in table and table[pid][2] == started and not table[pid][3]}
 
 
 def _tail(path, limit):
@@ -735,7 +776,7 @@ def start_turn(run_dir, *, agent, argv, prompt, cwd, env, popen=subprocess.Popen
 
     A turn Orc starts on its own (``user_turn=False``: a Ship gate reminder, a
     main-moved notice, a rescue) carries on the user's last turn, so it keeps
-    that turn's "Since last turn" baseline and is recorded in ``orcTurns``."""
+    that turn's "Last code change" baseline and is recorded in ``orcTurns``."""
     if not os.path.isdir(cwd):
         raise HeadlessError("launch directory does not exist: " + cwd, "no_cwd")
     with _locked(run_dir, ".turn.lock"), _locked(run_dir):
@@ -973,18 +1014,32 @@ def _append_closing_line(run_dir, turn, line):
         _IDLE_TURNS.pop(run_dir, None)
 
 
-def _checkpoint_cleanup(run_dir, state, members, mark="interruptedAt"):
+_CLEANUP_KEYS = ("cleanupMembers", "cleanupCommands", "cleanupForced")
+
+
+def _checkpoint_cleanup(run_dir, state, members, mark="interruptedAt", commands=None, forced=False):
+    """Record what Stop still has to end: the turn's group ``members``, the
+    shell ``commands`` it started in groups of their own, and whether Stop
+    has had to force the turn, which is when those commands are ended too.
+    ``members=None`` records that nothing is left."""
     with _locked(run_dir):
         current = _read_state(run_dir)
         if not current or any(current.get(key) != state.get(key) for key in ("turn", "pid")):
             return False
         if members is None:
-            current.pop("cleanupMembers", None)
+            for key in _CLEANUP_KEYS:
+                current.pop(key, None)
         else:
-            identities = {str(pid): identity[0] for pid, identity in members.items()}
-            if current.get("cleanupMembers") == identities:
+            cleanup = {"cleanupMembers": {str(pid): identity[0] for pid, identity in members.items()}}
+            if commands:
+                cleanup["cleanupCommands"] = {str(pid): started for pid, started in commands.items()}
+            if forced:
+                cleanup["cleanupForced"] = True
+            if all(current.get(key) == cleanup.get(key) for key in _CLEANUP_KEYS):
                 return True
-            current["cleanupMembers"] = identities
+            for key in _CLEANUP_KEYS:
+                current.pop(key, None)
+            current.update(cleanup)
             if "interruptedAt" not in current and "settledAt" not in current:
                 current[mark] = _now_iso()
         try:
@@ -994,10 +1049,29 @@ def _checkpoint_cleanup(run_dir, state, members, mark="interruptedAt"):
     return True
 
 
-def interrupt(run_dir, *, wait=INTERRUPT_GRACE_SECONDS, sig=signal.SIGINT, expect=None, settled=None):
+def _saved_commands(state):
+    saved = state.get("cleanupCommands")
+    if not isinstance(saved, dict):
+        return {}
+    commands = {}
+    for pid, started in saved.items():
+        with contextlib.suppress(ValueError, TypeError):
+            if isinstance(started, (int, float)):
+                commands[int(pid)] = started
+    return commands
+
+
+def interrupt(run_dir, *, wait=INTERRUPT_GRACE_SECONDS, sig=signal.SIGINT, expect=None, settled=None,
+              report=None):
     """Interrupt the running turn's process group, as Esc does in a terminal,
     escalating to SIGTERM and then SIGKILL when it will not stop. Returns
     ``stopped``, ``idle`` when nothing is running, or ``failed``.
+
+    A turn that has to be forced (an escalation, or ``sig`` SIGKILL for
+    Kill) also has the shell commands it had started in groups of their own
+    ended with the same signals; a turn that stops on ``sig`` ends them
+    itself. ``report``, a dict, gets the name of the last signal sent under
+    ``"signal"``.
 
     A sweep passes the ``(turn, pid)`` it judged as ``expect``, so a turn
     the user started since is left alone. ``settled`` ends a turn whose agent
@@ -1014,29 +1088,37 @@ def interrupt(run_dir, *, wait=INTERRUPT_GRACE_SECONDS, sig=signal.SIGINT, expec
             return "idle"
         if expect is not None and (state.get("turn"), state.get("pid")) != tuple(expect):
             return "idle"
-        result = _stop_group(run_dir, state, wait, sig, "interruptedAt" if settled is None else "settledAt")
+        result = _stop_group(run_dir, state, wait, sig, "interruptedAt" if settled is None else "settledAt",
+                             {} if report is None else report)
         if result == "stopped" and settled is not None:
             _append_closing_line(run_dir, state["turn"], settled)
     return result
 
 
-def _stop_group(run_dir, state, wait, sig, mark):
+def _group_done(members):
+    return not members or all(zombie for _, zombie in members.values())
+
+
+def _stop_group(run_dir, state, wait, sig, mark, report):
     pending = "cleanupMembers" in state
     if not pending and (state.get("status") != "running" or not _turn_process_alive(state)):
         return "idle"
     pid = state["pid"]
-    members = _process_group_members(pid)
+    table = _process_table()
+    if table is _UNKNOWN:
+        return "failed"
+    members = _group_members(table, pid)
     if members is _UNKNOWN:
         return "failed"
     if pending:
-        if not members:
+        forced = state.get("cleanupForced") is True
+        commands = _live_commands(_saved_commands(state), table)
+        if _group_done(members) and not (forced and commands):
             return "stopped" if _checkpoint_cleanup(run_dir, state, None) else "failed"
         owned = state["cleanupMembers"]
-        if not isinstance(owned, dict) or not any(
+        if not isinstance(owned, dict) or not _group_done(members) and not any(
                 owned.get(str(member)) == identity[0] for member, identity in members.items()):
             return "failed"
-        if all(zombie for _, zombie in members.values()):
-            return "stopped" if _checkpoint_cleanup(run_dir, state, None) else "failed"
     else:
         if not members:
             return "idle"
@@ -1045,38 +1127,60 @@ def _stop_group(run_dir, state, wait, sig, mark):
                 or not state["spawnedAt"] - START_SLACK_SECONDS <= leader[0]
                 <= state["spawnedAt"] + START_WINDOW_SECONDS):
             return "failed"
+        # Taken before any signal: once the turn is gone, its commands are
+        # adopted by launchd and nothing ties them to it.
+        forced, commands = False, _group_commands(table, pid)
     # Stop may outlive its caller and its leader. Persist ownership before
     # signaling so a fresh process can finish cleanup after either exits.
-    if not _checkpoint_cleanup(run_dir, state, members, mark):
+    if not _checkpoint_cleanup(run_dir, state, members, mark, commands, forced):
         return "failed"
     sent = False
+    # Once the group is seen gone, only its commands are left to signal: the
+    # group number is no longer the turn's.
+    group_gone = _group_done(members)
     for stop_signal, grace in ((sig, wait), (signal.SIGTERM, 2.0), (signal.SIGKILL, 2.0)):
-        try:
-            os.killpg(pid, stop_signal)
-        except ProcessLookupError:
+        forced = forced or stop_signal != signal.SIGINT
+        if forced and commands and not _checkpoint_cleanup(run_dir, state, members, mark, commands, forced):
+            return "failed"
+        if not group_gone:
+            try:
+                os.killpg(pid, stop_signal)
+            except ProcessLookupError:
+                group_gone = True
+            except OSError:
+                return "failed"
+        if forced:
+            for command in commands:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(command, stop_signal)
+        if group_gone and not (forced and commands):
             if not _checkpoint_cleanup(run_dir, state, None):
                 return "failed"
             return "stopped" if sent else "idle"
-        except OSError:
-            return "failed"
         sent = True
+        report["signal"] = signal.Signals(stop_signal).name
         deadline = time.monotonic() + grace
         while True:
-            current = _process_group_members(pid)
+            table = _process_table()
+            if table is _UNKNOWN:
+                return "failed"
+            current = _group_members(table, pid)
             if current is _UNKNOWN:
                 return "failed"
-            if not current:
+            commands = _live_commands(commands, table)
+            done = _group_done(current)
+            group_gone = group_gone or done
+            if done and not (forced and commands):
                 return "stopped" if _checkpoint_cleanup(run_dir, state, None) else "failed"
             # A surviving identity anchors the group after its leader is
             # reaped; a recycled group number alone authorizes no signal.
-            if not any(member in current and current[member][0] == identity[0]
-                       for member, identity in members.items()):
+            if not done and not any(member in current and current[member][0] == identity[0]
+                                    for member, identity in members.items()):
                 return "failed"
-            if all(zombie for _, zombie in current.values()):
-                return "stopped" if _checkpoint_cleanup(run_dir, state, None) else "failed"
-            if not _checkpoint_cleanup(run_dir, state, current, mark):
+            if not done:
+                members = current
+            if not _checkpoint_cleanup(run_dir, state, current, mark, commands, forced):
                 return "failed"
-            members = current
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.1)

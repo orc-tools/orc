@@ -1,7 +1,10 @@
-"""Auto merge: a run whose Chat turned it on takes its project's Ship action
-the moment it reaches its Ship stop. Core's watch loop calls `watch_tick`;
-core's `ship_at_landing_stop` does the delivery, so this package only keeps
-each run's choice and the outcome of the last attempt."""
+"""Auto merge: a run whose Chat turned it on starts its build automatically
+once its plan completes (carrying Auto merge onto the launched build run),
+and takes its project's Ship action the moment it reaches its Ship stop. Core's
+watch loop calls `watch_tick`; core's `start_plan_at_plan_stop` and
+`ship_at_landing_stop` do the work, so this package only keeps each run's
+choice, the outcome of the last attempt, and each time the choice was turned on
+or off, which Chat shows as badges."""
 import glob
 import json
 import os
@@ -9,16 +12,26 @@ import re
 import sys
 import tempfile
 import time
+import uuid
+from datetime import datetime, timezone
 
 # New names on purpose: the toggle core used to have left `auto-merge.json`
 # in some runs, and those must not ship the moment this package is enabled.
 CHOICE_FILE = 'auto-merge-choice.json'
 ATTEMPT_FILE = 'auto-merge-attempt.json'
+CHANGES_FILE = 'auto-merge-changes.json'
+CHANGES_MAX = 200
+CHANGE_ID = re.compile(r'[a-f0-9]{32}\Z')
 ROUTE = re.compile(r'^/api/auto-merge/runs/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$')
 
 
 def _now():
     return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def _moment():
+    """Now, to the millisecond: Chat places a change between transcript items by it."""
+    return datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
 
 
 def _read(path):
@@ -64,19 +77,47 @@ class Service:
     def enabled(self, run_id):
         return _read(os.path.join(self._run_dir(run_id), CHOICE_FILE)).get('enabled') is True
 
+    def changes(self, run_id):
+        """Each time this run's Auto merge was turned on or off, oldest first:
+        `{id, at, enabled}`. Core sends them to Chat as `autoMergeChanges`."""
+        saved = _read(os.path.join(self._run_dir(run_id), CHANGES_FILE)).get('changes')
+        return [entry for entry in saved if isinstance(entry, dict)] if isinstance(saved, list) else []
+
+    def _record_change(self, run_id, enabled, change_id):
+        """Keep one flip. The choice is already saved, so a failure here is
+        only printed."""
+        changes = self.changes(run_id)
+        if not change_id or any(entry.get('id') == change_id for entry in changes):
+            change_id = uuid.uuid4().hex
+        change = {'id': change_id, 'at': _moment(), 'enabled': enabled}
+        try:
+            _write(os.path.join(self._run_dir(run_id), CHANGES_FILE),
+                   {'schemaVersion': 1, 'changes': [*changes, change][-CHANGES_MAX:]})
+        except OSError as error:
+            print('Auto merge %s: could not record the change: %s' % (run_id, error), file=sys.stderr)
+            return None
+        return change
+
     def set_enabled(self, run_id, enabled):
         """Turning it on again clears a stopped attempt, so the next tick
         tries the Ship action once more. Core also calls this when the
         composer starts a run with Auto merge on; it returns True so core can
         tell a saved choice from a package that is off."""
+        self.change(run_id, enabled)
+        return True
+
+    def change(self, run_id, enabled, change_id=None):
+        """Save the choice and return the flip it recorded for Chat, under the
+        id the page drew its badge with, or None when nothing changed."""
         run_dir = self._run_dir(run_id)
+        changed = self.enabled(run_id) is not enabled
         _remove(os.path.join(run_dir, ATTEMPT_FILE))
         if enabled:
             _write(os.path.join(run_dir, CHOICE_FILE),
                    {'schemaVersion': 1, 'runId': run_id, 'enabled': True, 'updatedAt': _now()})
         else:
             _remove(os.path.join(run_dir, CHOICE_FILE))
-        return True
+        return self._record_change(run_id, enabled, change_id) if changed else None
 
     def available(self, meta):
         """A review run never reaches Ship, so its Chat offers no Auto merge."""
@@ -97,16 +138,20 @@ class Service:
                 'error': error}
 
     def watch_tick(self):
-        """Ship every run that has Auto merge on and is waiting at its Ship
-        stop, once per delivery authority."""
+        """Start the build for any completed plan that has Auto merge on, and
+        ship every run waiting at its Ship stop, once per digest."""
         if not self.context['is_enabled']():
             return
         for path in glob.glob(os.path.join(self._runs(), '*', CHOICE_FILE)):
             run_id = os.path.basename(os.path.dirname(path))
             attempt_path = os.path.join(self._run_dir(run_id), ATTEMPT_FILE)
+            skip_digest = _read(attempt_path).get('digest')
+            wanted = lambda run_id=run_id: self.enabled(run_id)
             result = self.context['ship_at_landing_stop'](
-                run_id, skip_digest=_read(attempt_path).get('digest'),
-                wanted=lambda run_id=run_id: self.enabled(run_id))
+                run_id, skip_digest=skip_digest, wanted=wanted)
+            if result is None and self.context.get('start_plan_at_plan_stop'):
+                result = self.context['start_plan_at_plan_stop'](
+                    run_id, skip_digest=skip_digest, wanted=wanted)
             if result is None:
                 continue
             try:
@@ -121,6 +166,7 @@ class Service:
         if not match or method not in ('GET', 'POST'):
             return False
         run_id = match.group(1)
+        answer = {}
         if not os.path.isdir(self._run_dir(run_id)):
             handler.json_error(404, 'no such run', False)
             return True
@@ -135,6 +181,10 @@ class Service:
             if options is None or not isinstance(options.get('enabled'), bool):
                 handler.json_error(400, 'expected {enabled: true|false}', False)
                 return True
+            change_id = options.get('changeId')
+            if change_id is not None and not (isinstance(change_id, str) and CHANGE_ID.match(change_id)):
+                handler.json_error(400, 'changeId must be 32 hex characters', False)
+                return True
             with self.context['run_mutation_lock'](run_id):
                 if not self.context['run_is_live'](run_id):
                     handler.json_error(409, 'this run has already finished', False)
@@ -143,11 +193,12 @@ class Service:
                     handler.json_error(400, 'A review run never ships, so it has no Auto merge.', False)
                     return True
                 try:
-                    self.set_enabled(run_id, options['enabled'])
+                    recorded = self.change(run_id, options['enabled'], change_id)
                 except OSError:
                     handler.json_error(500, 'could not save Auto merge')
                     return True
-        handler._respond(200, json.dumps(self.view(run_id)).encode(), 'application/json',
+            answer['change'] = recorded
+        handler._respond(200, json.dumps({**self.view(run_id), **answer}).encode(), 'application/json',
                          {'Cache-Control': 'no-store'})
         return True
 

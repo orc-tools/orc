@@ -164,13 +164,19 @@ export const motionVisualsCardHtml = () => `<div class="settings-card" id="theme
     <fieldset class="settings-fieldset">
       <legend class="settings-label">Motion &amp; visuals</legend>
       <div class="theme-options-grid">
-        <div class="theme-option-item" data-settings-anchor="appearance">
-          <div class="settings-field">
-            <span aria-hidden="true">Colour scheme</span>
-            <orc-segmented id="set-theme-mode" label="Colour scheme" aria-describedby="hint-theme-mode" value="${esc(themeMode || 'system')}"><button type="button" value="system">System</button><button type="button" value="light">Light</button><button type="button" value="dark">Dark</button></orc-segmented>
+        <div class="theme-option-stack">
+          <div class="theme-option-item" data-settings-anchor="appearance">
+            <div class="settings-field">
+              <span aria-hidden="true">Colour scheme</span>
+              <orc-segmented id="set-theme-mode" label="Colour scheme" aria-describedby="hint-theme-mode" value="${esc(themeMode || 'system')}"><button type="button" value="system">System</button><button type="button" value="light">Light</button><button type="button" value="dark">Dark</button></orc-segmented>
+            </div>
+            <p class="settings-hint" id="hint-theme-mode">${COLOR_SCHEME_HINT}</p>
+            ${basicsAccentOptionsHtml()}
           </div>
-          <p class="settings-hint" id="hint-theme-mode">${COLOR_SCHEME_HINT}</p>
-          ${basicsAccentOptionsHtml()}
+          <div class="theme-option-item">
+            <orc-switch class="settings-check" id="set-factory-visuals" name="set-factory-visuals" label="Enable factory visuals" description="${FACTORY_VISUALS_HINT}"${factoryVisualsEnabled() ? ' checked' : ''}></orc-switch>
+            <p class="settings-hint" id="hint-factory-visuals">${FACTORY_VISUALS_HINT}</p>
+          </div>
         </div>
         <div class="theme-option-stack">
           <div class="theme-option-item">
@@ -182,10 +188,6 @@ export const motionVisualsCardHtml = () => `<div class="settings-card" id="theme
             <p class="settings-hint" id="hint-send-offs">${SEND_OFFS_HINT}</p>
             <p class="settings-note theme-option-held" id="send-offs-held"${reducedMotion() ? '' : ' hidden'}>${HUB_ICONS.lock}<span data-send-offs-held>${sendOffsHeldText()}</span></p>
           </div>
-        </div>
-        <div class="theme-option-item">
-          <orc-switch class="settings-check" id="set-factory-visuals" name="set-factory-visuals" label="Enable factory visuals" description="${FACTORY_VISUALS_HINT}"${factoryVisualsEnabled() ? ' checked' : ''}></orc-switch>
-          <p class="settings-hint" id="hint-factory-visuals">${FACTORY_VISUALS_HINT}</p>
         </div>
       </div>
     </fieldset>

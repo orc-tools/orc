@@ -1,15 +1,20 @@
-"""Scoped diffs for the side panel: changes since the last turn, or the whole branch.
+"""Scoped diffs for the side panel: the last code change, or the whole branch.
 
-A turn is what the user starts by sending a message; a turn Orc starts on its
-own (a reminder, a notice, a rescue) carries on the user's last one. Before a
-user's turn starts on a live checkout, ``capture_turn_base`` and
+The last code change is everything the most recent user turn that changed code
+edited. A turn is what the user starts by sending a message; a turn Orc starts
+on its own (a reminder, a notice, a rescue) carries on the user's last one.
+Before a user's turn starts on a live checkout, ``capture_turn_base`` and
 ``commit_turn_base`` record the checkout's git tree (tracked, staged, unstaged,
-and untracked non-ignored files) under ``<run_dir>/.turn-diff/base.json``.
-``read_diff`` diffs that baseline against the current checkout tree for
-``scope="turn"``, or ``buildBaseCommit`` against the current checkout tree for
-``scope="branch"``. When a turn finishes, ``record_turn_diff`` saves the last
-turn's patch under ``<run_dir>/.turn-diff/last.patch`` so settled and merged
-runs retain it after their worktree is removed.
+and untracked non-ignored files) under ``<run_dir>/.turn-diff/base.json``, and
+the change shown until then under ``previous.patch``.
+
+``read_diff`` with ``scope="turn"`` diffs that baseline against the current
+checkout tree, and keeps showing ``previous.patch`` while the turn has edited
+nothing. Commits the turn brought in from the branch it builds on are not its
+edits. ``scope="branch"`` diffs ``buildBaseCommit`` against the current
+checkout tree. When a headless turn finishes, and at Ship, ``record_turn_diff``
+saves what the panel shows as ``last.patch``, so settled and merged runs retain
+it after their worktree is removed.
 """
 from __future__ import annotations
 
@@ -25,11 +30,13 @@ import subprocess
 import tempfile
 import threading
 
+import collision_radar
 import session_identity
 
 STATE_DIR = ".turn-diff"
 BASE_FILE = "base.json"
 LAST_PATCH_FILE = "last.patch"
+PREVIOUS_PATCH_FILE = "previous.patch"
 HEX_OID = re.compile(r"[0-9a-fA-F]{7,64}\Z")
 SAFE_REF = re.compile(r"[^A-Za-z0-9._-]+")
 TERMINAL_NO_LIVE_STATUSES = {"merged", "merged-to-parent", "cancelled"}
@@ -37,6 +44,7 @@ EMPTY_SHA1 = hashlib.sha1(b"").hexdigest()
 
 REPO_INFO_CACHE_MAX = 64
 COMMIT_TREE_CACHE_MAX = 256
+BASE_SYNC_CACHE_MAX = 256
 TREE_CACHE_MAX = 64
 DIFF_CACHE_MAX = 16
 DIFF_CACHE_MAX_ENTRY_BYTES = 16 * 1024 * 1024
@@ -54,7 +62,13 @@ GIT_IDENTITY_ENV = {
 class DiffSnapshot:
     patch: bytes
     etag: str
-    branch_has_diff: bool
+
+
+@dataclass(frozen=True)
+class TurnBase:
+    """A new turn's baseline, and the change the panel showed before it."""
+    record: dict
+    shown: bytes
 
 
 @dataclass(frozen=True)
@@ -79,8 +93,27 @@ _CACHE_LOCK = threading.Lock()
 _REPO_INFO_CACHE: collections.OrderedDict[tuple[str, int, int], _RepoInfo | None] = collections.OrderedDict()
 _COMMIT_TREE_CACHE: collections.OrderedDict[tuple[object, ...], tuple[str, str]] = collections.OrderedDict()
 _TREE_CACHE: collections.OrderedDict[tuple[str, int, int], tuple[object, str]] = collections.OrderedDict()
+# What a head took in from the branches it builds on, and baselines with that
+# merged in. Both are keyed by the commits and trees they were read from.
+_BASE_SYNC_CACHE: collections.OrderedDict[tuple[object, ...], object] = collections.OrderedDict()
 _DIFF_CACHE: collections.OrderedDict[tuple[object, ...], tuple[bytes, str]] = collections.OrderedDict()
 _DIFF_CACHE_BYTES = 0
+
+
+def _cached(cache: collections.OrderedDict, key):
+    with _CACHE_LOCK:
+        if key not in cache:
+            return None
+        cache.move_to_end(key)
+        return cache[key]
+
+
+def _remember(cache: collections.OrderedDict, limit: int, key, value) -> None:
+    with _CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > limit:
+            cache.popitem(last=False)
 
 
 def _path_id(path: str) -> tuple[str, int, int] | None:
@@ -103,7 +136,8 @@ def _read_meta(run_dir: str) -> dict:
 
 
 def _git_bytes(cwd: str, args: list[str], *, extra_env: dict[str, str] | None = None,
-               optional_locks: bool = False, timeout: int = 15) -> bytes | None:
+               optional_locks: bool = False, timeout: int = 15,
+               ok_codes: tuple[int, ...] = (0,)) -> bytes | None:
     env = dict(os.environ)
     if not optional_locks:
         env["GIT_OPTIONAL_LOCKS"] = "0"
@@ -119,12 +153,12 @@ def _git_bytes(cwd: str, args: list[str], *, extra_env: dict[str, str] | None = 
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return result.stdout if result.returncode == 0 else None
+    return result.stdout if result.returncode in ok_codes else None
 
 
 def _git_text(cwd: str, args: list[str], *, extra_env: dict[str, str] | None = None,
-              optional_locks: bool = False) -> str | None:
-    out = _git_bytes(cwd, args, extra_env=extra_env, optional_locks=optional_locks)
+              optional_locks: bool = False, ok_codes: tuple[int, ...] = (0,)) -> str | None:
+    out = _git_bytes(cwd, args, extra_env=extra_env, optional_locks=optional_locks, ok_codes=ok_codes)
     if out is None:
         return None
     return out.decode("utf-8", "replace").strip()
@@ -164,11 +198,7 @@ def _repo_info(real_cwd: str) -> _RepoInfo | None:
             index_path=index_path,
         )
 
-    with _CACHE_LOCK:
-        _REPO_INFO_CACHE[repo_id] = info
-        _REPO_INFO_CACHE.move_to_end(repo_id)
-        while len(_REPO_INFO_CACHE) > REPO_INFO_CACHE_MAX:
-            _REPO_INFO_CACHE.popitem(last=False)
+    _remember(_REPO_INFO_CACHE, REPO_INFO_CACHE_MAX, repo_id, info)
     return info
 
 
@@ -190,11 +220,9 @@ def _resolve_commit_tree(cwd: str, info: _RepoInfo | None, spec: str) -> tuple[s
         return None
     scope_id: tuple[object, ...] = info.common_id if info is not None else (cwd,)
     key = (*scope_id, spec.lower())
-    with _CACHE_LOCK:
-        cached = _COMMIT_TREE_CACHE.get(key)
-        if cached is not None:
-            _COMMIT_TREE_CACHE.move_to_end(key)
-            return cached
+    cached = _cached(_COMMIT_TREE_CACHE, key)
+    if cached is not None:
+        return cached
 
     # Calling rev-parse without --verify resolves both ^{commit} and ^{tree} in one
     # subprocess (--verify rejects multiple revisions); HEX_OID guards spec above.
@@ -203,14 +231,8 @@ def _resolve_commit_tree(cwd: str, info: _RepoInfo | None, spec: str) -> tuple[s
     if len(lines) != 2 or not (HEX_OID.fullmatch(lines[0]) and HEX_OID.fullmatch(lines[1])):
         return None
     pair = (lines[0], lines[1])
-    full_key = (*scope_id, lines[0].lower())
-    with _CACHE_LOCK:
-        _COMMIT_TREE_CACHE[key] = pair
-        _COMMIT_TREE_CACHE.move_to_end(key)
-        _COMMIT_TREE_CACHE[full_key] = pair
-        _COMMIT_TREE_CACHE.move_to_end(full_key)
-        while len(_COMMIT_TREE_CACHE) > COMMIT_TREE_CACHE_MAX:
-            _COMMIT_TREE_CACHE.popitem(last=False)
+    _remember(_COMMIT_TREE_CACHE, COMMIT_TREE_CACHE_MAX, key, pair)
+    _remember(_COMMIT_TREE_CACHE, COMMIT_TREE_CACHE_MAX, (*scope_id, lines[0].lower()), pair)
     return pair
 
 
@@ -395,14 +417,9 @@ def _working_tree_from_probe(probe: _LiveProbe, *, pin_ref: str | None = None) -
     sig = probe.sig
     cache_key = info.repo_id
     if pin_ref is None and sig is not None:
-        cached_tree: str | None = None
-        with _CACHE_LOCK:
-            cached = _TREE_CACHE.get(cache_key)
-            if cached is not None and cached[0] == sig:
-                _TREE_CACHE.move_to_end(cache_key)
-                cached_tree = cached[1]
-        if cached_tree is not None and _tree_exists(cwd, info, cached_tree):
-            return head, cached_tree
+        cached = _cached(_TREE_CACHE, cache_key)
+        if cached is not None and cached[0] == sig and _tree_exists(cwd, info, cached[1]):
+            return head, cached[1]
 
     src_index = info.index_path
     with tempfile.TemporaryDirectory(prefix="orc-turn-diff-") as tmpdir:
@@ -435,11 +452,7 @@ def _working_tree_from_probe(probe: _LiveProbe, *, pin_ref: str | None = None) -
             _git_bytes(cwd, ["update-ref", f"refs/orc/turn-base/{safe}", commit], optional_locks=True)
 
     if sig is not None:
-        with _CACHE_LOCK:
-            _TREE_CACHE[cache_key] = (sig, tree)
-            _TREE_CACHE.move_to_end(cache_key)
-            while len(_TREE_CACHE) > TREE_CACHE_MAX:
-                _TREE_CACHE.popitem(last=False)
+        _remember(_TREE_CACHE, TREE_CACHE_MAX, cache_key, (sig, tree))
     return head, tree
 
 
@@ -474,33 +487,23 @@ def _git_diff_trees(cwd: str, base_tree: str, target_tree: str) -> bytes:
     return out or b""
 
 
-def _snapshot_from_digest(patch: bytes, digest: str, branch_has_diff: bool) -> DiffSnapshot:
-    flag = 1 if branch_has_diff else 0
-    return DiffSnapshot(patch=patch, etag=f'"{digest}:{flag}"', branch_has_diff=branch_has_diff)
+def _snapshot(patch: bytes, digest: str | None = None) -> DiffSnapshot:
+    digest = digest or hashlib.sha1(patch).hexdigest()
+    return DiffSnapshot(patch=patch, etag=f'"{digest}"')
 
 
-def _snapshot(patch: bytes, branch_has_diff: bool) -> DiffSnapshot:
-    digest = EMPTY_SHA1 if not patch else hashlib.sha1(patch).hexdigest()
-    return _snapshot_from_digest(patch, digest, branch_has_diff)
-
-
-def _diff_trees_snapshot(cwd: str, info: _RepoInfo | None, base_tree: str, target_tree: str,
-                         *, extra_branch_diff: bool = False) -> DiffSnapshot:
+def _diff_trees_snapshot(cwd: str, info: _RepoInfo, base_tree: str, target_tree: str) -> DiffSnapshot:
     global _DIFF_CACHE_BYTES
     if base_tree == target_tree:
-        return _snapshot_from_digest(b"", EMPTY_SHA1, bool(extra_branch_diff))
+        return _snapshot(b"", EMPTY_SHA1)
 
-    scope_id: tuple[object, ...] = info.common_id if info is not None else (cwd,)
-    cache_key = (*scope_id, base_tree, target_tree)
-    with _CACHE_LOCK:
-        cached = _DIFF_CACHE.get(cache_key)
-        if cached is not None:
-            _DIFF_CACHE.move_to_end(cache_key)
-            patch, digest = cached
-            return _snapshot_from_digest(patch, digest, extra_branch_diff or bool(patch))
+    cache_key = (*info.common_id, base_tree, target_tree)
+    cached = _cached(_DIFF_CACHE, cache_key)
+    if cached is not None:
+        return _snapshot(*cached)
 
     patch = _git_diff_trees(cwd, base_tree, target_tree)
-    digest = EMPTY_SHA1 if not patch else hashlib.sha1(patch).hexdigest()
+    digest = hashlib.sha1(patch).hexdigest()
     if len(patch) <= DIFF_CACHE_MAX_ENTRY_BYTES:
         with _CACHE_LOCK:
             old = _DIFF_CACHE.pop(cache_key, None)
@@ -511,7 +514,99 @@ def _diff_trees_snapshot(cwd: str, info: _RepoInfo | None, base_tree: str, targe
             while len(_DIFF_CACHE) > DIFF_CACHE_MAX or _DIFF_CACHE_BYTES > DIFF_CACHE_MAX_TOTAL_BYTES:
                 _, evicted = _DIFF_CACHE.popitem(last=False)
                 _DIFF_CACHE_BYTES -= len(evicted[0])
-    return _snapshot_from_digest(patch, digest, extra_branch_diff or bool(patch))
+    return _snapshot(patch, digest)
+
+
+def _synced_heads(probe: _LiveProbe, meta: dict, since: str) -> tuple[str, ...]:
+    """The commits of the branches this run builds on (the default branch, a
+    parent run's branch, ``buildBaseCommit``) that the checkout has and
+    ``since`` does not: what a merge or rebase brought in. A merge still being
+    resolved counts. Only the first-parent line of such a branch counts, so it
+    merging this run's own commits does not make them foreign."""
+    cwd, info, head = probe.cwd, probe.info, probe.head
+    merging = _read_patch_file(os.path.join(os.path.dirname(info.index_path), "MERGE_HEAD")) or b""
+    heads = [head, *(oid for oid in merging.decode("ascii", "replace").split() if HEX_OID.fullmatch(oid))]
+    if heads == [since]:
+        return ()
+    parent = meta.get("parentBranch")
+    names = ["main", "master", *([parent] if isinstance(parent, str) and parent else [])]
+    # Its own branch, where the run works on the default branch directly.
+    own = probe.branch or meta.get("branch")
+    if own in ("main", "master"):
+        return ()
+    listed = _git_text(cwd, [
+        "for-each-ref", "--format=%(objectname)", "refs/remotes/origin/HEAD",
+        *(f"refs/{kind}/{name}" for name in names if name != own for kind in ("heads", "remotes/origin")),
+    ])
+    tips = set((listed or "").split())
+    configured = _configured_base_commit(meta)
+    if configured:
+        tips.add(configured)
+    key = (*info.common_id, "synced", since, *heads, *sorted(tips))
+    cached = _cached(_BASE_SYNC_CACHE, key)
+    if cached is not None:
+        return cached
+
+    synced = set()
+    for tip in tips:
+        # The oldest commit of the line the checkout lacks; its parent is the
+        # newest one it has.
+        lacking = _git_text(cwd, ["rev-list", "--first-parent", "--parents", tip, *(f"^{oid}" for oid in heads)])
+        if lacking is None:
+            continue
+        oldest = lacking.splitlines()[-1].split() if lacking else []
+        newest = tip if not lacking else oldest[1] if len(oldest) > 1 else None
+        if newest and _git_bytes(cwd, ["merge-base", "--is-ancestor", newest, since]) is None:
+            synced.add(newest)
+    result = tuple(sorted(synced))
+    _remember(_BASE_SYNC_CACHE, BASE_SYNC_CACHE_MAX, key, result)
+    return result
+
+
+def _tree_with_synced(probe: _LiveProbe, base_head: str, base_tree: str, synced: tuple[str, ...]) -> str:
+    """``base_tree`` as it would be had ``synced`` been merged into it. Where
+    the two conflict, its own side is kept, so a conflict resolved by hand
+    still shows. Returns ``base_tree`` when git cannot merge them."""
+    key = (*probe.info.common_id, "merged", base_head, base_tree, *synced)
+    cached = _cached(_BASE_SYNC_CACHE, key)
+    if cached is not None and _tree_exists(probe.cwd, probe.info, cached):
+        return cached
+    # Fixed dates, so reading the same diff twice writes the same objects.
+    env = {**GIT_IDENTITY_ENV, "GIT_AUTHOR_DATE": "@0 +0000", "GIT_COMMITTER_DATE": "@0 +0000"}
+    tree, parents = base_tree, [base_head]
+    for commit in synced:
+        ours = _git_text(probe.cwd, [
+            "commit-tree", tree, *(arg for parent in parents for arg in ("-p", parent)), "-m", "orc turn baseline",
+        ], extra_env=env, optional_locks=True)
+        # Exit 1 is a merge with conflicts, which still names its tree first.
+        merged = _git_text(probe.cwd, ["merge-tree", "--write-tree", "--no-messages", "-X", "ours", ours, commit],
+                           optional_locks=True, ok_codes=(0, 1)) if ours else None
+        tree = merged.split()[0] if merged else ""
+        if not HEX_OID.fullmatch(tree):
+            return base_tree
+        parents = [ours, commit]
+    _remember(_BASE_SYNC_CACHE, BASE_SYNC_CACHE_MAX, key, tree)
+    return tree
+
+
+def _edits_since(probe: _LiveProbe, meta: dict, base_head: object, base_tree: str, tree: str) -> DiffSnapshot:
+    """What changed in the checkout since a baseline, without what it brought
+    in from the branches it builds on."""
+    synced = (_synced_heads(probe, meta, base_head)
+              if base_tree != tree and isinstance(base_head, str) and HEX_OID.fullmatch(base_head) else ())
+    if not synced:
+        return _diff_trees_snapshot(probe.cwd, probe.info, base_tree, tree)
+    merged_tree = _tree_with_synced(probe, base_head, base_tree, synced)
+    edits = _diff_trees_snapshot(probe.cwd, probe.info, merged_tree, tree)
+    rules = collision_radar.repo_generated_rules(
+        meta.get("mainRepoPath"), config_dir=os.environ.get("ORC_CONFIG_DIR")) if edits.patch else []
+    if rules:
+        changed = _git_bytes(probe.cwd, ["diff", "--name-only", "--no-renames", "-z", merged_tree, tree]) or b""
+        paths = [path for path in changed.decode("utf-8", "surrogateescape").split("\0") if path]
+        # A sync regenerates these files itself.
+        if paths and not collision_radar.partition_generated_paths(paths, rules)[1]:
+            return _snapshot(b"", EMPTY_SHA1)
+    return edits
 
 
 def _atomic_write_bytes(path: str, payload: bytes) -> bool:
@@ -534,35 +629,37 @@ def _atomic_write_bytes(path: str, payload: bytes) -> bool:
         return False
 
 
-def capture_turn_base(run_dir: str, meta: dict | None = None) -> dict | None:
-    """Snapshot the live checkout's current git tree before starting a new turn,
-    without writing into ``run_dir`` until ``commit_turn_base`` confirms the
-    turn started."""
+def capture_turn_base(run_dir: str, meta: dict | None = None) -> TurnBase | None:
+    """Snapshot the live checkout's current git tree and the change shown for
+    it before starting a new turn, without writing into ``run_dir`` until
+    ``commit_turn_base`` confirms the turn started."""
     resolved = _read_meta(run_dir) if meta is None else meta
     probe = _probe_live_checkout(resolved)
     if probe is None:
         return None
+    shown = _read_diff_resolved(run_dir, resolved, scope="turn", live_probe=probe).patch
     run_id = resolved.get("runId") or os.path.basename(os.path.normpath(run_dir))
     snap = _working_tree_from_probe(probe, pin_ref=str(run_id))
     if snap is None:
         return None
     head, tree = snap
-    return {
+    return TurnBase({
         "schemaVersion": 1,
         "repoRoot": probe.cwd,
         "branch": probe.branch,
         "head": head,
         "tree": tree,
         "recordedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    }
+    }, shown)
 
 
-def commit_turn_base(run_dir: str, record: dict | None) -> bool:
-    if not isinstance(record, dict):
+def commit_turn_base(run_dir: str, base: TurnBase | None) -> bool:
+    if not isinstance(base, TurnBase):
         return False
-    target = os.path.join(run_dir, STATE_DIR, BASE_FILE)
-    payload = (json.dumps(record, indent=2) + "\n").encode("utf-8")
-    return _atomic_write_bytes(target, payload)
+    state_dir = os.path.join(run_dir, STATE_DIR)
+    payload = (json.dumps(base.record, indent=2) + "\n").encode("utf-8")
+    return (_atomic_write_bytes(os.path.join(state_dir, PREVIOUS_PATCH_FILE), base.shown)
+            and _atomic_write_bytes(os.path.join(state_dir, BASE_FILE), payload))
 
 
 def record_turn_base(run_dir: str, meta: dict | None = None) -> bool:
@@ -645,11 +742,21 @@ def _headless_turns(run_dir: str) -> _HeadlessTurns:
     return _HeadlessTurns(max(0, turn), at, tuple(windows))
 
 
-def _turn_info(run_dir: str, meta: dict) -> tuple[int, float | None, bool]:
-    """The user's turn count, when their latest turn started, and whether
-    that turn edited files. A prompt Orc sent on its own is not a turn."""
+@dataclass(frozen=True)
+class _UserTurns:
+    """How many turns the user started, when each known one started (oldest
+    first), and whether the latest edited files."""
+    count: int
+    starts: tuple[float | None, ...]
+    last_edited: bool = False
+
+
+def _user_turns(run_dir: str, meta: dict) -> _UserTurns:
+    """The user's turns from the transcript, or just the latest from headless
+    state when that has counted more. A prompt Orc sent on its own is not a
+    turn."""
     headless = _headless_turns(run_dir)
-    h_turn, h_at = headless.turn, headless.at
+    latest_only = _UserTurns(headless.turn, (headless.at,))
     try:
         import run_chat
         data = run_chat.timeline(meta, cursor=None, harness_run_dir=run_dir)
@@ -658,52 +765,49 @@ def _turn_info(run_dir: str, meta: dict) -> tuple[int, float | None, bool]:
         items = None
 
     if not isinstance(items, list) or not items:
-        return h_turn, h_at, False
+        return latest_only
 
     prompt_indices = [
         idx for idx, item in enumerate(items)
         if isinstance(item, dict) and item.get("kind") == "user" and not item.get("steer")
         and not headless.by_orc(_parse_iso_epoch(item.get("at")))
     ]
-    c_turn = len(prompt_indices)
-    if h_turn > c_turn:
-        return h_turn, h_at, False
-    if c_turn == 0:
-        return h_turn, h_at, False
+    count = len(prompt_indices)
+    if headless.turn > count or count == 0:
+        return latest_only
 
-    last_idx = prompt_indices[-1]
-    last_at = _parse_iso_epoch(items[last_idx].get("at"))
-    if last_at is None and h_turn == c_turn:
-        last_at = h_at
-    has_edits = any(
+    starts = [_parse_iso_epoch(items[idx].get("at")) for idx in prompt_indices]
+    if starts[-1] is None and headless.turn == count:
+        starts[-1] = headless.at
+    last_edited = any(
         isinstance(item, dict)
         and item.get("kind") == "tool"
         and (item.get("category") == "edit" or bool(item.get("files")))
-        for item in items[last_idx + 1:]
+        for item in items[prompt_indices[-1] + 1:]
     )
-    return c_turn, last_at, has_edits
+    return _UserTurns(count, tuple(starts), last_edited)
 
 
-def _commit_before_turn(cwd: str, base_commit: str, tip_commit: str, started_at: float | None) -> str:
-    """Latest commit in ``base_commit..tip_commit`` created strictly before
-    ``started_at``, or ``base_commit`` when every branch commit belongs to the
-    latest turn."""
-    if started_at is None or base_commit == tip_commit:
-        return base_commit
+def _commits_before_turns(cwd: str, base_commit: str, tip_commit: str, turns: _UserTurns) -> list[str]:
+    """For each turn, latest first, the newest commit in
+    ``base_commit..tip_commit`` created strictly before it started, or
+    ``base_commit`` when there is none. Stops at ``base_commit``: no earlier
+    turn can reach further back."""
     out = _git_text(cwd, ["log", "--first-parent", "--format=%H:%ct", f"{base_commit}..{tip_commit}"])
-    if not out:
-        return base_commit
-    for line in out.splitlines():
-        sha, sep, raw_ts = line.partition(":")
-        if not sep or not HEX_OID.fullmatch(sha):
-            continue
-        try:
-            commit_ts = int(raw_ts)
-        except ValueError:
-            continue
-        if commit_ts < started_at:
-            return sha
-    return base_commit
+    commits: list[tuple[str, int]] = []
+    for line in (out or "").splitlines():
+        sha, _sep, stamp = line.partition(":")
+        if HEX_OID.fullmatch(sha) and stamp.isdigit():
+            commits.append((sha, int(stamp)))
+    found: list[str] = []
+    for started_at in reversed(turns.starts):
+        before = base_commit if started_at is None else next(
+            (sha for sha, stamp in commits if stamp < started_at), base_commit)
+        if before not in found:
+            found.append(before)
+        if before == base_commit:
+            break
+    return found
 
 
 def _read_patch_file(path: str) -> bytes | None:
@@ -715,8 +819,8 @@ def _read_patch_file(path: str) -> bytes | None:
 
 
 def record_turn_diff(run_dir: str, meta: dict | None = None) -> bool:
-    """Persist the latest turn's patch when a turn settles, so merging and
-    removing the worktree does not erase ``Since last turn``."""
+    """Persist the change the panel shows when a turn settles, so merging and
+    removing the worktree does not erase it."""
     resolved = _read_meta(run_dir) if meta is None else meta
     probe = _probe_live_checkout(resolved)
     if probe is None:
@@ -725,101 +829,108 @@ def record_turn_diff(run_dir: str, meta: dict | None = None) -> bool:
     return _atomic_write_bytes(os.path.join(run_dir, STATE_DIR, LAST_PATCH_FILE), snap.patch)
 
 
-def _read_diff_resolved(run_dir: str, resolved: dict, *, scope: str,
-                        live_probe: _LiveProbe | None = None) -> DiffSnapshot:
-    want_branch = scope == "branch"
-    diff_patch_path = os.path.join(run_dir, "diff.patch")
-    last_patch_path = os.path.join(run_dir, STATE_DIR, LAST_PATCH_FILE)
+def _saved_change(run_dir: str, *names: str) -> DiffSnapshot | None:
+    """The first non-empty saved patch among ``names``."""
+    for name in names:
+        patch = _read_patch_file(os.path.join(run_dir, STATE_DIR, name))
+        if patch and patch.strip():
+            return _snapshot(patch)
+    return None
 
-    probe = live_probe if live_probe is not None else _probe_live_checkout(resolved)
-    if probe is not None:
-        cwd = probe.cwd
-        info = probe.info
-        working = _working_tree_from_probe(probe)
-        base = _branch_base(cwd, resolved, working[0], info=info) if working else None
-        if working and base:
-            head_commit, current_tree = working
-            base_commit, base_tree = base
-            branch_has_diff = base_tree != current_tree
-            if want_branch:
-                return _diff_trees_snapshot(cwd, info, base_tree, current_tree)
 
-            saved_base = _read_turn_base(run_dir)
-            if (saved_base
-                    and os.path.realpath(saved_base["repoRoot"]) == cwd
-                    and (not saved_base.get("branch") or saved_base.get("branch") == probe.branch)
-                    and _tree_exists(cwd, info, saved_base["tree"])):
-                return _diff_trees_snapshot(
-                    cwd, info, saved_base["tree"], current_tree, extra_branch_diff=branch_has_diff
-                )
+def _live_last_change(run_dir: str, meta: dict, probe: _LiveProbe, head: str, tree: str,
+                      base: tuple[str, str]) -> DiffSnapshot:
+    cwd, info = probe.cwd, probe.info
+    base_commit, base_tree = base
+    saved_base = _read_turn_base(run_dir)
+    if (saved_base
+            and os.path.realpath(saved_base["repoRoot"]) == cwd
+            and (not saved_base.get("branch") or saved_base.get("branch") == probe.branch)
+            and _tree_exists(cwd, info, saved_base["tree"])):
+        edits = _edits_since(probe, meta, saved_base.get("head"), saved_base["tree"], tree)
+        if edits.patch:
+            return edits
+        # Until previous.patch existed, last.patch held the turn before.
+        has_previous = os.path.exists(os.path.join(run_dir, STATE_DIR, PREVIOUS_PATCH_FILE))
+        kept = _saved_change(run_dir, PREVIOUS_PATCH_FILE if has_previous else LAST_PATCH_FILE)
+        return kept or _diff_trees_snapshot(cwd, info, base_tree, tree)
 
-            # When HEAD is still at buildBaseCommit, base_commit..HEAD has no commits to
-            # split by turn timestamp, so skip parsing the run transcript on live polls.
-            if head_commit == base_commit:
-                return _diff_trees_snapshot(cwd, info, base_tree, current_tree)
+    # When HEAD is still at buildBaseCommit, base_commit..HEAD has no commits to
+    # split by turn timestamp, so skip parsing the run transcript on live polls.
+    turns = _user_turns(run_dir, meta) if head != base_commit else None
+    if turns and turns.count > 1:
+        for prior in _commits_before_turns(cwd, base_commit, head, turns):
+            resolved = _resolve_commit_tree(cwd, info, prior)
+            edits = _edits_since(probe, meta, prior, resolved[1], tree) if resolved else None
+            if edits and edits.patch:
+                return edits
+    return _diff_trees_snapshot(cwd, info, base_tree, tree)
 
-            turn_count, last_started, _ = _turn_info(run_dir, resolved)
-            if turn_count <= 1:
-                return _diff_trees_snapshot(cwd, info, base_tree, current_tree)
 
-            prior_commit = _commit_before_turn(cwd, base_commit, head_commit, last_started)
-            prior_resolved = _resolve_commit_tree(cwd, info, prior_commit)
-            prior_tree = prior_resolved[1] if prior_resolved else base_tree
-            return _diff_trees_snapshot(
-                cwd, info, prior_tree, current_tree, extra_branch_diff=branch_has_diff
-            )
-
-    disk_branch = _read_patch_file(diff_patch_path)
-    repo_tip = _repo_branch_tip(resolved)
-
-    if want_branch:
-        if disk_branch is not None:
-            return _snapshot(disk_branch, bool(disk_branch.strip()))
-        if repo_tip is not None:
-            repo, info, tip_commit = repo_tip
-            tip_resolved = _resolve_commit_tree(repo, info, tip_commit)
-            base = _branch_base(repo, resolved, tip_commit, info=info) if tip_resolved else None
-            if tip_resolved and base:
-                return _diff_trees_snapshot(repo, info, base[1], tip_resolved[1])
-        return _snapshot_from_digest(b"", EMPTY_SHA1, False)
-
-    branch_has_diff = bool(disk_branch and disk_branch.strip())
-    saved_turn = _read_patch_file(last_patch_path)
-    if saved_turn is not None:
-        return _snapshot(saved_turn, branch_has_diff or bool(saved_turn.strip()))
-
-    turn_count, last_started, last_has_edits = _turn_info(run_dir, resolved)
+def _settled_branch(run_dir: str, meta: dict, repo_tip: tuple[str, _RepoInfo, str] | None) -> DiffSnapshot:
+    patch = _read_patch_file(os.path.join(run_dir, "diff.patch"))
+    if patch is not None:
+        return _snapshot(patch)
     if repo_tip is not None:
         repo, info, tip_commit = repo_tip
-        tip_resolved = _resolve_commit_tree(repo, info, tip_commit)
-        base = _branch_base(repo, resolved, tip_commit, info=info) if tip_resolved else None
-        if tip_resolved and base:
-            tip_tree = tip_resolved[1]
-            base_commit, base_tree = base
-            branch_has_diff = branch_has_diff or (base_tree != tip_tree)
-            if turn_count <= 1:
-                if disk_branch is not None:
-                    return _snapshot(disk_branch, bool(disk_branch.strip()))
-                return _diff_trees_snapshot(repo, info, base_tree, tip_tree)
-            prior_commit = _commit_before_turn(repo, base_commit, tip_commit, last_started)
-            prior_resolved = _resolve_commit_tree(repo, info, prior_commit)
-            prior_tree = prior_resolved[1] if prior_resolved else base_tree
-            snap = _diff_trees_snapshot(
-                repo, info, prior_tree, tip_tree, extra_branch_diff=branch_has_diff
-            )
-            if not snap.patch and last_has_edits and prior_commit == tip_commit and disk_branch:
-                # Squash-merged or pre-dated single commit where transcript proves
-                # the final turn edited files.
-                return _snapshot(disk_branch, True)
-            return snap
+        tip = _resolve_commit_tree(repo, info, tip_commit)
+        base = _branch_base(repo, meta, tip_commit, info=info) if tip else None
+        if tip and base:
+            return _diff_trees_snapshot(repo, info, base[1], tip[1])
+    return _snapshot(b"", EMPTY_SHA1)
 
-    if turn_count <= 1:
-        patch = disk_branch or b""
-        return _snapshot(patch, bool(patch.strip()))
 
-    if last_has_edits and disk_branch:
-        return _snapshot(disk_branch, True)
-    return _snapshot_from_digest(b"", EMPTY_SHA1, branch_has_diff)
+def _settled_turn_change(run_dir: str, meta: dict, repo_tip: tuple[str, _RepoInfo, str],
+                         branch: DiffSnapshot) -> DiffSnapshot | None:
+    """The last change the transcript and commit times show, for a run whose
+    turns saved no patch."""
+    repo, info, tip_commit = repo_tip
+    turns = _user_turns(run_dir, meta)
+    tip = _resolve_commit_tree(repo, info, tip_commit)
+    base = _branch_base(repo, meta, tip_commit, info=info) if tip else None
+    if turns.count <= 1 or not tip or not base:
+        return None
+    priors = _commits_before_turns(repo, base[0], tip_commit, turns)
+    if turns.last_edited and priors and priors[0] == tip_commit:
+        # Squash-merged or pre-dated single commit where the transcript proves
+        # the final turn edited files.
+        return branch
+    for prior in priors:
+        resolved = _resolve_commit_tree(repo, info, prior)
+        change = _diff_trees_snapshot(repo, info, resolved[1], tip[1]) if resolved else None
+        if change and change.patch:
+            return change
+    return None
+
+
+def _settled_last_change(run_dir: str, meta: dict) -> DiffSnapshot:
+    kept = _saved_change(run_dir, LAST_PATCH_FILE)
+    if kept:
+        return kept
+    repo_tip = _repo_branch_tip(meta)
+    branch = _settled_branch(run_dir, meta, repo_tip)
+    # A patch saved empty means the latest turns edited nothing; one never
+    # saved leaves previous.patch a turn behind what they did.
+    found = None
+    if repo_tip is not None and not os.path.exists(os.path.join(run_dir, STATE_DIR, LAST_PATCH_FILE)):
+        found = _settled_turn_change(run_dir, meta, repo_tip, branch)
+    return found or _saved_change(run_dir, PREVIOUS_PATCH_FILE) or branch
+
+
+def _read_diff_resolved(run_dir: str, resolved: dict, *, scope: str,
+                        live_probe: _LiveProbe | None = None) -> DiffSnapshot:
+    probe = live_probe if live_probe is not None else _probe_live_checkout(resolved)
+    if probe is not None:
+        working = _working_tree_from_probe(probe)
+        base = _branch_base(probe.cwd, resolved, working[0], info=probe.info) if working else None
+        if working and base:
+            head, tree = working
+            if scope == "branch":
+                return _diff_trees_snapshot(probe.cwd, probe.info, base[1], tree)
+            return _live_last_change(run_dir, resolved, probe, head, tree, base)
+    if scope == "branch":
+        return _settled_branch(run_dir, resolved, _repo_branch_tip(resolved))
+    return _settled_last_change(run_dir, resolved)
 
 
 # What the side panel reads of a patch: DIFF_PREVIEW_BYTES in
@@ -884,8 +995,7 @@ def panel_patch(snapshot: DiffSnapshot) -> DiffSnapshot:
         if omitted is not None:
             total -= len(sections[index]) - len(omitted)
             sections[index] = omitted
-    return DiffSnapshot(patch=b"".join(sections), etag=panel_etag(snapshot),
-                        branch_has_diff=snapshot.branch_has_diff)
+    return DiffSnapshot(patch=b"".join(sections), etag=panel_etag(snapshot))
 
 
 def read_diff(run_dir: str, meta: dict | None = None, *, scope: str = "turn") -> DiffSnapshot:

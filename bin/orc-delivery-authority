@@ -21,6 +21,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
 from linked_pr import branch_pr_to_link, linked_pr_url  # noqa: E402
 import run_checks  # noqa: E402
+import run_diff  # noqa: E402
 
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -687,6 +688,9 @@ def ship(args: argparse.Namespace) -> int:
                 "diff is empty; commit changes before shipping or use orc-record-delivery --no-diff"
             )
         atomic_write(args.run_dir / "diff.patch", diff_proc.stdout)
+        # Delivery removes the checkout the last code change is read from.
+        with contextlib.suppress(Exception):
+            run_diff.record_turn_diff(str(args.run_dir))
 
         pr_body_dest = args.run_dir / "pr-body.md"
         if args.pr_body is not None:

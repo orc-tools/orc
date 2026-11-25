@@ -15,6 +15,16 @@ import time
 import tomllib
 
 LIMIT = 2 * 1024 * 1024
+# How long one connection may take in all, and how long a call that changes a
+# thread may go without hearing from Codex. A call that changes a thread always
+# gets its quiet limit, even after a slow read used up most of the window.
+WINDOW_SECONDS = 5
+QUIET_SECONDS = 2
+# Calls that only read a thread. Codex holds the first one after a terminal
+# opens a thread until that thread has loaded, which took up to 2.5s on 0.172,
+# so these wait out the whole window. Calls that start, steer or interrupt a
+# turn keep the quiet limit and are never retried, so nothing is sent twice.
+READ_ONLY_METHODS = frozenset({"thread/read", "thread/loaded/list", "thread/turns/list"})
 _loaded_lock = threading.Lock()
 _loaded_cache = None
 _status_lock = threading.Lock()
@@ -101,6 +111,10 @@ class RpcRejected(RpcError):
     pass
 
 
+class RpcTimeout(RpcError):
+    """Codex did not answer in time; a request it may have received."""
+
+
 class Client:
     def __init__(self, path=None):
         home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
@@ -108,12 +122,13 @@ class Client:
         self.sock = None
         self.stream = None
         self.sequence = 0
-        self.deadline = time.monotonic() + 5
+        self.deadline = time.monotonic() + WINDOW_SECONDS
+        self.quiet = QUIET_SECONDS
 
     def __enter__(self):
         try:
             self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.sock.settimeout(2)
+            self.sock.settimeout(QUIET_SECONDS)
             self.sock.connect(str(self.path))
             self.stream = self.sock.makefile("rb")
             key = base64.b64encode(os.urandom(16)).decode()
@@ -161,7 +176,7 @@ class Client:
         self.sock.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
     def read(self, size):
-        self.sock.settimeout(max(0.01, min(2, self.deadline - time.monotonic())))
+        self.sock.settimeout(max(0.01, min(self.quiet, self.deadline - time.monotonic())))
         data = self.stream.read(size)
         if len(data) != size:
             raise RpcError("Codex closed the local connection")
@@ -197,18 +212,29 @@ class Client:
             message.extend(body)
             if head[0] & 128:
                 return json.loads(message)
-        raise RpcError("Codex did not acknowledge the request in time")
+        raise RpcTimeout("Codex did not acknowledge the request in time")
 
     def call(self, method, params):
         self.sequence += 1
         self.send(1, json.dumps({"id": self.sequence, "method": method, "params": params}).encode())
-        for _ in range(256):
-            response = self.receive()
-            if response.get("id") != self.sequence:
-                continue
-            if "error" in response:
-                raise RpcRejected(str(response["error"].get("message", "Codex refused the request")))
-            return response.get("result", {})
+        started = time.monotonic()
+        if method in READ_ONLY_METHODS:
+            self.quiet = WINDOW_SECONDS
+        else:
+            self.deadline = max(self.deadline, started + QUIET_SECONDS)
+        try:
+            for _ in range(256):
+                response = self.receive()
+                if response.get("id") != self.sequence:
+                    continue
+                if "error" in response:
+                    raise RpcRejected(str(response["error"].get("message", "Codex refused the request")))
+                return response.get("result", {})
+        except (TimeoutError, RpcTimeout) as error:
+            raise RpcTimeout("Codex did not answer %s in time (%.1fs)"
+                             % (method, time.monotonic() - started)) from error
+        finally:
+            self.quiet = QUIET_SECONDS
         raise RpcError("Codex sent too many events before acknowledging")
 
 
@@ -270,7 +296,7 @@ class StdioClient(Client):
             self.pending += chunk
             if len(self.pending) > LIMIT:
                 raise RpcError("Codex message exceeds the local transport limit")
-        raise RpcError("Codex did not acknowledge the request in time")
+        raise RpcTimeout("Codex did not acknowledge the request in time")
 
 
 # Codex's auto mode. The sandbox alone is not enough: an Orc run creates its

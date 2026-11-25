@@ -15,6 +15,8 @@ import hashlib
 import threading
 from typing import NamedTuple, Optional
 
+from keyed_locks import KeyedLocks
+
 
 class Bar(NamedTuple):
     stamp: object
@@ -30,7 +32,7 @@ class PrebuiltBars:
     def __init__(self):
         self._lock = threading.Lock()
         self._bars = {}
-        self._builds = {}   # run id -> lock held for the length of one build
+        self._build_lock = KeyedLocks()
 
     def _kept(self, run_id, stamp):
         # A run with no stamp cannot be told apart from its earlier self.
@@ -39,10 +41,6 @@ class PrebuiltBars:
         with self._lock:
             bar = self._bars.get(run_id)
         return bar if bar is not None and bar.stamp == stamp else None
-
-    def _build_lock(self, run_id):
-        with self._lock:
-            return self._builds.setdefault(run_id, threading.Lock())
 
     def _build(self, run_id, stamp, build):
         # The stamp is read before the build, so a change that lands while it
@@ -69,9 +67,7 @@ class PrebuiltBars:
 
     def building(self, run_id):
         """Whether a build of this run is running now."""
-        with self._lock:
-            lock = self._builds.get(run_id)
-        return lock is not None and lock.locked()
+        return self._build_lock(run_id).locked()
 
     def shown(self, run_id, stamp_of, build):
         """The bar to draw, as `(body, version)`.
@@ -106,8 +102,3 @@ class PrebuiltBars:
         with self._lock:
             for run_id in set(self._bars) - wanted:
                 del self._bars[run_id]
-            for run_id in set(self._builds) - wanted:
-                # A lock in use belongs to a build that will keep its result;
-                # the next sweep forgets that run again.
-                if not self._builds[run_id].locked():
-                    del self._builds[run_id]

@@ -1308,6 +1308,7 @@ def teardown_generic(run_dir: Path, repo_id: str | None = None) -> dict:
         run_devd("unregister", devd_id)
     worktree["enabled"] = False
     install_marker(run_dir, worktree).unlink(missing_ok=True)
+    worktree_servers.clear_problem(run_dir, worktree)
     state["repoPath"] = str(repo)
     if participant is not None:
         participant["status"] = "ready"

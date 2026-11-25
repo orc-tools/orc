@@ -6,7 +6,7 @@ import { showReviewPanel } from './review-panel.js';
 import { showAnswerPanel } from './answer-panel.js';
 import { hasDiagram, hasTechDoc, showDiagramPanel, showTechDocPanel } from './markdown-panel.js';
 import { hasAssets, onRunDiffFiles, showAssetsPanel } from './assets-panel.js';
-import { prPanelAvailable, showPrPanel } from './pr-panel.js';
+import { prPanelAvailable, retirePrPanelUnlessRun, showPrPanel } from './pr-panel.js';
 import { hasEvals, showEvalsPanel } from './evals-panel.js';
 import { shortcutMatches } from './shortcuts.js';
 import { isFinalReady, isFlashcardRun, isPlanningComplete } from './run-presentation.js';
@@ -177,12 +177,11 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     $('run-panel-assets').hidden = view !== 'assets';
   }
 
-  function note(text, { retry = false, showBranch = false } = {}) {
+  function note(text, { retry = false } = {}) {
     $('run-diff-summary').textContent = '';
     $('run-diff-tools').innerHTML = '';
     clearDiffViews();
     body.innerHTML = `<div class="run-diff-note" role="status"><p>${text}</p>` +
-      (showBranch ? '<button type="button" data-diff-scope="branch">Show branch diff</button>' : '') +
       (retry ? '<button type="button" data-diff-retry>Try again</button>' : '') + '</div>';
   }
 
@@ -218,7 +217,6 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     const text = empty ? '' : response?.ok ? await response.text().catch(() => null) : null;
     const contentRange = response?.headers.get('Content-Range')?.match(/^bytes \d+-(\d+)\/(\d+)$/);
     const truncated = !!contentRange && Number(contentRange[1]) + 1 < Number(contentRange[2]);
-    const branchHasDiff = response?.headers.get('X-Orc-Branch-Has-Diff') === '1';
     if (token !== loadSeq) return;
     const api = text === null || !text.trim() ? null : await (prewarmedApi || loadDiffsModule().catch(() => null));
     if (token !== loadSeq) return;
@@ -232,8 +230,7 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     }
     loadedEtag = response?.headers.get('ETag') || null;
     if (!text.trim()) {
-      if (scope === 'turn' && branchHasDiff) note('No changes since last turn.', { showBranch: true });
-      else note('No changes yet.');
+      note('No changes yet.');
       return;
     }
     renderDiffPanel(api, text, run.id, {
@@ -258,6 +255,7 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
 
   diffPanelSync = () => {
     const run = currentRun();
+    retirePrPanelUnlessRun(run?.id);
     if (loadedRunId && loadedRunId !== run?.id) {
       cancelLoad();
       loadedKey = null;
@@ -370,7 +368,7 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     document.querySelector('#run-panel-tabs [aria-selected="true"]')?.focus();
   };
 
-  function setScope(next, { focusSelect = false } = {}) {
+  function setScope(next) {
     const run = currentRun();
     if (!run) return;
     const normalized = next === 'branch' ? 'branch' : 'turn';
@@ -379,7 +377,6 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     loadedKey = null;
     loadedEtag = null;
     diffPanelSync();
-    if (focusSelect) scopeSelect.focus();
   }
 
   diffPanelReveal = (view, options) => {
@@ -443,11 +440,6 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
   new ResizeObserver(() => syncMaximized()).observe($('run-sidebar'));
   scopeSelect.addEventListener('change', () => setScope(scopeSelect.value));
   body.addEventListener('click', event => {
-    const scopeBtn = event.target.closest('[data-diff-scope]');
-    if (scopeBtn) {
-      setScope(scopeBtn.dataset.diffScope, { focusSelect: true });
-      return;
-    }
     if (!event.target.closest('[data-diff-retry]')) return;
     loadedKey = null;
     loadedEtag = null;

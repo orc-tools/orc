@@ -1,5 +1,6 @@
 import { $, announce, esc, holdInert, runs, setRuns, showToast } from './core.js';
 import { refresh } from './activity.js';
+import { showSendingAnswers } from './chat.js';
 import { ASSET_ICONS, clipUrl, clockTime } from './assets-panel.js';
 import { clipError, clipPlayback, onClipChange, onClipTime, playClips, setClipsPaused, stopClips } from './clip-player.js';
 import { reflectRunChange } from './dialogs.js';
@@ -401,12 +402,12 @@ function amAnswered(question) {
     : !!(answer.picked || []).length || !!(answer.other || '').trim();
 }
 
-function amAnswerText(question) {
+function amAnswerText(question, otherSeparator = ' — ') {
   const answer = am.answers[question.id] || {};
   if (question.type === 'text') return (answer.text || '').trim();
   const picked = question.options.map(option => option.label).filter(label => (answer.picked || []).includes(label));
   const other = (answer.other || '').trim();
-  return picked.join(', ') + (other ? (picked.length ? ` — ${other}` : other) : '');
+  return picked.join(', ') + (other ? (picked.length ? otherSeparator + other : other) : '');
 }
 
 function amSingle() {
@@ -694,11 +695,16 @@ function amQuestionHtml(question, position, batch) {
   return `<div class="am-question" data-question="${esc(question.id)}">${heading}${required}${why ? `<p class="am-why">${why}</p>` : ''}${facts}${amClipsHtml(question)}${control}</div>`;
 }
 
+// The header's Back to chat is the one way out, so the first step's left slot
+// holds no second copy of it.
 function amBackButton() {
   return am.step > 0
     ? `<button type="button" class="am-btn ghost" data-am="goto" data-step="${am.step - 1}">${am.set.readOnly ? 'Previous question' : 'Back'}</button>`
-    : '<button type="button" class="am-btn ghost" data-am="close">Back to chat</button>';
+    : '';
 }
+
+// The action row's left side: the previous step and Skip, beside the primary.
+const amActionsStart = (...buttons) => `<span class="am-actions-start">${buttons.join('')}</span>`;
 
 function amStepHtml() {
   const step = am.set.steps[am.step];
@@ -714,11 +720,12 @@ function amStepHtml() {
   if (am.set.readOnly) {
     return `<section class="am-card" aria-labelledby="am-q-${questions[0].number}"><p class="am-sub">Read only · Submitted answers</p>${eyebrow}${body}
       ${last && am.set.submittedNotes ? `<div class="am-submitted-answer"><strong>Your notes</strong><p>${esc(am.set.submittedNotes)}</p></div>` : ''}
-      <div class="am-actions">${am.step > 0 ? amBackButton() : '<span></span>'}${last ? '<button type="button" class="am-btn primary" data-am="close">Back to chat</button>' : '<button type="button" class="am-btn primary" data-am="next">Next question</button>'}</div></section>`;
+      <div class="am-actions">${amActionsStart(amBackButton())}${last ? '<button type="button" class="am-btn primary" data-am="close">Back to chat</button>' : '<button type="button" class="am-btn primary" data-am="next">Next question</button>'}</div></section>`;
   }
   const optional = questions.filter(question => !amMustAnswer(question)).length;
   const skipLabel = single ? 'Skip question' : optional < questions.length ? 'Skip optional questions'
     : optional === 2 ? 'Skip both for now' : 'Skip for now';
+  const skip = optional ? `<button type="button" class="am-btn ghost" data-am="skip"${am.sending ? ' disabled' : ''}>${skipLabel}</button>` : '';
   const direct = single || (amDraftSet(am.set) && last);
   const primary = direct
     ? `<button type="button" class="am-btn primary" data-am="send"${am.sending ? ' disabled' : ''}>${am.sending ? (amDraftSet(am.set) ? 'Saving…' : 'Sending…') : amSendLabel()} <kbd>↵</kbd></button>`
@@ -726,8 +733,8 @@ function amStepHtml() {
   return `<section class="am-card" aria-labelledby="am-q-${questions[0].number}">${eyebrow}${body}
     ${single ? amNotesHtml() : ''}
     <p class="am-error" role="alert">${esc(am.error)}</p>
-    <div class="am-actions">${amBackButton()}${primary}</div>
-  </section>${optional ? `<button type="button" class="am-skip" data-am="skip"${am.sending ? ' disabled' : ''}>${skipLabel}</button>` : ''}`;
+    <div class="am-actions">${amActionsStart(amBackButton(), skip)}${primary}</div>
+  </section>`;
 }
 
 function amThreadMessages(question) {
@@ -788,7 +795,7 @@ function amReviewHtml() {
     <ol class="am-review-list">${rows}</ol>
     ${amNotesHtml()}
     <p class="am-error" role="alert">${esc(am.error || (missing.length ? `Answer ${missing.length === 1 ? 'the question marked Needs an answer' : 'the questions marked Needs an answer'} before sending.` : ''))}</p>
-    <div class="am-actions">${amBackButton()}<button type="button" class="am-btn primary" data-am="send"${missing.length || am.sending ? ' disabled' : ''}>${am.sending ? 'Sending…' : amSendLabel()} <kbd>↵</kbd></button></div>
+    <div class="am-actions">${amActionsStart(amBackButton())}<button type="button" class="am-btn primary" data-am="send"${missing.length || am.sending ? ' disabled' : ''}>${am.sending ? 'Sending…' : amSendLabel()} <kbd>↵</kbd></button></div>
   </section>`;
 }
 
@@ -928,10 +935,11 @@ function amPickByKey(key) {
   return true;
 }
 
-async function amSubmit(runId, set, answers, notes, delivery) {
+async function amSubmit(runId, set, answers, notes, delivery, submissionId) {
   const response = await fetch(`/runs/${encodeURIComponent(runId)}/question-set-submit`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind: set.kind, generation: set.generation, answers, notes, delivery }),
+    body: JSON.stringify({ kind: set.kind, generation: set.generation, answers, notes, delivery,
+      ...(submissionId ? { chatSubmission: submissionId } : {}) }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || (amSingleSet(set) ? 'Your answer was not sent.' : 'Your answers were not sent.'));
@@ -1027,11 +1035,21 @@ async function amCopy() {
 async function amSendNow() {
   const sending = am;
   const { runId, set } = sending;
+  const gateAnswers = set.kind === 'clarification' && {
+    label: set.label, runId,
+    answers: set.questions.map(question => ({
+      question: `${question.prompt}?`, answer: amAnswerText(question, ' — other: ') || 'Skipped',
+    })),
+    notes: set.notes ? sending.notes.trim() : '',
+  };
   closeAnswerMode();
+  const pending = gateAnswers ? showSendingAnswers(runId, gateAnswers) : null;
   const sent = markSentQuestions(runId);
   try {
-    await amSubmit(runId, set, sending.answers, sending.notes, 'send');
+    const receipt = await amSubmit(runId, set, sending.answers, sending.notes, 'send', pending?.id);
+    pending?.finish(!receipt.idempotent || receipt.chatSubmission === pending.id);
   } catch (error) {
+    pending?.finish(false);
     releaseSentQuestions(runId, sent);
     amSendFailed(sending, error.message);
     return;

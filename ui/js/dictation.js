@@ -1,7 +1,6 @@
 import { shortcutMatches } from './shortcuts.js';
 
 const dictationBindings = new WeakMap();
-const dictationAreas = new Set();
 let activeDictation = null;
 
 const DICTATION_MICROPHONE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg>';
@@ -137,6 +136,8 @@ function receiveDictationEvent(detail) {
     if (!text) return releaseDictation(session, 'No speech detected. Try again.');
     releaseDictation(session, '', true);
     binding.area.focus();
+  } else if (detail.state === 'cancelled') {
+    releaseDictation(session);
   } else if (detail.state === 'error') {
     releaseDictation(session, detail.message || 'Dictation failed. Try again.');
   } else if (['preparing', 'downloading', 'recording', 'transcribing'].includes(detail.state)) {
@@ -159,9 +160,9 @@ function shortcutBinding() {
   if (activeDictation && activeDictation.binding.area.getClientRects().length) return activeDictation.binding;
   const focused = dictationBindings.get(document.activeElement);
   if (focused) return focused;
-  for (const area of dictationAreas) {
-    if (!area.isConnected) dictationAreas.delete(area);
-    else if (area.getClientRects().length && !area.disabled && !area.readOnly) return dictationBindings.get(area);
+  for (const area of document.querySelectorAll('textarea')) {
+    const binding = dictationBindings.get(area);
+    if (binding && area.getClientRects().length && !area.disabled && !area.readOnly) return binding;
   }
   return null;
 }
@@ -226,7 +227,6 @@ export function bindDictation(area, { owner = () => location.hash, changed = () 
     changed();
   } };
   dictationBindings.set(area, binding);
-  dictationAreas.add(area);
   binding.paint('idle', '');
   const availability = new MutationObserver(() => {
     if (area.disabled || area.readOnly) cancelDictation(area);
@@ -271,4 +271,11 @@ export function bindDictation(area, { owner = () => location.hash, changed = () 
     catch (_) { cancelDictation(area, 'Dictation is unavailable. Reload Orc and try again.'); }
   };
   button.addEventListener('click', binding.toggle);
+  return () => {
+    cancelDictation(area);
+    clearTimeout(revealTimer);
+    availability.disconnect();
+    dictationBindings.delete(area);
+    button.removeEventListener('click', binding.toggle);
+  };
 }

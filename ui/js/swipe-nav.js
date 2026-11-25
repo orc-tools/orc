@@ -56,7 +56,9 @@ function endSwipe() {
 }
 
 export function handleSwipeWheel(event) {
-  if (!fallbackOn() || event.ctrlKey || event.deltaMode !== 0) return;
+  // Ctrl + wheel is a pinch zoom. Shift + wheel is a mouse scrolling sideways,
+  // which macOS sends as horizontal wheel events just like a swipe.
+  if (!fallbackOn() || event.ctrlKey || event.shiftKey || event.deltaMode !== 0) return;
   const now = event.timeStamp;
   if (swipe && now - swipe.last > SWIPE_GAP_MS) endSwipe();
 

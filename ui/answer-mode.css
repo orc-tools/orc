@@ -92,12 +92,6 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
 .am-stage .am-opt { gap: 10px; padding: 8px 12px; }
 .am-stage .am-opt strong { font-size: 15px; }
 .am-stage .am-actions { margin-top: 14px; }
-.am-skip {
-  display: block; margin: 4px auto 0; padding: 4px 8px; min-height: 28px;
-  border: 0; background: transparent; color: var(--muted-strong); font: inherit; font-size: 13px;
-  text-decoration: underline; text-underline-offset: 3px; cursor: var(--orc-cursor-pointer, pointer);
-}
-.am-skip:hover { color: var(--heading); }
 .am-card::before {
   content: ""; position: absolute; inset: 0 0 auto; height: var(--answer-mode-trim-height); background: var(--answer-mode-trim);
 }
@@ -198,6 +192,9 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
 .am-error:empty { display: none; }
 
 .am-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; }
+.am-actions-start { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Stays on the right when a narrow row wraps it under Back and Skip. */
+.am-actions > .am-btn.primary { margin-left: auto; }
 .am-btn {
   display: inline-flex; align-items: center; gap: 10px; padding: 9px 18px; border: 1px solid transparent;
   border-radius: 10px; font: inherit; font-size: 15px; font-weight: 600; cursor: var(--orc-cursor-pointer, pointer);
@@ -477,7 +474,7 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
 img.gh-emoji { width: 1.25em; height: 1.25em; vertical-align: -0.25em; }
 .prr-reply.is-editing { position: relative; }
 .gh-emoji-menu {
-  position: absolute; z-index: 5; width: 220px; max-width: calc(100% - 24px); margin: 0; padding: 4px; list-style: none;
+  position: absolute; z-index: 5; width: 220px; max-width: calc(100% - 24px); overflow-y: auto; margin: 0; padding: 4px; list-style: none;
   border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
   box-shadow: 0 6px 18px rgb(0 0 0 / .28); font-size: 13px;
 }

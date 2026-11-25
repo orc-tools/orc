@@ -3,6 +3,7 @@
 import { $, announce, dotHtml, esc, runs, runState, toast } from './core.js';
 import { reducedMotion } from './motion.js';
 import { themeAllowsCharacterMotion } from './character-motion.js';
+import { playingScene } from './page-scene.js';
 import { mountScene, playPrOpened, playYeet, recordScene } from './send-offs.js';
 import { defaultTheme, pickableFunModes } from './fun-modes.js';
 import { formatBytes, revealInFinder } from './finder.js';
@@ -19,6 +20,8 @@ const GALLERY_DELIVERY_FRAMES = 30;
 // The send-off scenes run at display rate in the app, so their MP4 does too.
 const GALLERY_DELIVERY_MP4_FPS = 60;
 const GALLERY_GIF_WIDTH = 560;
+// The GIF endpoint accepts 8 MiB of JSON, including the base64 frames.
+const GALLERY_GIF_FRAME_BUDGET = 8 * 1024 * 1024 - 4096;
 // Screenshots of the showcase world (docs/showcase/gallery-backdrops.js) that
 // stand in for the page a send-off plays over: the page it tears or opens,
 // then the page it fades back to.
@@ -43,8 +46,8 @@ function galleryBackdrop(el) {
   }
   return getComputedStyle(document.documentElement).backgroundColor || '#1a1b26';
 }
-function galleryGifFrame(canvas, backdrop) {
-  const scale = Math.min(1, GALLERY_GIF_WIDTH / canvas.width);
+function galleryGifFrame(canvas, backdrop, maxWidth) {
+  const scale = Math.min(1, maxWidth / canvas.width);
   const flat = document.createElement('canvas');
   flat.width = Math.max(2, Math.round(canvas.width * scale / 2) * 2);
   flat.height = Math.max(2, Math.round(canvas.height * scale / 2) * 2);
@@ -156,7 +159,7 @@ function buildGallery() {
   });
   $('gallery-close').addEventListener('click', closeGallery);
   document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape' || $('gallery-view').hidden) return;
+    if (event.key !== 'Escape' || $('gallery-view').hidden || playingScene()) return;
     event.preventDefault();
     closeGallery();
   });
@@ -216,16 +219,25 @@ function runDeliveryScene(host, theme) {
         const frames = await recordDeliveryScene(host.dataset.deliveryScene, scene.theme, onFrame);
         return { frames, fps: GALLERY_DELIVERY_MP4_FPS };
       }
-      const backdrop = galleryBackdrop(host), step = scene.length / GALLERY_DELIVERY_FRAMES, frames = [];
-      for (let i = 0; i < GALLERY_DELIVERY_FRAMES; i++) {
-        if (scene !== stage) throw new Error('Scene changed while recording');
-        // Read back in the same task as the render: the WebGL buffer is
-        // cleared once the frame is composited.
-        scene.render(i * step);
-        frames.push(galleryGifFrame(scene.canvas, backdrop));
-        await new Promise(resolve => setTimeout(resolve));
+      const backdrop = galleryBackdrop(host), step = scene.length / GALLERY_DELIVERY_FRAMES;
+      let maxWidth = GALLERY_GIF_WIDTH;
+      for (;;) {
+        const frames = [];
+        let bytes = 0;
+        for (let i = 0; i < GALLERY_DELIVERY_FRAMES; i++) {
+          if (scene !== stage) throw new Error('Scene changed while recording');
+          // Read back before the compositor clears a WebGL frame.
+          scene.render(i * step);
+          const frame = galleryGifFrame(scene.canvas, backdrop, maxWidth);
+          frames.push(frame);
+          bytes += frame.length;
+          await new Promise(resolve => setTimeout(resolve));
+        }
+        if (bytes <= GALLERY_GIF_FRAME_BUDGET) return { frames, delayCs: Math.round(step * 100) };
+        // Detailed illustrations can exceed the upload limit on a Retina display.
+        const scale = .9 * Math.sqrt(GALLERY_GIF_FRAME_BUDGET / bytes);
+        maxWidth = Math.max(2, Math.floor(Math.min(maxWidth, scene.canvas.width) * scale));
       }
-      return { frames, delayCs: Math.round(step * 100) };
     },
   };
 }

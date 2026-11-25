@@ -250,17 +250,29 @@ def answer_follow_up_context(meta, text, *, run_dir=None, config_dir=None):
         "--file -`, then print http://127.0.0.1:4173/#%s/diagram.md. No child run."
         % (target_dir, rid)
     )
+    checkout = (target_meta or {}).get("mainRepoPath") or (target_meta or {}).get("repoPath")
+    in_chat = "" if question else (
+        "- IN-CHAT: the change touches no tracked file in the project's code, such as "
+        "an Orc or project setting such as the deploy command, "
+        "a git remote or upstream, or running a script or the deploy. A merged run "
+        "has no branch, checks, or Ship to carry it, and needs none: do it yourself in this "
+        "conversation, from the project's own checkout{checkout}, and start no run. Before "
+        "anything that publishes something the user did not name, such as creating "
+        "a repository or choosing its visibility, ask first. Reply with what changed "
+        "and where, so this chat is the record. If it turns out partway to need a "
+        "change to project files, say so, keep what you already did, and start the "
+        "code part as WORK.\n"
+    ).format(checkout=" (%s)" % checkout if checkout else "")
     return (
         "[orc hook] {kind} follow-up on run `{rid}` — {title}\n"
         "  {label}{answer}\n"
         "  message: {message}\n"
         "{boundary} Classify the message yourself using the "
-        "Classification rule in {question_runs}:\n"
-        "- WORK: the message asks you to make a repository, configuration, branch, "
-        "run-state, document, ticket, comment, deployment, or other external "
-        "change, on its own or mixed with a question. That includes a bare go-"
-        "ahead such as \"do it\" for a change you described. {start} with "
-        "this command:\n"
+        "Classification rule in {question_runs}{in_chat_rule}:\n"
+        "{in_chat}"
+        "- WORK: the message asks you to make {work_scope}, on its own or mixed "
+        "with a question. That includes a bare go-ahead such as \"do it\" for a "
+        "change you described. {start} with this command:\n"
         "  {curl}\n"
         "{continued}"
         "  Otherwise print [Open run](http://127.0.0.1:4173/#<childRunId>) and stop.\n"
@@ -300,6 +312,12 @@ def answer_follow_up_context(meta, text, *, run_dir=None, config_dir=None):
         curl=work_curl,
         quiz_curl=quiz_curl,
         kind="ANSWERED-QUESTION" if question else "MERGED-RUN",
+        in_chat=in_chat,
+        in_chat_rule="" if question else (
+            ", except that a change touching no project files is IN-CHAT, not WORK"),
+        work_scope=("a repository, configuration, branch, run-state, document, "
+                    "ticket, comment, deployment, or other external change" if question
+                    else "a change to the project's files, however small"),
         label="answer:  " if question else "summary: ",
         answer=os.path.join(target_dir, "answer.md" if question else "pr-body.md"),
         boundary=("Do not create or resume another run. Write nothing into this run "
@@ -316,7 +334,8 @@ def answer_follow_up_context(meta, text, *, run_dir=None, config_dir=None):
         costly=("A WORK message turns this answer into a change run, so when intent is "
                 "unclear, answer and ask." if question else
                 "Every WORK message starts a separate run, so when intent is unclear, "
-                "answer and ask."),
+                "answer and ask, and when the change touches no project files, keep "
+                "it IN-CHAT."),
         question_runs=skill_commands.SKILLS / "_shared/question-runs.md",
         diagram=diagram,
     )

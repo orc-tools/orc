@@ -90,9 +90,11 @@
 
 .pending-status { display: flex; align-items: center; gap: 8px; margin: 8px 0 0;
   color: var(--muted-strong); font-size: 13px; line-height: 1.5; }
-.pending-status::before { content: ''; box-sizing: border-box; flex: none; width: 10px; height: 10px;
+.pending-status::before { content: ''; }
+.pending-status::before, .status-spinner { box-sizing: border-box; flex: none; width: 10px; height: 10px;
   border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; }
 @media (prefers-reduced-motion: no-preference) {
-  :root:not([data-animations-off]) .pending-status::before { animation: pending-spin 900ms linear infinite; }
+  :root:not([data-animations-off]) .pending-status::before,
+  :root:not([data-animations-off]) .status-spinner { animation: pending-spin 900ms linear infinite; }
 }
 @keyframes pending-spin { to { transform: rotate(360deg); } }

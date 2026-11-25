@@ -15,9 +15,11 @@ import re
 import shutil
 import socket
 import subprocess
+import json
 import time
 
 import command_suggestions
+import qa_setup_fix
 
 
 def activate(context):
@@ -142,13 +144,7 @@ ANNOUNCED_PORT_RE = re.compile(
 
 def announced_ports(log: Path, offset: int) -> list[int]:
     """Ignore earlier launches; a server's latest port announcement wins."""
-    try:
-        with open(log, "rb") as stream:
-            stream.seek(offset)
-            data = stream.read().decode("utf-8", "replace")
-    except OSError:
-        return []
-    ports = [int(match) for match in ANNOUNCED_PORT_RE.findall(data)]
+    ports = [int(match) for match in ANNOUNCED_PORT_RE.findall(log_since(log, offset))]
     ports.reverse()
     return ports
 
@@ -166,8 +162,63 @@ def owned_port(worktree: dict, ports: list[int], pgid: int | None) -> int | None
     return None
 
 
+INSTALL_LOG = "worktree-install.log"
+SERVER_LOG = "worktree-server.log"
+
+
+def problem_path(state_dir: Path, worktree: dict) -> Path:
+    """Why the worktree's install or dev server last stopped, beside its
+    install marker, one per worktree."""
+    return Path(state_dir) / (".worktree-server-problem-%s.json" % worktree.get("slug", ""))
+
+
+def read_problem(state_dir: Path, worktree: dict) -> dict | None:
+    """The stopped process the QA window shows, as {process, detail, log,
+    lines, toolLog}, or None while nothing has stopped."""
+    try:
+        problem = json.loads(problem_path(state_dir, worktree).read_text())
+    except (OSError, ValueError):
+        return None
+    return problem if isinstance(problem, dict) and isinstance(problem.get("detail"), str) else None
+
+
+def record_problem(state_dir: Path, worktree: dict, process: str, log: Path,
+                   output: str, fallback: str) -> str:
+    """Saves why `process` stopped for the QA window and returns its one-line
+    reason: the cause from its output, never a closing pointer to a log."""
+    lines = qa_setup_fix.failure_lines(output)
+    detail = qa_setup_fix.failure_headline(lines) or fallback
+    problem_path(state_dir, worktree).write_text(json.dumps({
+        "process": process, "detail": detail, "log": str(log), "lines": lines,
+        "toolLog": qa_setup_fix.tool_log(lines)}))
+    return detail
+
+
+def clear_problem(state_dir: Path, worktree: dict) -> None:
+    problem_path(state_dir, worktree).unlink(missing_ok=True)
+
+
+def log_since(log: Path, offset: int) -> str:
+    try:
+        with open(log, "rb") as stream:
+            stream.seek(offset)
+            return stream.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def open_log(log: Path, command: str):
+    """Appends a header for this attempt and returns the open log and where
+    the attempt's own output starts."""
+    stream = open(log, "ab")
+    stream.write(("\n=== %s :: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), command)).encode())
+    stream.flush()
+    return stream, log.stat().st_size
+
+
 def seed_worktree(repo: Path, target: Path, config: dict,
-                  marker: Path) -> list[str]:
+                  marker: Path, state_dir: Path | None = None,
+                  worktree: dict | None = None) -> list[str]:
     """Keep the install marker outside the tree so teardown's dirty check passes."""
     copied = []
     for relative in config["copy"]:
@@ -183,17 +234,25 @@ def seed_worktree(repo: Path, target: Path, config: dict,
         copied.append(relative)
     install = config["install"]
     if install and not marker.exists():
-        try:
-            result = subprocess.run(["/bin/bash", "-lc", install],
-                                    cwd=str(target), text=True,
-                                    capture_output=True, timeout=INSTALL_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            raise WorktreeError("worktreeServer.install timed out after %ds"
-                                % INSTALL_TIMEOUT) from None
-        if result.returncode:
-            detail = (result.stderr or result.stdout).strip().splitlines()
-            raise WorktreeError("worktreeServer.install failed: %s" %
-                                (detail[-1] if detail else "no output"))
+        state = Path(state_dir) if state_dir is not None else marker.parent
+        log = state / INSTALL_LOG
+        stream, offset = open_log(log, install)
+        with stream:
+            stream.write(("$ %s\n" % install).encode())
+            stream.flush()
+            try:
+                result = subprocess.run(["/bin/bash", "-lc", install],
+                                        cwd=str(target), stdin=subprocess.DEVNULL,
+                                        stdout=stream, stderr=subprocess.STDOUT,
+                                        timeout=INSTALL_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                result = None
+        if result is None or result.returncode:
+            fallback = ("timed out after %ds" % INSTALL_TIMEOUT if result is None
+                        else "exited with %d" % result.returncode)
+            detail = record_problem(state, worktree or {}, "install", log,
+                                    log_since(log, offset), fallback)
+            raise WorktreeError("The install stopped: %s" % detail)
         marker.write_text("")
     return copied
 
@@ -225,17 +284,15 @@ def launch_server(repo: Path, worktree: dict, state_dir: Path, save,
     if isinstance(existing, dict) and host.server_pids(worktree, existing):
         return {"ok": True, "configured": True, "started": True, "reused": True,
                 "url": worktree.get("url"), **existing}
+    clear_problem(state_dir, worktree)
     copied = seed_worktree(repo, target, config, host.install_marker(
-        state_dir, worktree)) if seed else []
+        state_dir, worktree), state_dir, worktree) if seed else []
     port = free_port(config["port"])
     command = config["command"].replace("{port}", str(port)).replace(
         "{path}", str(target))
-    log = state_dir / "worktree-server.log"
-    with open(log, "ab") as stream:
-        stream.write(("\n=== %s :: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"),
-                                            command)).encode())
-        stream.flush()
-        log_offset = log.stat().st_size
+    log = state_dir / SERVER_LOG
+    stream, log_offset = open_log(log, command)
+    with stream:
         process = subprocess.Popen(
             ["/bin/bash", "-lc", command], cwd=str(target),
             stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT,
@@ -275,7 +332,9 @@ def launch_server(repo: Path, worktree: dict, state_dir: Path, save,
     if owned is None and not announced and exited is not None:
         host.clear_server(worktree)
         save()
-        raise WorktreeError("dev server exited with %d; see %s" % (exited, log))
+        detail = record_problem(state_dir, worktree, "dev server", log,
+                                log_since(log, log_offset), "exited with %d" % exited)
+        raise WorktreeError("The dev server stopped: %s" % detail)
     if owned is None and not announced and host.port_open(port):
         # Retain our process record for cleanup, but never expose a stranger's URL.
         raise WorktreeError(

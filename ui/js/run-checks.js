@@ -295,7 +295,7 @@ const checksFoldKey = runId => `orc-checks:${runId}`;
 // whether the card stands open, and `fold()` to fold it for a card that takes
 // its place.
 export function renderChecksCard(host, options) {
-  const { runId, checks, working, show = true, onFixInRun, onFixInNewRun, onFix, onLinkFixRun, onToggle } = options;
+  const { runId, checks, working, show = true, onFixInRun, onFixInNewRun, onFix, onLinkFixRun, onToggle, onAfterFold } = options;
   const fixNew = onFixInNewRun || onFix;
   const repaint = () => (onToggle ? onToggle() : renderChecksCard(host, options));
   const view = chatChecks(checks, working, { show });
@@ -364,7 +364,7 @@ export function renderChecksCard(host, options) {
   };
   // A card already on screen travels to its folded row, or back.
   const moved = host.querySelector('.chat-card') && host.dataset.listed !== String(listed);
-  if (moved) animateCardFold(host, paint, 'chat-checks-ghost');
+  if (moved) animateCardFold(host, paint, 'chat-checks-ghost', onAfterFold);
   else paint();
   // A card that comes or changes while Chat is open says so; one there when Chat opens does not.
   const said = host.dataset.state;

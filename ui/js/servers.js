@@ -1,5 +1,6 @@
 import { $, announce, esc, externalAppHref } from './core.js';
 import { focusControl } from './filters.js';
+import { requestDevServerSetup } from './settings.js';
 
 const ICON_ATTRS = 'width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
 const EYE_ICON = `<svg ${ICON_ATTRS}><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>`;
@@ -146,7 +147,7 @@ function idleWorktreeRow(row, projectKey) {
 }
 
 function setupLink({ key, name }) {
-  return `<a class="servers-setup" href="#settings/project/${esc(encodeURIComponent(key))}" aria-label="Set up a dev server for ${esc(name)}" data-focus-key="setup:${esc(key)}" data-row-primary>Set up</a>`;
+  return `<a class="servers-setup" href="#settings/project/${esc(encodeURIComponent(key))}" aria-label="Set up a dev server for ${esc(name)}" data-setup-project="${esc(key)}" data-focus-key="setup:${esc(key)}" data-row-primary>Set up</a>`;
 }
 
 // Something on this project can be started, stopped or retried from here.
@@ -428,6 +429,9 @@ function onServersClick(event) {
   if (hide) return setHidden(hide.dataset.hideProject, true);
   const show = event.target.closest('[data-show-project]');
   if (show) return setHidden(show.dataset.showProject, false);
+  const setup = event.target.closest('[data-setup-project]');
+  // A modified click opens another tab or window and leaves this one as it is.
+  if (setup && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) return requestDevServerSetup(setup.dataset.setupProject);
   const worktree = event.target.closest('[data-worktree-action]');
   if (worktree && worktree.getAttribute('aria-disabled') !== 'true') runWorktreeAction(worktree);
 }

@@ -376,7 +376,7 @@
 :root[data-synthwave] .run .session-status.running { display: none; }
 :root[data-synthwave] .run:has(.session-status.running) .name::before { animation: synthwave-level 1.1s ease-in-out -.5s infinite alternate; }
 :root[data-synthwave] .run:has(.session-status.running) .name::after { animation: synthwave-level .8s ease-in-out -1.4s infinite alternate; }
-:root[data-synthwave] .run :is(.state-tag, .unread-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+:root[data-synthwave] .run :is(.state-tag, .unread-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .run-age) {
   font: 600 10px/1.5 var(--synthwave-font); letter-spacing: .1em; text-transform: uppercase;
 }
 /* The Settled shelf is a horizon: finished runs go down behind it, and the

@@ -5,6 +5,11 @@
 choices. `orc-setting set <setting> <value>` changes one for all of Orc,
 such as `orc-setting set factoryVisuals off`; Orc puts a line with Undo in
 the run's Chat. Only the settings `list` names can change or be offered.
+
+`orc-setting dev-server --project <project> --command '<command>'
+[--install '<command>'] [--copy <file> ...]` saves a project's Live dev
+server, with Edit and Undo in the Chat. It refuses to replace a dev server
+already saved: say what you would change and ask, then pass `--replace`.
 Never run it unless the user asked for that change in their own words.
 """
 import argparse
@@ -64,6 +69,24 @@ def change(args):
               entry["label"], entry["fromText"], entry["toText"]))
 
 
+def save_dev_server(args):
+    run_dir, _status = run_dir_args.resolve(args, TOOL)
+    result = call("/api/chat-settings/dev-server", {
+        "project": args.project, "command": args.command_line, "install": args.install or "",
+        "copy": args.copy or [], "replace": args.replace, "source": {"kind": "run", "runId": run_dir.name}})
+    if not result.get("changed"):
+        print("%s already has that dev server saved; nothing changed. Tell the user in one line." % result["label"])
+        return
+    entry = result["change"]
+    saved = ["command %s" % entry["command"]]
+    if entry.get("install"):
+        saved.append("install command %s" % entry["install"])
+    if entry.get("copy"):
+        saved.append("files to copy %s" % ", ".join(entry["copy"]))
+    print("Saved %s: %s. This run's Chat shows it with Edit and Undo; tell the user in one line what you "
+          "saved." % (entry["label"], "; ".join(saved)))
+
+
 def main():
     parser = argparse.ArgumentParser(prog=TOOL, description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -73,6 +96,17 @@ def main():
     setter.add_argument("value")
     run_dir_args.add_arguments(setter)
     setter.set_defaults(func=change)
+    server = commands.add_parser("dev-server", help="save a project's Live dev server")
+    server.add_argument("--project", required=True, help="the project's folder, as Settings lists it")
+    server.add_argument("--command", dest="command_line", required=True,
+                        help="the command that starts the dev server, with {port} when it takes a port flag")
+    server.add_argument("--install", help="the command that installs dependencies in a new worktree")
+    server.add_argument("--copy", action="append", metavar="FILE",
+                        help="a file to copy into each worktree, such as .env (repeat for more)")
+    server.add_argument("--replace", action="store_true",
+                        help="replace a dev server already saved, only after the user agreed")
+    run_dir_args.add_arguments(server)
+    server.set_defaults(func=save_dev_server)
     args = parser.parse_args()
     args.func(args)
 

@@ -62,6 +62,8 @@ repository its own steps and name it by folder in brackets after the name,
 as `**Export worker** (`serverless`).`, and write `Waits on step N.` in a
 step that must wait for another: Start work then opens one run per step in
 its repository, and Orc starts a waiting step when that run reaches Ship.
+In a plan of one repository, `Waits on step N.` matters to Start each step,
+which does the same and stacks the waiting step on that step's branch.
 
 The plan holds no file paths, no implementation diary, no checklist of
 checks and no decision record. The build run settles its own approach.
@@ -163,8 +165,11 @@ ask to build, starts the build.
 When the user asks the plan run to build the plan, in chat or in a note,
 follow **Build when asked** in `../_shared/planning-session.md`: make any
 changes asked for in the same message, run `orc-plan-ready` again, then
-start the build with `orc-plan-start --run-dir <run-dir>` and reply with
-its link. Never answer that only the button can start it.
+start the build with `orc-plan-start --run-dir <run-dir>` (`--each` when
+they ask for a run per step, such as "a run for each" or "separate runs";
+one line asking which when a plan of several steps gets only "go") and
+reply from its output with its links, never before it has answered.
+Never answer that only the button can start it.
 
 ## Notes on the plan
 

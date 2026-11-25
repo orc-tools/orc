@@ -374,7 +374,7 @@
 /* The bulb says a session is live by flickering, so the row's own dot goes. */
 :root[data-upside-down] .run .session-status.running { display: none; }
 :root[data-upside-down] .run:has(.session-status.running) .name::before { animation: upside-down-flicker 2.6s linear infinite; }
-:root[data-upside-down] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+:root[data-upside-down] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .run-age) {
   font: 500 10px/1.5 var(--upside-down-type); letter-spacing: .06em; text-transform: uppercase;
 }
 /* The Settled shelf hangs the string of lights along its top edge, closed and

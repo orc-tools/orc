@@ -1859,29 +1859,6 @@ export function openSettingsSearch({ fromShortcut = false } = {}) {
 
 orcRegisterOverlayCloser('settings-search', () => closeSettingsSearch({ restoreFocus: false }));
 
-// Exposed for Orc.app's Edit -> Find… native menu (app/main.swift) and hideSettings().
-window.orcOpenSettingsSearch = () => openSettingsSearch({ fromShortcut: true });
-window.orcCloseSettingsSearch = () => closeSettingsSearch({ restoreFocus: false });
-
-// Delegated click handler on #settings-view so header re-renders never lose wiring.
-$('settings-view')?.addEventListener('click', event => {
-  const trigger = event.target.closest?.('#settings-search-btn');
-  if (!trigger) return;
-  event.preventDefault();
-  openSettingsSearch();
-});
-
-// Cmd+F / Ctrl+F inside Settings (browser and non-menu fallback).
-document.addEventListener('keydown', event => {
-  if (!settingsViewActive || $('settings-view')?.hidden) return;
-  if (event.altKey || event.shiftKey) return;
-  if (!(event.metaKey || event.ctrlKey)) return;
-  if (String(event.key || '').toLowerCase() !== 'f') return;
-  if (openSettingsSearch({ fromShortcut: true })) {
-    event.preventDefault();
-  }
-});
-
 settingsSearchInput?.addEventListener('input', () => {
   settingsSearchUpdateQuery(settingsSearchInput.value);
 });

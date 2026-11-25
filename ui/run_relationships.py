@@ -295,12 +295,24 @@ def add_question_project(config_dir, run_id, project, created_at=None):
         return dict(row)
 
 
+def question_projects_by_run(store):
+    by_run = {}
+    for row in store.get("questionProjects", []):
+        if isinstance(row, dict) and valid_run_id(row.get("runId")):
+            by_run.setdefault(row["runId"], []).append(row)
+    return by_run
+
+
 def question_project_context(store, run_id):
     """Return project context only for one unambiguous, well-formed record."""
     if not valid_run_id(run_id) or not isinstance(store, dict):
         return None
-    rows = [row for row in store.get("questionProjects", [])
-            if isinstance(row, dict) and row.get("runId") == run_id]
+    return question_project_from_rows([
+        row for row in store.get("questionProjects", [])
+        if isinstance(row, dict) and row.get("runId") == run_id])
+
+
+def question_project_from_rows(rows):
     if len(rows) != 1:
         return None
     row = rows[0]

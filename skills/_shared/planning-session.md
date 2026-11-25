@@ -168,10 +168,20 @@ each in its repository with its own PR, and holds a step that waits on
 another until that run reaches Ship. Those runs list together under the plan
 in the sidebar when they span repositories, and can send each other notes.
 Otherwise, until any
-step has a run, one **Start work** button builds the whole plan in one run
-and is the only Start on the page: every step shows that run, and no step
-offers Start while it stands. Once a step has a run of its own, a step with
-no run offers:
+step has a run, **Start work** builds the whole plan in one run and is the
+page's main button: every step shows that run, and no step offers Start
+while it stands. Beside it, a quiet **Start each step** opens one run per
+step at once in the plan's project, and holds a step that waits on another
+until that run reaches Ship. That waiting step then **stacks**: its run
+starts from the branch of the step it waits on (from the later step's
+branch, with the other's merged in, when it waits on two), brings that
+step's new commits in whenever it stops in Build, and brings main in once
+that step merges. Its PR targets that step's branch and moves to main by
+itself once that step merges. Cancelling a step stops the step stacked on
+it, which then offers Start again, from main. Each step's run at Ship
+shows **Merge** on the plan page, held for a stacked step until the step
+below it merges. Once a step has a run of its own, a step with no run
+offers:
 
 - **Start step N** when the plan has several steps — Orc UI forks a child change run through the existing context-fork route
   with `planning/planning.mdx` captured as context. Its prompt names the
@@ -213,10 +223,11 @@ next-step choice; an explicit ask to build is (**Build when asked**).
 
 ### Build when asked
 
-The user can start the build in words instead of with the button. A chat
+The user can start the build in words instead of with the buttons. A chat
 message or note batch that plainly asks to build ("build it", "start the
-build", "go ahead and build", "start step 2") is the Start work choice made
-in chat. "Looks good", thanks, answers and silence never are.
+build", "go ahead and build", "a run for each", "start step 2") is the
+Start work or Start each step choice made in chat.
+"Looks good", thanks, answers and silence never are.
 
 1. **Only a finished plan builds.** `planning.state` is `"complete"`: a
    plan run's plan has passed `orc-plan-ready`, a session has written its
@@ -228,16 +239,27 @@ in chat. "Looks good", thanks, answers and silence never are.
    each mockup they affect, answer every note, and stop at the gate again
    (`orc-plan-ready`, or `orc-ui open --gate` for a session). Do not wait
    for the user to read the revised plan.
-3. **Start it.** Run `orc-plan-start --run-dir <run-dir>`. "Build it" builds
-   the whole plan in one run; "start step N" adds `--step N`, as the plan
-   page's Start step N does. The build runs on what Builds with opens on,
+3. **Pick the start.** Run `orc-plan-start --run-dir <run-dir>`. "Build it",
+   "start the build" and "go ahead and build" build the whole plan in one
+   run. "A run for each", "separate runs", "spin up runs for all of these"
+   and any other plain ask for one run per step add `--each`, as Start each
+   step does. "start step N" adds `--step N`, as the plan page's Start step
+   N does. On a plan of several steps that names no repositories, a message
+   that asks to build but says neither, such as "go", gets one line asking
+   whether to build it in one run or one run per step, and nothing starts
+   until the answer. The build runs on what Builds with opens on,
    the plan run's own settings, unless the user named others: pass only what
    they named, as `--agent`, `--model`, `--effort`, `--fast`,
    `--permission-mode`, `--account` or `--[no-]orchestration` ("build it
    with Codex" is `--agent codex`). Notes left in the plan's tray go with
    the build, as with Start work.
-4. **Reply and stop.** One line with `[Open the build](<link>)` from its
-   output, then stop. Chat follows the build from there, as after Start work.
+4. **Start before you reply.** Run the helper first and write the reply
+   from its output, never ahead of it, so a reply never claims a run that
+   did not open. One line with `[Open the build](<link>)` for each link it
+   printed, then stop. With `--each`, name each step in `waitingSteps` as
+   waiting on the step it waits on, and each line in `errors` as a step
+   that did not start. Chat follows the build from there, as after Start
+   work.
 5. **A refusal stops at the gate.** When the helper refuses, run the gate
    command again so the plan waits at its gate, say why in one line, say
    Start work on the plan page still offers the build, and stop.

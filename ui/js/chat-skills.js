@@ -111,7 +111,7 @@ function markCardHtml(mark, lookup) {
 // A textarea cannot style part of its text, so each command that names a real
 // skill, and each id of a run Orc knows, gets its pill painted on a mirror
 // layer underneath the draft.
-function bindSkillMark(area, surface, lookup, mentioned) {
+function bindSkillMark(area, surface, lookup, mentioned, signal) {
   const layer = document.createElement('div');
   layer.className = 'chat-skill-mark';
   layer.setAttribute('aria-hidden', 'true');
@@ -171,11 +171,16 @@ function bindSkillMark(area, surface, lookup, mentioned) {
   area.addEventListener('keydown', unhover);
   area.addEventListener('input', paint);
   area.addEventListener('scroll', paint);
-  new ResizeObserver(paint).observe(surface);
-  new ResizeObserver(paint).observe(area);
-  document.fonts?.addEventListener('loadingdone', paint);
+  const observer = new ResizeObserver(paint);
+  observer.observe(surface);
+  observer.observe(area);
+  document.fonts?.addEventListener('loadingdone', paint, { signal });
+  signal.addEventListener('abort', () => {
+    observer.disconnect();
+    unhover();
+  }, { once: true });
   // A run named in the draft gains or loses its pill as Orc's runs change.
-  onRunsChange(area, paint);
+  onRunsChange(paint, signal);
   return paint;
 }
 
@@ -214,9 +219,11 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
   const usage = popup.querySelector('.chat-skills-usage');
   // The run each title was chosen for, when two runs share it.
   const mentioned = new Map();
-  const paintMark = bindSkillMark(area, surface, name => findSkill(catalog, name), mentioned);
+  const live = new AbortController();
+  const { signal } = live;
+  const paintMark = bindSkillMark(area, surface, name => findSkill(catalog, name), mentioned, signal);
   // An open list of runs must not offer one that has just gone.
-  onRunsChange(area, () => { if (!popup.hidden && picking === 'runs') render(); });
+  onRunsChange(() => { if (!popup.hidden && picking === 'runs') render(); }, signal);
   area.setAttribute('role', 'combobox');
   area.setAttribute('aria-autocomplete', 'list');
   area.setAttribute('aria-controls', list.id);
@@ -231,11 +238,7 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
   let loadedUrl;
   let generation = 0;
 
-  // A run chat's composer is rebuilt each time the chat opens, so the window
-  // listeners leave with it.
-  const live = new AbortController();
   const position = () => {
-    if (!area.isConnected) live.abort();
     if (popup.hidden || !area.isConnected) return;
     const caret = caretBounds(area);
     const container = surface.getBoundingClientRect();
@@ -348,7 +351,7 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
         const skills = data.error ? [] : data.skills || [];
         if (requestGeneration === generation) {
           error = data.error || '';
-          if (!error) { catalog = skills; onCatalog?.(); }
+          if (!error) { catalog = skills; if (!signal.aborted) onCatalog?.(); }
         }
         return skills;
       })
@@ -357,7 +360,10 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
         return [];
       })
       .finally(() => {
-        if (requestGeneration === generation) { pending = null; render(); paintMark(); }
+        if (requestGeneration === generation) {
+          pending = null;
+          if (!signal.aborted) { render(); paintMark(); }
+        }
       });
     return pending;
   };
@@ -400,11 +406,13 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
   });
   area.addEventListener('blur', () => { dismissed = true; close(); });
   area.addEventListener('scroll', position);
-  area.closest('.nc-scroll')?.addEventListener('scroll', position);
+  area.closest('.nc-scroll')?.addEventListener('scroll', position, { signal });
   for (const [target, type] of [[window, 'resize'], [window.visualViewport, 'resize'], [window.visualViewport, 'scroll']]) {
-    target?.addEventListener(type, position, { signal: live.signal });
+    target?.addEventListener(type, position, { signal });
   }
-  new ResizeObserver(position).observe(area);
+  const observer = new ResizeObserver(position);
+  observer.observe(area);
+  signal.addEventListener('abort', () => observer.disconnect(), { once: true });
   area.addEventListener('keydown', event => {
     if (popup.hidden || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === 'Escape') {
@@ -443,6 +451,7 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
     const skills = await load();
     return replaceOutsideCode(text, COMMAND, (command, name) => findSkill(skills, name)?.invocation ?? command);
   };
+  invocation.dispose = () => live.abort();
   invocation.refresh = update;
   invocation.mentions = draft => sentText(draft, mentioned);
   invocation.skill = name => findSkill(catalog, name);

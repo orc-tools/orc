@@ -7,6 +7,12 @@ Each release is a `## v<version>` section, newest first, written and reviewed
 by the publisher before it goes out. A release bundles every change since the
 one before.
 
+## v3.85.0 (2026-11-25)
+
+- UX Improvements
+- Updated Claude Code/Codex CLI compatibility.
+- Improved QA browser
+
 ## v3.62.0 (2026-11-24)
 
 - Orc is public: install it on Mac, Windows or Windows on Arm.

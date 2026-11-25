@@ -69,13 +69,23 @@
 #usage-reset-dialog { --orc-dialog-max-width: 480px; }
 #usage-reset-dialog [slot="footer"] { display: flex; gap: 12px; }
 #sidebar-usage[hidden] { display: none; }
-#sidebar-usage { position: relative; flex-shrink: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
-#sidebar-usage [data-usage-summary] { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 5px 8px; font-size: 11.5px; }
-/* WebKit mis-sizes refreshed subgrids that anchor absolute children.
-   The provider label anchors the tooltip instead. */
-.usage-row { --usage-bar: var(--green); display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; cursor: help; }
+/* One login per row, with when it resets at the end. Four or more fold
+   into two columns, so a long list leaves room for runs; there the reset
+   moves into the row's tooltip. */
+#sidebar-usage { position: relative; flex-shrink: 0; padding: 7px 12px; border-top: 1px solid var(--border); }
+#sidebar-usage [data-usage-summary] { --usage-column-gap: 14px; container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 5px var(--usage-column-gap); font-size: 11.5px; }
+#sidebar-usage [data-usage-summary]:where(:has(> .usage-row:nth-child(4))) { grid-template-columns: repeat(auto-fill, minmax(calc(10ch + 42px), 1fr)); }
+/* Each tooltip opens straight above its own login, so the pointer can
+   reach it without crossing another. In the phone drawer, the grid's
+   second column opens leftward to keep the details on screen. */
+.usage-row { --usage-bar: var(--green); position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 6px; min-width: 0; cursor: help; }
+[data-usage-summary]:has(> .usage-row:nth-child(4)) > .usage-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+[data-usage-summary]:has(> .usage-row:nth-child(4)) .usage-row-reset { display: none; }
+@media (max-width: 700px) {
+  [data-usage-summary]:has(> .usage-row:nth-child(4)) > .usage-row:nth-child(2n) .usage-tooltip { left: auto; right: 0; --usage-tip-room: min(100cqw, calc(200% + var(--usage-column-gap))); }
+}
 .usage-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 3px; }
-.usage-tooltip { display: none; position: absolute; bottom: 100%; left: 0; width: max-content; min-width: 220px; max-width: min(440px, calc(100vw - 32px)); box-sizing: border-box; max-height: min(480px, 65dvh); overflow-y: auto; padding: 10px 12px; z-index: var(--z-tooltip); border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--heading); box-shadow: 0 8px 24px #0004; font-size: 12px; font-weight: 400; line-height: 1.45; overflow-wrap: anywhere; cursor: default; }
+.usage-tooltip { display: none; position: absolute; bottom: 100%; left: 0; width: max-content; min-width: min(220px, var(--usage-tip-room, 100cqw)); max-width: min(440px, calc(100vw - 32px), var(--usage-tip-room, 100vw)); box-sizing: border-box; max-height: min(480px, 65dvh); overflow-y: auto; padding: 10px 12px; z-index: var(--z-tooltip); border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--heading); box-shadow: 0 8px 24px #0004; font-size: 12px; font-weight: 400; line-height: 1.45; overflow-wrap: anywhere; cursor: default; }
 .usage-tooltip > strong, .usage-tooltip-email { display: block; }
 .usage-tooltip-email { color: var(--muted-strong); font-size: 11px; }
 .usage-tip-windows { clear: both; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 4px 8px; margin-top: 8px; font-variant-numeric: tabular-nums; }
@@ -126,8 +136,8 @@
 .usage-tip-stale { color: var(--yellow-text); }
 .usage-row:not(.usage-tooltip-dismissed):hover .usage-tooltip,
 .usage-row:not(.usage-tooltip-dismissed):focus-within .usage-tooltip { display: block; }
-.usage-row-name { position: relative; min-width: 0; color: var(--heading); font-weight: 600; }
-/* The tooltip hangs off the name, so only the label clips. */
+.usage-row-name { min-width: 0; color: var(--heading); font-weight: 600; }
+/* The tooltip hangs off the row, so only the label clips. */
 .usage-row-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-row.usage-level-medium { --usage-bar: var(--yellow); }
 .usage-row.usage-level-low { --usage-bar: var(--red); }
@@ -144,8 +154,8 @@
 .usage-row.usage-exhausted > .usage-battery { --usage-edge: var(--red); }
 .usage-row-percent { min-width: 4ch; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 .usage-row.usage-exhausted .usage-row-percent { color: var(--red-text); }
-.usage-row-reset { min-width: 6ch; text-align: right; color: var(--muted-strong); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.usage-row-unavailable { grid-column: 2 / -1; color: var(--muted-strong); }
+.usage-row-reset { min-width: 8ch; text-align: right; color: var(--muted-strong); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-row-unavailable { grid-column: 2 / -1; color: var(--muted-strong); white-space: nowrap; }
 @media (pointer: coarse) {
   .usage-renewal input, .account-logins .usage-tip-toggle, .account-logins .login-link { min-height: 44px; }
 }

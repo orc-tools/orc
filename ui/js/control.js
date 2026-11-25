@@ -56,6 +56,32 @@ export function forkDraft(run) {
   const mention = title ? `${MENTION_PAD}@${title}${MENTION_PAD} ` : '';
   return mention && runMentionsIn(mention)[0]?.run.id === run.id ? mention : `${run.id} `;
 }
+// Start and Stop reach only these adapters' apps (worktree_app_action in
+// ui/serve.py). Any other tree's app, if it has one, is run by hand. A generic
+// tree whose project saved no dev server still offers Start: its config is not
+// in the run, and the start that finds none says so.
+const WORKTREE_APP_ADAPTERS = new Set(['generic', 'devd']);
+export function worktreeAppState(wt, health) {
+  wt = wt || {};
+  if (!wt.enabled) return { label: 'No worktree', start: false, stop: false };
+  const startable = WORKTREE_APP_ADAPTERS.has(wt.adapter);
+  if (health === 'up') return { label: 'App running', start: false, stop: startable };
+  if (health === 'error') return { label: 'App is returning errors', start: false, stop: startable };
+  if (health === 'down') return { label: 'App stopped', start: startable, stop: false };
+  return startable ? { label: 'No app running', start: true, stop: false }
+    : { label: 'No app for this worktree', start: false, stop: false };
+}
+// A path is shown as its folder over its last part, which says which tree it
+// is: the folder gives way from the left when the column is narrow, and the
+// last part is never cut. The home folder reads as ~. Anything else is null.
+export function controlPathParts(value) {
+  const text = String(value ?? '');
+  if (!/^~?\//.test(text)) return null;
+  const shown = text.replace(/^\/(?:Users|home)\/(?!Shared(?:\/|$))[^/]+(?=\/|$)/, '~');
+  const trimmed = shown.length > 1 ? shown.replace(/\/+$/, '') : shown;
+  const cut = trimmed.lastIndexOf('/') + 1;
+  return cut && cut < trimmed.length ? { dir: trimmed.slice(0, cut), name: trimmed.slice(cut) } : { dir: '', name: trimmed };
+}
 // END TESTABLE: control-center state helpers
 
 // The rail's keys, in the order their sections sit on the page. The waterfall
@@ -76,8 +102,13 @@ const controlReadout = (name, value) => `<div class="cp-readout"><span class="cp
 function controlCopyRow(label, value) {
   const present = value !== undefined && value !== null && String(value).trim();
   const display = present ? String(value) : 'Unavailable';
-  const breakableDisplay = esc(display).replace(/([/._-])/g, '$1<wbr>');
-  return `<div class="control-copy-row"><dt>${esc(label)}</dt><dd translate="no">${breakableDisplay}</dd>`
+  const path = present ? controlPathParts(display) : null;
+  // The shortened path is drawn for the eye; a screen reader and the tooltip
+  // get the exact value, as Copy does.
+  const shown = path
+    ? `<span class="control-path" aria-hidden="true">${path.dir ? `<span class="control-path-dir"><bdi dir="ltr">${esc(path.dir)}</bdi></span>` : ''}<span class="control-path-name">${esc(path.name)}</span></span><span class="sr-only">${esc(display)}</span>`
+    : esc(display).replace(/([/._-])/g, '$1<wbr>');
+  return `<div class="control-copy-row"><dt>${esc(label)}</dt><dd translate="no"${path ? ` title="${esc(display)}"` : ''}>${shown}</dd>`
     + (present ? `<orc-copy-button variant="ghost" size="compact" value="${esc(String(value))}" aria-label="Copy ${esc(label)}">Copy</orc-copy-button>` : '<span></span>')
     + '</div>';
 }
@@ -244,7 +275,7 @@ export function renderControlCenter(run, scrollTop = readScroll(run.id + '/' + C
   const state = runState(meta, run.files || [], Date.now(), { pending: !!run.pending });
   const model = modelLabel(parentModel(meta).model);
   const worktreeLamp = worktreeHealth === 'up' ? 'on' : worktreeHealth === 'error' ? 'warn' : worktreeHealth === 'down' || !wt.enabled ? 'off' : '';
-  const worktreeState = worktreeHealth === 'up' ? 'App Running' : worktreeHealth === 'error' ? 'App Erroring' : worktreeHealth === 'down' ? 'App Stopped' : wt.enabled ? 'App Unknown' : 'Not Enabled';
+  const worktreeApp = worktreeAppState(wt, worktreeHealth);
   const sessionFailed = !!(sessionWarning || sessionOperation?.error);
   const link = `#${encodeURIComponent(run.id)}/${CONTROL_KEY}`;
   c.innerHTML = `<article class="control-center" aria-labelledby="control-title" data-run-state="${esc(state.key)}" style="--cp-state: ${esc(state.color)}"${waterfallShown ? '' : ' data-fresh'}>
@@ -282,11 +313,12 @@ export function renderControlCenter(run, scrollTop = readScroll(run.id + '/' + C
     </fieldset>` : ''}
     <fieldset class="settings-fieldset control-section"${worktreeLamp ? ` data-lamp="${worktreeLamp}"` : ''}>
       <legend class="settings-label"><h5 id="control-worktree-title">Worktree</h5></legend>
-      <p class="control-state">${worktreeState}</p>
-      ${wt.enabled ? `<dl class="control-copy-list">${controlCopyRow('Adapter', wt.adapter || 'unknown')}${controlCopyRow('Path', wt.path || meta.repoPath)}</dl>` : '<p class="control-help">This run does not use an Orc-managed worktree.</p>'}
+      <p class="control-state">${worktreeApp.label}</p>
+      ${wt.enabled ? `<dl class="control-copy-list">${controlCopyRow('Adapter', wt.adapter || 'unknown')}${wt.path && wt.path !== meta.repoPath ? controlCopyRow('Path', wt.path) : ''}</dl>` : '<p class="control-help">This run does not use an Orc-managed worktree.</p>'}
       <div class="control-actions">
         ${wt.url ? `<a class="control-action-link" href="${esc(externalAppHref(wt.url, run.id) || wt.url)}" target="_blank" rel="noopener">View App ↗</a>` : ''}
-        ${wt.enabled ? `<orc-button data-worktree-action="start" ${readOnly || worktreeBusy || worktreeHealth === 'up' ? 'disabled' : ''} variant="ghost" size="compact">Start App</orc-button><orc-button data-worktree-action="stop" ${readOnly || worktreeBusy || !['up', 'error'].includes(worktreeHealth) ? 'disabled' : ''} variant="ghost" size="compact">Stop App</orc-button>` : ''}
+        ${worktreeApp.start ? `<orc-button data-worktree-action="start" ${readOnly || worktreeBusy ? 'disabled' : ''} variant="ghost" size="compact">Start App</orc-button>` : ''}
+        ${worktreeApp.stop ? `<orc-button data-worktree-action="stop" ${readOnly || worktreeBusy ? 'disabled' : ''} variant="ghost" size="compact">Stop App</orc-button>` : ''}
         <orc-button data-worktree-action="cleanup" ${readOnly || worktreeBusy || statusSetLocked(meta) || !wt.managedByOrc ? 'disabled' : ''} class="danger" variant="ghost" size="compact">Cleanup…</orc-button>
       </div>
       <p id="control-worktree-status" class="control-status-line${wt.operation?.error ? ' control-error' : ''}" aria-live="polite">${esc(operationText)}</p>
@@ -338,7 +370,9 @@ export function renderControlCenter(run, scrollTop = readScroll(run.id + '/' + C
         </fieldset>` : ''}
         <fieldset class="settings-fieldset control-section control-status" ${statusLocked ? 'disabled' : ''}>
           <legend class="settings-label"><h5 id="control-status-title">Status</h5></legend>
-          <div class="control-status-options">${statusValues.map(status => `<label><input type="radio" name="run-status" value="${status}"${meta.status === status ? ' checked' : ''}> ${status[0].toUpperCase() + status.slice(1)}</label>`).join('')}</div>
+          ${controlStatusNowHtml(state)}
+          <p class="control-status-manual" id="control-status-manual">Set by hand</p>
+          <div class="control-status-options" role="radiogroup" aria-labelledby="control-status-manual">${statusValues.map(status => `<label><input type="radio" name="run-status" value="${status}"${meta.status === status ? ' checked' : ''}> ${status[0].toUpperCase() + status.slice(1)}</label>`).join('')}</div>
           <p id="control-status-result" class="control-status-line" aria-live="polite">${meta.status === 'cancelled' ? 'Cancelled runs cannot change status.' : statusLocked && !readOnly ? 'Status is managed by the run while its session is working.' : ''}</p>
         </fieldset>
       </div>
@@ -391,6 +425,14 @@ export function renderControlCenter(run, scrollTop = readScroll(run.id + '/' + C
   bindControlCenter(run);
   mountWaterfall(run, c.querySelector('[data-waterfall-run]'), { fresh: !waterfallShown });
 }
+
+// The Status module opens on the run's state as the header and sidebar give
+// it. A gate or Ship stop matches none of the raw values below, which are a
+// manual override.
+const controlStatusNowHtml = state => `<div class="control-status-now" data-state="${esc(state.key)}" style="--control-status-color: ${esc(state.color)}">
+            <p class="control-status-now-label"><span class="control-status-dot" aria-hidden="true"></span>${esc(state.label)}</p>
+            ${state.detail && state.detail !== state.label ? `<p class="control-help">${esc(state.detail)}</p>` : ''}
+          </div>`;
 
 export function setControlStatus(id, message, tone = '') {
   const el = $(id);

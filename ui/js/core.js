@@ -313,10 +313,13 @@ export function submitChord(textarea, pick, plainEnter = false) {
     if (e.key !== 'Enter' || e.isComposing) return;
     if (!(e.metaKey || e.ctrlKey) && !(plainEnter && !e.shiftKey)) return;
     if (textarea.disabled || textarea.readOnly) return;
-    const btn = pick();
-    if (!btn || btn.disabled) return;
+    // Swallowed even while Send is greyed out (empty box, already sending), so
+    // Enter never falls through as a blank line, and bare Enter in an empty box
+    // does nothing rather than send and complain (the diff's comment boxes).
     e.preventDefault();
-    btn.click();
+    if (!(e.metaKey || e.ctrlKey) && !textarea.value.trim()) return;
+    const btn = pick();
+    if (btn && !btn.disabled) btn.click();
   });
 }
 
@@ -811,22 +814,23 @@ export function highlightSearchMatch(text, query) {
   }
   return html + esc(value.slice(from));
 }
-export function reviewParent(run, allRuns = runs) {
+export function reviewParent(run, allRuns = runs, byId) {
   if (run?.meta?.route !== 'local-review') return null;
   const parentId = run.meta.parentRunId;
   // Only a QA run (Review in Orc) nests its code review child.
-  return parentId && parentId !== run.id
-    ? allRuns.find(parent => parent.id === parentId && parent.meta?.route === 'qa') || null
-    : null;
+  if (!parentId || parentId === run.id) return null;
+  const parent = byId ? byId.get(parentId) : allRuns.find(item => item.id === parentId);
+  return parent?.meta?.route === 'qa' ? parent : null;
 }
 
-export function reviewsForRun(runId, allRuns = runs) {
+export function reviewsForRun(runId, allRuns = runs, byId, reviewsByParent) {
   if (!runId) return [];
-  const parent = allRuns.find(item => item.id === runId);
+  const parent = byId ? byId.get(runId) : allRuns.find(item => item.id === runId);
   if (parent && parent.meta?.route !== 'qa') return [];
-  return allRuns.filter(run => run.meta?.route === 'local-review'
-    && run.meta.parentRunId === runId && run.id !== runId)
-    .sort((a, b) => runCreated(a) - runCreated(b) || a.id.localeCompare(b.id));
+  const reviews = reviewsByParent ? [...(reviewsByParent.get(runId) || [])]
+    : allRuns.filter(run => run.meta?.route === 'local-review'
+      && run.meta.parentRunId === runId && run.id !== runId);
+  return reviews.sort((a, b) => runCreated(a) - runCreated(b) || a.id.localeCompare(b.id));
 }
 
 // File activity must not reorder runs that already have a creation timestamp.
@@ -862,8 +866,8 @@ export function runTimesHtml(run, now = new Date()) {
     .map(([label, date], index, all) => `<span class="run-time">${label} <time datetime="${date.toISOString()}" title="${absoluteStamp(date)}">${esc(relativeStamp(date, now).replace(/^(Just now|Yesterday)/, word => word.toLowerCase()))}</time>${index < all.length - 1 ? '<span class="run-time-sep" aria-hidden="true">·</span>' : ''}</span>`)
     .join('');
 }
-import { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun } from './run-presentation.js';
-export { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun };
+import { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun } from './run-presentation.js';
+export { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun };
 
 // pushed and live happen in that order, so a run shows only the furthest one
 // it has reached; merged is the Done state's job, and live waits until the run
@@ -950,9 +954,10 @@ export const dotHtml = meta => {
 // simply starts the next one, so there is no session state worth showing.
 export const sessionStatusHtml = meta => {
   if (sessionStatus(meta) !== 'running') return '';
-  const stock = '<span class="session-status running" title="Working" data-part="status-lamp" data-state="working"><span class="dot pulse" aria-hidden="true"></span><span class="sr-only">Working</span></span>';
+  const label = busyLabel(meta);
+  const stock = `<span class="session-status running" title="${label}" data-part="status-lamp" data-state="working"><span class="dot pulse" aria-hidden="true"></span><span class="sr-only">${label}</span></span>`;
   return typeof renderThemeHtmlSlot === 'function'
-    ? renderThemeHtmlSlot('statusLamp', { state: 'working', running: true, pulse: true, color: 'var(--green)', label: 'Working' }, stock, { part: 'status-lamp', state: 'working', srLabel: 'Working' })
+    ? renderThemeHtmlSlot('statusLamp', { state: 'working', running: true, pulse: true, color: 'var(--green)', label }, stock, { part: 'status-lamp', state: 'working', srLabel: label })
     : stock;
 };
 

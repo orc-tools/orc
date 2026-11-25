@@ -6,12 +6,15 @@ import fcntl
 import hashlib
 import json
 import os
+import select
 import signal
+import socket
 import struct
 import subprocess
 import sys
 import termios
 import threading
+import time
 from typing import Any
 
 import uuid
@@ -19,6 +22,7 @@ import atexit
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_FRAME = 1 << 20
+WRITE_TIMEOUT = 5
 
 # A controlling terminal delivers resize signals to interactive programs.
 # Forking this threaded server to acquire one would inherit unsafe locks.
@@ -72,11 +76,41 @@ class WebSocket:
     frames out, masked frames in. Sends are locked because the pty pump and
     the reader (answering pings) both write."""
 
-    def __init__(self, rfile, wfile):
+    def __init__(self, rfile, wfile, connection=None):
         self.rfile = rfile
         self.wfile = wfile
-        self.lock = threading.Lock()
+        self.connection = connection
+        self.lock = threading.RLock()
         self.closed = False
+        if connection is not None:
+            connection.setblocking(False)
+            self.readable = select.poll()
+            self.readable.register(connection, select.POLLIN)
+
+    def _write_frame(self, frame):
+        if self.connection is None:
+            self.wfile.write(frame)
+            self.wfile.flush()
+            return
+        # The bridge may wait indefinitely for input. Give each frame its
+        # own write deadline, including time spent sending partial frames.
+        deadline = time.monotonic() + WRITE_TIMEOUT
+        remaining = memoryview(frame)
+        poll = None
+        while remaining:
+            try:
+                sent = self.connection.send(remaining)
+                if not sent:
+                    raise ConnectionError("terminal viewer disconnected")
+                remaining = remaining[sent:]
+            except BlockingIOError:
+                if poll is None:
+                    poll = select.poll()
+                    poll.register(self.connection, select.POLLOUT)
+                if not poll.poll(max(0, int((deadline - time.monotonic()) * 1000))):
+                    raise TimeoutError("terminal viewer stopped reading")
+            if remaining and time.monotonic() >= deadline:
+                raise TimeoutError("terminal viewer stopped reading")
 
     def send(self, opcode: int, payload: bytes = b"") -> bool:
         size = len(payload)
@@ -90,10 +124,9 @@ class WebSocket:
             if self.closed:
                 return False
             try:
-                self.wfile.write(header + payload)
-                self.wfile.flush()
+                self._write_frame(header + payload)
             except OSError:
-                self.closed = True
+                self._shutdown()
                 return False
         return True
 
@@ -101,13 +134,32 @@ class WebSocket:
         return self.send(0x1, json.dumps(message).encode())
 
     def close(self, code: int = 1000) -> None:
-        self.send(0x8, struct.pack("!H", code))
         with self.lock:
-            self.closed = True
+            if not self.closed:
+                self.send(0x8, struct.pack("!H", code))
+                self._shutdown()
+
+    def _shutdown(self):
+        self.closed = True
+        if self.connection is not None:
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def _read(self, size: int) -> bytes | None:
-        data = self.rfile.read(size) if size else b""
-        return data if len(data) == size else None
+        # The HTTP reader may already hold bytes from the upgrade request.
+        # A nonblocking buffered read returns None while waiting for more.
+        data = bytearray()
+        while len(data) < size and not self.closed:
+            chunk = self.rfile.read(size - len(data))
+            if chunk is None:
+                self.readable.poll()
+            elif chunk:
+                data.extend(chunk)
+            else:
+                return None
+        return bytes(data) if len(data) == size else None
 
     def recv(self) -> tuple[int, bytes] | None:
         """The next text/binary message as (opcode, payload), or None once the
@@ -172,7 +224,7 @@ def set_size(fd: int, cols: int, rows: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def stop_attach(proc: subprocess.Popen, master: int) -> None:
+def stop_process(proc: subprocess.Popen) -> None:
     if proc.poll() is None:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
@@ -186,10 +238,6 @@ def stop_attach(proc: subprocess.Popen, master: int) -> None:
         except OSError:
             pass
         proc.wait()
-    try:
-        os.close(master)
-    except OSError:
-        pass
 
 
 _SHELLS = {}
@@ -200,7 +248,7 @@ class Shell:
     """A PTY running `argv`, a login shell by default, in `environ` (the
     daemon's own environment by default) plus `env`."""
 
-    def __init__(self, cwd, env=None, argv=None, environ=None):
+    def __init__(self, cwd, env=None, argv=None, environ=None, *, on_exit=None):
         self.id = uuid.uuid4().hex
         self.lock = threading.RLock()
         self.output = bytearray()
@@ -209,11 +257,11 @@ class Shell:
         # herdr's tab state and the thread that follows it, for a herdr client.
         self.tabs = None
         self.feed = None
-        self.master, slave = os.openpty()
-        set_size(self.master, 80, 24)
         environment = dict(os.environ if environ is None else environ,
                            TERM="xterm-256color", COLORTERM="truecolor", **(env or {}))
+        self.master, slave = os.openpty()
         try:
+            set_size(self.master, 80, 24)
             self.proc = subprocess.Popen(
                 [sys.executable, "-c", _CTTY_SHIM, *(argv or [os.environ.get("SHELL") or "/bin/sh", "-l"])],
                 cwd=cwd, stdin=slave, stdout=slave, stderr=slave, env=environment,
@@ -223,9 +271,13 @@ class Shell:
             raise
         finally:
             os.close(slave)
-        threading.Thread(target=self.pump, daemon=True).start()
+        try:
+            threading.Thread(target=self.pump, args=(on_exit,), daemon=True).start()
+        except BaseException:
+            self.close()
+            raise
 
-    def pump(self):
+    def pump(self, on_exit):
         try:
             while True:
                 try:
@@ -234,29 +286,62 @@ class Shell:
                     break
                 if not data:
                     break
-                with self.lock:
-                    self.output.extend(data)
-                    del self.output[:-1024 * 1024]
-                    for ws in tuple(self.clients):
-                        if not ws.send(0x2, data):
-                            self.clients.discard(ws)
+                self._publish_output(data)
         finally:
             with self.lock:
-                for ws in tuple(self.clients):
-                    ws.send_json({"type": "exit"})
-                    ws.close()
+                self._close_master()
+                clients = tuple(self.clients)
                 self.clients.clear()
+            for ws in clients:
+                ws.send_json({"type": "exit"})
+                ws.close()
             self.proc.wait()
+            if on_exit is not None:
+                on_exit(self)
+
+    def _publish_output(self, data):
+        with self.lock:
+            self.output.extend(data)
+            del self.output[:-1024 * 1024]
+            clients = tuple(self.clients)
+        for ws in clients:
+            if not ws.send(0x2, data):
+                with self.lock:
+                    self.clients.discard(ws)
+
+    def _close_master(self):
+        if self.master >= 0:
+            master, self.master = self.master, -1
+            os.close(master)
+
+    def resize(self, cols, rows):
+        with self.lock:
+            if self.master >= 0:
+                set_size(self.master, cols, rows)
+
+    def write(self, data):
+        # A write can block on a paste. Let the pump drain output, and keep
+        # this descriptor valid even if the shell exits during the write.
+        with self.lock:
+            master = os.dup(self.master)
+        try:
+            os.write(master, data)
+        finally:
+            os.close(master)
 
     def send(self, text):
-        os.write(self.master, text.encode())
+        self.write(text.encode())
 
     def close(self):
         with self.lock:
             if self.closed:
                 return
             self.closed = True
-        stop_attach(self.proc, self.master)
+        try:
+            stop_process(self.proc)
+        finally:
+            with self.lock:
+                self._close_master()
 
 
 def get_shell(run_id, index=1, cwd=None, env=None, argv=None, environ=None):
@@ -268,7 +353,12 @@ def get_shell(run_id, index=1, cwd=None, env=None, argv=None, environ=None):
             del _SHELLS[key]
             shell = None
         if shell is None and cwd:
-            shell = _SHELLS[key] = Shell(cwd, env, argv, environ)
+            def forget(exited):
+                with _SHELL_LOCK:
+                    if _SHELLS.get(key) is exited:
+                        del _SHELLS[key]
+
+            shell = _SHELLS[key] = Shell(cwd, env, argv, environ, on_exit=forget)
         return shell
 
 
@@ -324,20 +414,32 @@ def copy_to_mac(text):
 def bridge(ws, shell, cols=80, rows=24, on_copy=None):
     """Joins `ws` to `shell`. `on_copy` takes the text the browser copied out
     of the terminal, for a browser on this Mac only."""
-    set_size(shell.master, cols, rows)
-    with shell.lock:
-        ws.send(0x2, bytes(shell.output))
-        if shell.tabs is not None:
-            ws.send_json(dict(shell.tabs, type="tabs"))
-        shell.clients.add(ws)
     try:
+        # Register together with the snapshot. The viewer's lock orders its
+        # replay before new frames without holding up shell state or shutdown.
+        with ws.lock:
+            with shell.lock:
+                shell.resize(cols, rows)
+                replay = bytes(shell.output)
+                tabs = shell.tabs
+                exited = shell.master < 0
+                if not exited:
+                    shell.clients.add(ws)
+            if not ws.send(0x2, replay):
+                return
+            del replay
+            if exited:
+                ws.send_json({"type": "exit"})
+                return
+            if tabs is not None:
+                ws.send_json(dict(tabs, type="tabs"))
         while True:
             message = ws.recv()
             if message is None:
                 break
             opcode, payload = message
             if opcode == 0x2:
-                os.write(shell.master, payload)
+                shell.write(payload)
             else:
                 try:
                     control = json.loads(payload)
@@ -346,8 +448,8 @@ def bridge(ws, shell, cols=80, rows=24, on_copy=None):
                 if not isinstance(control, dict):
                     continue
                 if control.get("type") == "resize":
-                    set_size(shell.master, clamp_size(control.get("cols"), 80, 2, 1000),
-                             clamp_size(control.get("rows"), 24, 1, 500))
+                    shell.resize(clamp_size(control.get("cols"), 80, 2, 1000),
+                                 clamp_size(control.get("rows"), 24, 1, 500))
                 elif control.get("type") == "copy" and on_copy and isinstance(control.get("text"), str):
                     on_copy(control["text"][:COPY_LIMIT])
     except OSError:

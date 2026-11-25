@@ -89,11 +89,21 @@ export function toggleTerminal() { terminalToggle(); }
   }
 
   // The dock grows as far as the user drags it, short of covering the chat's
-  // prompt: the chat above it can shrink to nothing, but stays typeable.
+  // reply box itself — never the cards pinned above it — so opening or closing
+  // cards leaves the terminal fixed and dragging it up is not capped by them.
+  function promptReserve() {
+    const composer = $('content').querySelector('.chat-composer');
+    const box = composer?.querySelector('.newconv-prompt');
+    if (!composer || !box) return 0;
+    const style = getComputedStyle(composer);
+    const chrome = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+      + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    return Math.ceil(box.getBoundingClientRect().height + chrome);
+  }
+
   function maxHeight() {
     const shell = $('content-shell').getBoundingClientRect?.();
-    const prompt = $('content').querySelector('.chat-composer')?.getBoundingClientRect().height || 0;
-    return Math.max(MIN_HEIGHT, Math.floor(window.innerHeight - (shell?.top || 0) - prompt));
+    return Math.max(MIN_HEIGHT, Math.floor(window.innerHeight - (shell?.top || 0) - promptReserve()));
   }
 
   function setHeight(px, persist = true) {
@@ -116,8 +126,8 @@ export function toggleTerminal() { terminalToggle(); }
   function observeDock() {
     dockObserver.disconnect();
     dockObserver.observe($('content-shell'));
-    const composer = $('content').querySelector('.chat-composer');
-    if (composer) dockObserver.observe(composer);
+    const prompt = $('content').querySelector('.chat-composer .newconv-prompt');
+    if (prompt) dockObserver.observe(prompt);
   }
 
   // The run the hash names, when it is one the sidebar knows. Everything else

@@ -72,6 +72,9 @@ HUNK_LINES = 8
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 IMAGE_REF = re.compile(r"attachments/[A-Za-z0-9][A-Za-z0-9._-]{0,159}")
 MAX_IMAGES = 10
+# A comment the QA window added from a step you failed (`add_comments`), not
+# one Orc drafted from the code.
+QA_SOURCE = "qa"
 # What GitHub's upload endpoint takes, out of the types Orc's image tray accepts.
 GITHUB_IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 UPLOAD_URL = "https://uploads.github.com/user-attachments/assets"
@@ -151,6 +154,7 @@ def _comment(raw, index):
     recommended = raw.get("recommended") if raw.get("recommended") in ("keep", "drop") else "keep"
     return {
         "id": cid,
+        "source": QA_SOURCE if raw.get("source") == QA_SOURCE else "orc",
         "header": _text(raw.get("header")) or "Finding %d" % (index + 1),
         "finding": _finding(raw.get("finding"), cid),
         "path": _text(raw.get("path")),
@@ -252,16 +256,18 @@ def question_schema(draft):
     questions = []
     for comment in draft["comments"]:
         keep = comment["recommended"] == "keep"
+        qa = comment["source"] == QA_SOURCE
         questions.append({
             "id": comment["id"],
             "header": comment["header"],
             "prompt": "What should happen to it",
-            "comment": {"author": "Orc", "path": comment["path"], "line": comment["line"],
+            "comment": {"author": "Your QA" if qa else "Orc", "path": comment["path"], "line": comment["line"],
                         "url": comment["url"], "body": comment["finding"] or comment["header"],
                         "diffHunk": comment["diffHunk"]},
             "draft": {"label": "Comment on this line" if comment["line"] else "Comment",
                       "body": comment["body"],
-                      "hint": "Orc drafted this. Edit it here; nothing posts until you send the review."},
+                      "hint": ("From a step you failed in QA" if qa else "Orc drafted this")
+                      + ". Edit it here; nothing posts until you send the review."},
             "options": [
                 {"label": KEEP, "recommended": keep,
                  "description": "Posts as a line comment when you send the review."
@@ -382,6 +388,59 @@ def edit(run_dir, meta, target, *, body=None, kept=None, images=None, digest=Non
                 if not isinstance(kept, bool):
                     raise DraftError("kept must be true or false", 400)
                 item["kept"] = kept
+        raw.pop("lastError", None)
+        _save(run_dir, raw)
+        return load(run_dir)
+
+
+def qa_status(run_dir, meta):
+    """Whether failed QA steps can go into this run's drafted review: "open",
+    "posted" once the review is on GitHub, or "none" while there is no draft
+    to add to (the review is still reading the change, or its draft cannot
+    be read)."""
+    if not applies(meta):
+        return "none"
+    try:
+        draft = load(run_dir)
+    except DraftError:
+        return "none"
+    if draft is None or not _bound(draft, meta):
+        return "none"
+    return "posted" if draft["posted"] else "open"
+
+
+def add_comments(run_dir, meta, comments):
+    """Adds the comments the QA window wrote from failed steps, each kept and
+    posted in the review's body, since a failure has no line in the code.
+
+    A comment with the id of one already in the draft replaces it: a repeated
+    id would make the draft unreadable. The draft keeps the state it had, so a
+    ready review stays ready, with the new comments in the card to edit or
+    drop, and one still being walked in Answer mode walks them too. Returns
+    the draft."""
+    with _locked(run_dir):
+        draft = _editable(run_dir, meta)
+        raw = draft["raw"]
+        existing = raw["comments"] = raw.get("comments") if isinstance(raw.get("comments"), list) else []
+        # A clean draft reads "ready" only because it has no comments.
+        raw["state"] = draft["state"]
+        for comment in comments:
+            cid = comment.get("id")
+            if not isinstance(cid, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", cid):
+                raise DraftError("a QA comment needs an id of letters, digits, '.', '_' or '-'", 400)
+            body = _body(comment.get("body"))
+            if not body:
+                raise DraftError("a QA comment cannot be empty", 400)
+            item = {"id": cid, "source": QA_SOURCE, "header": _text(comment.get("header")) or "QA step failed",
+                    "finding": _text(comment.get("finding")), "path": "", "line": None, "body": body,
+                    "images": _checked_images(run_dir, comment.get("images") or []),
+                    "recommended": "keep", "kept": True}
+            index = next((index for index, old in enumerate(existing)
+                          if isinstance(old, dict) and old.get("id") == cid), None)
+            if index is None:
+                existing.append(item)
+            else:
+                existing[index] = item
         raw.pop("lastError", None)
         _save(run_dir, raw)
         return load(run_dir)

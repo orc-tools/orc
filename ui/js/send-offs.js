@@ -6,7 +6,7 @@
 // module draws the cast.
 import { onReducedMotionChange, reducedMotion } from './motion.js';
 import { themeAllowsCharacterMotion } from './character-motion.js';
-import { claimScene, playingScene, releaseScene, restoreScroll, sceneLeft, staticClone } from './page-scene.js';
+import { claimScene, playingScene, releaseScene, restoreScroll, sceneLeft, staticClone, stillCopies } from './page-scene.js';
 import { SCENES, seamOutline } from './scene-poses.js';
 import { preloadScenes } from './theme-scenes.js';
 
@@ -130,6 +130,7 @@ function send(name, { theme, word, title: customTitle, force = false } = {}) {
     layer.innerHTML = `<style>
       .orc-yeet-scene { position:fixed; inset:0; z-index:2147483000; overflow:hidden; pointer-events:none;
         isolation:isolate; background:var(--orc-scene-bg); }
+      ${stillCopies('.orc-yeet-scene *')}
       .orc-yeet-scene canvas { position:absolute; inset:0; width:100%; height:100%; z-index:3; pointer-events:none; }
       .orc-yeet-paper { position:absolute; inset:0; z-index:2; overflow:hidden; pointer-events:none;
         background:var(--bg,#191d20); transform-origin:50% 50%; will-change:transform,opacity; }

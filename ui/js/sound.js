@@ -93,7 +93,7 @@ export function setSoundVolume(value) {
 }
 
 let ctx = null;
-function ensureContext() {
+export function soundContext() {
   const Ctor = window.AudioContext || window.webkitAudioContext;
   if (!Ctor) return null;
   if (!ctx || ctx.state === 'closed') ctx = new Ctor();
@@ -134,7 +134,7 @@ async function playClip(src, volume) {
 async function playTone(tone, volume) {
   let resumeTimer;
   try {
-    const audioCtx = ensureContext();
+    const audioCtx = soundContext();
     if (!audioCtx) return false;
     if (audioCtx.state !== 'running') {
       // WebKit can leave resume pending while playback is blocked.

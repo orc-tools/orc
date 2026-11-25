@@ -18,8 +18,10 @@ import urllib.request
 from typing import Any, Callable
 
 import zerohands_review
+from stat_cache import keep_recent
 
 CACHE_SECONDS = 30
+CACHE_LIMIT = 64
 FIELDS = ",".join([
     "number", "title", "state", "isDraft", "url", "author", "baseRefName",
     "headRefName", "additions", "deletions", "changedFiles", "updatedAt",
@@ -238,7 +240,7 @@ def fetch(url: str, cwd: str | None = None, now: float | None = None) -> dict[st
     except Exception:  # the Zerohands row is extra: never let it cost the panel its PR
         detail["zerohands"] = None
     with _lock:
-        _cache[url] = (now, detail)
+        keep_recent(_cache, url, (now, detail), CACHE_LIMIT)
     return detail
 
 

@@ -106,10 +106,12 @@ const opacity = new Map();
 
 function paint(kit, sheet) {
   const lots = sheet === 'lots';
-  const file = `motor-court-${kit.mode === 'light' ? 'day' : 'night'}${lots ? '-lots' : ''}.webp`;
+  const time = kit.mode === 'light' ? 'day' : 'night';
+  const variant = lots ? `${time}-lots` : time;
+  const file = new URL(`./motor-court-${variant}.webp`, import.meta.url).href;
   if (kit.materials.has(file)) return kit.materials.get(file);
   const material = new MeshBasicMaterial({ side: DoubleSide, toneMapped: false, fog: false, alphaTest: lots ? 0.38 : 0 });
-  material.map = kit.picture(new URL(file, import.meta.url).href, texture => {
+  material.map = kit.picture(file, texture => {
     if (!lots) return;
     const canvas = document.createElement('canvas');
     [canvas.width, canvas.height] = SHEET;

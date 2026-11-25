@@ -342,7 +342,7 @@ function trayHtml(notes) {
   const status = sent?.stage === 'revising'
     ? `<div class="plan-notes-revising">
         <div class="plan-notes-revising-row">
-          <p class="plan-notes-revising-title" role="status"><span class="plan-notes-spinner" aria-hidden="true"></span>Revising the plan</p>
+          <p class="plan-notes-revising-title" role="status"><span class="status-spinner" aria-hidden="true"></span>Revising the plan</p>
           <p class="plan-notes-revising-meta">From your ${planNotesCount(sent.items.length)}${since
             ? ` · <span class="plan-notes-timer" data-plan-notes-since="${esc(since)}"></span>` : ''}</p>
           ${chatLink(runId, sent)}

@@ -116,20 +116,77 @@ function clearSettingsSpotlight() {
   spotlightNode?.removeAttribute('data-settings-spotlight');
   spotlightNode = null;
 }
-export function spotlightSettingsElement(target) {
+export function spotlightSettingsElement(target, { stay = false } = {}) {
   if (!target) return;
   clearSettingsSpotlight();
-  target.setAttribute('data-settings-spotlight', '');
+  target.setAttribute('data-settings-spotlight', stay ? 'stay' : '');
   spotlightNode = target;
-  spotlightTimer = setTimeout(clearSettingsSpotlight, SPOTLIGHT_MS);
+  if (!stay) spotlightTimer = setTimeout(clearSettingsSpotlight, SPOTLIGHT_MS);
 }
 export function requestSettingsSpotlight(key) {
   pendingSpotlightKey = key || null;
+}
+// Servers' Set up link: the project's page rings Live dev server until you
+// use something on the page or leave it. The request outlives a redraw, which
+// replaces the ringed block, and is dropped once the page is used or left.
+let devServerSetup = null; // { key, listeners, used, fromWorktree }
+export function requestDevServerSetup(projectKey) {
+  endDevServerSetup();
+  devServerSetup = { key: normPath(projectKey), listeners: null, used: false, fromWorktree: false };
+}
+function endDevServerSetup() {
+  if (!devServerSetup) return;
+  devServerSetup.listeners?.abort();
+  devServerSetup = null;
+  clearSettingsSpotlight();
+}
+// Focus the ring took by itself is no edit for a refreshed page to protect.
+export const devServerSetupUnused = () => Boolean(devServerSetup?.listeners && !devServerSetup.used
+  && spotlightNode?.contains(document.activeElement));
+// The commands a project's files suggest arrive after the page and can push
+// the ring out of view.
+export function keepDevServerSetupInView() {
+  if (devServerSetupUnused()) spotlightNode.scrollIntoView({ block: 'nearest' });
+}
+// Live dev server hides while managed worktrees are Off, so the ring waits on
+// the select that brings it back.
+export function ringDevServerSetup() {
+  const block = devServerSetup && $('settings-view').querySelector('[data-proj-dev-server]');
+  if (!block) return null;
+  const target = block.hidden ? $('proj-wt').closest('.settings-field') : block;
+  if (block.hidden) devServerSetup.fromWorktree = true;
+  if (target !== spotlightNode) {
+    spotlightSettingsElement(target, { stay: true });
+    target.scrollIntoView({ block: 'nearest' });
+  }
+  return target;
+}
+function noteDevServerSetupUse(event) {
+  const path = event.composedPath();
+  const inside = path.slice(0, path.indexOf(event.currentTarget));
+  if (!inside.some(node => node.localName?.startsWith('orc-') || node.matches?.('a, button, input, textarea, select, summary, label'))) return;
+  devServerSetup.used = true;
+  // The ring started on this select, whose own change moves it (wireProjectDevServer).
+  if (devServerSetup.fromWorktree && inside.includes($('proj-wt'))) return;
+  endDevServerSetup();
+}
+function revealDevServerSetup() {
+  const key = projectKeyFromSettingsHash();
+  if (key === null || normPath(key) !== devServerSetup.key) return endDevServerSetup();
+  const target = ringDevServerSetup();
+  if (!target) return; // not drawn yet, or the project is gone
+  if (!devServerSetup.listeners) {
+    devServerSetup.listeners = new AbortController();
+    const { signal } = devServerSetup.listeners;
+    for (const type of ['click', 'input', 'change']) $('settings-view').addEventListener(type, noteDevServerSetupUse, { signal });
+  }
+  focusControl(target.querySelector('orc-switch, orc-select'));
 }
 // Account rows and plugin cards are drawn after their own fetch, so the
 // target may arrive after the tab does.
 export function revealSettingsAnchor() {
   stopAnchorWatch();
+  if (devServerSetup) revealDevServerSetup();
   const key = settingsAnchorFromHash();
   const tab = settingsTabFromHash();
   const panel = key && $(`settings-panel-${tab}`);
@@ -746,13 +803,14 @@ export function showSettings() {
     // hash twice; the heading must not take focus from the tab row then.
     // A view that started after Settings drew (Skills) is drawn in now.
     syncSettingsTabView(requestedHash);
-    if (settingsAnchorFromHash()) revealSettingsAnchor();
+    if (settingsAnchorFromHash() || devServerSetup) revealSettingsAnchor();
     else if (!$('settings-tabs')?.contains(document.activeElement)) focusSettingsHeading();
   }
 }
 export function hideSettings() {
   const keepPendingForm = settingsDirty || settingsSaving || settingsSaveTimer !== null;
   window.orcCloseSettingsSearch?.();
+  endDevServerSetup();
   clearSettingsSpotlight();
   deactivateInstructions();
   deactivateOrchestrate();

@@ -335,6 +335,8 @@
 :root[data-hotel] #search-wrap { margin: 0 10px 9px; padding: 2px 3px; }
 :root[data-hotel] :is(#sidebar-status, #merge-selection-bar) { margin: 0 10px 8px; }
 :root[data-hotel] :is(#sidebar-usage, #radio-now, #sidebar-footer) { margin: 8px 10px 0; }
+/* The pixel face is too wide for the two-column grid in the inset card. */
+:root[data-hotel] #sidebar-usage > * { grid-template-columns: minmax(0, 1fr); }
 /* The foot of the sidebar is the hotel's toolbar: dark by day and by night,
    with its buttons lit. */
 :root[data-hotel] #sidebar-footer {
@@ -422,10 +424,10 @@
 /* The light says a session is live by blinking, so the row's own dot goes. */
 :root[data-hotel] .run .session-status.running { display: none; }
 :root[data-hotel] .run:has(.session-status.running) .name::before { animation: hotel-blink 1.2s steps(1) infinite; }
-:root[data-hotel] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag, .run-age) {
+:root[data-hotel] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .run-age) {
   font: var(--hotel-label); letter-spacing: 0;
 }
-:root[data-hotel] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag, .evals-candidate-tag) { font-weight: 700; }
+:root[data-hotel] .run :is(.state-tag, .stale-tag, .focus-tag, .pushed-tag, .live-tag) { font-weight: 700; }
 /* The Settled shelf is one more card, pinned to the foot of the list. The
    shell's --settled-shelf-* tokens shape it closed and open alike. Runs are
    inset as far as it is, so they pass exactly behind it. */

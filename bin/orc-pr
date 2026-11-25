@@ -118,6 +118,26 @@ def check_pr(url, slug):
     return url
 
 
+def stacked_base(repo, meta, branch, default):
+    """The branch a stacked run's PR targets: the run it builds on, until that
+    lands on the default branch. Its PR then shows only this run's work, and
+    Orc moves it to the default branch once the parent merges. None when the
+    parent has landed or GitHub has no branch for it."""
+    parent = meta.get("parentBranch")
+    if not isinstance(parent, str) or not parent.strip() or parent.strip() in (branch, default):
+        return None
+    parent = parent.strip()
+    tip = subprocess.run(["git", "rev-parse", "--verify", f"refs/heads/{parent}^{{commit}}"],
+                         cwd=repo, capture_output=True, text=True)
+    if tip.returncode == 0 and any(
+            contains(repo, tip.stdout.strip(), ref)
+            for ref in (f"refs/heads/{default}", f"refs/remotes/origin/{default}")):
+        return None
+    if not command(["git", "ls-remote", "--heads", "origin", f"refs/heads/{parent}"], repo):
+        return None
+    return parent
+
+
 def pr_target(repo, branch, meta, linked):
     origin = command(["git", "remote", "get-url", "--push", "--all", "origin"], repo)
     slug = github_repo(origin)
@@ -129,6 +149,8 @@ def pr_target(repo, branch, meta, linked):
     base = meta.get("baseBranch") or meta.get("defaultBranch") or default
     if not default or branch in (base, default):
         raise DeliveryError("cannot push a PR onto the base or default branch")
+    if not linked:
+        base = stacked_base(repo, meta, branch, default) or base
     existing = query_open_pr(repo, branch, slug)
     if existing:
         check_pr(existing, slug)
@@ -204,11 +226,16 @@ def deliver(run_dir, args):
                   "The PR body may still differ from pr-body.md.", file=sys.stderr)
         else:
             push_commit(repo, branch, head)
-        if not existing:
+        created = not existing
+        if created:
             existing = check_pr(create_pr(repo, slug, base, branch, meta["title"], body, images), slug)
         verify_delivery(repo, existing, branch, head, body if not linked and images else None,
                         pushed_elsewhere=pushed_elsewhere)
-        write_meta(path, settle(read_meta(path), [existing], False))
+        settled = settle(read_meta(path), [existing], False)
+        if created and base == meta.get("parentBranch"):
+            # Orc moves this PR to the default branch once its parent lands.
+            settled["prBase"] = base
+        write_meta(path, settled)
         return existing
 
 

@@ -275,15 +275,54 @@ function announceChanges(before, after) {
 
 // ---------- actions ----------
 
+// The app page the browser shows for a page step, as a path in the app, so a
+// failure says where it failed. Nothing when the browser is elsewhere.
+function failedPage(step) {
+  if (step.kind !== 'page' || paneStep()?.id !== step.id) return null;
+  const shown = shownPage(step);
+  const app = state.data?.app?.url;
+  if (!shown || !app || !sameApp(shown, app)) return null;
+  try {
+    const url = new URL(shown);
+    const path = url.pathname + url.search + url.hash;
+    return path.length <= 2000 ? path : null;
+  } catch {
+    return null;
+  }
+}
+
 async function setVerdict(step, verdict) {
   const next = step.result?.verdict === verdict ? null : verdict;
-  const done = await act({ action: 'verdict', step: step.id, verdict: next }, 'verdict:' + step.id);
+  const page = next === 'fail' ? failedPage(step) : null;
+  const done = await act({ action: 'verdict', step: step.id, verdict: next, ...(page ? { page } : {}) }, 'verdict:' + step.id);
   if (!done) return;
   announce(next === 'pass' ? `Step ${step.number} passed.` : next === 'fail' ? `Step ${step.number} failed.` : `Step ${step.number} cleared.`);
   if (next) {
     const following = nextUnchecked(step.id);
     if (following) setCurrent(following.id);
   }
+}
+
+// Failed steps not sent anywhere yet, which the footer's button sends: to
+// your review of a pull request, or to your own run's agent. The server picks
+// which (data.failures.target) and refuses any step whose words changed.
+const unsentFailures = () => steps().filter(step => step.result?.verdict === 'fail' && !step.result?.sent);
+
+async function sendFailures() {
+  const list = unsentFailures();
+  if (!list.length) return;
+  const review = state.data?.failures?.target === 'review';
+  const done = await act({ action: 'send-failures', steps: list.map(step => ({ id: step.id, hash: step.hash })) }, 'send');
+  if (!done) return;
+  const count = plural(list.length, 'failure');
+  announce(review ? `${count} added to your review.` : `${count} sent to the agent.`);
+}
+
+async function retest(step) {
+  const done = await act({ action: 'retest', step: step.id }, 'retest:' + step.id);
+  if (!done) return;
+  setCurrent(step.id);
+  announce(`Step ${step.number} is ready to test again.`);
 }
 
 function openNote(step) {
@@ -408,35 +447,54 @@ function fixLogHtml(problem) {
   return `<details class="qa-fix-log"${fixLogOpen ? ' open' : ''}>
       <summary>Why ${problem.process === 'setup' ? 'setup' : escapeHtml(problem.process)} stopped (from its log)</summary>
       ${lines.length ? `<pre class="qa-fix-lines mono">${shown}</pre>` : ''}
-      ${problem.log ? `<div class="qa-fix-path"><span class="mono">${escapeHtml(problem.log)}</span><button type="button" class="qa-link" data-act="reveal-log" data-path="${escapeHtml(problem.log)}">Show in Finder</button></div>` : ''}
+      ${problem.log ? `<div class="qa-fix-path"><span class="mono">${escapeHtml(problem.log)}</span><button type="button" class="qa-link" data-act="reveal-log" data-path="${escapeHtml(problem.log)}">Show in Finder</button>${problem.toolLog ? `<button type="button" class="qa-link" data-act="reveal-log" data-path="${escapeHtml(problem.toolLog)}">${/[\\/]\.npm[\\/]/.test(problem.toolLog) ? "Show npm's full log" : 'Show its full log'}</button>` : ''}</div>` : ''}
     </details>`;
+}
+
+// What stopped, as a heading word: setup, an orc-devd process, the install or
+// the dev server.
+function stoppedLabel(problem) {
+  const name = problem.process || 'setup';
+  return `${name[0].toUpperCase()}${name.slice(1)} stopped`;
+}
+
+// The rail's one line for a stopped app: the fix's reason, else the cause.
+function stoppedSummary(problem) {
+  return problem.fix?.reason || problem.detail;
 }
 
 function fixRunNote(run) {
   if (!run) return '';
+  if (run.id === 'terminal') {
+    return run.state === 'running' ? '<p class="qa-fix-after">This terminal runs in the worktree, outside the QA sandbox. When you are done, close it and start the app again.</p>' : '';
+  }
   if (run.state === 'running') return '<p class="qa-fix-after">When this finishes, Orc runs setup again and opens the app.</p>';
   if (run.state === 'failed') return `<p class="qa-error">The command stopped with exit code ${escapeHtml(run.exitCode)}. Read the terminal above, then run it again.</p>`;
   return run.error ? `<p class="qa-error">${escapeHtml(run.error)}</p>`
     : '<p class="qa-fix-after">Done. Orc is running setup again.</p>';
 }
 
-function setupStoppedHtml(app, problem) {
+function setupStoppedHtml(app, problem, startButton = '') {
   const fix = problem.fix;
-  const run = fix && app.setupFix?.id === fix.id ? app.setupFix : null;
+  const run = app.setupFix && (app.setupFix.id === 'terminal' || app.setupFix.id === fix?.id) ? app.setupFix : null;
   const busy = state.busy.has('fix');
   const others = (app.problems || []).filter(other => other !== problem);
-  const label = problem.process === 'setup' ? 'Setup stopped' : `${problem.process} stopped`;
+  const terminalOpen = run?.id === 'terminal' && run.state === 'running';
   return `<div class="qa-fix">
-      <span class="qa-fix-tag">${escapeHtml(label)}</span>
+      <span class="qa-fix-tag">${escapeHtml(stoppedLabel(problem))}</span>
       <h2>${escapeHtml(fix ? fix.reason : problem.detail)}</h2>
       ${fix ? `<p>${escapeHtml(fix.explain)}</p>
         <div class="qa-cmdline qa-fix-cmd mono"><span>${escapeHtml(fix.command)}</span>
-          <button type="button" class="qa-btn primary" data-act="setup-fix" data-fix="${escapeHtml(fix.id)}"${busy || run?.state === 'running' ? ' disabled' : ''}>${run && run.state !== 'running' ? 'Run it again' : 'Run it'}</button></div>` : ''}
+          <button type="button" class="qa-btn primary" data-act="setup-fix" data-fix="${escapeHtml(fix.id)}"${busy || run?.state === 'running' ? ' disabled' : ''}>${run?.id === fix.id && run.state !== 'running' ? 'Run it again' : 'Run it'}</button></div>` : ''}
       ${run ? '<div data-fix-term-slot></div>' : ''}
       ${fixRunNote(run)}
       ${state.errors.fix ? `<p class="qa-error">${escapeHtml(state.errors.fix)}</p>` : ''}
       ${fixLogHtml(problem)}
       ${others.map(other => `<p class="qa-error">${escapeHtml(other.detail)}</p>`).join('')}
+      <div class="qa-fix-actions">
+        <button type="button" class="qa-btn" data-act="fix-terminal"${busy || terminalOpen ? ' disabled' : ''}>Open a terminal here</button>
+        ${startButton}
+      </div>
     </div>`;
 }
 
@@ -502,9 +560,12 @@ function appRow(app) {
     dot = 'red'; label = 'Failed';
     if (app.canStart) link = `<button type="button" class="qa-link" data-act="app" data-target="pr" data-do="restart"${busy ? ' disabled' : ''}>${startLabel(app, true)}</button>`;
   }
-  const error = state.errors[where] || (app.state === 'error' ? app.error : null);
+  // A stopped app's card in the pane has the whole story; the rail keeps one line.
+  const stopped = app.state !== 'running' ? stoppedProblem(app) : null;
+  if (stopped) { dot = 'red'; label = 'Setup stopped'; }
+  const error = state.errors[where] || (stopped ? stoppedSummary(stopped) : app.state === 'error' ? app.error : null);
   return `<div class="qa-status"><span class="qa-dot ${dot}"></span><b>${label}</b>${host ? `<span class="mono">${escapeHtml(host)}</span>` : ''}${link}</div>
-    ${error ? `<div class="qa-error">${escapeHtml(error)}</div>` : ''}${problemLines(app)}`;
+    ${error ? `<div class="qa-error">${escapeHtml(error)}</div>` : ''}${stopped ? '' : problemLines(app)}`;
 }
 
 function reviewRow(review) {
@@ -568,6 +629,26 @@ function stepMeta(step) {
 }
 
 const verdictWord = verdict => (verdict === 'pass' ? '<span class="ok">Passed</span>' : '<span class="bad">Failed</span>');
+
+// Where a failure went. One sent to the agent offers Retest once the run has
+// a new commit; Retest keeps the old result beside the step.
+function sentLine(step) {
+  const sent = step.result?.sent;
+  if (!sent) return '';
+  const busy = state.busy.has('retest:' + step.id);
+  const button = sent.retest ? ` · <button type="button" class="qa-inline-link" data-act="retest"${busy ? ' disabled' : ''}>Retest<span class="qa-visually-hidden"> step ${escapeHtml(step.number)}</span></button>` : '';
+  return `<div class="qa-meta qa-sent">${sent.to === 'review' ? 'Added to your review' : 'Sent to the agent'}${button}</div>`;
+}
+
+// The result a Retest set aside: short in the list, in full on the open step.
+function previousHtml(step, full) {
+  const previous = step.result?.previous;
+  if (!previous) return '';
+  if (!full) return step.result?.verdict ? '' : `<div class="qa-meta">${verdictWord(previous.verdict)} last time · testing again</div>`;
+  const shots = previous.shots || [];
+  return `<div class="qa-label">Last time</div><div class="qa-say">${verdictWord(previous.verdict)}${previous.note ? ` · <span class="qa-note">${escapeHtml(previous.note)}</span>` : ''}</div>
+    ${shots.length ? `<div class="qa-shots">${shots.map(shot => `<span class="qa-shot"><a href="${escapeHtml(shot.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(shot.url)}" alt="Earlier screenshot ${escapeHtml(shot.path)}"></a></span>`).join('')}</div>` : ''}`;
+}
 const KIND = { page: ['page', 'Page'], command: ['cmd', 'Command'], mcp: ['mcp', 'MCP'] };
 
 function currentBody(step) {
@@ -575,7 +656,7 @@ function currentBody(step) {
   const editing = state.editing?.stepId === step.id;
   const busy = state.busy.has('verdict:' + step.id);
   const shots = result.shots || [];
-  const error = state.errors['verdict:' + step.id] || state.errors['note:' + step.id] || state.errors['shot:' + step.id] || state.errors['cmd:' + step.id];
+  const error = state.errors['verdict:' + step.id] || state.errors['note:' + step.id] || state.errors['shot:' + step.id] || state.errors['cmd:' + step.id] || state.errors['retest:' + step.id];
   return `${step.why ? `<div class="qa-label">Why check this</div><div class="qa-say">${inlineMarkdown(step.why)}</div>` : ''}
     ${step.kind === 'command' ? `<div class="qa-label">Command</div><div class="qa-fullcmd mono">${escapeHtml(step.command || '')}</div>` : ''}
     ${step.do ? `<div class="qa-label">Do this</div><div class="qa-say">${inlineMarkdown(step.do)}</div>` : ''}
@@ -583,6 +664,8 @@ function currentBody(step) {
     ${result.note && !editing ? `<div class="qa-label">Note</div><div class="qa-say qa-note">${escapeHtml(result.note)}</div>` : ''}
     ${editing ? '<div data-note-slot></div>' : ''}
     ${shots.length ? `<div class="qa-shots">${shots.map(shot => `<span class="qa-shot"><a href="${escapeHtml(shot.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(shot.url)}" alt="Screenshot ${escapeHtml(shot.path)}"></a><button type="button" class="qa-shot-remove" data-act="remove-shot" data-path="${escapeHtml(shot.path)}" aria-label="Remove this screenshot">×</button></span>`).join('')}</div>` : ''}
+    ${previousHtml(step, true)}
+    ${sentLine(step)}
     ${editing ? '' : `<div class="qa-actions">
       <button type="button" class="qa-btn primary${result.verdict === 'pass' ? ' on' : ''}" data-act="pass" aria-pressed="${result.verdict === 'pass'}"${busy ? ' disabled' : ''}>✓ Pass</button>
       <button type="button" class="qa-btn fail${result.verdict === 'fail' ? ' on' : ''}" data-act="fail" aria-pressed="${result.verdict === 'fail'}"${busy ? ' disabled' : ''}>✕ Fail</button>
@@ -613,7 +696,7 @@ function stepHtml(step) {
     <div class="qa-num" aria-hidden="true">${num}</div>
     <div class="qa-body">
       ${titleRow(step, kind, `<span class="qa-step-title" role="button" tabindex="0" data-act="select" aria-label="${escapeHtml(`${numLabel}: ${step.title}`)}">${escapeHtml(step.title)}</span>`)}
-      ${now ? currentBody(step) : stepMeta(step) + note}
+      ${now ? currentBody(step) : stepMeta(step) + note + previousHtml(step, false) + sentLine(step)}
     </div></li>`;
 }
 
@@ -641,6 +724,37 @@ function stepLists(list) {
     </section>` : ''}`;
 }
 
+// "your note and screenshot", "your notes", or nothing, for what the
+// failures being sent actually carry.
+function carried(list) {
+  const many = list.length > 1;
+  const parts = [];
+  if (list.some(step => step.result?.note)) parts.push(many ? 'notes' : 'note');
+  if (list.some(step => step.result?.shots?.length)) parts.push(many ? 'screenshots' : 'screenshot');
+  return parts.length ? ` with your ${parts.join(' and ')}` : '';
+}
+
+// The footer's part in sending failed steps on: the button while they can
+// go, else why they cannot.
+function failureFoot(data) {
+  const failures = data.failures;
+  const list = unsentFailures();
+  if (!failures || !list.length) return { button: '', text: '' };
+  const review = failures.target === 'review';
+  if (failures.state === 'posted') return { button: '', text: 'Your review is already on GitHub, so failures stay here.' };
+  if (failures.state !== 'open') {
+    return { button: '', text: review ? 'Failures can go into your review once it has a draft.' : 'This run has finished, so failures can’t go to its agent.' };
+  }
+  const count = list.length;
+  const label = review ? `Add ${plural(count, 'failure')} to your review` : `Send ${plural(count, 'failure')} to the agent`;
+  const with_ = carried(list);
+  const text = review
+    ? (count === 1 ? `The failure becomes a comment${with_}.` : `The failures become comments${with_}.`) + ' Nothing posts until you send the review.'
+    : count === 1 ? `The failure goes to the agent as a Chat message${with_}.` : `The failures go to the agent as one Chat message${with_}.`;
+  const busy = state.busy.has('send');
+  return { button: `<button type="button" class="qa-btn primary" data-act="send-failures"${busy ? ' disabled' : ''}>${busy ? (review ? 'Adding…' : 'Sending…') : escapeHtml(label)}</button>`, text };
+}
+
 function renderRail() {
   const data = state.data;
   const keepScroll = rail.querySelector('.qa-steps')?.scrollTop || 0;
@@ -666,7 +780,9 @@ function renderRail() {
   if (data.writing) list = '<p class="qa-quiet qa-writing">Writing your QA steps…</p>';
   else if (!steps().length) list = '<p class="qa-quiet qa-writing">This run has no QA steps yet.</p>';
   else list = stepLists(steps());
-  const footError = state.errors.finish;
+  const footError = state.errors.finish || state.errors.send;
+  const foot = failureFoot(data);
+  const summary = finished ? `Finished · ${passed} passed, ${failed} failed` : `Each result, note and screenshot is kept with the ${isReview() ? 'review' : 'run'}`;
   rail.innerHTML = `<div class="qa-rail-head">
       <div class="qa-crumb"><span class="qa-tag">QA</span>${pr ? `${prLink(pr)}${pr.author ? `<span>by ${escapeHtml(pr.author)}</span>` : ''}` : ''}</div>
       <h1>${escapeHtml(run.title || run.id)}</h1>
@@ -678,8 +794,9 @@ function renderRail() {
     ${data.seeded ? `<p class="qa-source">From the pull request’s QA section.${typing() ? ' Orc is adding pages, commands and edge cases as it reviews.' : ''}</p>` : ''}
     <div class="qa-steps">${list}</div>
     <div class="qa-rail-foot">
+      ${foot.button}
       <button type="button" class="qa-btn" data-act="${finished ? 'reopen' : 'finish'}"${state.busy.has('finish') ? ' disabled' : ''}>${finished ? 'Reopen QA' : 'Finish QA'}</button>
-      <span>${finished ? `Finished · ${passed} passed, ${failed} failed` : `Each result, note and screenshot is kept with the ${isReview() ? 'review' : 'run'}.`}</span>
+      <span${foot.button ? ' class="qa-foot-full"' : ''}>${escapeHtml(summary)}.${foot.text ? ' ' + escapeHtml(foot.text) : ''}</span>
       ${footError ? `<div class="qa-error">${escapeHtml(footError)}</div>` : ''}
     </div>`;
   const slot = rail.querySelector('[data-note-slot]');
@@ -700,6 +817,8 @@ rail.addEventListener('click', event => {
   if (act_ === 'select') { if (step) setCurrent(step.id, { focus: true }); return; }
   if (act_ === 'step-page') return goToStepPage(step);
   if (act_ === 'pass' || act_ === 'fail') return setVerdict(step, act_);
+  if (act_ === 'retest') return retest(step);
+  if (act_ === 'send-failures') return sendFailures();
   if (act_ === 'note') return openNote(step);
   if (act_ === 'note-save') return saveNote(currentStep());
   if (act_ === 'note-cancel') { state.editing = null; render(); return; }
@@ -963,8 +1082,8 @@ function renderPageView(step) {
     if (problem) {
       // Redrawn only when it changes, so a poll never steals the terminal's
       // focus or closes the log the person opened.
-      const html = `${setupStoppedHtml(app, problem)}
-        ${empty.button ? `<button type="button" class="qa-btn" data-act="start-app"${state.busy.has('app:pr') ? ' disabled' : ''}>${empty.button}</button>` : ''}
+      const again = problem.process === 'install' && app.startAction === 'start' ? 'Try the install again' : empty.button;
+      const html = `${setupStoppedHtml(app, problem, again ? `<button type="button" class="qa-btn" data-act="start-app"${state.busy.has('app:pr') ? ' disabled' : ''}>${again}</button>` : '')}
         ${state.errors['app:pr'] ? `<p class="qa-error">${escapeHtml(state.errors['app:pr'])}</p>` : ''}`;
       if (html !== pageEmptyHtml || pageEmpty.querySelector('[data-fix-term-slot]')) {
         pageEmptyHtml = html;
@@ -1030,6 +1149,7 @@ pageView.addEventListener('click', event => {
   else if (what === 'start-app') act({ action: 'app', target: 'pr', do: 'start' }, 'app:pr');
   else if (what === 'copy-fix') copyFix(control);
   else if (what === 'setup-fix') act({ action: 'setup-fix', do: 'run', fix: control.dataset.fix }, 'fix');
+  else if (what === 'fix-terminal') act({ action: 'setup-fix', do: 'terminal' }, 'fix');
   else if (what === 'reveal-log') revealLog(control.dataset.path);
 });
 pageView.addEventListener('toggle', event => {

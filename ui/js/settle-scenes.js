@@ -1,7 +1,7 @@
 import { animationsOff, systemReducedMotion } from './motion.js';
 import { themeAllowsCharacterMotion } from './character-motion.js';
 import { sceneEase, sceneRange } from './scene-poses.js';
-import { claimScene, playingScene, releaseScene, restoreScroll, staticClone } from './page-scene.js';
+import { claimScene, playingScene, releaseScene, restoreScroll, staticClone, stillCopies } from './page-scene.js';
 
 // Settling the open run, from its chat or its sidebar row, animates the
 // sidebar and the page separately. Its row drops into the Settled shelf as
@@ -323,6 +323,7 @@ function settleScene(target, ms, style, build) {
   layer.setAttribute('aria-hidden', 'true');
   layer.innerHTML = `<style>
     .orc-settle-scene { position:fixed; inset:0; z-index:2147483000; overflow:hidden; pointer-events:none; }
+    ${stillCopies('.orc-settle-scene *')}
     .orc-settle-halo, .orc-settle-glow { position:absolute; }
     ${style}
     .orc-settle-halo { border-radius:6px; opacity:0; background:color-mix(in srgb,var(--accent,#78a9c2) 20%,transparent);

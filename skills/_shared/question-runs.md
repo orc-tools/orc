@@ -12,6 +12,10 @@ reporting). A question mark alone does not qualify.
 Any requested repository, configuration, branch, run-state, document, ticket,
 comment, message, deployment, or other external mutation selects the change
 pipeline. A mixed information-and-change request also selects the pipeline.
+Exception: an Orc setting the request asks to save with `orc-setting`
+(such as `orc-setting dev-server`) stays informational. Save it before
+publishing and say what was saved; if it refuses because one is saved, say
+what you would change and ask.
 When intent is genuinely uncertain, use normal Clarification; never use the
 informational path to avoid lifecycle safeguards. Source resolution may read
 Linear, Sentry, Notion, Git, and repository evidence; defer every side effect

@@ -13,6 +13,7 @@ import time
 
 import mcp_client
 import mcp_suggest
+from stat_cache import keep_recent
 
 SESSIONS = mcp_client.Sessions()
 
@@ -35,6 +36,7 @@ LOGS = {"io.modelcontextprotocol/logLevel": "info"}
 
 _schemas: dict = {}
 _schemas_lock = threading.Lock()
+_SCHEMA_CACHE_LIMIT = 32
 
 
 class BadRequest(ValueError):
@@ -87,7 +89,7 @@ def _remember_tools(key, tools: list) -> dict:
     schemas = {tool["name"]: tool.get("inputSchema") for tool in tools
                if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
     with _schemas_lock:
-        _schemas[key] = schemas
+        keep_recent(_schemas, key, schemas, _SCHEMA_CACHE_LIMIT)
     return schemas
 
 

@@ -72,10 +72,11 @@ class OrcModelPicker extends HTMLElement {
         details[open] .chevron { transform: rotate(180deg); }
         .mark { display: inline-flex; flex: none; width: 14px; height: 14px; color: var(--heading); }
         .mark svg { width: 100%; height: 100%; }
-        .panel { --panel-max-height: var(--float-max-height, min(360px, calc(100dvh - 32px))); position: absolute; z-index: 50; top: calc(100% + 8px); left: 0; display: flex; align-items: stretch; width: min(440px, calc(100vw - 32px)); height: auto; min-height: 0; max-height: var(--panel-max-height); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 18px 48px rgb(0 0 0 / .28); overflow: hidden; }
+        .panel { --panel-max-height: var(--float-max-height, min(360px, calc(100dvh - 32px))); position: absolute; z-index: 50; top: calc(100% + 8px); left: var(--panel-left, 0px); display: flex; align-items: stretch; width: min(440px, calc(100vw - 32px)); height: auto; min-height: 0; max-height: var(--panel-max-height); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 18px 48px rgb(0 0 0 / .28); overflow: hidden; }
         .panel:focus { outline: none; }
         /* Inside a scrolling list the panel would be clipped, so above 700px it opens in the top layer; below 700px the mobile sheet owns .panel[popover]. */
         @media (min-width: 701px) {
+          :host(:not([floating])) .panel[data-side="above"] { top: auto; bottom: calc(100% + 8px); }
           :host([floating]) .panel[popover] { position: fixed; inset: auto; margin: 0; padding: 0; top: var(--float-top); left: var(--float-left); width: min(440px, calc(100vw - 32px)); height: auto; max-height: var(--panel-max-height); color: inherit; }
           :host([floating]) .panel[popover]:not(:popover-open) { display: none; }
         }
@@ -193,6 +194,8 @@ class OrcModelPicker extends HTMLElement {
     this.updatePresentation = () => {
       if (!this.details.open) return;
       if (this.mobileMedia.matches) {
+        delete this.panel.dataset.side;
+        this.panel.style.removeProperty('--panel-left');
         this.panel.style.removeProperty('--float-max-height');
         this.panel.style.setProperty('--picker-viewport-top', `${window.visualViewport?.offsetTop || 0}px`);
         this.panel.style.setProperty('--picker-viewport-height', `${window.visualViewport?.height || window.innerHeight}px`);
@@ -200,36 +203,54 @@ class OrcModelPicker extends HTMLElement {
         // layer keeps the phone sheet bounded by the viewport instead.
         this.panel.setAttribute('popover', 'manual');
         if (!this.panel.matches(':popover-open')) this.panel.showPopover();
-      } else if (this.hasAttribute('floating')) {
+      } else {
+        const floating = this.hasAttribute('floating');
+        if (!floating) {
+          if (this.panel.matches(':popover-open')) this.panel.hidePopover();
+          this.panel.removeAttribute('popover');
+        }
         const anchor = this.shadowRoot.querySelector('summary').getBoundingClientRect();
-        const labelId = this.getAttribute('aria-labelledby');
+        const labelId = floating ? this.getAttribute('aria-labelledby') : null;
         const labelBox = labelId ? this.getRootNode()?.getElementById?.(labelId)?.getBoundingClientRect() : null;
         const anchorTop = labelBox && labelBox.bottom <= anchor.top + 4 && labelBox.top >= anchor.top - 32
           ? labelBox.top
           : anchor.top;
+        const viewportLeft = window.visualViewport?.offsetLeft || 0;
+        const viewportTop = window.visualViewport?.offsetTop || 0;
         const viewportWidth = window.visualViewport?.width || window.innerWidth;
         const viewportHeight = window.visualViewport?.height || window.innerHeight;
         const width = Math.min(440, viewportWidth - 32);
-        const spaceBelow = viewportHeight - anchor.bottom - 16;
-        const spaceAbove = anchorTop - 16;
-        const maxHeight = Math.max(160, Math.min(FLOAT_MAX_HEIGHT, Math.max(spaceBelow, spaceAbove)));
-        this.panel.style.setProperty('--float-max-height', `${maxHeight}px`);
-        this.panel.style.setProperty('--float-left', `${Math.max(16, Math.min(anchor.right - width, viewportWidth - width - 16))}px`);
-        this.panel.setAttribute('popover', 'manual');
-        if (!this.panel.matches(':popover-open')) this.panel.showPopover();
+        const spaceBelow = Math.max(0, viewportTop + viewportHeight - anchor.bottom - 16);
+        const spaceAbove = Math.max(0, anchorTop - viewportTop - 16);
+        this.panel.style.setProperty('--float-max-height', `${FLOAT_MAX_HEIGHT}px`);
+        if (floating) {
+          this.panel.style.setProperty('--float-left', `${Math.max(viewportLeft + 16, Math.min(anchor.right - width, viewportLeft + viewportWidth - width - 16))}px`);
+          this.panel.setAttribute('popover', 'manual');
+          if (!this.panel.matches(':popover-open')) this.panel.showPopover();
+        }
         const natural = this.panel.offsetHeight;
         let side = this.floatSide || 'below';
         if (side === 'below' && natural > spaceBelow && spaceAbove > spaceBelow) side = 'above';
         else if (side === 'above' && natural > spaceAbove && spaceBelow > spaceAbove) side = 'below';
         this.floatSide = side;
-        const sideCap = Math.max(160, Math.min(FLOAT_MAX_HEIGHT, side === 'below' ? spaceBelow : spaceAbove));
+        const available = side === 'below' ? spaceBelow : spaceAbove;
+        const sideCap = Math.max(0, Math.min(FLOAT_MAX_HEIGHT, Math.floor(available)));
         this.panel.style.setProperty('--float-max-height', `${sideCap}px`);
-        const height = this.panel.offsetHeight;
-        const top = side === 'below'
-          ? Math.min(anchor.bottom + 8, viewportHeight - 8 - height)
-          : Math.max(8, anchorTop - 8 - height);
-        this.panel.style.setProperty('--float-top', `${Math.max(8, top)}px`);
-      } else this.resetPresentation();
+        this.panel.dataset.side = side;
+        if (floating) {
+          const height = this.panel.offsetHeight;
+          const left = Math.max(viewportLeft + 16, Math.min(anchor.right - width, viewportLeft + viewportWidth - width - 16));
+          const top = side === 'below'
+            ? Math.min(anchor.bottom + 8, viewportTop + viewportHeight - 8 - height)
+            : Math.max(viewportTop + 8, anchorTop - 8 - height);
+          this.panel.style.setProperty('--float-left', `${Math.round(left)}px`);
+          this.panel.style.setProperty('--float-top', `${Math.round(Math.max(viewportTop + 8, top))}px`);
+        } else {
+          const hostRect = this.getBoundingClientRect();
+          const desiredLeft = Math.max(viewportLeft + 16, Math.min(anchor.left, viewportLeft + viewportWidth - width - 16));
+          this.panel.style.setProperty('--panel-left', `${Math.round(desiredLeft - hostRect.left)}px`);
+        }
+      }
     };
     this.searchInput = this.shadowRoot.querySelector('input');
     this.details.addEventListener('toggle', () => {
@@ -255,6 +276,11 @@ class OrcModelPicker extends HTMLElement {
     this.shadowRoot.addEventListener('keydown', event => this.onKeydown(event));
     this.closeOutside = event => {
       if (!event.composedPath().includes(this)) this.close();
+    };
+    this.onViewportScroll = event => {
+      if (!this.details.open) return;
+      if (event.target === this.panel || this.shadowRoot.contains(event.target)) return;
+      this.updatePresentation();
     };
   }
 
@@ -284,6 +310,7 @@ class OrcModelPicker extends HTMLElement {
     document.addEventListener('focusin', this.closeOutside);
     this.mobileMedia.addEventListener('change', this.updatePresentation);
     window.addEventListener('resize', this.updatePresentation);
+    window.addEventListener('scroll', this.onViewportScroll, { capture: true, passive: true });
     window.visualViewport?.addEventListener('resize', this.updatePresentation);
     window.visualViewport?.addEventListener('scroll', this.updatePresentation);
   }
@@ -297,6 +324,7 @@ class OrcModelPicker extends HTMLElement {
     document.removeEventListener('focusin', this.closeOutside);
     this.mobileMedia.removeEventListener('change', this.updatePresentation);
     window.removeEventListener('resize', this.updatePresentation);
+    window.removeEventListener('scroll', this.onViewportScroll, { capture: true });
     window.visualViewport?.removeEventListener('resize', this.updatePresentation);
     window.visualViewport?.removeEventListener('scroll', this.updatePresentation);
   }
@@ -321,7 +349,11 @@ class OrcModelPicker extends HTMLElement {
 
   resetPresentation() {
     this.floatSide = null;
+    delete this.panel.dataset.side;
     this.panel.style.removeProperty('--float-max-height');
+    this.panel.style.removeProperty('--float-top');
+    this.panel.style.removeProperty('--float-left');
+    this.panel.style.removeProperty('--panel-left');
     if (this.panel.matches(':popover-open')) this.panel.hidePopover();
     this.panel.removeAttribute('popover');
   }

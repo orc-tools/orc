@@ -1,5 +1,5 @@
 import { esc } from './core.js';
-import { replyEditorHtml, repaintWithEmoji, wireReplyEditor } from './pr-review-card.js';
+import { rememberReviewCard, replyEditorHtml, repaintWithEmoji, roundCards, wireReplyEditor } from './pr-review-card.js';
 import { emojiReady, emojifyHtml } from './github-emoji.js';
 import { prPushButton, prPushPending, prRepliesPending } from './run-presentation.js';
 
@@ -20,8 +20,6 @@ const STATUS = {
   decision: { label: 'Needs your decision', tone: 'warn' },
 };
 
-const cards = new Map();
-
 // The round waits at its gate for the click. While the agent is still writing
 // the round (running before it opens the gate) there is nothing to click yet;
 // once the click sent the push, the card stays to show it under way.
@@ -29,7 +27,7 @@ export function prRoundCardPending(run) {
   const meta = run?.meta;
   return !!meta && (prPushPending(meta) || prRepliesPending(meta))
     && (run.files || []).some(file => file.path === REPLIES_FILE)
-    && (meta.status === 'awaiting-gate' || (meta.status === 'running' && !!cards.get(run.id)?.sent));
+    && (meta.status === 'awaiting-gate' || (meta.status === 'running' && !!roundCards.get(run.id)?.sent));
 }
 
 function roundKey(run) {
@@ -50,7 +48,7 @@ async function fetchRound(runId) {
 // says whether the host still belongs to this run once the fetch returns.
 export function syncPrRoundCard(host, run, isCurrent) {
   const key = roundKey(run);
-  let entry = cards.get(run.id);
+  let entry = roundCards.get(run.id);
   if (!entry || entry.key !== key) {
     const previous = entry;
     // A refetch of the same round (a status flip, a saved reply) keeps the
@@ -58,10 +56,10 @@ export function syncPrRoundCard(host, run, isCurrent) {
     const same = previous && JSON.parse(previous.key)[1] === (run.meta.prFeedback?.round ?? null);
     entry = { key, round: same ? previous.round : null, error: '', editing: same ? previous.editing : null,
       saving: false, saveError: '', sent: same && previous.sent };
-    cards.set(run.id, entry);
     fetchRound(run.id).then(round => { entry.round = round; entry.error = ''; }, error => { if (!entry.round) entry.error = error.message; })
-      .then(() => { if (entry.isCurrent() && cards.get(run.id) === entry) paint(host, run, entry); });
+      .then(() => { if (entry.isCurrent() && roundCards.get(run.id) === entry) paint(host, run, entry); });
   }
+  rememberReviewCard(roundCards, run.id, entry);
   entry.isCurrent = isCurrent;
   paint(host, run, entry);
 }
@@ -138,7 +136,7 @@ function paint(host, run, entry) {
   const draft = host.querySelector('#prr-edit')?.value;
   const draftCard = host.querySelector('[data-prr-save]')?.dataset.prrSave;
   host.dataset.signature = signature;
-  repaintWithEmoji(() => { if (entry.isCurrent?.() && cards.get(run.id) === entry) paint(host, run, entry); });
+  repaintWithEmoji(() => { if (entry.isCurrent?.() && roundCards.get(run.id) === entry) paint(host, run, entry); });
   const scroller = host.closest('.chat-scroll');
   const following = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
   host.hidden = !entry.round && !entry.error;
@@ -192,7 +190,7 @@ async function saveReply(host, run, entry, form) {
     entry.saving = false;
     // The chat may have moved to another run while the save was out; the
     // card then belongs to no host until that run's chat opens again.
-    if (cards.get(run.id) === entry && entry.isCurrent()) {
+    if (roundCards.get(run.id) === entry && entry.isCurrent()) {
       paint(host, run, entry);
       if (!entry.editing) host.querySelector(`[data-prr-edit="${CSS.escape(card)}"]`)?.focus();
     }

@@ -91,13 +91,9 @@ export function unpadRunRefs(text, lookup = knownRun) {
   return text.replace(PADDED_REF, (whole, id) => (runRefIn(id, lookup)?.id === id ? id : whole));
 }
 
-// Calls `changed` each time Orc's runs change, until `area` leaves the page.
-export function onRunsChange(area, changed) {
-  const listener = () => {
-    if (area.isConnected) changed();
-    else document.removeEventListener('orc:runs', listener);
-  };
-  document.addEventListener('orc:runs', listener);
+// Calls `changed` for the lifetime of the bound composer.
+export function onRunsChange(changed, signal) {
+  document.addEventListener('orc:runs', changed, { signal });
 }
 
 // Rendered chat is cached, and what it cached goes stale when a run a message

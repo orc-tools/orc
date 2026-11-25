@@ -16,10 +16,12 @@ import secrets
 import stat
 import tempfile
 import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 
 from run_relationships import valid_run_id
+from stat_cache import keep_recent
 
 
 STATES = frozenset({"queued", "launching", "running", "waiting", "completed", "failed", "cancelled", "interrupted"})
@@ -52,15 +54,20 @@ def _read(config_dir):
     return store
 
 
-# tasks.json path -> ((st_ino, st_size, st_mtime_ns), parsed store). The store
-# holds every task ever run, megabytes of JSON, and an orchestration wait polls
-# it several times a second. Writes replace the file, so the inode changes.
-_CACHE = {}
+# Polling repeatedly reads the live store and index. Keep recently visited
+# archives with them, so finished parents can fall out of memory.
+_CACHE_LIMIT = 32
+_CACHE = OrderedDict()
 _CACHE_LOCK = threading.Lock()
 
 
 def _signature(st):
     return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _remember(path, signature, value):
+    with _CACHE_LOCK:
+        keep_recent(_CACHE, path, (signature, value), _CACHE_LIMIT)
 
 
 def _cached(path, read):
@@ -69,18 +76,20 @@ def _cached(path, read):
     try:
         signature = _signature(os.stat(path))
     except FileNotFoundError:
+        with _CACHE_LOCK:
+            _CACHE.pop(path, None)
         return read(path)
     except OSError as exc:
         raise ValueError("task store is unreadable") from exc
     with _CACHE_LOCK:
         cached = _CACHE.get(path)
-    if cached is not None and cached[0] == signature:
-        return cached[1]
+        if cached is not None and cached[0] == signature:
+            _CACHE.move_to_end(path)
+            return cached[1]
     # A replace between the stat and this read leaves an old signature on
     # newer content, which only costs the next call a parse.
     value = read(path)
-    with _CACHE_LOCK:
-        _CACHE[path] = (signature, value)
+    _remember(path, signature, value)
     return value
 
 
@@ -213,8 +222,7 @@ def _replace(path, value):
             signature = _signature(os.fstat(handle.fileno()))
         os.replace(temporary, path)
         # Parsed from the written text, never the value the caller holds.
-        with _CACHE_LOCK:
-            _CACHE[str(path)] = (signature, json.loads(text))
+        _remember(str(path), signature, json.loads(text))
         descriptor = os.open(directory, os.O_RDONLY)
         try:
             os.fsync(descriptor)

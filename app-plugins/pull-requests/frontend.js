@@ -2,20 +2,18 @@ import { LINEAR_MARK_SVG, SLACK_MARK_SVG } from '/js/agent-marks.js';
 import { $, announce, esc } from '/js/core.js';
 import { GITHUB_MARK_SVG, openCancel } from '/js/dialogs.js';
 import { createLaunchSelection } from '/js/launch-selection.js';
+import { BOARD_LISTS, SLACK_SIGN_IN, mountBoardSetup } from './board-setup.js';
 import '/js/model-picker.js';
 import '/js/effort-slider.js';
 
 const SIBLING_VIEWS = ['empty', 'head', 'tabs', 'version-banner', 'content', 'settings-view', 'changelog-view', 'new-view', 'stats-view', 'gallery-view', 'servers-view', 'bots-view', 'welcome-view', 'run-times'];
 const REFRESHING_POLL_MS = 3000;
 const IDLE_POLL_MS = 60000;
-const REPO_SEARCH_DEBOUNCE_MS = 220;
 const DAY_MS = 86400000;
 const TEAM_KEY = 'orc.prManager.team';
 const TAB_KEY = 'orc.prManager.tab';
 const REVIEW_DEFAULT = { agent: 'claude', model: 'claude-opus-5-5', effort: 'high' };
 const PASSED_CHECKS_SHOWN = 6;
-const GITHUB_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
-const GITHUB_REPO_RE = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})$/;
 // The description and conversation are GitHub-rendered HTML written by anyone
 // who can comment, so they get no scripts, no connections and no plugins.
 // Images and video stay because PR descriptions are mostly screenshots.
@@ -126,14 +124,10 @@ let detail = null;
 let reviewSetup = null;
 let mergePending = false;
 let conflictPending = false;
-let onboarding = null;
-let repoRequest = null;
-let repoSearchTimer = 0;
+let disposeSetup = null;
 let openOnboardingNext = false;
 let settingsSlot = null;
 let pickedTab = readStore(TAB_KEY);
-const cachedCatalogOrgs = new Map();
-const cachedCatalogRepos = new Map();
 const frames = new Map();
 
 function readStore(key) {
@@ -219,6 +213,9 @@ function repoRef(row) {
 }
 
 function authorName(row) {
+  if (row.author && String(row.author).toLowerCase() === String(snapshot?.viewer?.login || '').toLowerCase()) {
+    return '<span class="prs-author prs-mine">You</span>';
+  }
   return `<span class="prs-author">${logo('person', row.author, [safeUrl(row.authorAvatarUrl)])}${esc(row.author || 'unknown')}</span>`;
 }
 
@@ -347,7 +344,7 @@ function ownStatus(row) {
 // Slack on the page. The server already drops Slack from every row; this hides
 // the parts that would otherwise say "not posted".
 function slackOn() {
-  return snapshot?.slack?.shown !== false;
+  return mode === 'detail' ? detail?.slackShown !== false : snapshot?.slack?.shown !== false;
 }
 
 function sameTag(a, b) {
@@ -400,7 +397,7 @@ function replaceHtml(el, html) {
 const TOP_SECTIONS = ['ready', 'needs-action'];
 
 // The lists in page order. Each is a tab: its button carries the count, its panel the rows.
-const TABS = ['now', 'stale', 'team-reviews', 'waiting', 'reviewed', 'own'];
+const TABS = Object.keys(BOARD_LISTS);
 
 function tabHtml(id) {
   return `<button type="button" role="tab" id="prs-${id}-title" class="prs-tab" data-tab="${id}" aria-controls="prs-panel-${id}" aria-selected="false" tabindex="-1"></button>`;
@@ -433,7 +430,7 @@ function showTab(onTab = false) {
   // The first tab stands on the panel's square corner; any other needs a foot on both sides.
   lists.dataset.lead = String(current === tabs[0]);
   lists.dataset.loud = String(current?.dataset.tab === 'now' && current.dataset.tone === 'fail');
-  if (onTab && document.activeElement !== current) current?.focus({ preventScroll: true });
+  if (onTab && document.activeElement !== current) (current || $('prs-settings')).focus({ preventScroll: true });
 }
 
 function pickTab(tab) {
@@ -459,7 +456,7 @@ function dashboardShell() {
       <button type="button" id="prs-refresh" class="settings-btn-inline">${icon('refresh')}<span>Refresh</span></button>
       <button type="button" id="prs-settings" class="settings-btn-inline prs-settings-btn" aria-label="Settings">${icon('settings')}<span>Settings</span></button></div></header>
     <ul id="prs-notices" class="prs-notices"></ul>
-    ${listsHtml()}</div>`;
+    ${listsHtml()}<p id="prs-no-lists" class="prs-empty" hidden>Your selected lists need Slack. Connect Slack or choose a GitHub list in Settings.</p></div>`;
 }
 
 function scopeSummaryText(scope) {
@@ -498,7 +495,19 @@ function rowTitle(row) {
 }
 
 function meta(parts) {
-  return `<p class="prs-meta">${parts.filter(Boolean).map(part => `<span>${part}</span>`).join('')}</p>`;
+  const content = parts.filter(Boolean).map(part => `<span>${part}</span>`).join('');
+  return content ? `<p class="prs-meta">${content}</p>` : '';
+}
+
+const COLUMN_RENDERERS = { repo: repoRef, author: authorName, size: diffStat, ticket: row => ticketChip(row.ticket), checks: checksSignal };
+
+function boardFields(row, fields, columns = snapshot?.columns) {
+  return fields.filter(field => !columns || columns.includes(field)).map(field => COLUMN_RENDERERS[field](row));
+}
+
+function previewRow(columns) {
+  const row = { repo: 'team/web', number: 42, author: 'alex', additions: 18, deletions: 4, ticket: { ref: 'WEB-12' }, checkStatus: 'success' };
+  return `<strong>Update the sign-in flow</strong>${meta(boardFields(row, Object.keys(COLUMN_RENDERERS), columns))}`;
 }
 
 function shortRef(target, row) {
@@ -557,13 +566,13 @@ function reviewRow(row, near, team = false) {
     : '<div class="prs-wait"></div>';
   const tag = !team && row.slack?.tag ? `<span class="prs-tag"><span class="sr-only">Slack tag </span>${esc(row.slack.tag)}</span>` : '';
   const signals = [team ? slackSignal(row) : '', team && row.reviewRequestedFromYou ? signal('gate', 'Requested from you') : '',
-    checksSignal(row), team && row.reviewStatus === 'approved' ? reviewSignal(row) : '',
+    ...boardFields(row, ['checks']), team && row.reviewStatus === 'approved' ? reviewSignal(row) : '',
     row.reviewStatus === 'changes_requested' ? signal('fail', 'Changes requested') : '',
     row.mergeable === 'CONFLICTING' ? signal('fail', 'Conflict', icon('conflict')) : ''];
   const start = `<a class="prs-start" href="${esc(reviewHash(row))}"${unpicked ? ' data-lead="true"' : ''} aria-label="Review ${esc(prRef(row))} in Orc" data-focus-key="start:${esc(row.url)}">Review in Orc</a>`;
   return `<li class="prs-row prs-row-waiting">${lead}
     <div class="prs-row-body">${rowTitle(row)}
-      ${meta([repoRef(row), authorName(row), diffStat(row), tag, ...relations(row, near), ...signals])}</div>
+      ${meta([...boardFields(row, ['repo', 'author', 'size', 'ticket']), tag, ...relations(row, near), ...signals])}</div>
     ${rowLinks(row, start)}</li>`;
 }
 
@@ -572,7 +581,6 @@ function reviewRow(row, near, team = false) {
 function staleRow(row) {
   const age = shortAge(row.waitingSince);
   const old = elapsedMs(row.waitingSince) >= 7 * DAY_MS;
-  const mine = String(row.author || '').toLowerCase() === String(snapshot?.viewer?.login || '').toLowerCase();
   const tag = row.slack?.tag ? `<span class="prs-tag"><span class="sr-only">Slack tag </span>${esc(row.slack.tag)}</span>` : '';
   const ref = esc(prRef(row));
   const open = row.slack?.permalink
@@ -580,7 +588,7 @@ function staleRow(row) {
     : '';
   return `<li class="prs-row prs-row-stale"><div class="prs-age" data-tone="${old ? 'fail' : 'warn'}"><b>${esc(age || '')}</b><span>no reaction</span></div>
     <div class="prs-row-body">${rowTitle(row)}
-      ${meta([repoRef(row), mine ? '<span class="prs-author prs-mine">You</span>' : authorName(row), diffStat(row), tag])}</div>
+      ${meta([...boardFields(row, ['repo', 'author', 'size', 'ticket', 'checks']), tag])}</div>
     <div class="prs-row-links">${open}<a class="prs-icon-link" href="${esc(row.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${ref} on GitHub" title="Open on GitHub" data-focus-key="github:${esc(row.url)}">${GITHUB_MARK_SVG}</a></div></li>`;
 }
 
@@ -603,11 +611,11 @@ function ownRow(row, near) {
   const run = row.orcRun?.runId
     ? `<a class="prs-run" href="#${esc(encodeURIComponent(row.orcRun.runId))}" aria-label="Orc run: ${esc(row.orcRun.title || row.orcRun.runId)}" data-focus-key="run:${esc(row.url)}">Orc run</a>`
     : '';
-  const signals = [row.isDraft && status.id !== 'draft' ? signal('neutral', 'Draft') : '', checksSignal(row), row.isDraft ? '' : reviewSignal(row),
+  const signals = [row.isDraft && status.id !== 'draft' ? signal('neutral', 'Draft') : '', ...boardFields(row, ['checks']), row.isDraft ? '' : reviewSignal(row),
     row.mergeable === 'CONFLICTING' ? signal('fail', 'Conflict', icon('conflict')) : '', row.isDraft ? '' : slackSignal(row)].join('');
   return `<li class="prs-row prs-row-own" data-status="${status.id}">${statusHtml(status)}
     <div class="prs-row-body">${rowTitle(row)}
-      ${meta([repoRef(row), ticketChip(row.ticket), diffStat(row), ...relations(row, near), updated ? `updated ${updated} ago` : '', run])}
+      ${meta([...boardFields(row, ['repo', 'author', 'size', 'ticket']), ...relations(row, near), updated ? `updated ${updated} ago` : '', run])}
       ${signals ? `<p class="prs-signals">${signals}</p>` : ''}${reasonsHtml(row)}</div>
     ${rowLinks(row)}</li>`;
 }
@@ -675,7 +683,7 @@ function reviewedRow(row, near) {
   const reviewed = shortAge(row.reviewActivity?.reviewedAt);
   return `<li class="prs-row prs-row-own prs-row-reviewed">${statusHtml(status)}
     <div class="prs-row-body">${rowTitle(row)}
-      ${meta([repoRef(row), authorName(row), reviewed ? `you reviewed ${reviewed} ago` : '', diffStat(row), ...relations(row, near), checksSignal(row)])}</div>
+      ${meta([...boardFields(row, ['repo', 'author']), reviewed ? `you reviewed ${reviewed} ago` : '', ...boardFields(row, ['size', 'ticket']), ...relations(row, near), ...boardFields(row, ['checks'])])}</div>
     ${rowLinks(row)}</li>`;
 }
 
@@ -699,8 +707,11 @@ function statusText() {
   return snapshot.fetchedAt ? updatedText(snapshot.fetchedAt) : 'Not loaded yet. Try Refresh.';
 }
 
-function channelName() {
-  return `#${esc(snapshot?.slack?.channel || detail?.slackChannel || 'eng-review-requests')}`;
+function channelNames(pr) {
+  if (pr?.slack?.channel) return `#${esc(pr.slack.channel)}`;
+  const channels = pr ? pr.slackChannels || [pr.slackChannel].filter(Boolean) : snapshot?.slack?.channels;
+  const names = channels?.length ? channels : [snapshot?.slack?.channel || 'eng-review-requests'];
+  return NAME_LIST.format(names.map(name => `#${esc(name)}`));
 }
 
 function sourcesText() {
@@ -708,7 +719,7 @@ function sourcesText() {
   const days = snapshot.slack?.lookbackDays;
   const scope = snapshot.repoScope ? ` · ${esc(scopeSummaryText(snapshot.repoScope))}` : '';
   if (!slackOn()) return ` · From <span class="prs-source">${GITHUB_MARK_SVG}GitHub</span>${scope}`;
-  return ` · From <span class="prs-source">${GITHUB_MARK_SVG}GitHub</span> and <span class="prs-source">${SLACK_MARK_SVG}${channelName()}</span> in Slack${days ? `, last ${plural(days, 'day')}` : ''}${scope}`;
+  return ` · From <span class="prs-source">${GITHUB_MARK_SVG}GitHub</span> and <span class="prs-source">${SLACK_MARK_SVG}${channelNames()}</span> in Slack${days ? `, last ${plural(days, 'day')}` : ''}${scope}`;
 }
 
 function renderStatus() {
@@ -730,11 +741,6 @@ function renderNotices() {
   replaceHtml($('prs-notices'), notices.map(text => `<li>${icon('warn')}<span>${text}</span></li>`).join(''));
 }
 
-// Each tab's mark: its shape, icon and the tone it takes while its list has rows.
-const SECTION_MARKS = {
-  now: ['burst', 'bolt', 'fail'], stale: ['hexagon', 'active', 'warn'], 'team-reviews': ['shield', 'team', 'gate'], waiting: ['ticket', 'eye', 'active'],
-  reviewed: ['blob', 'active', 'neutral'], own: ['squircle', 'pr', 'neutral'],
-};
 function waitingGroup(id, shape, title, hint, rows) {
   return `<section class="prs-sub" aria-label="${esc(title)}"><h4 id="${id}" tabindex="-1" data-focus-key="group:${id}">${shaped(shape, '', 'prs-sub-mark')}${esc(title)} <span class="prs-count">${rows.length}</span></h4>
     ${hint ? `<p class="prs-hint">${hint}</p>` : ''}<ul class="prs-rows">${rowsHtml(rows, reviewRow)}</ul></section>`;
@@ -756,9 +762,11 @@ function renderDashboard() {
   const searching = !!query.trim();
   const team = selectedTeam();
   replaceHtml($('prs-team-pick'), teamPickHtml(team));
+  const selected = snapshot.visibleLists || TABS;
+  const usesList = id => selected.includes(id) && (!BOARD_LISTS[id].slack || slackOn());
   const tab = id => $(`prs-${id}-title`);
   const count = (id, title, total) => {
-    const [shape, mark, tone] = SECTION_MARKS[id];
+    const { shape, icon: mark, tone } = BOARD_LISTS[id];
     // An empty list's mark goes quiet.
     tab(id).dataset.tone = total ? tone : 'neutral';
     tab(id).innerHTML = `${shaped(shape, icon(mark), 'prs-section-mark')}${title} <span class="prs-count">${total}</span>`;
@@ -776,7 +784,8 @@ function renderDashboard() {
     if (custom) tab('now').before(tab('own'));
     else tab('reviewed').after(tab('own'));
   }
-  const top = id => (custom ? null : sections.find(section => section.id === id))?.items || [];
+  const splitActions = !custom && usesList('now');
+  const top = id => (splitActions && sections.find(section => section.id === id))?.items || [];
 
   // Do next leads with what one click finishes: your PRs that can merge now.
   // Then what blocks you most: your PRs that need a fix or an answer, runs
@@ -786,68 +795,70 @@ function renderDashboard() {
   const mergeable = row => ownStatus(row).id === 'ready';
   const ready = top('ready').filter(mergeable);
   const approved = top('ready').filter(row => !mergeable(row));
-  const chasing = row => !custom && ownStatus(row).id === 'chase';
-  const others = sections.filter(section => custom || !TOP_SECTIONS.includes(section.id));
+  const chasing = row => splitActions && ownStatus(row).id === 'chase';
+  const others = sections.filter(section => !splitActions || !TOP_SECTIONS.includes(section.id));
   const chase = others.flatMap(section => section.items.filter(chasing));
   const opening = (snapshot.readyToOpen || []).filter(matchesRunQuery);
   const reviewed = (snapshot.reviewed || []).filter(matchesQuery);
   const rereview = reviewed.filter(row => reviewedStatus(row).tone === 'gate');
   const quiet = reviewed.filter(row => reviewedStatus(row).tone !== 'gate');
   const now = ready.length + action.length + opening.length + rereview.length + approved.length + chase.length;
-  count('now', 'Do next', now);
+  count('now', BOARD_LISTS.now.label, now);
   replaceHtml($('prs-now'), now
     ? `<ul class="prs-rows">${rowsHtml(ready, ownRow)}${rowsHtml(action, ownRow)}${opening.map(readyToOpenRow).join('')}${rowsHtml(rereview, reviewedRow)}${rowsHtml(approved, ownRow)}${rowsHtml(chase, ownRow)}</ul>`
     : loading ? '' : searching ? emptyHtml('Nothing that needs you matches your search.', '', 'search')
       : emptyHtml('Nothing needs you right now.', ' No merges, conflicts, new feedback, runs to open, re-reviews or quiet reviews to chase.', 'clear'));
 
   const days = snapshot.slack?.lookbackDays;
-  const checked = ` Checked ${channelName()}${days ? ` for the last ${plural(days, 'day')}` : ''}`;
+  const checked = ` Checked ${channelNames()}${days ? ` for the last ${plural(days, 'day')}` : ''}`;
   const slack = slackOn();
   const stale = (snapshot.stale || []).filter(matchesQuery);
-  count('stale', 'Stale in Slack', stale.length);
-  tab('stale').hidden = !slack;
+  count('stale', BOARD_LISTS.stale.label, stale.length);
   replaceHtml($('prs-stale'), stale.length
-    ? `<p class="prs-hint">Posted in ${channelName()} 4+ days ago with no 👀 or ✅ yet, oldest first. Every team, yours included.</p><ul class="prs-rows">${stale.map(staleRow).join('')}</ul>`
+    ? `<p class="prs-hint">Posted in ${channelNames()} 4+ days ago with no 👀 or ✅ yet, oldest first. Every team, yours included.</p><ul class="prs-rows">${stale.map(staleRow).join('')}</ul>`
     : loading ? '' : searching ? emptyHtml('No stale Slack posts match your search.', '', 'search')
       : emptyHtml('No stale review posts.', `${checked}: every post from 4+ days ago has a 👀 or ✅.`, 'clear'));
 
   const teamRows = team ? (snapshot.posted || []).filter(row => tagged(row, team) && matchesQuery(row)) : [];
-  tab('team-reviews').hidden = !slack;
-  count('team-reviews', team ? `${esc(team)} reviews` : 'Team reviews', teamRows.length);
+  count('team-reviews', team ? `${esc(team)} reviews` : BOARD_LISTS['team-reviews'].label, teamRows.length);
   replaceHtml($('prs-team-reviews'), teamRows.length
-    ? `<p class="prs-hint">Posted in ${channelName()}, oldest first.</p><ul class="prs-rows">${rowsHtml(teamRows, (row, near) => reviewRow(row, near, true))}</ul>`
+    ? `<p class="prs-hint">Posted in ${channelNames()}, oldest first.</p><ul class="prs-rows">${rowsHtml(teamRows, (row, near) => reviewRow(row, near, true))}</ul>`
     : loading ? '' : !team ? emptyHtml('Pick your team to list its review requests here.', '', 'watch')
       : searching ? emptyHtml(`No ${esc(team)} review requests match your search.`, '', 'search')
         : emptyHtml(`No open ${esc(team)} review requests.`, `${checked}.`, 'watch'));
 
   // A row shows once: a team post stays in the team list, marked when it is
   // also requested from you.
-  const inTeam = new Set(teamRows.map(row => row.url));
+  const inTeam = new Set(usesList('team-reviews') ? teamRows.map(row => row.url) : []);
   const waiting = (snapshot.waiting || []).filter(row => !inTeam.has(row.url) && matchesQuery(row));
   const requested = waiting.filter(row => row.reviewRequestedFromYou);
   const open = waiting.filter(row => !row.reviewRequestedFromYou && tagged(row, 'All'));
-  count('waiting', 'Reviews to pick up', requested.length + open.length);
+  count('waiting', BOARD_LISTS.waiting.label, requested.length + open.length);
   replaceHtml($('prs-waiting'), requested.length + open.length
     ? (requested.length ? waitingGroup('prs-group-requested', 'bubble', 'Requested from you', '', requested) : '')
-      + (open.length ? waitingGroup('prs-group-queue', 'ticket', 'Open to all', `Tagged All in ${channelName()} and not picked up yet, oldest first.`, open) : '')
+      + (open.length ? waitingGroup('prs-group-queue', 'ticket', 'Open to all', `Tagged All in ${channelNames()} and not picked up yet, oldest first.`, open) : '')
     : loading ? '' : searching ? emptyHtml('No waiting pull requests match your search.', '', 'search')
       : emptyHtml('Nothing waiting for a reviewer.', slack ? `${checked} and your GitHub review requests.` : ' Checked your GitHub review requests.', 'watch'));
 
-  // The last two wait on other people, so each tab leaves the page while empty.
-  count('reviewed', 'Waiting on authors', quiet.length);
-  tab('reviewed').hidden = !quiet.length && !searching;
+  count('reviewed', BOARD_LISTS.reviewed.label, quiet.length);
   replaceHtml($('prs-reviewed'), quiet.length ? `<ul class="prs-rows">${rowsHtml(quiet, reviewedRow)}</ul>`
-    : searching ? emptyHtml('No reviewed pull requests match your search.', '', 'search') : '');
+    : searching ? emptyHtml('No reviewed pull requests match your search.', '', 'search') : emptyHtml('No reviews waiting on authors.', '', 'clear'));
 
   const rest = others.map(section => ({ ...section, items: section.items.filter(row => !chasing(row)) })).filter(section => section.items.length);
   const ownCount = rest.reduce((sum, section) => sum + section.items.length, 0);
-  count('own', custom ? 'Your pull requests' : 'Your other pull requests', ownCount);
-  tab('own').hidden = !ownCount && !searching;
+  count('own', splitActions ? 'Your other pull requests' : BOARD_LISTS.own.label, ownCount);
   replaceHtml($('prs-own'), rest.length
     ? rest.map(section => `<section class="prs-sub" aria-label="${esc(section.title)}"><h4${section.id ? ` id="prs-own-${esc(section.id)}" tabindex="-1" data-focus-key="group:own-${esc(section.id)}"` : ''}>${esc(section.title)} <span class="prs-count">${section.items.length}</span></h4>
         <ul class="prs-rows">${rowsHtml(section.items, ownRow)}</ul></section>`).join('')
-    : searching ? emptyHtml(`None of your ${custom ? '' : 'other '}pull requests match your search.`, '', 'search') : '');
+    : searching ? emptyHtml(`None of your ${splitActions ? 'other ' : ''}pull requests match your search.`, '', 'search') : emptyHtml('No open pull requests here.', '', 'clear'));
 
+  const available = TABS.filter(usesList);
+  const nonempty = { own: ownCount, reviewed: quiet.length };
+  const visible = available.filter(id => searching || nonempty[id] !== 0);
+  if (!visible.length && available.length) visible.push(available[0]);
+  for (const id of TABS) tab(id).hidden = !visible.includes(id);
+  $('prs-no-lists').hidden = !!visible.length;
+  $('prs-lists').hidden = !visible.length;
   showTab(onTab);
 }
 
@@ -881,9 +892,9 @@ async function refreshDashboard() {
       snapshot = data;
       loadError = false;
       renderPluginSettingsCard();
-      if (data.onboardingComplete === false) {
+      if (data.onboardingComplete === false || openOnboardingNext) {
         request = null;
-        openOnboarding({ reconfiguring: false });
+        openOnboarding();
         return;
       }
       if (shellKind !== 'dashboard') mountDashboardShell();
@@ -929,19 +940,11 @@ async function startRefresh() {
 function showDashboard() {
   const view = $('pr-manager-view');
   delete view.dataset.onboarding;
-  onboarding = null;
+  closeSetup();
   detail = null;
   mode = 'dashboard';
-  if (openOnboardingNext) {
-    openOnboardingNext = false;
-    openOnboarding({ reconfiguring: snapshot?.onboardingComplete !== false });
-    return;
-  }
-  if (snapshot?.onboardingComplete === false) {
-    openOnboarding({ reconfiguring: false });
-    return;
-  }
-  if (snapshot) {
+  if (openOnboardingNext && snapshot) return openOnboarding();
+  if (snapshot && snapshot.onboardingComplete !== false) {
     if (shellKind !== 'dashboard') mountDashboardShell();
     renderDashboard();
   } else if (shellKind !== 'loading') {
@@ -951,352 +954,46 @@ function showDashboard() {
   refreshDashboard();
 }
 
-function onboardingShell() {
-  return `<div id="prs-onboarding" class="prs-onboard-stage">
-    <section class="am-card prs-onboard-card" aria-labelledby="pr-manager-title">
-      <p class="am-eyebrow">Pull requests</p>
-      <h2 id="pr-manager-title" class="am-q" tabindex="-1">What repositories do you care about?</h2>
-      <p class="am-why">Choose the GitHub organizations or repositories whose pull requests and review requests should show here. This overrides machine and project hiding.</p>
-      <div class="am-options prs-onboard-all" data-type="multi">
-        <label id="prs-onboard-all-row" class="am-opt" for="prs-onboard-all">
-          <input id="prs-onboard-all" type="checkbox">
-          <span class="am-tick" aria-hidden="true">✓</span>
-          <span>
-            <strong>All repositories</strong>
-            <small>Show pull requests across every organization and repository you can access, including future repositories.</small>
-          </span>
-        </label>
-      </div>
-      <div id="prs-onboard-picker" class="prs-onboard-picker">
-        <label class="prs-onboard-search">
-          ${icon('search')}
-          <span class="sr-only">Search organizations and repositories</span>
-          <input id="prs-onboard-search" type="search" placeholder="Search organizations or owner/repo (e.g. acme, acme/web)…" autocomplete="off" spellcheck="false">
-        </label>
-        <div id="prs-onboard-notice" class="prs-onboard-notice"></div>
-        <div id="prs-onboard-results" class="prs-onboard-results am-options" data-type="multi"></div>
-      </div>
-      <section class="prs-onboard-slack" aria-labelledby="prs-onboard-slack-title">
-        <h3 id="prs-onboard-slack-title">Slack</h3>
-        <orc-switch id="prs-onboard-slack" label="Use Slack" aria-describedby="prs-onboard-slack-hint"></orc-switch>
-        <p id="prs-onboard-slack-hint" class="prs-onboard-slack-hint">Reads the channel below for review posts, their reactions and the Stale in Slack list. Off, this page stops reading Slack and hides every Slack part.</p>
-        <label id="prs-onboard-channel-row" class="prs-onboard-channel">
-          <span>Channel</span>
-          <orc-input type="text" id="prs-onboard-channel" placeholder="review-requests" aria-label="Slack channel" aria-describedby="prs-onboard-channel-hint" spellcheck="false" autocomplete="off"></orc-input>
-        </label>
-        <p id="prs-onboard-channel-hint" class="prs-onboard-slack-hint">Start a line with your team's name and a colon, such as <code>Payments:</code>, before the pull request links in a post. Your team's tab lists the posts tagged with your team.</p>
-        <p id="prs-onboard-slack-note" class="prs-onboard-slack-note" hidden>${icon('warn')}<span>${SLACK_SIGN_IN}</span></p>
-      </section>
-      <p id="prs-onboard-error" class="am-error" role="alert"></p>
-      <div class="am-actions">
-        <div id="prs-onboard-summary" class="prs-onboard-meta" role="status"></div>
-        <div id="prs-onboard-buttons" class="prs-onboard-btns"></div>
-      </div>
-    </section>
-  </div>`;
+function closeSetup() {
+  disposeSetup?.();
+  disposeSetup = null;
 }
 
-function mergeCatalog(data) {
-  for (const org of data?.orgs || []) {
-    if (!org?.login) continue;
-    const key = org.login.toLowerCase();
-    const prev = cachedCatalogOrgs.get(key);
-    cachedCatalogOrgs.set(key, {
-      login: org.login,
-      repoCount: Math.max(Number(org.repoCount) || 0, Number(prev?.repoCount) || 0),
-    });
+function openOnboarding() {
+  if (!snapshot) {
+    openOnboardingNext = true;
+    refreshDashboard();
+    return;
   }
-  for (const repo of data?.repos || []) {
-    if (typeof repo !== 'string' || !repo.includes('/')) continue;
-    cachedCatalogRepos.set(repo.toLowerCase(), repo);
-    const owner = repo.split('/', 1)[0];
-    if (!cachedCatalogOrgs.has(owner.toLowerCase())) {
-      cachedCatalogOrgs.set(owner.toLowerCase(), { login: owner, repoCount: 1 });
-    }
-  }
-}
-
-// Slack channel names: lowercase letters, digits, hyphens, underscores, periods.
-const SLACK_CHANNEL_RE = /^[a-z0-9][a-z0-9._-]{0,79}$/;
-
-function onboardingChannel() {
-  return (onboarding?.slackChannel || '').trim().replace(/^#/, '').toLowerCase();
-}
-
-function onboardingChannelValid() {
-  return !onboarding?.useSlack || SLACK_CHANNEL_RE.test(onboardingChannel());
-}
-
-function onboardingSelectionValid() {
-  return Boolean(onboarding && (onboarding.all || onboarding.orgs.size > 0 || onboarding.repos.size > 0)
-    && onboardingChannelValid());
-}
-
-function onboardingSummaryHtml() {
-  if (!onboarding) return '';
-  if (onboarding.all) {
-    return '<span>Showing <strong>all current and future repositories</strong></span>';
-  }
-  const orgs = [...onboarding.orgs.values()];
-  const repos = [...onboarding.repos.values()];
-  if (!orgs.length && !repos.length) {
-    return '<span>None selected yet</span>';
-  }
-  const parts = [];
-  if (orgs.length === 1 && !repos.length) parts.push(`All repositories in <strong>${esc(orgs[0])}</strong>`);
-  else {
-    if (orgs.length) parts.push(`<strong>${plural(orgs.length, 'organization')}</strong> (${orgs.map(esc).join(', ')})`);
-    if (repos.length) parts.push(`<strong>${pluralRepo(repos.length)}</strong>`);
-  }
-  const clear = onboarding.saving
-    ? ''
-    : '<button type="button" id="prs-onboard-clear" class="prs-onboard-clear">Clear</button>';
-  return `<span>Selected: ${parts.join(' and ')}</span>${clear}`;
-}
-
-function onboardingResultsHtml() {
-  if (!onboarding) return '';
-  const needle = onboarding.search.trim();
-  const low = needle.toLowerCase();
-  const disabledAll = onboarding.all || onboarding.saving;
-
-  const orgMap = new Map(cachedCatalogOrgs);
-  for (const [key, login] of onboarding.orgs) {
-    if (!orgMap.has(key)) orgMap.set(key, { login, repoCount: 0 });
-  }
-  const repoMap = new Map(cachedCatalogRepos);
-  for (const [key, repo] of onboarding.repos) {
-    if (!repoMap.has(key)) repoMap.set(key, repo);
-  }
-
-  let orgs = [...orgMap.values()].filter(item => !low || item.login.toLowerCase().includes(low));
-  let repos = [...repoMap.values()].filter(item => !low || item.toLowerCase().includes(low));
-
-  if (needle && GITHUB_REPO_RE.test(needle) && !repoMap.has(low)) {
-    repos = [needle, ...repos];
-  } else if (needle && GITHUB_LOGIN_RE.test(needle) && !orgs.some(item => item.login.toLowerCase() === low)) {
-    orgs = [{ login: needle, repoCount: 0 }, ...orgs];
-  }
-
-  if (!orgs.length && !repos.length) {
-    if (onboarding.loading) return '<p class="prs-empty" role="status">Loading organizations and repositories from GitHub…</p>';
-    return emptyHtml(
-      needle ? `No organizations or repositories match “${esc(needle)}”.` : 'No repositories discovered yet.',
-      'Type an organization name (like acme) or owner/repo above to select it directly.',
-    );
-  }
-
-  const orgItems = orgs.map(org => {
-    const key = org.login.toLowerCase();
-    const checked = onboarding.orgs.has(key);
-    const countText = org.repoCount ? ` · ${pluralRepo(org.repoCount)} found` : '';
-    return `<label class="am-opt${disabledAll ? ' is-disabled' : ''}" data-focus-key="onboard-org:${esc(key)}">
-      <input type="checkbox" name="prs-onboard-org" value="${esc(org.login)}"${checked ? ' checked' : ''}${disabledAll ? ' disabled' : ''}>
-      <span class="am-tick" aria-hidden="true">✓</span>
-      <span>
-        <strong>${esc(org.login)} <span class="prs-onboard-badge">All in ${esc(org.login)}/*</span></strong>
-        <small>Show every current and future repository in ${esc(org.login)}${esc(countText)}.</small>
-      </span>
-    </label>`;
-  }).join('');
-
-  const repoItems = repos.map(repo => {
-    const key = repo.toLowerCase();
-    const owner = repo.split('/', 1)[0];
-    const coveredByOrg = onboarding.orgs.has(owner.toLowerCase());
-    const checked = coveredByOrg || onboarding.repos.has(key);
-    const disabled = disabledAll || coveredByOrg;
-    const classes = ['am-opt', disabled ? 'is-disabled' : '', coveredByOrg ? 'is-covered' : ''].filter(Boolean).join(' ');
-    const note = coveredByOrg
-      ? `Included because all of ${esc(owner)}/* is selected`
-      : 'Individual repository';
-    return `<label class="${classes}" data-focus-key="onboard-repo:${esc(key)}">
-      <input type="checkbox" name="prs-onboard-repo" value="${esc(repo)}"${checked ? ' checked' : ''}${disabled ? ' disabled' : ''}>
-      <span class="am-tick" aria-hidden="true">✓</span>
-      <span>
-        <strong>${esc(repo)}</strong>
-        <small>${note}</small>
-      </span>
-    </label>`;
-  }).join('');
-
-  return `${orgItems ? `<div class="prs-onboard-group" role="group" aria-labelledby="prs-onboard-orgs-head">
-      <p id="prs-onboard-orgs-head" class="prs-onboard-group-head">Organizations <span class="prs-count">${orgs.length}</span></p>
-      ${orgItems}
-    </div>` : ''}
-    ${repoItems ? `<div class="prs-onboard-group" role="group" aria-labelledby="prs-onboard-repos-head">
-      <p id="prs-onboard-repos-head" class="prs-onboard-group-head">Repositories <span class="prs-count">${repos.length}</span></p>
-      ${repoItems}
-    </div>` : ''}`;
-}
-
-const SLACK_SIGN_IN = 'Slack isn\'t connected in Claude Code, so Slack is hidden on this page. Run /mcp in Claude Code to sign in.';
-
-function renderOnboarding() {
-  if (!active || mode !== 'onboarding' || !onboarding) return;
-  const allInput = $('prs-onboard-all');
-  const allRow = $('prs-onboard-all-row');
-  const picker = $('prs-onboard-picker');
-  const search = $('prs-onboard-search');
-  if (!allInput || !picker || !search) return;
-
-  allInput.checked = onboarding.all;
-  allInput.disabled = onboarding.saving;
-  allRow.classList.toggle('is-disabled', onboarding.saving);
-  picker.dataset.disabled = String(onboarding.all);
-  search.disabled = onboarding.all || onboarding.saving;
-
-  const notice = onboarding.repoNotice
-    ? `<span>${esc(onboarding.repoNotice)}</span><button type="button" id="prs-onboard-retry-repos" class="settings-btn-inline">Retry</button>`
-    : '';
-  replaceHtml($('prs-onboard-notice'), notice);
-  replaceHtml($('prs-onboard-results'), onboardingResultsHtml());
-  $('prs-onboard-error').textContent = onboarding.error || '';
-  replaceHtml($('prs-onboard-summary'), onboardingSummaryHtml());
-  const slackSwitch = $('prs-onboard-slack');
-  slackSwitch.toggleAttribute('checked', onboarding.useSlack);
-  slackSwitch.toggleAttribute('disabled', onboarding.saving);
-  $('prs-onboard-slack-note').hidden = !(onboarding.useSlack && snapshot?.slack?.connected === false);
-  const channel = $('prs-onboard-channel');
-  if (channel.value !== onboarding.slackChannel) channel.value = onboarding.slackChannel;
-  channel.toggleAttribute('disabled', onboarding.saving);
-  $('prs-onboard-channel-row').hidden = !onboarding.useSlack;
-  $('prs-onboard-channel-hint').hidden = !onboarding.useSlack;
-
-  const cancelBtn = onboarding.reconfiguring
-    ? `<button type="button" id="prs-onboard-cancel" class="am-btn ghost"${onboarding.saving ? ' disabled' : ''}>Cancel</button>`
-    : '';
-  const saveLabel = onboarding.saving ? 'Saving…' : 'Save';
-  const canSave = onboardingSelectionValid() && !onboarding.saving;
-  replaceHtml($('prs-onboard-buttons'), `${cancelBtn}<button type="button" id="prs-onboard-save" class="am-btn primary"${canSave ? '' : ' disabled'}>${saveLabel}</button>`);
-}
-
-async function loadOnboardingRepos(q = '', { force = false } = {}) {
-  if (!active || mode !== 'onboarding' || !onboarding) return;
-  repoRequest?.abort();
-  const controller = new AbortController();
-  repoRequest = controller;
-  onboarding.loading = true;
-  renderOnboarding();
-  const params = new URLSearchParams();
-  if (q.trim()) params.set('q', q.trim());
-  if (force) params.set('refresh', '1');
-  const suffix = params.toString() ? `?${params}` : '';
-  try {
-    const response = await fetch(`/api/prs/repos${suffix}`, { signal: controller.signal, cache: 'no-store' });
-    const data = await response.json().catch(() => ({}));
-    if (repoRequest !== controller || !onboarding) return;
-    if (!response.ok) {
-      onboarding.repoNotice = data.error || 'Could not load repositories from GitHub.';
-    } else {
-      mergeCatalog(data);
-      onboarding.repoNotice = data.error || '';
-    }
-  } catch {
-    if (repoRequest === controller && onboarding) {
-      onboarding.repoNotice = 'Could not reach Orc to list GitHub repositories.';
-    }
-  } finally {
-    if (repoRequest === controller) {
-      repoRequest = null;
-      if (onboarding) {
-        onboarding.loading = false;
-        renderOnboarding();
-      }
-    }
-  }
-}
-
-function openOnboarding({ reconfiguring = false } = {}) {
+  openOnboardingNext = false;
   clearTimeout(timer);
   request?.abort();
   request = null;
-  clearTimeout(repoSearchTimer);
-  repoRequest?.abort();
-  repoRequest = null;
+  closeSetup();
   releaseFrames();
-
-  const saved = reconfiguring ? snapshot?.repoScope : null;
-  const orgs = new Map();
-  const repos = new Map();
-  if (saved?.mode === 'selected') {
-    for (const org of saved.orgs || []) orgs.set(org.toLowerCase(), org);
-    for (const repo of saved.repos || []) repos.set(repo.toLowerCase(), repo);
-  }
-  onboarding = {
-    reconfiguring,
-    all: saved?.mode === 'all',
-    orgs,
-    repos,
-    search: '',
-    loading: cachedCatalogOrgs.size === 0 && cachedCatalogRepos.size === 0,
-    saving: false,
-    error: '',
-    repoNotice: '',
-    useSlack: snapshot?.slack?.enabled !== false,
-    slackChannel: snapshot?.slack?.channel || '',
-  };
-  mode = 'onboarding';
-  shellKind = 'onboarding';
+  mode = shellKind = 'onboarding';
   const view = $('pr-manager-view');
   view.dataset.onboarding = 'true';
-  view.innerHTML = onboardingShell();
-  renderOnboarding();
-  $('pr-manager-title')?.focus();
-  loadOnboardingRepos('');
-}
-
-function cancelOnboarding() {
-  if (!onboarding?.reconfiguring || onboarding.saving) return;
-  clearTimeout(repoSearchTimer);
-  repoRequest?.abort();
-  repoRequest = null;
-  onboarding = null;
-  showDashboard();
-  $('prs-settings')?.focus();
-}
-
-async function saveOnboarding() {
-  if (!onboarding || onboarding.saving || !onboardingSelectionValid()) return;
-  onboarding.saving = true;
-  onboarding.error = '';
-  renderOnboarding();
-  const payload = {
-    ...(onboarding.all
-      ? { mode: 'all', orgs: [], repos: [] }
-      : { mode: 'selected', orgs: [...onboarding.orgs.values()], repos: [...onboarding.repos.values()] }),
-    useSlack: onboarding.useSlack,
-    ...(onboarding.useSlack ? { slackChannel: onboardingChannel() } : {}),
-  };
-  try {
-    const response = await fetch('/api/prs/onboarding', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Could not save repository selection.');
-    if (!active || mode !== 'onboarding') return;
-    snapshot = data;
-    loadError = false;
-    onboarding = null;
-    clearTimeout(repoSearchTimer);
-    repoRequest?.abort();
-    repoRequest = null;
-    renderPluginSettingsCard();
-    mode = 'dashboard';
-    mountDashboardShell();
-    renderDashboard();
-    $('pr-manager-title')?.focus();
-    announce('Pull request settings saved.');
-    schedule();
-  } catch (error) {
-    if (active && mode === 'onboarding' && onboarding) {
-      onboarding.saving = false;
-      onboarding.error = error.message || 'Could not save repository selection.';
-      renderOnboarding();
-    }
-  }
+  disposeSetup = mountBoardSetup(view, snapshot, {
+    crest: shaped('blob', icon('pr'), 'prs-crest'),
+    preview: previewRow,
+    saved(data) {
+      closeSetup();
+      snapshot = data;
+      loadError = false;
+      renderPluginSettingsCard();
+      mode = 'dashboard';
+      mountDashboardShell();
+      renderDashboard();
+      $('pr-manager-title')?.focus();
+      announce('Pull request settings saved.');
+      schedule();
+    },
+    cancel() {
+      showDashboard();
+      $('prs-settings')?.focus();
+    },
+  });
 }
 
 function themeCss() {
@@ -1818,7 +1515,7 @@ async function loadDetail() {
 function showDetail(path) {
   mode = 'detail';
   shellKind = 'detail';
-  onboarding = null;
+  closeSetup();
   detailPath = path;
   detail = null;
   reviewSetup = null;
@@ -1853,7 +1550,7 @@ function reviewSteps(pr) {
   const own = !!viewer && String(pr.author || '').toLowerCase() === viewer;
   const asked = !!viewer && (pr.requestedReviewers || []).some(login => login.toLowerCase() === viewer);
   return {
-    eyes: pr.slack ? { state: 'open' } : { state: 'off', note: `Not posted in ${channelName()}, so there is no post to react to.` },
+    eyes: pr.slack ? { state: 'open' } : { state: 'off', note: `Not posted in ${channelNames(pr)}, so there is no post to react to.` },
     reviewer: own ? { state: 'off', note: 'This is your own pull request.' }
       : asked ? { state: 'done', note: 'You are already a requested reviewer.' } : { state: 'open' },
     start: pr.review?.available ? { state: 'open' } : { state: 'off', note: pr.review?.reason || 'Review locally is not available for this pull request.' },
@@ -1865,7 +1562,7 @@ function stepDetail(id, pr) {
     const post = pr.slack?.permalink
       ? ` <a href="${esc(pr.slack.permalink)}" target="_blank" rel="noopener noreferrer">Open the post</a>` : '';
     const taken = pr.slack?.state === 'picked-up' ? ' Someone else is already looking.' : '';
-    return `Shows ${channelName()} that you have picked this up.${taken}${post}`;
+    return `Shows ${channelNames(pr)} that you have picked this up.${taken}${post}`;
   }
   if (id === 'reviewer') return 'Adds you to the reviewers on the pull request.';
   return 'Starts the pull request\'s app first, so you can test straight away. Then a child run reviews the code and Orc writes your QA steps.';
@@ -2052,20 +1749,6 @@ function wireView(view) {
       renderDashboard();
       return;
     }
-    if (event.target.id === 'prs-onboard-channel' && onboarding) {
-      onboarding.slackChannel = event.target.value;
-      renderOnboarding();
-      return;
-    }
-    if (event.target.id === 'prs-onboard-search' && onboarding) {
-      onboarding.search = event.target.value;
-      renderOnboarding();
-      clearTimeout(repoSearchTimer);
-      const trimmed = onboarding.search.trim();
-      if (trimmed.length >= 2) {
-        repoSearchTimer = setTimeout(() => loadOnboardingRepos(trimmed), REPO_SEARCH_DEBOUNCE_MS);
-      }
-    }
   });
   view.addEventListener('change', event => {
     const target = event.target;
@@ -2086,58 +1769,13 @@ function wireView(view) {
       renderDashboard();
       return;
     }
-    if (!onboarding) return;
-    if (target.id === 'prs-onboard-slack') {
-      onboarding.useSlack = !!event.detail?.checked;
-      renderOnboarding();
-      return;
-    }
-    if (target.id === 'prs-onboard-all') {
-      onboarding.all = target.checked;
-      onboarding.error = '';
-      renderOnboarding();
-      return;
-    }
-    if (target.name === 'prs-onboard-org') {
-      const login = target.value;
-      const key = login.toLowerCase();
-      if (target.checked) {
-        onboarding.orgs.set(key, login);
-        for (const repoKey of [...onboarding.repos.keys()]) {
-          if (repoKey.split('/', 1)[0] === key) onboarding.repos.delete(repoKey);
-        }
-      } else {
-        onboarding.orgs.delete(key);
-      }
-      onboarding.error = '';
-      renderOnboarding();
-      return;
-    }
-    if (target.name === 'prs-onboard-repo') {
-      const repo = target.value;
-      const key = repo.toLowerCase();
-      if (target.checked) onboarding.repos.set(key, repo);
-      else onboarding.repos.delete(key);
-      onboarding.error = '';
-      renderOnboarding();
-    }
   });
   view.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
     if (button.id === 'prs-refresh') startRefresh();
-    else if (button.id === 'prs-settings') openOnboarding({ reconfiguring: true });
-    else if (button.id === 'prs-onboard-save') saveOnboarding();
-    else if (button.id === 'prs-onboard-cancel') cancelOnboarding();
-    else if (button.id === 'prs-onboard-clear' && onboarding) {
-      onboarding.all = false;
-      onboarding.orgs.clear();
-      onboarding.repos.clear();
-      onboarding.error = '';
-      renderOnboarding();
-    } else if (button.id === 'prs-onboard-retry-repos' && onboarding) {
-      loadOnboardingRepos(onboarding.search, { force: true });
-    } else if (button.id === 'prs-retry') loadDetail();
+    else if (button.id === 'prs-settings') openOnboarding();
+    else if (button.id === 'prs-retry') loadDetail();
     else if (button.dataset.stepAct) stepAction(button);
     else if (button.id === 'prs-merge') startMerge(button);
     else if (button.id === 'prs-conflict') startConflictRun(button);
@@ -2159,7 +1797,8 @@ function wireView(view) {
 function renderPluginSettingsCard() {
   if (!settingsSlot || !settingsSlot.isConnected) return;
   const slack = snapshot?.slack;
-  const slackText = slack?.enabled === false ? 'Off' : slack?.connected === false ? SLACK_SIGN_IN : 'On';
+  const slackText = !snapshot ? 'Loading…' : snapshot.onboardingComplete === false ? 'Not set up'
+    : slack?.enabled === false ? 'Off' : slack?.connected === false ? SLACK_SIGN_IN : 'On';
   settingsSlot.innerHTML = `<div class="prs-plugin-settings">
     <p><strong>Repositories:</strong> ${esc(scopeSummaryText(snapshot?.repoScope))}<br><strong>Slack:</strong> ${esc(slackText)}</p>
     <button type="button" class="settings-btn-inline" data-prs-configure>Configure</button>
@@ -2194,11 +1833,9 @@ export function showPrManager(hash = '#prs') {
 export function hidePrManager() {
   active = false;
   clearTimeout(timer);
-  clearTimeout(repoSearchTimer);
+  closeSetup();
   request?.abort();
   request = null;
-  repoRequest?.abort();
-  repoRequest = null;
   releaseFrames();
   const view = $('pr-manager-view');
   if (view) view.hidden = true;
@@ -2233,6 +1870,7 @@ export async function activate({ signal, base, commands, settings, view: registe
   button.id = 'prs-btn';
   button.setAttribute('href', '#prs');
   button.setAttribute('label', 'Pull requests');
+  button.dataset.caption = 'PRs';
   button.setAttribute('size', 'compact');
   button.innerHTML = SIDEBAR_PR_ICON;
   if ($('servers-btn')) $('servers-btn').after(button);
@@ -2262,12 +1900,6 @@ export async function activate({ signal, base, commands, settings, view: registe
 
   registerView({ hash: 'prs', subroutes: true, show: showPrManager, hide: hidePrManager });
 
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && active && mode === 'onboarding' && onboarding?.reconfiguring && !onboarding.saving) {
-      event.preventDefault();
-      cancelOnboarding();
-    }
-  }, { signal });
   document.addEventListener('visibilitychange', () => {
     clearTimeout(timer);
     if (active && mode === 'dashboard' && !document.hidden) refreshDashboard();
@@ -2296,11 +1928,8 @@ export async function activate({ signal, base, commands, settings, view: registe
     detailPath = null;
     detail = null;
     reviewSetup = null;
-    onboarding = null;
     openOnboardingNext = false;
     settingsSlot = null;
-    cachedCatalogOrgs.clear();
-    cachedCatalogRepos.clear();
     if (isPrHash(location.hash)) location.hash = 'new';
   };
 }

@@ -12,7 +12,7 @@ import './settings.js';
 import './scenes.js';
 import './activity.js';
 import './palette.js';
-import './settings-search.js';
+import { bindSettingsSearch } from './secondary-screens.js';
 import './merge-plan.js';
 import './project-order.js';
 import './status-order.js';
@@ -47,6 +47,7 @@ const hostScenes = {
   playPrOpened: options => scenes.playPrOpened(options),
 };
 window.orcSceneHost = hostScenes;
+bindSettingsSearch();
 startUsageTracking();
 startImageMenu();
 startTypingFx();

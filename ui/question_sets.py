@@ -280,7 +280,7 @@ def _answer(question, answers, index):
     return picked, _text(answer.get("other")), _text(answer.get("text"))
 
 
-def encode(schema, answers, notes="", *, clarification=False):
+def encode(schema, answers, notes="", *, clarification=False, chat_answers=None):
     """(els, lines) the gate page would send for these answers, or ValueError.
 
     `answers` maps a question id to {"picked": [labels], "other": text} for a
@@ -318,7 +318,11 @@ def encode(schema, answers, notes="", *, clarification=False):
                 reply += (" — other: " if reply else "") + other
         if not reply and requires_answer(question, clarification=clarification):
             raise ValueError("question %d needs an answer" % (index + 1))
-        lines.append("%d. %s?: %s" % (index + 1, _prompt(question), reply or "Skipped"))
+        prompt = _prompt(question) + "?"
+        reply = reply or "Skipped"
+        lines.append("%d. %s: %s" % (index + 1, prompt, reply))
+        if chat_answers is not None:
+            chat_answers.append({"question": prompt, "answer": reply})
     note = _text(notes) if schema.get("notes") else ""
     if schema.get("notes"):
         els.append({"v": note})

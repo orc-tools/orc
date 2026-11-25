@@ -13,10 +13,10 @@ import { q } from './diff.js';
 import { isMergeSelected } from './merge-plan.js';
 import { normPath } from './settings.js';
 import { unpushedMainHtml, watchRepoSync } from './repo-sync.js';
-import { RUN_STATE_LABELS, externalReviewAuthor, groupCountsLabel, groupWaitLabel, isExternalReview, isLocalReviewRun, isOrchestrationWorker, isPlanGroupRoot, isPlanningRun, normalizeStatusOrder, openManualSteps, pairedBuildOf, planStartingSince, presentRun, runNoteLabel } from './run-presentation.js';
+import { RUN_STATE_LABELS, externalReviewAuthor, groupCountsLabel, groupWaitLabel, isExternalReview, isLocalReviewRun, isOrchestrationWorker, isPlanGroupRoot, isPlanningRun, normalizeStatusOrder, openManualSteps, pairedBuildOf, shownManualSteps, planStartingSince, presentRun, runNoteLabel } from './run-presentation.js';
 import { waitForPaneClosed } from './session-close.js';
 import { playSettle, playSettleRow, playUnsettle } from './settle-scenes.js';
-import { chatComposerReady, focusChatComposer } from './chat.js';
+import { chatComposerReady, focusChatComposer, updateChatRun } from './chat.js';
 import { flushManualSteps } from './manual-steps.js';
 import { mountRunRowSlot, mountSidebarHeadSlot, themeComponent } from './theme-components.js';
 // [{ id, name, conds: [{ key, op: 'is'|'not'|'any', value }] }] —
@@ -370,16 +370,15 @@ let settledAt = {};
 // A review still open under a parent that finished on its own has no listed
 // row to sit beneath, so it takes a top-level row of its own. A parent settled
 // by hand takes its reviews to the shelf with it.
-function strandedReviewIds() {
+function strandedReviewIds(byId) {
   return new Set(runs.filter(run => {
-    const parent = reviewParent(run);
+    const parent = reviewParent(run, runs, byId);
     return parent && !(parent.id in settledAt) && !(run.id in settledAt)
       && isSidebarDone(parent.meta || {}, parent.files || [])
       && !isSidebarDone(run.meta || {}, run.files || []);
   }).map(run => run.id));
 }
-function inheritedSettledReviewIds(stranded = strandedReviewIds()) {
-  const byId = new Map(runs.map(run => [run.id, run]));
+function inheritedSettledReviewIds(stranded = strandedReviewIds(), byId = new Map(runs.map(run => [run.id, run]))) {
   const result = new Set();
   for (const run of runs) {
     if (stranded.has(run.id)) continue;
@@ -520,10 +519,15 @@ async function toggleSettledRun(id, settled = !(id in settledAt)) {
   });
 }
 // A run with steps left for the user stays listed, and its Chat is where they are ticked.
+// Steps wait for Ship, so a refused early settle is what shows them in Chat.
 function showStepsLeft(id, message, { awaitingCount = false } = {}) {
   location.hash = `${encodeURIComponent(id)}/${CHAT_KEY}`;
-  return setRunWarning(id, message, { kind: 'steps', awaitingCount });
+  const shown = setRunWarning(id, message, { kind: 'steps', awaitingCount });
+  const run = runs.find(entry => entry.id === id);
+  if (run) updateChatRun(run);
+  return shown;
 }
+export const stepsWarningShown = id => runWarnings.get(id)?.kind === 'steps';
 // Settles made here, newest last, with the runs that settled with each, for ⌘Z.
 const settleUndoStack = [];
 let typedCount = 0;
@@ -944,10 +948,12 @@ export function evalsTagHtml(meta) {
 }
 // Sibling candidates share the prompt as their title; the candidate tells
 // them apart.
-export function evalsCandidateTagHtml(runId, parentMeta) {
+// An Evals candidate's model and effort, such as "Opus 5.5 · Medium". Its row
+// under the parent leads with this, since the project and title repeat the parent's.
+export function evalsCandidateLabel(runId, parentMeta) {
   if (parentMeta?.route !== 'evals') return '';
   const child = (parentMeta.evals?.children || []).find(entry => entry.childRunId === runId);
-  return child?.label ? `<span class="evals-candidate-tag">${esc(child.label)}</span>` : '';
+  return typeof child?.label === 'string' ? child.label.trim() : '';
 }
 // "now", "5m", "2h", "3d", "2w", "4mo", "1y": the age column of a run row.
 export function compactAge(date, now = new Date()) {
@@ -1055,11 +1061,11 @@ function searchShownText() {
     : `${$('count').textContent} runs shown`;
 }
 // A search spans every run, so it leaves nothing to settle.
-export function settledRuns(shownIds, q, now) {
+export function settledRuns(shownIds, q, now, byId, inheritedIds) {
   if (q) return [];
-  const inheritedIds = inheritedSettledReviewIds();
+  inheritedIds ??= inheritedSettledReviewIds();
   const settledTime = r => settledAt[r.id] ?? (runActivity(r, now) || 0);
-  return runs.filter(r => !reviewParent(r) && !shownIds.has(r.id)
+  return runs.filter(r => !reviewParent(r, runs, byId) && !shownIds.has(r.id)
     && (r.id in settledAt || inheritedIds.has(r.id) || isSidebarDone(r.meta || {}, r.files || [])))
     .sort((a, b) => (settledTime(b) - settledTime(a)) || (runStarted(b) - runStarted(a)));
 }
@@ -1070,7 +1076,7 @@ function settledShelfHtml(settled, trees, renderRun, count) {
   const drawn = settledExpanded || motion?.dir === 'close';
   const page = [];
   if (drawn) {
-    for (const tree of trees) {
+    for (const tree of trees()) {
       if (page.length >= settledLimit) break;
       page.push(...tree);
     }
@@ -1189,21 +1195,31 @@ export function renderList() {
   const tagged = !q && (!!activeView || activeViewId === CUSTOM_VIEW_ID);
   const activeId = decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
   const now = Date.now();
-  const stranded = strandedReviewIds();
+  const byId = new Map(runs.map(run => [run.id, run]));
+  const stranded = strandedReviewIds(byId);
   // A review lives in its run's Chat, and a plan paired with its build in
   // the build's row (plan-pair.js), so neither lists a row of its own.
   const pairedPlans = new Set(runs.filter(groupedPlanBuild).map(run => run.id));
-  const rowless = run => pairedPlans.has(run.id) || (!stranded.has(run.id) && reviewParent(run));
+  const rowless = run => pairedPlans.has(run.id) || (!stranded.has(run.id) && reviewParent(run, runs, byId));
   const parentOf = run => stranded.has(run.id) ? undefined : (run.meta || {}).parentRunId;
-  const inheritedIds = inheritedSettledReviewIds(stranded);
+  const inheritedIds = inheritedSettledReviewIds(stranded, byId);
   const settledIds = new Set([...Object.keys(settledAt), ...inheritedIds]);
   // A starting run's pane is not up yet, so session filters would read it as
   // offline and drop it until the agent adopts it, then bring it back.
   const filterMeta = r => (r.pending ? { ...r.meta, sessionAlive: true } : r.meta || {});
   const childRuns = new Map();
+  const reviewsByParent = new Map();
   runs.forEach(run => {
     const pid = parentOf(run);
-    if (pid) childRuns.set(pid, [...(childRuns.get(pid) || []), run]);
+    if (pid) {
+      if (!childRuns.has(pid)) childRuns.set(pid, []);
+      childRuns.get(pid).push(run);
+    }
+    const parent = reviewParent(run, runs, byId);
+    if (parent) {
+      if (!reviewsByParent.has(parent.id)) reviewsByParent.set(parent.id, []);
+      reviewsByParent.get(parent.id).push(run);
+    }
   });
   const orchestrating = id => (childRuns.get(id) || []).some(child => isOrchestrationWorker(child.meta));
   // A worker under a closed fork toggle leaves the list with all beneath it;
@@ -1235,7 +1251,6 @@ export function renderList() {
   if (activeRun) shown.push(activeRun);
   listFollowsOpenRun = Boolean(activeRun);
   const shownIds = new Set(shown.map(r => r.id));
-  const byId = new Map(runs.map(run => [run.id, run]));
   // Rows listed only because the open run is, which go back to the shelf with
   // it and keep their place in its count. A run with a listed run beneath it
   // is listed for that run's sake, unless a parent of its own takes them.
@@ -1293,7 +1308,7 @@ export function renderList() {
     if (planId && !(run.meta || {}).parentRunId && (!host || runCreated(run) > runCreated(host))) planHosts.set(planId, run);
   });
   for (const [planId, host] of [...planHosts]) {
-    const plan = runs.find(r => r.id === planId);
+    const plan = byId.get(planId);
     const listed = shownIds.has(planId);
     if (!plan || pairedPlans.has(planId) || !isPlanningRun(plan.meta) || settledIds.has(planId)
       || (!listed && (q || isSidebarDone(plan.meta || {}, plan.files || [])))) {
@@ -1333,7 +1348,7 @@ export function renderList() {
     }
   }
   shown = shown.filter(run => !rowless(run));
-  const shelved = new Map(settledRuns(shownIds, q, now)
+  const shelved = new Map(settledRuns(shownIds, q, now, byId, inheritedIds)
     .filter(run => !collapsedIds.has(run.id) && !rowless(run)).map(run => [run.id, run]));
   for (const run of [...shelved.values()]) {
     const family = [run];
@@ -1431,7 +1446,7 @@ export function renderList() {
       }
     });
     kids.forEach((children, parentId) => {
-      const parent = list.find(run => run.id === parentId);
+      const parent = byId.get(parentId);
       // A plan's runs across repositories list in the order of its steps.
       const steps = isPlanGroupRoot(parent?.meta, parentId)
         ? new Map(parent.meta.runGroup.members.filter(member => member.runId).map(member => [member.runId, member.step ?? 1000]))
@@ -1518,7 +1533,7 @@ export function renderList() {
     const name = r.id.replace(/-\d{8}-\d{4,6}$/, '');
     const title = meta.title || meta.sourceRef || name;
     const { sidebar, badges, state: ownState } = presentRun(r);
-    const reviews = reviewsForRun(r.id);
+    const reviews = meta.route === 'qa' ? reviewsForRun(r.id, runs, byId, reviewsByParent) : [];
     const reviewIds = new Set(reviews.map(review => review.id));
     const latestReview = reviews.at(-1);
     const reviewState = latestReview && presentRun(latestReview).state;
@@ -1533,7 +1548,7 @@ export function renderList() {
       || (childCounts.get(r.id) || 0)) + startedPlanHosts.has(r.id);
     // the indent/connector is CSS-only — give AT a text equivalent
     const parentId = sidebarParentId(r);
-    const parentRun = depth ? runs.find(p => p.id === parentId) : null;
+    const parentRun = depth ? byId.get(parentId) : null;
     const role = depth && isOrchestrationWorker(meta) ? meta.orchestrationWorker?.role : null;
     const workerRole = Object.hasOwn(WORKER_ROLE_LABELS, role) ? role : null;
     const childKind = workerRole ? `${WORKER_ROLE_LABELS[workerRole]} worker` : isLocalReviewRun(meta) ? 'Review'
@@ -1543,7 +1558,9 @@ export function renderList() {
     const settledByHand = r.id in settledAt;
     const groupRoot = isPlanGroupRoot(meta, r.id);
     // A plan whose runs span repositories names how many, not its own project.
-    const project = withProject ? (groupRoot ? { key: 'group', label: `${meta.runGroup.repos} repositories` } : runProject(r)) : null;
+    // An Evals candidate under its parent is named by its model alone.
+    const candidate = depth ? evalsCandidateLabel(r.id, parentRun?.meta) : '';
+    const project = withProject && !candidate ? (groupRoot ? { key: 'group', label: `${meta.runGroup.repos} repositories` } : runProject(r)) : null;
     const projectIcon = project && (groupRoot ? projectMonogramHtml('Plan') : isExternalReview(meta) ? EXTERNAL_REVIEW_ICON : isLocalReviewRun(meta) ? REVIEW_ICON : projectIconHtml(runProjectPath(r), project.label));
     const externalTag = isExternalReview(meta) ? EXTERNAL_REVIEW_TAG : '';
     // The row is too narrow for both, and whose PR it is says more than the project.
@@ -1569,8 +1586,7 @@ export function renderList() {
     const forkTag = !nForks || groupRoot ? ''
       : !q && (orchestrating(r.id) || startedPlanHosts.has(r.id)) ? `<button class="fork-tag fork-toggle" type="button" data-key="forks-${esc(r.id)}" data-run-id="${esc(r.id)}" aria-label="${forksLabel}" aria-expanded="${forksOpen}" title="${forksOpen ? 'Hide worker and settled forks' : 'Show all forks'}">⑂ ${nForks}</button>`
       : `<span class="fork-tag" aria-label="${forksLabel}">⑂ ${nForks}</span>`;
-    const openSteps = !shelved && !settledInList && meta.status !== 'cancelled' && !isQuestionRun(r)
-      ? openManualSteps(meta) : 0;
+    const openSteps = !shelved && !settledInList ? shownManualSteps(meta, r.files || []) : 0;
     const warning = runWarnings.get(r.id)?.message || '';
     rowSlotData.set(r.id, {
       id: r.id, title, state: state.key, stateLabel: state.label, stateDetail: state.detail || '',
@@ -1582,11 +1598,10 @@ export function renderList() {
     return `<div class="run${externalTag ? ' external-review' : ''}${depth ? ' fork-child' : ''}${workerRole ? ` worker-${workerRole}` : ''}${depth && planHosts.has(r.id) ? ' plan-child' : ''}${last ? ' fork-last' : ''}${selected ? ' merge-selected' : ''}${revealed ? ' fork-revealed' : ''}${warning ? ' has-warning' : ''}" data-id="${esc(r.id)}" data-part="run-row" data-state="${esc(state.key)}"${unread ? ' data-unread' : ''}${priorityRootId ? ` data-priority-root="${esc(priorityRootId)}"${depth ? '' : ' draggable="true"'}` : ''}>
       <div class="run-actions" data-part="run-actions">${actions}</div>
       ${project ? `<div class="run-project" data-part="run-project">${projectIcon}${externalTag}<span class="run-project-name">${reviewAuthor ? `<span class="sr-only">by </span>${esc(reviewAuthor)}` : project.key === 'other' ? 'No project' : esc(project.label)}</span></div>` : externalTag ? `<div class="run-project" data-part="run-project">${EXTERNAL_REVIEW_ICON}${externalTag}<span class="run-project-name"><span class="sr-only">by </span>${esc(reviewAuthor)}</span></div>` : ''}
-      <a class="run-link" href="#${encodeURIComponent(r.id)}" data-id="${esc(r.id)}"${priorityRootId && !depth ? ' draggable="false"' : ''} title="${esc(workerRole ? `${childKind}: ${title}` : title)}"${r.id === activeId ? ' aria-current="page"' : ''}>
-      <div class="name" data-part="run-title">${selected ? '<span class="sr-only">Selected: </span>' : ''}${forkPrefix}${highlightSearchMatch(title, q)}</div>
+      <a class="run-link" href="#${encodeURIComponent(r.id)}" data-id="${esc(r.id)}"${priorityRootId && !depth ? ' draggable="false"' : ''} title="${esc(workerRole ? `${childKind}: ${title}` : candidate ? `${candidate}: ${title}` : title)}"${r.id === activeId ? ' aria-current="page"' : ''}>
+      <div class="name" data-part="run-title">${selected ? '<span class="sr-only">Selected: </span>' : ''}${forkPrefix}${candidate ? `<span class="evals-candidate-tag">${highlightSearchMatch(candidate, q)}</span>` : highlightSearchMatch(title, q)}</div>
       </a>
       <div class="sub" data-part="run-meta"><span class="sub-tags">
-        ${evalsCandidateTagHtml(r.id, parentRun?.meta)}
         ${sessionStatusHtml(reviewing ? latestReview.meta : meta)}
         ${prBadgeHtml(meta)}
         ${unread ? '<span class="unread-tag"><span class="dot" aria-hidden="true"></span>Unread</span>' : ''}
@@ -1594,7 +1609,7 @@ export function renderList() {
         ${groupRoot && !settledInList ? `<span class="run-group-counts">${esc(groupCountsLabel(meta.runGroup))}</span>` : ''}
         ${meta.runNote && !settledInList ? `<span class="run-note-tag">${esc(runNoteLabel(meta.runNote))}</span>` : ''}
         ${openSteps ? `<span class="steps-tag">${openSteps} ${openSteps === 1 ? 'step' : 'steps'} left</span>` : ''}
-        ${badges.questions ? `<span class="waiting-tag question-tag">${badges.questions} ${badges.questions === 1 ? 'question' : 'questions'}</span>` : ''}
+        ${badges.questions && !state.countsQuestions ? `<span class="waiting-tag question-tag">${badges.questions} ${badges.questions === 1 ? 'question' : 'questions'}</span>` : ''}
         ${badges.attention && !reviewing ? '<span class="attention-tag">attention</span>' : ''}
         ${deliveryTagHtml(meta, { linkLive: false, files: r.files || [], working: state.key === 'working' })}
         ${sidebar.stale ? '<span class="stale-tag" aria-label="no recent activity">stale</span>' : ''}
@@ -1609,10 +1624,11 @@ export function renderList() {
   const previousSignature = typeof lastSearchSignature === 'undefined' ? null : lastSearchSignature;
   const searchChanged = !!signature && signature !== previousSignature;
   if (typeof lastSearchSignature !== 'undefined') setLastSearchSignature(signature || null);
-  const settledOrder = new Map(settled.map((run, index) => [run.id, index]));
-  const shelfTrees = makeTrees(settled, () => 0);
-  shelfTrees.sort((a, b) => Math.min(...a.map(([r]) => settledOrder.get(r.id)))
-    - Math.min(...b.map(([r]) => settledOrder.get(r.id))));
+  const shelfTrees = () => {
+    const settledOrder = new Map(settled.map((run, index) => [run.id, index]));
+    return makeTrees(settled, () => 0).sort((a, b) => Math.min(...a.map(([r]) => settledOrder.get(r.id)))
+      - Math.min(...b.map(([r]) => settledOrder.get(r.id))));
+  };
   const shelf = settledShelfHtml(settled, shelfTrees, renderRun, settled.length + heldCount);
   const writeList = html => keepProjectIcons('#list', () => { $('list').innerHTML = html; });
   if (q !== searchPagedQuery) {

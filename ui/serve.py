@@ -60,6 +60,7 @@ import qa_chat
 import qa_hub
 import qa_sandbox
 import qa_setup_fix
+import worktree_servers
 import qa_steps
 import orchestration
 import orchestration_launch
@@ -143,6 +144,7 @@ import merge_queue
 import collision_radar
 import codex_questions
 import keychain_secrets
+from keyed_locks import KeyedLocks
 import windows_host
 import manual_steps
 import app_plugins
@@ -333,6 +335,7 @@ def plugin_runtime_context(*, home=None, allow_network=None):
         'ship_action': lambda meta: ship_action(meta),
         'is_review_run': lambda meta: local_review.is_review(meta),
         'ship_at_landing_stop': lambda *args, **kwargs: ship_at_landing_stop(*args, **kwargs),
+        'start_plan_at_plan_stop': lambda *args, **kwargs: start_plan_at_plan_stop(*args, **kwargs),
         'run_is_merge_queued': lambda run_id, meta=None: run_is_merge_queued(run_id, meta),
         'canonical_path': lambda path: canonical_path(path),
     }
@@ -1051,10 +1054,9 @@ window.orcSubmitChord = function (textarea, pick, plainEnter) {
     if (e.key !== 'Enter' || e.isComposing) return;
     if (!(e.metaKey || e.ctrlKey) && !(plainEnter && !e.shiftKey)) return;
     if (textarea.disabled || textarea.readOnly) return;
-    var btn = pick();
-    if (!btn || btn.disabled) return;
     e.preventDefault();
-    btn.click();
+    var btn = pick();
+    if (btn && !btn.disabled) btn.click();
   });
 };
 </script>
@@ -2104,10 +2106,24 @@ ATTACHMENTS_JS = rb"""
   var VIDEO_MIME = /^video\/(mp4|quicktime|webm|x-m4v)$/;
   var MAX_VIDEO_BYTES = 200 * 1024 * 1024;
   var lightbox, lastPreview;
-  var states = {};
+  var states = Object.create(null);
   var restored = window.orcSavedAttachments || {};
-  // Saved draft references for a textarea the client has not wrapped yet.
-  var pending = {};
+  // Gates export references even after a field is removed. Keep only paths.
+  var detached = Object.create(null);
+  var pending = new WeakMap();
+  var uploadsByKey = Object.create(null);
+
+  function isChat(key) { return key.indexOf('chat:') === 0; }
+  function isReview(key) { return key.indexOf('prr:') === 0; }
+  function sharesUploads(key) { return isChat(key) || isReview(key) || !!window.orcPersistAttachments; }
+  function stateFor(ta) {
+    var state = ta && states[textareaKey(ta)];
+    return state && state.ta === ta ? state : null;
+  }
+  function currentField(state) {
+    var current = sharesUploads(state.key) ? states[state.key] : state;
+    return current && current.ta && current.ta.isConnected ? current : null;
+  }
   function textareaKey(ta) {
     if (ta.dataset.orcAttachmentKey) return ta.dataset.orcAttachmentKey;
     var key;
@@ -2125,24 +2141,28 @@ ATTACHMENTS_JS = rb"""
   function referencesFor(state) { return Object.keys(state.references); }
   window.orcExportAttachments = function () {
     var result = {};
+    Object.keys(detached).forEach(function (key) {
+      if (detached[key].length) result[key] = detached[key].slice();
+    });
     Object.keys(states).forEach(function (key) {
+      if (!states[key].ta.isConnected && !window.orcPersistAttachments) return;
       var references = referencesFor(states[key]);
       if (references.length) result[key] = references;
     });
     return result;
   };
   window.orcTextareaHasAttachments = function (textarea) {
-    var state = states[textareaKey(textarea)];
+    var state = stateFor(textarea);
     return !!(state && referencesFor(state).length);
   };
   window.orcAppendAttachmentReferences = function (text, textarea) {
     var references = [];
     if (textarea) {
-      var state = states[textareaKey(textarea)];
+      var state = stateFor(textarea);
       if (state) references = referencesFor(state);
     } else {
-      Object.keys(states).forEach(function (key) {
-        references = references.concat(referencesFor(states[key]));
+      Object.values(window.orcExportAttachments()).forEach(function (paths) {
+        references = references.concat(paths);
       });
     }
     references = references.filter(function (reference, index, all) {
@@ -2172,7 +2192,7 @@ ATTACHMENTS_JS = rb"""
     lightbox.addEventListener('close', function () {
       // Escape closes the dialog without closeLightbox, and a hidden video
       // would keep playing its sound.
-      emptyLightbox(); restorePreviewFocus();
+      if (!lightbox.open) { emptyLightbox(); restorePreviewFocus(); }
     });
     document.body.appendChild(lightbox);
     return lightbox;
@@ -2183,13 +2203,15 @@ ATTACHMENTS_JS = rb"""
     if (player.hasAttribute('src')) { player.pause(); player.removeAttribute('src'); player.load(); }
   }
   function restorePreviewFocus() {
-    if (lastPreview && lastPreview.focus) lastPreview.focus();
+    var preview = lastPreview;
     lastPreview = null;
+    if (preview && preview.isConnected) preview.focus();
   }
   function closeLightbox() {
     if (!lightbox) return;
     emptyLightbox();
-    if (lightbox.open) lightbox.close(); else restorePreviewFocus();
+    if (lightbox.open) lightbox.close();
+    restorePreviewFocus();
   }
   function showInDialog(url, label, preview, video) {
     var box = ensureLightbox(), image = box.querySelector('img'),
@@ -2218,6 +2240,7 @@ ATTACHMENTS_JS = rb"""
   function basename(path) { return path.replace(/\\/g, '/').split('/').pop(); }
   function fileUrl(reference) { return root + '/' + encodeURIComponent(basename(reference)); }
   function setStatus(state, text, error, announceOnly) {
+    if (!state) return;
     state.status.textContent = text || '';
     state.status.style.color = error ? 'var(--red, #e87878)' : '';
     state.status.classList.toggle('announce-only', !!announceOnly);
@@ -2241,10 +2264,14 @@ ATTACHMENTS_JS = rb"""
       height -= parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
     }
     height -= state.reserve;
-    ta.style.height = Math.max(state.minimumHeight, state.manualHeight, Math.ceil(height)) + 'px';
+    var next = Math.max(state.minimumHeight, state.manualHeight, Math.ceil(height));
+    var maxHeight = parseFloat(style.maxHeight);
+    if (maxHeight > 0 && next > maxHeight) next = Math.floor(maxHeight);
+    ta.style.height = next + 'px';
     field.style.minHeight = '';
   }
   function refreshLayout(state) {
+    if (!state.ta || !state.ta.isConnected) return;
     var trayHeight = state.tray.childElementCount ? state.tray.offsetHeight : 0;
     state.reserve = trayHeight ? trayHeight + 7 : 0;
     state.ta.style.paddingBottom = (state.basePaddingBottom + state.reserve) + 'px';
@@ -2283,25 +2310,47 @@ ATTACHMENTS_JS = rb"""
     remove.type = 'button'; remove.className = 'orc-attachment-remove';
     remove.textContent = '\u00d7'; remove.title = 'Remove attachment';
     remove.setAttribute('aria-label', 'Remove ' + basename(reference));
-    remove.addEventListener('click', function () {
-      remove.disabled = true; setStatus(state, 'Removing\u2026', false, true);
-      fetch(url, { method: 'DELETE' }).then(function (response) {
-        if (!response.ok && response.status !== 404) throw new Error('remove failed');
-        var focusTarget = item.nextElementSibling &&
-          item.nextElementSibling.querySelector('.orc-attachment-preview');
-        if (!focusTarget) focusTarget = item.previousElementSibling &&
-          item.previousElementSibling.querySelector('.orc-attachment-preview');
-        if (!focusTarget) focusTarget = state.ta;
-        item.remove(); delete state.references[reference];
-        setStatus(state, 'Removed ' + basename(reference), false, true);
-        notifyAttachmentChange(state); refreshLayout(state);
-        focusTarget.focus();
-      }).catch(function () {
-        remove.disabled = false; setStatus(state, 'Could not remove attachment. Try again.', true);
-      });
-    });
+    remove.addEventListener('click', function () { removeAttachment(state, reference, url); });
     item.appendChild(preview); item.appendChild(remove); state.tray.appendChild(item);
     state.references[reference] = item;
+  }
+  function updateDetachedReferences(state, reference, added) {
+    if (isChat(state.key)) {
+      window.dispatchEvent(new CustomEvent('orc:chat-draft-attachment', {
+        detail: { runId: state.key.slice(5), reference: reference, added: added }
+      }));
+    } else if (window.orcPersistAttachments) {
+      var references = (detached[state.key] || []).filter(function (path) { return path !== reference; });
+      if (added) references.push(reference);
+      rememberDetached(state.key, references);
+      window.orcPersistAttachments();
+    } else if (added && isReview(state.key)) {
+      // The user closed this edit before its upload finished.
+      fetch(fileUrl(reference), { method: 'DELETE' }).catch(function () {});
+    }
+  }
+  function removeAttachment(state, reference, url) {
+    state.references[reference].querySelector('.orc-attachment-remove').disabled = true;
+    setStatus(state, 'Removing\u2026', false, true);
+    fetch(url, { method: 'DELETE' }).then(function (response) {
+      if (!response.ok && response.status !== 404) throw new Error('remove failed');
+      var current = currentField(state);
+      if (!current) return updateDetachedReferences(state, reference, false);
+      var item = current.references[reference];
+      if (!item) return;
+      var focusTarget = item.nextElementSibling?.querySelector('.orc-attachment-preview') ||
+        item.previousElementSibling?.querySelector('.orc-attachment-preview') || current.ta;
+      item.remove(); delete current.references[reference];
+      setStatus(current, 'Removed ' + basename(reference), false, true);
+      notifyAttachmentChange(current); refreshLayout(current);
+      if (current === state) focusTarget.focus();
+    }).catch(function () {
+      var current = currentField(state);
+      var item = current && current.references[reference];
+      if (!item) return;
+      item.querySelector('.orc-attachment-remove').disabled = false;
+      setStatus(current, 'Could not remove attachment. Try again.', true);
+    });
   }
   function accepts(state, file) {
     var type = file && file.type || '';
@@ -2311,16 +2360,10 @@ ATTACHMENTS_JS = rb"""
     if (!file || !accepts(state, file)) return Promise.resolve();
     var noun = /^video\//.test(file.type) ? 'video' : 'image';
     if (noun === 'video' && file.size > MAX_VIDEO_BYTES) {
-      setStatus(state, 'Video exceeds 200 MB limit', true);
+      setStatus(currentField(state), 'Video exceeds 200 MB limit', true);
       return Promise.resolve();
     }
-    setStatus(state, 'Adding ' + noun + '\u2026', false, true);
-    // Composers listen for input to enable or hold their send button.
-    var uploading = function (delta) {
-      state.uploading = (state.uploading || 0) + delta;
-      state.ta.dispatchEvent(new Event('input', { bubbles: true }));
-    };
-    uploading(1);
+    setStatus(currentField(state), 'Adding ' + noun + '\u2026', false, true);
     return fetch(root, { method: 'POST', headers: {
       // A header value outside Latin-1 makes fetch throw, and macOS puts a
       // narrow no-break space in screenshot and screen recording names.
@@ -2329,13 +2372,16 @@ ATTACHMENTS_JS = rb"""
     }, body: file }).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (data) {
         if (!response.ok) throw new Error(data.error || 'upload failed');
-        addThumbnail(state, data.reference, data.url);
-        notifyAttachmentChange(state); refreshLayout(state);
-        setStatus(state, 'Added ' + basename(data.reference), false, true);
+        var field = currentField(state);
+        if (!field) return updateDetachedReferences(state, data.reference, true);
+        addThumbnail(field, data.reference, data.url);
+        notifyAttachmentChange(field); refreshLayout(field);
+        setStatus(field, 'Added ' + basename(data.reference), false, true);
       });
     }).catch(function (error) {
-      setStatus(state, error.message || 'Could not add ' + noun, true);
-    }).then(function () { uploading(-1); });
+      var field = currentField(state);
+      if (field) setStatus(field, error.message || 'Could not add ' + noun, true);
+    });
   }
   function attachable(state, items) {
     return Array.prototype.slice.call(items || []).map(function (item) {
@@ -2356,9 +2402,21 @@ ATTACHMENTS_JS = rb"""
         ? 'Only images can be attached' : 'Only images and videos can be attached', true);
       return Promise.resolve();
     }
+    // Keep the whole batch pending while the draft switches away and back.
+    var shared = sharesUploads(state.key);
+    var counts = shared ? uploadsByKey : state;
+    var key = shared ? state.key : 'uploading';
+    function markUploading(delta) {
+      var count = (counts[key] || 0) + delta;
+      if (count) counts[key] = count;
+      else delete counts[key];
+      var field = currentField(state);
+      if (field) field.ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    markUploading(1);
     return picked.reduce(function (p, file) {
       return p.then(function () { return upload(state, file); });
-    }, Promise.resolve());
+    }, Promise.resolve()).finally(function () { markUploading(-1); });
   }
   // Prevented even for files Orc does not take, which the browser would
   // otherwise open in place of Orc.
@@ -2369,7 +2427,13 @@ ATTACHMENTS_JS = rb"""
   }
   function attach(ta) {
     if (ta.dataset.orcAttachments || ta.disabled) return;
+    var key = textareaKey(ta);
+    var previous = states[key];
+    if (previous && previous.ta.isConnected) return;
+    if (previous) release(previous);
     ta.dataset.orcAttachments = '1';
+    var events = new AbortController(), options = { signal: events.signal };
+    var originalHeight = ta.style.height, originalPadding = ta.style.paddingBottom;
     var initialStyle = getComputedStyle(ta);
     var field = document.createElement('div'); field.className = 'orc-attachment-field';
     if (initialStyle.maxWidth && initialStyle.maxWidth !== 'none') {
@@ -2391,7 +2455,7 @@ ATTACHMENTS_JS = rb"""
     status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
     field.appendChild(tray); field.insertAdjacentElement('afterend', status);
     var state = { ta: ta, tray: tray, status: status, references: {},
-      key: textareaKey(ta), imagesOnly: !!(imagesOnly && ta.matches(imagesOnly)),
+      key: key, imagesOnly: !!(imagesOnly && ta.matches(imagesOnly)),
       basePaddingBottom: parseFloat(initialStyle.paddingBottom) || 0,
       minimumHeight: parseFloat(initialStyle.height) || ta.offsetHeight,
       manualHeight: 0, reserve: 0 };
@@ -2415,10 +2479,15 @@ ATTACHMENTS_JS = rb"""
       changeTextarea(ta, kept.join('\n').replace(/^\n|\n$/g, ''));
       if (window.orcPersistAttachments) window.orcPersistAttachments();
     }
-    addReferences(restored[state.key]);
-    if (pending[state.key]) {
-      addReferences(pending[state.key]);
-      delete pending[state.key];
+    if (detached[state.key]) {
+      addReferences(detached[state.key]);
+      delete detached[state.key];
+    } else {
+      addReferences(restored[state.key]);
+    }
+    if (pending.has(ta)) {
+      addReferences(pending.get(ta));
+      pending.delete(ta);
       // The host re-syncs its buttons and saved draft from this.
       changeTextarea(ta, ta.value);
     }
@@ -2427,24 +2496,31 @@ ATTACHMENTS_JS = rb"""
     ta.addEventListener('input', function () {
       // Also catches old reference lines restored after this client attached.
       migrateVisibleReferences(); refreshLayout(state);
-    });
+    }, options);
+    var resizeGesture;
     ta.addEventListener('pointerdown', function () {
+      resizeGesture?.abort();
+      resizeGesture = new AbortController();
       var before = ta.offsetHeight;
       function rememberManualSize() {
-        document.removeEventListener('pointerup', rememberManualSize);
+        resizeGesture.abort();
         if (Math.abs(ta.offsetHeight - before) < 2) return;
-        state.manualHeight = parseFloat(getComputedStyle(ta).height) || ta.offsetHeight;
+        var computed = getComputedStyle(ta);
+        var manual = parseFloat(computed.height) || ta.offsetHeight;
+        var maxHeight = parseFloat(computed.maxHeight);
+        state.manualHeight = maxHeight > 0 ? Math.min(manual, Math.floor(maxHeight)) : manual;
         refreshLayout(state);
       }
-      document.addEventListener('pointerup', rememberManualSize);
-    });
+      var gestureOptions = { signal: resizeGesture.signal };
+      document.addEventListener('pointerup', rememberManualSize, gestureOptions);
+      document.addEventListener('pointercancel', function () { resizeGesture.abort(); }, gestureOptions);
+    }, options);
     ta.addEventListener('paste', function (event) {
       var files = attachable(state, event.clipboardData && event.clipboardData.items);
       if (!files.length) return;
-      event.preventDefault(); files.reduce(function (p, file) {
-        return p.then(function () { return upload(state, file); });
-      }, Promise.resolve());
-    });
+      event.preventDefault();
+      attachAll(state, files);
+    }, options);
     var dropZone = ta;
     if (globalDrop && ta.matches(globalDrop)) dropZone = ta.closest('.newconv-prompt') || ta;
     function showFileDrop(event) {
@@ -2452,19 +2528,19 @@ ATTACHMENTS_JS = rb"""
       event.preventDefault();
       dropZone.classList.add('orc-attachment-drop');
     }
-    dropZone.addEventListener('dragenter', showFileDrop);
-    dropZone.addEventListener('dragover', showFileDrop);
+    dropZone.addEventListener('dragenter', showFileDrop, options);
+    dropZone.addEventListener('dragover', showFileDrop, options);
     dropZone.addEventListener('dragleave', function (event) {
       if (!dropZone.contains(event.relatedTarget)) dropZone.classList.remove('orc-attachment-drop');
-    });
+    }, options);
     dropZone.addEventListener('drop', function (event) {
       dropZone.classList.remove('orc-attachment-drop');
       if (!ta.disabled && !event.defaultPrevented) attachDropped(state, event);
-    });
+    }, options);
+    var observer, resizeFrame = 0;
     if (window.ResizeObserver) {
       var lastFieldWidth = field.getBoundingClientRect().width;
-      var resizeFrame = 0;
-      var observer = new ResizeObserver(function (entries) {
+      observer = new ResizeObserver(function (entries) {
         var changed = entries.some(function (entry) {
           if (entry.target === tray) return true;
           var width = entry.contentRect.width;
@@ -2477,20 +2553,57 @@ ATTACHMENTS_JS = rb"""
       });
       observer.observe(tray); observer.observe(field);
     }
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(function () { refreshLayout(state); });
-    }
+    state.dispose = function () {
+      observer?.disconnect();
+      cancelAnimationFrame(resizeFrame);
+      resizeGesture?.abort();
+      events.abort();
+      if (lastPreview && tray.contains(lastPreview)) closeLightbox();
+      dropZone.classList.remove('orc-attachment-drop');
+      ta.style.height = originalHeight;
+      ta.style.paddingBottom = originalPadding;
+      delete ta.dataset.orcAttachments;
+      if (field.contains(ta)) field.replaceWith(ta);
+      else field.remove();
+      status.remove();
+    };
   }
+  function rememberDetached(key, references) {
+    delete restored[key];
+    if (references.length) detached[key] = references;
+    else delete detached[key];
+  }
+  function release(state) {
+    delete states[state.key];
+    var references = referencesFor(state);
+    if (window.orcPersistAttachments) rememberDetached(state.key, references);
+    state.dispose();
+    state.ta = state.tray = state.status = state.references = state.addReferences = state.dispose = null;
+  }
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { Object.values(states).forEach(refreshLayout); });
+  }
+  var resizeTimer = 0;
+  window.addEventListener('resize', function () {
+    cancelAnimationFrame(resizeTimer);
+    resizeTimer = requestAnimationFrame(function () {
+      Object.keys(states).forEach(function (key) {
+        var state = states[key];
+        if (!state || !state.ta.isConnected) return;
+        if (parseFloat(getComputedStyle(state.ta).maxHeight) > 0) refreshLayout(state);
+      });
+    });
+  });
   window.addEventListener('orc-attachments-restored', function (event) {
     restored = event.detail || {};
     Object.keys(states).forEach(function (key) {
-      states[key].addReferences(restored[key]);
+      if (states[key].ta.isConnected) states[key].addReferences(restored[key]);
     });
   });
   // Drops the thumbnails without deleting the uploads: a sent prompt still
   // references the files, they just no longer belong to the emptied textarea.
   window.orcClearAttachments = function (textarea) {
-    var state = states[textareaKey(textarea)];
+    var state = stateFor(textarea);
     if (!state) return;
     Object.keys(state.references).forEach(function (reference) {
       state.references[reference].remove();
@@ -2501,25 +2614,25 @@ ATTACHMENTS_JS = rb"""
   // Drops one thumbnail whose file is already gone, without asking the
   // server to delete it again.
   window.orcForgetAttachment = function (textarea, reference) {
-    var state = states[textareaKey(textarea)];
+    var state = stateFor(textarea);
     if (!state || !state.references[reference]) return;
     state.references[reference].remove();
     delete state.references[reference];
     notifyAttachmentChange(state); refreshLayout(state);
   };
   window.orcAttachFiles = function (textarea, files) {
-    var state = states[textareaKey(textarea)];
+    var state = stateFor(textarea);
     if (!state) return Promise.resolve();
     return attachAll(state, files);
   };
   // A file still uploading has no reference yet, so a send that went now
   // would leave it behind.
   window.orcTextareaUploading = function (textarea) {
-    var state = states[textareaKey(textarea)];
-    return !!(state && state.uploading);
+    var state = stateFor(textarea);
+    return !!(state?.uploading || (textarea && uploadsByKey[textareaKey(textarea)]));
   };
   window.orcTextareaAttachments = function (textarea) {
-    var state = states[textareaKey(textarea)];
+    var state = stateFor(textarea);
     return state ? referencesFor(state) : [];
   };
   // The uploads outlive orcClearAttachments, so a prompt handed back after a
@@ -2529,7 +2642,8 @@ ATTACHMENTS_JS = rb"""
     var key = textareaKey(textarea), state = states[key];
     // A rebuilt textarea reuses its key before the client has wrapped it.
     if (state && state.ta === textarea) state.addReferences(references);
-    else if (Array.isArray(references) && references.length) pending[key] = references;
+    else if (Array.isArray(references) && references.length) pending.set(textarea, references);
+    else pending.delete(textarea);
   };
   var globalDrop = window.orcAttachmentGlobalDrop;
   var globalPaste = window.orcAttachmentGlobalPaste;
@@ -2539,7 +2653,7 @@ ATTACHMENTS_JS = rb"""
     var ta = Array.prototype.find.call(document.querySelectorAll(targetSelector),
       function (field) { return !field.disabled && field.offsetParent; });
     if (!ta) return null;
-    return states[textareaKey(ta)] || null;
+    return stateFor(ta);
   }
   // Quoted the way a shell would need it, so a path with a space still reads
   // as one path to the agent or the terminal.
@@ -2581,9 +2695,8 @@ ATTACHMENTS_JS = rb"""
       if (!state) return;
       var files = attachable(state, event.clipboardData && event.clipboardData.items);
       if (!files.length) return;
-      event.preventDefault(); files.reduce(function (p, file) {
-        return p.then(function () { return upload(state, file); });
-      }, Promise.resolve());
+      event.preventDefault();
+      attachAll(state, files);
     });
     document.addEventListener('dragover', function (event) {
       if (event.defaultPrevented) return;
@@ -2598,7 +2711,13 @@ ATTACHMENTS_JS = rb"""
       attachDropped(state, event);
     });
   }
-  function scan() { document.querySelectorAll(selector).forEach(attach); }
+  function scan() {
+    Object.values(states).forEach(function (state) {
+      if (!state.ta.isConnected) release(state);
+    });
+    if (lastPreview && !lastPreview.isConnected) closeLightbox();
+    document.querySelectorAll(selector).forEach(attach);
+  }
   scan();
   new MutationObserver(scan).observe(document.body, {
     childList: true, subtree: true, attributes: true, attributeFilter: ['disabled']
@@ -6189,13 +6308,7 @@ def planning_progress(run_id, rows, status_of):
 
 # Start work on a plan: its check for a standing build and the launch row that
 # answers it happen under one lock per plan.
-PLAN_START_LOCKS = {}
-PLAN_START_LOCKS_GUARD = threading.Lock()
-
-
-def plan_start_lock(run_id):
-    with PLAN_START_LOCKS_GUARD:
-        return PLAN_START_LOCKS.setdefault(run_id, threading.Lock())
+plan_start_lock = KeyedLocks()
 
 
 def planning_started_steps(run_id):
@@ -6226,15 +6339,28 @@ def planning_started_steps(run_id):
     return started
 
 
+def plan_source_digest(run_id):
+    """SHA-256 of a plan run's non-empty planning/planning.mdx, or None."""
+    try:
+        with open(os.path.join(RUNS, run_id, PLANNING_SOURCE), "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    if not data.strip():
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
 def planning_fork(run_id, meta, text, step=None, choices=None, cwd=None, token=None,
-                  context_run=None, plan_start=True):
+                  context_run=None, plan_start=True, stack=None, auto_merge=False):
     """Fork a child from a planning session through the context-fork seam
     an answered question's follow-up already uses. `step` is the part of
     the plan the child builds, recorded on its relationship row.
     `choices` are the plan page's Builds with settings: each one the
     request names is the child's own, and the rest come from the plan run.
     `cwd` is the project a step names, else the plan's own. `token` is a
-    waiting step's launch token, so its row becomes the launch row."""
+    waiting step's launch token, so its row becomes the launch row. `stack`
+    is the branch a stacked step builds on (plan_step_stack)."""
     choices = choices if isinstance(choices, dict) else {}
     agent = choices.get("agent") or (
         meta.get("harness") if meta.get("harness") in NEW_CONV_AGENTS else "claude")
@@ -6299,6 +6425,7 @@ def planning_fork(run_id, meta, text, step=None, choices=None, cwd=None, token=N
               "targetProject": cwd, "agent": agent, "text": text,
               "mode": "orc", "planStart": plan_start, "model": model, "effort": effort, **flags,
               "orchestration": orchestration_enabled,
+              **({"autoMerge": True} if auto_merge else {}),
               **({"orchestrationPreset": preset} if preset is not None else {}),
               **({"claudeAccount": choices["claudeAccount"]}
                  if choices.get("claudeAccount") is not None else {}),
@@ -6306,7 +6433,8 @@ def planning_fork(run_id, meta, text, step=None, choices=None, cwd=None, token=N
               "contextPath": context_path, "contextPackage": package_path,
               "contextSha256": digest, "gitProvenance": provenance,
               "requestedAt": datetime.now(timezone.utc).isoformat().replace(
-                  "+00:00", "Z"), **(step or {})}
+                  "+00:00", "Z"), **(step or {}),
+              **({"stack": stack} if stack else {})}
     with launch_usage_source("planning" if plan_start else "sibling"):
         return _launch_context_child(record)
 
@@ -6366,9 +6494,19 @@ def plan_step_reached_ship(meta):
         "merging", "merged", "merged-to-parent", "complete")
 
 
-def plan_step_prompt(plan_id, number, steps, cwd):
-    """What a step's run builds when its plan opened one run per step."""
+def plan_step_prompt(plan_id, number, steps, cwd, spans=True):
+    """What a step's run builds when its plan opened one run per step.
+    `spans` says the steps build in more than one repository."""
     step = steps[number - 1]
+    if not spans:
+        others = "; ".join('step %d "%s"' % (at, other["title"])
+                           for at, other in enumerate(steps, 1) if at != number)
+        return ('Build step %d of %d, "%s", from the plan the planning session '
+                "settled in planning/planning.mdx (run %s). Build only that step: "
+                "the plan opened one run per step, each with its own branch and PR "
+                "(%s). Leave their parts to them. Its decisions are settled "
+                "direction; do not reopen them."
+                % (number, len(steps), step["title"], plan_id, others))
     others = "; ".join('step %d "%s" in %s' % (
         at, other["title"], other.get("repo") or "this plan's project")
         for at, other in enumerate(steps, 1) if at != number)
@@ -6382,15 +6520,124 @@ def plan_step_prompt(plan_id, number, steps, cwd):
                                    plan_id, others))
 
 
-def plan_step_launch(plan_id, step_row):
+def plan_step_launch(plan_id, step_row, rows=None):
     """Start a step that waited, under the token its waiting row holds, so the
-    row becomes the run's launch row."""
+    row becomes the run's launch row. A step in the same repository as the
+    steps it waits on stacks on their branch."""
     meta = run_meta(plan_id)
     text = step_row.get("text") or whole_plan_build_prompt(plan_id)
     step = {key: step_row[key] for key in PLAN_STEP_ROW_FIELDS if key in step_row}
     choices = step_row.get("choices") if isinstance(step_row.get("choices"), dict) else {}
+    stack = plan_step_stack(plan_id, step_row, rows)
+    if stack:
+        step["stackedOn"] = [parent["step"] for parent in stack["stackedOn"]]
+        text = text + plan_stack_prompt(step_row.get("planStep"), stack)
+    auto_merge = bool(step_row.get("autoMerge")) and bool(APP_PLUGINS.enabled_root("auto-merge"))
     return planning_fork(plan_id, meta, text, step, choices,
-                         cwd=step_row.get("targetProject"), token=step_row.get("launchToken"))
+                         cwd=step_row.get("targetProject"), token=step_row.get("launchToken"),
+                         stack=stack, **({"auto_merge": True} if auto_merge else {}))
+
+
+def plan_step_runs(plan_id, number, rows):
+    """The runs that still stand for step `number` of a plan."""
+    found = []
+    for row in rows:
+        if (isinstance(row, dict) and row.get("sourceRunId") == plan_id
+                and row.get("planStep") == number and row.get("state") == "launched"
+                and run_relationships.valid_run_id(row.get("childRunId"))):
+            child = run_meta(row["childRunId"])
+            if child and child.get("status") != "cancelled":
+                found.append((row["childRunId"], child))
+    return found
+
+
+def plan_step_stack(plan_id, step_row, rows=None):
+    """Where a waiting step stacks: on the branch of the latest step it waits
+    on, with the branches of the other steps it waits on merged in. None when
+    the step builds in another repository than those runs, or one of them has
+    no branch to build on."""
+    waits = sorted(step_row.get("waitsOn") or (), reverse=True)
+    target = configured_repo_cwd(step_row.get("targetProject"))
+    if not waits or not target:
+        return None
+    if rows is None:
+        try:
+            rows = run_relationships.read_store(CONFIG_DIR)["children"]
+        except (OSError, ValueError, KeyError, run_relationships.RelationshipStoreError):
+            return None
+    parents = []
+    for number in waits:
+        ready = [(child_id, child) for child_id, child in plan_step_runs(plan_id, number, rows)
+                 if plan_step_reached_ship(child)]
+        if not ready:
+            return None
+        child_id, child = ready[-1]
+        repo = configured_repo_cwd(child.get("mainRepoPath") or child.get("repoPath"))
+        branch = child.get("branch")
+        if (not repo or canonical_path(repo) != canonical_path(target)
+                or not isinstance(branch, str) or not branch.strip()):
+            return None
+        head = collision_radar.ref_sha(target, "refs/heads/" + branch.strip())
+        if not head:
+            return None
+        parents.append({"runId": child_id, "step": number, "branch": branch.strip(),
+                        "title": child.get("title") or child_id, "head": head})
+    base, unmerged = parents[0]["head"], []
+    for other in parents[1:]:
+        if collision_radar.is_ancestor(target, other["head"], base):
+            continue
+        merged = stack_merge_commit(target, base, other, step_row.get("planStep"))
+        if merged:
+            base = merged
+        else:
+            unmerged.append(other)
+    first = parents[0]
+    return {"kind": "build-on", "runId": first["runId"], "title": first["title"],
+            "branch": first["branch"],
+            **({"baseCommit": base} if base != first["head"] else {}),
+            "stackedOn": [{key: parent[key] for key in ("runId", "step", "branch")}
+                          for parent in parents],
+            "unmerged": [{key: parent[key] for key in ("runId", "step", "branch")}
+                         for parent in unmerged]}
+
+
+def stack_merge_commit(repo, base, other, number):
+    """A commit that merges `other`'s branch into `base`, made without a
+    checkout, or None when the two conflict."""
+    try:
+        tree = subprocess.run(["git", "-C", repo, "merge-tree", "--write-tree", base, other["head"]],
+                              capture_output=True, text=True, timeout=30)
+        if tree.returncode != 0:
+            return None
+        commit = subprocess.run(
+            ["git", "-C", repo, "commit-tree", tree.stdout.split()[0], "-p", base,
+             "-p", other["head"], "-m", "chore: stack step %s on step %d (%s)"
+             % (number, other["step"], other["branch"])],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, IndexError, subprocess.TimeoutExpired):
+        return None
+    sha = commit.stdout.strip().lower()
+    return sha if commit.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+
+
+def plan_stack_prompt(number, stack):
+    """What a stacked step's run is told about the branch it builds on."""
+    first = stack["stackedOn"][0]
+    others = stack["stackedOn"][1:]
+    merged = [parent for parent in others if parent not in stack["unmerged"]]
+    text = ("\n\nStep %s stacks on step %d: Orc starts its branch from `%s` (run %s)%s. "
+            "Its PR targets that branch until step %d merges, then main. Orc brings "
+            "step %d's new commits in whenever this run stops in Build, and main once "
+            "step %d merges."
+            % (number, first["step"], first["branch"], first["runId"],
+               "".join(", with step %d's `%s` merged in" % (parent["step"], parent["branch"])
+                       for parent in merged),
+               first["step"], first["step"], first["step"]))
+    for parent in stack["unmerged"]:
+        text += (" Step %d's branch `%s` conflicts with it: merge it into your branch "
+                 "first (`git merge %s`) and settle the conflict."
+                 % (parent["step"], parent["branch"], parent["branch"]))
+    return text
 
 
 PLAN_STEP_ROW_FIELDS = ("planStep", "planStepTitle", "planSteps", "planRepo", "planRepos",
@@ -6447,13 +6694,238 @@ def start_waiting_plan_steps():
             current = run_relationships.child_by_token(CONFIG_DIR, row.get("launchToken"))
             if not current or current.get("state") != "waiting":
                 continue
-            _result, error = plan_step_launch(row["sourceRunId"], current)
+            _result, error = plan_step_launch(row["sourceRunId"], current, rows)
             if error:
                 run_relationships.upsert_child(CONFIG_DIR, {
                     "launchToken": row["launchToken"], "sourceRunId": row["sourceRunId"],
                     "state": "failed", "error": error[1]})
     if due or failed:
         invalidate_runs_body()
+
+
+def cancel_run_now(run_id, reason=""):
+    """Cancel a run and stop its session. Returns (body, None), or (None,
+    error args for json_error) when the run cannot be cancelled."""
+    with run_mutation_lock(run_id), RUN_STATUS_LOCK:
+        meta = run_meta(run_id)
+        if not meta:
+            return None, (404, "run not found")
+        if meta.get("status") in (
+                "complete", "merged", "merged-to-parent", "cancelled"):
+            return None, (409, "run already finished")
+        ownership_error = merge_ownership_error(run_id, meta)
+        if ownership_error:
+            return None, (409, ownership_error, False)
+        if merge_repo_identity(meta) is not None:
+            queue_data, queue_error = _read_merge_queue(meta)
+            if queue_error:
+                return None, (409, queue_error, False)
+            queue_index, queue_entry = _queue_entry(queue_data, run_id)
+            if queue_entry is not None:
+                if queue_entry.get("claimToken") or meta.get("status") == "merging":
+                    return None, (409, "active merge must stop before cancellation", False)
+                del queue_data["entries"][queue_index]
+                if not _write_merge_queue(meta, queue_data):
+                    return None, (500, "could not update merge queue", False)
+        meta["status"] = "cancelled"
+        if reason:
+            meta["cancelReason"] = reason
+        if not _write_run_meta(run_id, meta):
+            return None, (500, "could not save run status")
+    safe_reason = re.sub(r"[`$\\;|&<>]", "", reason)
+    note = ("orc: run %s cancelled via orc-ui%s. Stop work on this "
+            "run — meta.json status is already cancelled; commit "
+            "nothing further." % (
+                run_id,
+                " (reason: %s)" % safe_reason if safe_reason else ""))
+    if headless_session.is_headless(meta):
+        outcome = headless_session.interrupt(os.path.join(RUNS, run_id))
+        stopped = outcome in ("stopped", "idle")
+        still_working = outcome == "failed"
+    else:
+        # A terminal session Orc cannot interrupt. Only one that is mid-turn
+        # needs the notice: an idle or closed one does nothing more on its own.
+        stopped = False
+        still_working = _terminal_session_activity(run_id) == "running"
+    if stopped:
+        # the interrupted agent may have had a meta write in flight that
+        # clobbered the cancel — re-assert it now that the turn is aborted
+        with RUN_STATUS_LOCK:
+            meta = run_meta(run_id)
+            if meta and meta.get("status") != "cancelled":
+                meta["status"] = "cancelled"
+                if reason:
+                    meta["cancelReason"] = reason
+                _write_run_meta(run_id, meta)
+    body = {"ok": True, "stopped": stopped, "closed": False}
+    if still_working:
+        body["note"] = note   # an agent is still working -> the user pastes it
+    return body, None
+
+
+def stacked_steps_to_stop(rows, status_of):
+    """Launch rows of stacked plan steps whose run still works while a step
+    it stacks on was cancelled, each with the step that was."""
+    stop = []
+    for row in rows:
+        if (not isinstance(row, dict) or row.get("state") != "launched"
+                or not row.get("stackedOn") or not isinstance(row.get("stack"), dict)
+                or not run_relationships.valid_run_id(row.get("childRunId"))):
+            continue
+        if (status_of(row["childRunId"]) or {}).get("status") in TERMINAL_RUN_STATUSES:
+            continue
+        for parent in row["stack"].get("stackedOn") or ():
+            parent_id = parent.get("runId") if isinstance(parent, dict) else None
+            if (run_relationships.valid_run_id(parent_id)
+                    and (status_of(parent_id) or {}).get("status") == "cancelled"):
+                stop.append((row, parent.get("step")))
+                break
+    return stop
+
+
+def stop_steps_stacked_on_cancelled():
+    """Cancelling a step stops the step stacked on its branch. Its step then
+    offers Start again, which builds from main."""
+    try:
+        rows = run_relationships.read_store(CONFIG_DIR)["children"]
+    except (OSError, ValueError, KeyError, run_relationships.RelationshipStoreError):
+        return
+    stopped = False
+    for row, step in stacked_steps_to_stop(rows, run_meta):
+        _body, error = cancel_run_now(
+            row["childRunId"], "step %s, which this step stacks on, was cancelled" % step)
+        stopped = stopped or error is None
+    if stopped:
+        invalidate_runs_body()
+
+
+def start_plan_work(run_id, data=None, fork=None, auto_merge=None):
+    """Start the build run(s) for a completed plan under `plan_start_lock`.
+    Returns `(payload, error)` where `error` is `(status, message[, retryable])`."""
+    fork = fork or planning_fork
+    if auto_merge is None:
+        auto_merge = plan_auto_merge_enabled(run_id)
+    meta = run_meta(run_id)
+    if not planning_complete(meta):
+        return None, (409, "planning session is not complete", False)
+    if _has_active_feedback_batch(run_id, artifact_key=PLANNING_TAB):
+        return None, (409, "the plan is being revised", False)
+    text = whole_plan_build_prompt(run_id)
+    # A plan lists its runs under `## Work`; `step` starts one of them.
+    # Without it the child builds the whole plan in one run, unless the
+    # steps name their repositories: then each step is its own run.
+    number = data.get("step") if isinstance(data, dict) else None
+    step = None
+    steps = plan_step_list(run_id)
+    names = [entry["title"] for entry in steps]
+    choices = {key: data[key] for key in PLAN_BUILD_CHOICES
+               if isinstance(data, dict) and key in data}
+    # Start each step opens one run per step in a plan of one repository,
+    # as a plan whose steps name their repositories always does.
+    each = isinstance(data, dict) and data.get("each") is True
+    if number is None and (plan_names_repositories(steps) or (each and len(steps) > 1)):
+        return _start_plan_group(run_id, meta, steps, choices, fork, auto_merge=auto_merge)
+    if number is None:
+        # One run for every step, so the steps show it and offer no Start.
+        # A plan of one step or none has only this Start, and one build.
+        if planning_started_steps(run_id):
+            return None, (409, "the plan already has work started", False)
+        if len(names) > 1:
+            step = {"planWhole": True}
+    if number is not None:
+        if type(number) is not int or not 1 <= number <= len(names):
+            return None, (400, "the plan has no step %s" % number, False)
+        started = planning_started_steps(run_id)
+        if "whole" in started:
+            return None, (409, "a run is already building the whole plan", False)
+        if number in started:
+            return None, (409, "step %d already has a run" % number, False)
+        step = {"planStep": number, "planStepTitle": names[number - 1],
+                "planSteps": len(names)}
+        text = ('Build step %d of %d, "%s", from the plan the planning session '
+                "settled in planning/planning.mdx (run %s). Build only that step: "
+                "the plan's other steps are separate runs. Its decisions are "
+                "settled direction; do not reopen them."
+                % (number, len(names), names[number - 1], run_id))
+    cwd = None
+    if number is not None and plan_names_repositories(steps):
+        # A step of a plan that names repositories builds in its own.
+        plan_cwd = configured_repo_cwd(meta.get("mainRepoPath") or meta.get("repoPath"))
+        cwd = resolve_plan_repo(steps[number - 1].get("repo"), plan_cwd)
+        if not cwd:
+            return None, (409, "no configured project is named %s"
+                               % steps[number - 1].get("repo"), False)
+        places = {resolve_plan_repo(entry.get("repo"), plan_cwd) for entry in steps}
+        step.update(planGroup=True, planRepo=steps[number - 1].get("repo") or "",
+                    planRepos=len(places))
+        text = plan_step_prompt(run_id, number, steps, cwd)
+    text += plan_notes_for_build(run_id)
+    result, error = fork(run_id, meta, text, step, choices,
+                         **({"cwd": cwd} if cwd else {}),
+                         **({"auto_merge": True} if auto_merge else {}))
+    if error:
+        return None, error
+    with contextlib.suppress(OSError):
+        if run_unread.mark_read(UNREAD_PATH, run_id):
+            invalidate_runs_body()
+            _refresh_boot_live()
+    return {"ok": True, "childRunId": result.get("runId")}, None
+
+
+def _start_plan_group(run_id, meta, steps, choices, fork, auto_merge=False):
+    """Start work on a plan whose steps name their repositories, or Start
+    each step on any plan of several steps: one run per step, each in its
+    repository, all at once. A step that waits on another is recorded as
+    waiting and starts when that run reaches Ship."""
+    if planning_started_steps(run_id):
+        return None, (409, "the plan already has work started", False)
+    plan_cwd = configured_repo_cwd(meta.get("mainRepoPath") or meta.get("repoPath"))
+    places = [resolve_plan_repo(entry.get("repo"), plan_cwd) for entry in steps]
+    missing = sorted({entry.get("repo") or "this plan's project"
+                      for entry, cwd in zip(steps, places) if not cwd})
+    # Every repository must resolve before the first run opens.
+    if missing:
+        return None, (409, "no configured project is named %s"
+                           % ", ".join(missing), False)
+    notes = plan_notes_for_build(run_id)
+    launched, failures, waiting = [], [], []
+    # Runs across repositories list together as the plan's group and send
+    # each other notes. Runs in one repository list on their own, as a
+    # step started by itself does, and a step that waits stacks on the
+    # branch of the step it waits on.
+    spans = len(set(places)) > 1
+    for number, (entry, cwd) in enumerate(zip(steps, places), 1):
+        row = {"planStep": number, "planStepTitle": entry["title"],
+               "planSteps": len(steps),
+               **({"planGroup": True, "planRepos": len(set(places))} if spans else {}),
+               "planRepo": entry.get("repo") or "",
+               "waitsOn": list(entry.get("waitsOn") or [])}
+        text = plan_step_prompt(run_id, number, steps, cwd, spans) + notes
+        if row["waitsOn"]:
+            run_relationships.upsert_child(CONFIG_DIR, {
+                "launchToken": secrets.token_hex(12), "sourceRunId": run_id,
+                "targetProject": cwd, "mode": "orc", "planStart": True,
+                "text": text, "choices": choices, "state": "waiting",
+                **({"autoMerge": True} if auto_merge else {}),
+                "requestedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                **row})
+            waiting.append(number)
+            continue
+        result, error = fork(run_id, meta, text, row, choices, cwd=cwd,
+                             **({"auto_merge": True} if auto_merge else {}))
+        if error:
+            failures.append("step %d: %s" % (number, error[1]))
+        else:
+            launched.append(result.get("runId"))
+    if launched:
+        with contextlib.suppress(OSError):
+            if run_unread.mark_read(UNREAD_PATH, run_id):
+                _refresh_boot_live()
+    invalidate_runs_body()
+    if not launched and failures:
+        return None, (409, "; ".join(failures), False)
+    return {"ok": True, "childRunId": launched[0] if launched else None,
+            "childRunIds": launched, "waitingSteps": waiting, "errors": failures}, None
 
 
 RUN_NOTES_SEEN = {"mtime": None}
@@ -6514,8 +6986,9 @@ def start_waiting_plan_steps_for_watch_tick():
 
 def run_group_sweep():
     """One pass for the runs of a group: start the steps whose wait is over,
-    then deliver the notes they sent each other."""
-    for step in (start_waiting_plan_steps, deliver_run_notes):
+    stop the steps stacked on a cancelled one, then deliver the notes they
+    sent each other."""
+    for step in (start_waiting_plan_steps, stop_steps_stacked_on_cancelled, deliver_run_notes):
         try:
             step()
         except Exception as exc:  # a daemon thread has nowhere to raise to
@@ -6774,6 +7247,7 @@ def gate_source(run_dir, gs):
     source when it's on disk, else the GateSynth fallback (qa's report). None
     when neither exists. Authored always wins, so a run that predates the
     fallback renders exactly as it did before."""
+    run_dir = os.path.realpath(run_dir)
     for rel in (gs.source, gs.fallback):
         if not rel:
             continue
@@ -9726,6 +10200,9 @@ def synthesized_stage_pending(run_dir, page, meta=None, run_id=None,
                 meta = json.load(handle)
         except (OSError, ValueError):
             return False
+    if is_orchestration_worker(meta) and page == "plan.html":
+        # A worker writes no Plan and reports to its coordinator.
+        return False
     if minimal_shell_run(meta):
         # Minimal shell: the run writes no Plan, so Ship is its only page
         # and carries the loader from the first phase instead of plan.html.
@@ -10239,6 +10716,9 @@ def pending_stage_page(meta):
         return local_review.TAB
     if planning_run(meta):
         return PLANNING_TAB
+    if is_orchestration_worker(meta):
+        # A worker has no page of its own while it builds: its Chat is it.
+        return None
     if meta.get("lifecycleVersion") in (3, 4):
         if phase == "clarification":
             return CLARIFICATION_TAB
@@ -11544,7 +12024,9 @@ def codex_direct_input(thread_id, text, *, run_id=None, from_orc=False):
                     params.setdefault("additionalContext", {})["orc-follow-up"] = {
                         "kind": "application", "value": follow_up_ctx}
                 if not from_orc:
-                    turn_base = run_diff.capture_turn_base(os.path.join(RUNS, run_id), meta)
+                    # A diff that cannot be read never stops the message.
+                    with contextlib.suppress(Exception):
+                        turn_base = run_diff.capture_turn_base(os.path.join(RUNS, run_id), meta)
             result = client.call("turn/steer" if active else "turn/start", params)
             if active:
                 confirmed = result.get("turnId") == active["id"]
@@ -12135,6 +12617,47 @@ def ship_at_landing_stop(run_id, skip_digest=None, wanted=lambda: True):
             "error": error, "digest": digest}
 
 
+def start_plan_at_plan_stop(run_id, skip_digest=None, wanted=lambda: True):
+    """Start the build for a completed plan whose Chat turned Auto merge on.
+    Plugins call this; core never starts a plan's build unasked.
+
+    Returns None while the run is not a completed plan waiting at its gate,
+    `wanted()` says no, work already started, or the plan digest is still
+    `skip_digest`. Otherwise returns
+    {"state": "started"|"blocked", "action": "start-work", "error", "digest", ...}."""
+    if IS_PREVIEW or DEMO.active:
+        return None
+    meta = run_meta(run_id) or {}
+    if (not planning_complete(meta) or meta.get("status") != "awaiting-gate"
+            or planning_outcome(meta)):
+        return None
+    with plan_start_lock(run_id):
+        if not wanted():
+            return None
+        meta = run_meta(run_id) or {}
+        if (not planning_complete(meta) or meta.get("status") != "awaiting-gate"
+                or planning_outcome(meta)):
+            return None
+        if _has_active_feedback_batch(run_id, artifact_key=PLANNING_TAB):
+            return None
+        if planning_started_steps(run_id):
+            return None
+        digest = plan_source_digest(run_id)
+        if not digest or digest == skip_digest:
+            return None
+        payload, error = start_plan_work(run_id, {}, fork=planning_fork, auto_merge=True)
+    if error:
+        return {"state": "blocked", "action": "start-work",
+                "error": error[1], "digest": digest}
+    errors = payload.get("errors") or []
+    child_ids = payload.get("childRunIds") or (
+        [payload["childRunId"]] if payload.get("childRunId") else [])
+    failure = "; ".join(errors) if errors else None
+    return {"state": "blocked" if failure else "started", "action": "start-work",
+            "error": failure, "digest": digest,
+            "childRunId": payload.get("childRunId"), "childRunIds": child_ids}
+
+
 def dispatch_merge_queues_for_watch_tick():
     if not IS_PREVIEW:
         dispatch_ship_launches()
@@ -12158,24 +12681,27 @@ def _main_merge_in_flight(run_id, meta):
         os.path.join(RUNS, run_id, "merge-main-transaction.json"))
 
 
-# meta.json path -> (stamp, (status, route, parentRunId)). The Ship bar scans
+# Run folder -> (stamp, (status, route, parentRunId)). The Ship bar scans
 # every run on each render, and parsing every meta.json held Yeet back for
 # seconds once there were ~1500 runs.
 RUN_SCAN_FIELDS = {}
+RUN_LOOKUP_CACHE_LOCK = threading.Lock()
 
 
 def run_scan_fields(run_id):
     """A run's (status, route, parentRunId), parsed again only when its
     meta.json stamp changes. Scans filter on these and read only the matches."""
-    path = os.path.join(RUNS, run_id, "meta.json")
+    path = os.path.join(RUNS, run_id)
     stamp = _meta_stamp(run_id)
-    cached = RUN_SCAN_FIELDS.get(path)
+    with RUN_LOOKUP_CACHE_LOCK:
+        cached = RUN_SCAN_FIELDS.get(path)
     if stamp is not None and cached and cached[0] == stamp:
         return cached[1]
     meta = run_meta(run_id)
     fields = (meta.get("status"), meta.get("route"), meta.get("parentRunId"))
     if stamp is not None:
-        RUN_SCAN_FIELDS[path] = (stamp, fields)
+        with RUN_LOOKUP_CACHE_LOCK:
+            RUN_SCAN_FIELDS[path] = (stamp, fields)
     return fields
 
 
@@ -12502,9 +13028,24 @@ def question_set_payload(run_id):
                 target=session_target(run_id)), None
 
 
+def chat_answer_item(run_id, item):
+    submission = item.get("chatSubmission")
+    if not isinstance(submission, str) or not re.fullmatch(r"[0-9a-f]{32}", submission):
+        return item
+    receipt = _read_feedback_json(os.path.join(RUNS, run_id, "clarification-review", "chat", submission + ".json"), {})
+    answers = receipt.get("gateAnswers") if isinstance(receipt, dict) else None
+    if isinstance(answers, dict) and answers.get("runId") == run_id and receipt.get("manifest") == item.get("chatManifest"):
+        return dict(item, gateAnswers=answers)
+    return item
+
+
+def chat_queue_view(run_id, items):
+    return [chat_answer_item(run_id, item) for item in run_chat.queued_view(items)]
+
+
 def answered_question_set_payload(run_id, item_id):
     items = run_chat.timeline(run_meta(run_id)).get("items", [])
-    item = next((item for item in items if item.get("id") == item_id), {})
+    item = chat_answer_item(run_id, next((item for item in items if item.get("id") == item_id), {}))
     sent = item.get("gateAnswers") or {}
     if sent.get("label") != "Clarification" or sent.get("runId") != run_id:
         return None, "This answer has no saved questions. Return to the chat to read the answers."
@@ -12513,9 +13054,10 @@ def answered_question_set_payload(run_id, item_id):
         r"\nAnswer manifest: clarification-review/manifests/(clarification-[A-Za-z0-9][A-Za-z0-9._:-]{0,113})\.json\s*$",
         item.get("text", ""))
     schema = None
-    if reference:
+    manifest_key = item.get("chatManifest") or (reference[1] if reference else None)
+    if manifest_key:
         schema = _read_feedback_json(os.path.join(
-            run_dir, "clarification-review", "questions", reference[1] + ".json"), None)
+            run_dir, "clarification-review", "questions", manifest_key + ".json"), None)
     if schema is None:
         # Older submissions predate the frozen schema. Ambiguous histories must
         # not present a later round's options as the original questions.
@@ -13124,9 +13666,11 @@ def grilling_review_delivery_text(review, manifest):
     return text
 
 
-def clarification_review_delivery_text(review):
+def clarification_review_delivery_text(review, chat_submission=None):
     text = review["text"]
     manifest_ref = "clarification-review/manifests/%s.json" % review["idempotencyKey"]
+    if chat_submission:
+        return f"{text}\nChat submission: {chat_submission}\nAnswer manifest: {manifest_ref}"
     if "\nAnswer manifest: %s" % manifest_ref not in text:
         text += "\nAnswer manifest: %s" % manifest_ref
     return text
@@ -14335,7 +14879,7 @@ def flush_follow_ups(run_id, now=None):
             return False
         text = "\n\n".join(queued_feedback_text(run_id, item["text"]) for item in items)
         if headless_session.is_target(pane):
-            # Only a note the user wrote starts a new turn in "Since last turn".
+            # Only a note the user wrote starts a new turn in "Last code change".
             from_orc = all(item.get("orc") for item in items)
             delivery = _submit_queued_command(run_id, state, pane, text, from_orc=from_orc)
             error = delivery.error
@@ -15012,6 +15556,7 @@ def run_chat_payload(run_id, cursor=None):
     still queued for the end of the agent's turn."""
     meta = run_meta(run_id)
     payload = run_chat.timeline(meta, cursor)
+    payload["items"] = [chat_answer_item(run_id, item) for item in payload.get("items", [])]
     if run_chat.harness_of(meta) == "claude":
         payload["claudeAccount"] = run_claude_account(meta) or claude_accounts.DEFAULT
     failure = meta.get("launchFailure")
@@ -15024,7 +15569,7 @@ def run_chat_payload(run_id, cursor=None):
     if failure:
         payload["turnFailure"] = failure
     queue = displayed_follow_ups(run_id)
-    payload["queued"] = run_chat.queued_view(queue["items"])
+    payload["queued"] = chat_queue_view(run_id, queue["items"])
     if queue.get("runPause"):
         payload["runPause"] = queue["runPause"]
     payload["queueHeld"] = bool(queue.get("held") or meta.get("orchestrationQueueHeld"))
@@ -15041,6 +15586,7 @@ def run_chat_payload(run_id, cursor=None):
     payload["checks"] = checks_with_fix_runs(run_checks.view(os.path.join(RUNS, run_id)), run_id=run_id, meta=meta)
     payload["prUpdates"] = pr_updates.view(os.path.join(RUNS, run_id))
     payload["settingChanges"] = chat_settings.changes(CONFIG_DIR, run_id=run_id)
+    payload["autoMergeChanges"] = auto_merge_changes(run_id)
     payload["deploy"] = run_deploy_view(run_id, meta)
     payload["catchUp"] = run_catch_up.view(os.path.join(RUNS, run_id))
     return payload
@@ -16730,10 +17276,8 @@ def orchestrator_run_mode(kind, review=False, follows=False):
     return "orc" if follows else "orc-plan"
 
 
-def orchestrator_start_run(project, kind, prompt, launch, auto=False, continue_run=None, parent_run=None, pr=None,
-                           source=None):
-    """Start a run the orchestrator proposed and you approved, or one it
-    started on its own (``auto``) because you plainly asked for it, in the
+def orchestrator_start_run(project, kind, prompt, launch, continue_run=None, parent_run=None, pr=None, source=None):
+    """Start a run the orchestrator proposed and you approved, in the
     configured project named ``project``, on the card's ``launch`` runner,
     through the composer's own launch path. A new piece of work starts as a
     plan run (``orchestrator_run_mode``). A runner this machine cannot
@@ -16780,7 +17324,7 @@ def orchestrator_start_run(project, kind, prompt, launch, auto=False, continue_r
         parent_run = None
     token = LAUNCH_PARENT.set(parent_run)
     try:
-        with launch_usage_source(source or ("orchestrator-auto" if auto else "orchestrator")):
+        with launch_usage_source(source or "orchestrator"):
             if cwd:
                 request = operations.application_request(globals(), "POST", "/api/new-conversation")
                 request.start_run(data, cwd=cwd, extra={"worktree": cwd})
@@ -16841,6 +17385,26 @@ def choose_auto_merge(run_id):
         return False
 
 
+def auto_merge_changes(run_id):
+    """Each time Auto merge was turned on or off for `run_id`, as Chat's badges
+    show them. Empty while the package is off."""
+    try:
+        return APP_PLUGIN_RUNTIME.invoke("auto-merge", "changes", run_id) or []
+    except Exception as error:
+        print("Auto merge %s: could not read its changes: %s" % (run_id, error), file=sys.stderr)
+        return []
+
+
+def plan_auto_merge_enabled(run_id):
+    """True when the Auto merge plugin is enabled and turned on for `run_id`."""
+    if not APP_PLUGINS.enabled_root("auto-merge"):
+        return False
+    try:
+        return APP_PLUGIN_RUNTIME.invoke("auto-merge", "enabled", run_id) is True
+    except Exception:
+        return False
+
+
 def _abort_reserved_stub(run_id, run_dir, adopted, stage, message):
     """Remove a brand-new unreserved stub after setup fails, or mark an
     adopted/undeletable stub escalated so it never stays stuck as running."""
@@ -16893,6 +17457,11 @@ def _reserve_launch(cwd, agent, mode, prompt, permission_args, launch_action,
                     'branch': collision_choice['branch'],
                     'createdAt': _feedback_now(),
                 }
+                # A plan step stacked on two steps starts from both merged.
+                if collision_choice.get('baseCommit'):
+                    stub['baseCommit'] = collision_choice['baseCommit']
+                if collision_choice.get('stackedOn'):
+                    stub['stackedOn'] = collision_choice['stackedOn']
         stub['launchPermissionMode'] = launch_permission_mode(agent, permission_args or [])
         preset = LAUNCH_PRESET.get()
         if orchestration:
@@ -17252,8 +17821,11 @@ def sync_live_build_worktrees_for_watch_tick(names, metas):
             metas[name] = run_meta(name)
             invalidate_runs_body()
         elif state in ("conflicted", "dirty-overlap"):
+            # A stacked run merges its parent's branch rather than main.
+            target_branch = result.get("targetBranch") or main_branch
+            target_head = result.get("targetHead") or main_head
             fresh = run_meta(name)
-            if fresh.get("buildSyncNotifiedCommit") == main_head:
+            if fresh.get("buildSyncNotifiedCommit") == target_head:
                 metas[name] = fresh
                 continue
             files = ", ".join(result.get("files") or [])
@@ -17269,14 +17841,15 @@ def sync_live_build_worktrees_for_watch_tick(names, metas):
                     "merged into %s. Resolve the conflict in this worktree while you still have "
                     "the context, stage the resolved files, and run `orc-sync-main --run-dir %s` "
                     "to finish the merge and reset buildBaseCommit.%s"
-                    % (main_branch, main_head[:7], files, real_wt, shlex.quote(run_dir), regen_hint)
+                    % (target_branch, target_head[:7], files, real_wt, shlex.quote(run_dir), regen_hint)
                 )
             else:
                 prompt_text = (
                     "[Orc] %s moved to %s and modified %s, where %s also has uncommitted edits. "
                     "Commit or stash your edits and run `orc-sync-main --run-dir %s` to merge %s "
                     "and reset buildBaseCommit, settling any conflict while you have the context."
-                    % (main_branch, main_head[:7], files, real_wt, shlex.quote(run_dir), main_branch)
+                    % (target_branch, target_head[:7], files, real_wt, shlex.quote(run_dir),
+                       target_branch)
                 )
             _, error = queue_follow_up(
                 name, prompt_text, source="collision-radar", orc=True,
@@ -17286,11 +17859,90 @@ def sync_live_build_worktrees_for_watch_tick(names, metas):
             with run_mutation_lock(name):
                 fresh = run_meta(name)
                 if fresh:
-                    fresh["buildSyncNotifiedCommit"] = main_head
+                    fresh["buildSyncNotifiedCommit"] = target_head
                     _write_run_meta(name, fresh)
                     metas[name] = fresh
             flush_follow_ups(name)
             invalidate_runs_body()
+
+
+# A stacked run's PR targets its parent's branch (bin/orc-pr). Once the
+# parent lands on main, Orc moves the PR to main, at most once per run every
+# few minutes while GitHub refuses.
+STACKED_PR_RETARGET = {"thread": None, "tried": {}}
+STACKED_PR_RETRY_SECONDS = 300
+
+
+def stacked_prs_to_retarget(names, metas, now=None):
+    """(run id, PR URL, main branch, main repository) for each stacked PR
+    whose parent has landed on main."""
+    now = time.time() if now is None else now
+    due = []
+    for name in names:
+        meta = metas.get(name) or {}
+        base, url = meta.get("prBase"), meta.get("prUrl")
+        if (not isinstance(base, str) or not base.strip() or not isinstance(url, str)
+                or not url.startswith("https://")
+                or meta.get("status") in ("cancelled", "merged", "merged-to-parent")
+                or meta.get("prState") in ("closed", "merged")):
+            continue
+        if now - STACKED_PR_RETARGET["tried"].get(name, 0) < STACKED_PR_RETRY_SECONDS:
+            continue
+        main_repo = collision_radar.canonical_repo(meta.get("mainRepoPath"))
+        if not main_repo:
+            continue
+        main_branch, main_head = collision_radar.default_branch_head(main_repo)
+        if not main_branch or not main_head:
+            continue
+        parents = [parent for parent in collision_radar.stack_parents(
+            Path(RUNS), meta, main_repo, main_head) if parent["branch"] == base]
+        if not parents:
+            tip = collision_radar.ref_sha(main_repo, "refs/heads/" + base)
+            parents = [{"landed": not tip or collision_radar.is_ancestor(main_repo, tip, main_head)}]
+        if all(parent["landed"] for parent in parents):
+            due.append((name, url, main_branch, main_repo))
+    return due
+
+
+def retarget_stacked_pr(run_id, url, main_branch, main_repo):
+    try:
+        result = subprocess.run(["gh", "pr", "edit", url, "--base", main_branch],
+                                cwd=main_repo, capture_output=True, text=True, timeout=60,
+                                env=dict(os.environ, GH_PROMPT_DISABLED="1"))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print("orc-ui: could not move %s to %s: %s" % (url, main_branch, exc), file=sys.stderr)
+        return False
+    if result.returncode != 0:
+        print("orc-ui: could not move %s to %s: %s"
+              % (url, main_branch, (result.stderr or result.stdout).strip()), file=sys.stderr)
+        return False
+    with run_mutation_lock(run_id):
+        meta = run_meta(run_id)
+        if meta and meta.get("prBase"):
+            meta.pop("prBase", None)
+            _write_run_meta(run_id, meta)
+    invalidate_runs_body()
+    return True
+
+
+def retarget_stacked_prs_for_watch_tick(names, metas):
+    if not OWNS_NATIVE_APP or IS_PREVIEW or DEMO.active:
+        return
+    thread = STACKED_PR_RETARGET["thread"]
+    if thread is not None and thread.is_alive():
+        return
+    due = stacked_prs_to_retarget(names, metas)
+    if not due:
+        return
+    for name, *_rest in due:
+        STACKED_PR_RETARGET["tried"][name] = time.time()
+
+    def work():
+        for item in due:
+            retarget_stacked_pr(*item)
+    STACKED_PR_RETARGET["thread"] = threading.Thread(
+        target=work, name="orc-stacked-pr-retarget", daemon=True)
+    STACKED_PR_RETARGET["thread"].start()
 
 
 NEW_CONV_TRANSPORTS = {"headless": "spawn_headless_conversation"}
@@ -17749,6 +18401,8 @@ def _launch_context_child(record):
         launch_kwargs = child_account_kwargs(run_meta(record["sourceRunId"]), record["agent"])
     if orchestration_enabled:
         launch_kwargs["orchestration"] = True
+    if record.get("autoMerge") is True:
+        launch_kwargs["auto_merge"] = True
     # A child that names its own permission mode launches with it; any other
     # keeps the mode its source run launched with.
     own_mode = NEW_CONV_PERMISSION_MODES.get(record["agent"], {}).get(record.get("permissionMode"))
@@ -17759,6 +18413,8 @@ def _launch_context_child(record):
     launch_kwargs["permission_args"] += launch_fast_args(
         record["agent"], record.get("model"), record.get("fast", False))
     preset_token = LAUNCH_PRESET.set(record.get("orchestrationPreset", LAUNCH_PRESET.get()))
+    # A stacked plan step builds on the branch of the step it waits on.
+    stack_token = LAUNCH_COLLISION.set(record["stack"]) if isinstance(record.get("stack"), dict) else None
     try:
         result, error = new_conv_spawn_for(transport)(
             record["targetProject"], record["agent"],
@@ -17773,6 +18429,8 @@ def _launch_context_child(record):
                              "error": None}))
     finally:
         LAUNCH_PRESET.reset(preset_token)
+        if stack_token is not None:
+            LAUNCH_COLLISION.reset(stack_token)
     if error:
         run_relationships.upsert_child(CONFIG_DIR, {
             **record, "state": "failed", "error": error[1]})
@@ -19435,7 +20093,7 @@ def _inventory_copy(entry):
 MEDIA_VERSION_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".webm", ".mp4")
 
 
-def run_inventory(run_dir, name, raw_meta, digest=None):
+def run_inventory(run_dir, name, raw_meta, digest=None, *, unreadable=None):
     """(files, max_mtime, versions) for one run — the walk, cached for runs
     that can no longer change.
 
@@ -19481,6 +20139,8 @@ def run_inventory(run_dir, name, raw_meta, digest=None):
             try:
                 st = os.stat(full)
             except OSError:
+                if unreadable is not None:
+                    unreadable.append(full)
                 continue  # broken symlink (e.g. shots/node_modules from another machine)
             if st.st_mtime > max_mtime:
                 max_mtime = st.st_mtime
@@ -20533,15 +21193,32 @@ def runs_payload_bytes():
     return entry["body"], entry["etag"]
 
 
+def _prune_run_caches(local_ids):
+    run_dirs = {os.path.join(RUNS, name) for name in local_ids}
+    for cache, lock, present in (
+            (RAW_META_CACHE, RAW_META_CACHE_LOCK, local_ids),
+            (RUN_DERIVED_CACHE, RUN_DERIVED_CACHE_LOCK, local_ids),
+            (RUN_INVENTORY_CACHE, RUN_INVENTORY_CACHE_LOCK, local_ids),
+            (SETTLED_ROW_CACHE, SETTLED_ROW_CACHE_LOCK, local_ids),
+            (COST_CACHE, COST_CACHE_LOCK, local_ids),
+            (HARNESS_THREAD_LINKS, RUN_LOOKUP_CACHE_LOCK, run_dirs),
+            (RUN_SCAN_FIELDS, RUN_LOOKUP_CACHE_LOCK, run_dirs)):
+        with lock:
+            for gone in cache.keys() - present:
+                del cache[gone]
+
+
 def scan():
     runs = []
     if not os.path.isdir(RUNS):
+        _prune_run_caches(set())
         return []
     queued, queue_predecessors = queued_run_state()
     release_versions = _orc_release_versions_by_commit()
     orc_repo = _orc_source_repo()
     names = _run_names()
     local_ids = set(names)
+    _prune_run_caches(local_ids)
     raw_metas = {}
     raw_texts = {}  # parsed again per run below: cheaper than a deep copy
     for name in local_ids:
@@ -20551,9 +21228,6 @@ def scan():
             raw_texts[name] = text
         except (OSError, ValueError):
             raw_metas[name] = {}
-    with RAW_META_CACHE_LOCK:
-        for gone in set(RAW_META_CACHE) - local_ids:
-            RAW_META_CACHE.pop(gone, None)  # deleted run caches nothing
     active_merge_by_repo = {}
     for candidate_id in sorted(raw_metas):
         candidate = raw_metas[candidate_id]
@@ -20567,20 +21241,12 @@ def scan():
             }
     relationship_view = run_relationships.compatibility_view(
         raw_metas, run_relationships.read_store(CONFIG_DIR))
-    with RUN_DERIVED_CACHE_LOCK:
-        for gone in set(RUN_DERIVED_CACHE) - local_ids:
-            RUN_DERIVED_CACHE.pop(gone, None)  # deleted run caches nothing
-    with RUN_INVENTORY_CACHE_LOCK:
-        for gone in set(RUN_INVENTORY_CACHE) - local_ids:
-            RUN_INVENTORY_CACHE.pop(gone, None)  # ditto
-    with SETTLED_ROW_CACHE_LOCK:
-        for gone in set(SETTLED_ROW_CACHE) - local_ids:
-            SETTLED_ROW_CACHE.pop(gone, None)  # ditto
     session_reads = run_session.RunSessions(RUNS)
     # Per-scan indexes: every run used to walk the whole relationship store
     # (runs x rows) and re-derive its project's scripts, which is the same
     # answer for every run in a project.
     links_out, links_in, children_of, parent_row = _index_relationships(relationship_view)
+    question_projects = run_relationships.question_projects_by_run(relationship_view)
     latest_notes = run_notes.latest_by_run(run_notes.read_notes(CONFIG_DIR))
     scripts_by_repo = {}
     focus = focus_marks(power_mode.read_focus(CONFIG_DIR))
@@ -20610,7 +21276,7 @@ def scan():
                 links_out.get(name), links_in.get(name), parent_row.get(name), children,
                 children and [raw_metas.get(row.get("childRunId"), {}).get("status")
                               for row in children],
-                focus.get(name), health, devd_servers(raw_metas[name])))
+                focus.get(name), health, devd_servers(raw_metas[name]), question_projects.get(name)))
         reused = settled_row_reused(name, reuse_key, now) if reuse_key is not None else None
         if reused is not None:
             runs.append(reused)
@@ -20670,9 +21336,14 @@ def scan():
         meta.pop("threadLink", None)  # payload-only
         harness = harnesses.get(meta.get("harness"))
         if harness is not None and hasattr(harness, "thread_link"):
-            link = HARNESS_THREAD_LINKS.get(run_dir) or harness.thread_link(run_dir)
+            with RUN_LOOKUP_CACHE_LOCK:
+                link = HARNESS_THREAD_LINKS.get(run_dir)
+            if not link:
+                link = harness.thread_link(run_dir)
+                if link:
+                    with RUN_LOOKUP_CACHE_LOCK:
+                        HARNESS_THREAD_LINKS[run_dir] = link
             if link:
-                HARNESS_THREAD_LINKS[run_dir] = link
                 meta["threadLink"] = {**link, "agent": meta["harness"]}
         meta.pop("sourcePrUrl", None)  # payload-only
         source_pr = run_pull_request.source_pr_url(meta, prompt_text)
@@ -20730,7 +21401,13 @@ def scan():
         # API payload so those runs render on Done without rewriting history.
         if meta.get("status") in ("merged", "merged-to-parent"):
             meta["phase"] = "done"
-        question_run = is_question_run(meta, run_dir=run_dir)
+        inventory = None
+        question_run = False
+        if meta.get("outcome") == "question" and meta.get("status") == "complete":
+            unreadable = []
+            inventory = run_inventory(run_dir, name, raw_metas.get(name) or {}, unreadable=unreadable)
+            question_run = (not unreadable and os.path.isfile(os.path.join(run_dir, ANSWER_TAB))
+                            and is_question_run(meta, artifact_paths=inventory[0]))
         # An unadopted launcher with a confirmed ended session cannot start.
         if (meta.get("titlePending") and meta.get("status") == "running"
                 and meta.get("sessionAlive") is False):
@@ -20783,18 +21460,19 @@ def scan():
                 meta["manualSteps"] = steps_open  # payload-only
         # Archiving moves files without touching meta.json, so the archive
         # record is part of the key: an archived run re-walks once.
-        try:
-            archived = os.lstat(os.path.join(run_dir, run_archive.RECORD)).st_mtime_ns
-        except OSError:
-            archived = None
-        files, max_mtime, versions = run_inventory(
-            run_dir, name, raw_metas.get(name) or {},
-            digest=(hashlib.sha1(("%s\n%s" % (archived, text)).encode()).hexdigest()
-                    if text is not None else None))
+        if inventory is None:
+            try:
+                archived = os.lstat(os.path.join(run_dir, run_archive.RECORD)).st_mtime_ns
+            except OSError:
+                archived = None
+            inventory = run_inventory(
+                run_dir, name, raw_metas.get(name) or {},
+                digest=(hashlib.sha1(("%s\n%s" % (archived, text)).encode()).hexdigest()
+                        if text is not None else None))
+        files, max_mtime, versions = inventory
         question_run = is_question_run(meta, artifact_paths=files)
         if question_run:
-            project_context = run_relationships.question_project_context(
-                relationship_view, name)
+            project_context = run_relationships.question_project_from_rows(question_projects.get(name, ()))
             if project_context is not None:
                 meta["projectContext"] = project_context
         # Snapshot hashing, revision diffing and gate-tab synthesis are the
@@ -20877,9 +21555,12 @@ def scan():
 
 def inherit_plan_source(runs):
     """Runs nested under started work, such as its per-repository split
-    children, build from the same plan."""
+    children, build from the same plan. An Orchestrate worker builds a task
+    its coordinator handed it, not the plan, so it shows no Plan tab."""
     by_id = {run["id"]: run["meta"] for run in runs}
     for meta in by_id.values():
+        if is_orchestration_worker(meta):
+            continue
         seen, parent_id = set(), meta.get("parentRunId")
         while "planRunId" not in meta and parent_id in by_id and parent_id not in seen:
             seen.add(parent_id)
@@ -21395,10 +22076,11 @@ def synthesized_snapshot_request(rest):
 # ThreadingHTTPServer) all touch this list.
 SUBSCRIBERS = []
 SUBSCRIBERS_LOCK = threading.Lock()
+EVENT_BACKLOG = 64
 
 
 def subscribe_events():
-    q = queue.Queue()
+    q = queue.Queue(maxsize=EVENT_BACKLOG)
     with SUBSCRIBERS_LOCK:
         SUBSCRIBERS.append(q)
     return q
@@ -21417,10 +22099,8 @@ def broadcast(event):
         try:
             q.put_nowait(payload)
             reached += 1
-        except Exception:
-            with SUBSCRIBERS_LOCK:
-                if q in SUBSCRIBERS:
-                    SUBSCRIBERS.remove(q)
+        except queue.Full:
+            continue
     return reached
 
 
@@ -22460,6 +23140,10 @@ def watch_runs():
                 pass
             try:
                 sync_live_build_worktrees_for_watch_tick(names, metas)
+            except (ValueError, OSError):
+                pass
+            try:
+                retarget_stacked_prs_for_watch_tick(names, metas)
             except (ValueError, OSError):
                 pass
             try:
@@ -24778,11 +25462,17 @@ def _devd_problems(wt):
     return list(row.get("problems") or []) if row else []
 
 
-def _qa_problems(wt):
-    """The run's stopped processes, each with the enabled plugins' fix for
-    what its log says, when one matches (`fix`, else None)."""
+def _qa_problems(run_id, wt):
+    """The run's stopped processes, each with the fix for what its log says
+    when one matches (`fix`, else None): the enabled plugins' fixes first,
+    then Orc's own. A project on the plain dev server setting has one: the
+    install or dev server whose last start failed."""
     problems = _devd_problems(wt)
-    fixes = APP_PLUGINS.qa_setup_fixes() if problems else []
+    operation = wt.get("operation") if isinstance(wt.get("operation"), dict) else {}
+    if not problems and operation.get("state") == "failed" and wt.get("slug"):
+        stopped = worktree_servers.read_problem(os.path.join(RUNS, run_id), wt)
+        problems = [stopped] if stopped else []
+    fixes = APP_PLUGINS.qa_setup_fixes() + qa_setup_fix.BUILTIN_FIXES if problems else []
     return [dict(problem, fix=qa_setup_fix.match_fix(problem.get("lines"), fixes)) for problem in problems]
 
 
@@ -24813,7 +25503,7 @@ def _qa_app_state(run_id, meta):
             "url": url if state == "running" else None, "canStart": can_start, "error": error,
             "startAction": start_action if can_start else None,
             "blocked": blocked if state == "none" else None,
-            "problems": _qa_problems(wt), "setupFix": qa_setup_fix.view(run_id)}
+            "problems": _qa_problems(run_id, wt), "setupFix": qa_setup_fix.view(run_id)}
 
 
 QA_APP_STARTS = ("start", "restart", "recreate", "setup")
@@ -25030,20 +25720,28 @@ def _qa_after_setup_fix(run_id):
 
 
 def qa_setup_fix_action(run_id, meta, do, fix_id):
-    """Run it or Close for the fix the QA window offers. Run only starts the
-    command of the fix the current log still matches, never text the page
-    sent, so the page can only ask for a fix Orc itself offered."""
+    """Run it, Open a terminal here or Close for the fix the QA window
+    offers. Run only starts the command of the fix the current log still
+    matches, never text the page sent, so the page can only ask for a fix Orc
+    itself offered. The terminal is a login shell in the run's checkout,
+    outside the QA sandbox, for what no fix knows; it starts nothing after."""
     if do == "close":
         qa_setup_fix.close(run_id)
+        return
+    running = qa_setup_fix.get(run_id)
+    if do == "terminal":
+        if running and running.exit_code is None:
+            raise qa_hub.ActionError(409, "A terminal or fix is already open.")
+        qa_setup_fix.start(run_id, qa_setup_fix.TERMINAL,
+                           run_checkout_dir(meta) or os.path.expanduser("~"), lambda: None)
         return
     if do != "run" or not isinstance(fix_id, str):
         raise qa_hub.ActionError(400, "unknown setup fix action")
     wt = meta.get("worktree") if isinstance(meta.get("worktree"), dict) else {}
-    fix = next((problem["fix"] for problem in _qa_problems(wt)
+    fix = next((problem["fix"] for problem in _qa_problems(run_id, wt)
                 if problem.get("fix") and problem["fix"]["id"] == fix_id), None)
     if fix is None:
         raise qa_hub.ActionError(409, "That fix no longer matches why setup stopped. Start the app again.")
-    running = qa_setup_fix.get(run_id)
     if running and running.exit_code is None:
         raise qa_hub.ActionError(409, "The fix is still running.")
     qa_setup_fix.start(run_id, fix, run_checkout_dir(meta) or os.path.expanduser("~"),
@@ -25063,9 +25761,81 @@ def qa_payload(run_id, *, terminal_allowed=True):
         run_dir, run_id, document, run=_qa_run_view(run_id, meta), app=_qa_app_state(run_id, meta),
         main=_qa_main_state(meta), review=review, writing=writing,
         mcp_server=qa_mcp_server_name(run_id, meta),
-        mcp_hash="%s/%s" % (run_id, "__mcp__") if has_mcp_tab else None, meta=meta)
+        mcp_hash="%s/%s" % (run_id, "__mcp__") if has_mcp_tab else None, meta=meta,
+        delivery=qa_failure_delivery(run_id, meta))
     payload["shell"] = _qa_shell_status(meta, terminal_allowed)
     return payload
+
+
+def qa_review_draft_run(run_id, meta):
+    """The run whose drafted review a QA window's failures go into, as
+    (run id, run dir, meta): a code review run itself, or the review child of
+    a QA run from before Review in Orc ran the review alone. None when there
+    is no such run."""
+    if reviewed_pull_request(meta):
+        return run_id, os.path.join(RUNS, run_id), meta
+    if not is_qa_run(meta):
+        return None
+    try:
+        with open(os.path.join(RUNS, run_id, QA_REVIEW), encoding="utf-8") as handle:
+            record = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    child_id = record.get("runId") if isinstance(record, dict) else None
+    if not isinstance(child_id, str) or not _existing_run_id(child_id):
+        return None
+    return child_id, os.path.join(RUNS, child_id), run_meta(child_id)
+
+
+def qa_run_head(meta):
+    checkout = run_checkout_dir(meta)
+    return _git_value(checkout, "rev-parse", "HEAD", timeout=10) if checkout and os.path.isdir(checkout) else None
+
+
+def qa_failure_delivery(run_id, meta):
+    """Where the QA window sends failed steps (ui/qa_hub.py): your review of
+    a pull request, else the run's own agent, whose Chat must still take a
+    message. The target is decided here, never by the window, so a
+    colleague's step text only ever reaches your draft."""
+    if qa_pull_request(meta):
+        found = qa_review_draft_run(run_id, meta)
+        state = pr_review_draft.qa_status(found[1], found[2]) if found else "none"
+        return {"target": "review", "state": state}
+    return {"target": "agent", "state": "open" if meta.get("status") in CHAT_QUEUE_STATUSES else "finished",
+            "head": lambda: qa_run_head(meta)}
+
+
+def send_qa_failures(run_id, meta, document, shown):
+    """The QA window's Add to your review / Send to the agent."""
+    run_dir = os.path.join(RUNS, run_id)
+    delivery = qa_failure_delivery(run_id, meta)
+    if delivery["state"] == "posted":
+        raise qa_hub.ActionError(409, "Your review is already on GitHub, so it takes no more comments.")
+    if delivery["state"] != "open":
+        raise qa_hub.ActionError(409, "Your review has no draft yet." if delivery["target"] == "review"
+                                 else "This run has finished, so its agent takes no messages.")
+    if delivery["target"] == "review":
+        _draft_id, draft_dir, draft_meta = qa_review_draft_run(run_id, meta)
+
+        def deliver(failures):
+            comments = [qa_hub.review_comment(item, qa_hub.stage_shots(item["shots"], draft_dir))
+                        for item in failures]
+            try:
+                pr_review_draft.add_comments(draft_dir, draft_meta, comments)
+            except pr_review_draft.DraftError as error:
+                raise qa_hub.ActionError(error.status, qa_hub.sentence(str(error))) from None
+        return qa_hub.send_failures(run_dir, run_id, document, shown, "review", deliver)
+
+    def deliver(failures):
+        root = os.path.realpath(run_dir)
+        attachments = {item["id"]: [os.path.join(root, path) for path in qa_hub.stage_shots(item["shots"], run_dir)]
+                       for item in failures}
+        _state, error = queue_follow_up(run_id, qa_hub.agent_message(failures, attachments), source="chat")
+        if error:
+            raise qa_hub.ActionError(error[0], qa_hub.sentence(error[1]))
+        if flush_follow_ups(run_id):
+            unsettle_messaged_run(run_id)
+    return qa_hub.send_failures(run_dir, run_id, document, shown, "agent", deliver, commit=qa_run_head(meta))
 
 
 def qa_chat_diff(run_id, meta):
@@ -26923,7 +27693,6 @@ class ApplicationHandler:
         headers = {
             "ETag": etag,
             "Accept-Ranges": "bytes",
-            "X-Orc-Branch-Has-Diff": "1" if snapshot.branch_has_diff else "0",
             "X-Content-Type-Options": "nosniff",
         }
         if self.headers.get("If-None-Match") == etag:
@@ -27030,7 +27799,7 @@ class ApplicationHandler:
         self.send_header("Sec-WebSocket-Accept", run_terminal.accept_key(key))
         self.end_headers()
         self.close_connection = True
-        ws = run_terminal.WebSocket(self.rfile, self.wfile)
+        ws = run_terminal.WebSocket(self.rfile, self.wfile, self.connection)
         if tab == "agent":
             ws.send_json({"type": "error", "message": "Agent sessions are available in Chat"})
             ws.close()
@@ -27042,7 +27811,7 @@ class ApplicationHandler:
             if tab == run_herdr.HERDR_TAB:
                 shell = run_herdr.client(CONFIG_DIR, cwd)
                 # herdr draws at the PTY's size from its first frame.
-                run_terminal.set_size(shell.master, cols, rows)
+                shell.resize(cols, rows)
                 try:
                     run_herdr.ensure_workspace(CONFIG_DIR, page["scope"], cwd, page["label"], page["project"])
                 except run_herdr.HerdrError as exc:
@@ -27105,7 +27874,7 @@ class ApplicationHandler:
         self.send_header("Sec-WebSocket-Accept", run_terminal.accept_key(key))
         self.end_headers()
         self.close_connection = True
-        ws = run_terminal.WebSocket(self.rfile, self.wfile)
+        ws = run_terminal.WebSocket(self.rfile, self.wfile, self.connection)
         if fix_run is not None:
             # Outside the sandbox on purpose: a fix signs in, so it needs the
             # network and writes to the person's own config.
@@ -27141,7 +27910,9 @@ class ApplicationHandler:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
+        self.close_connection = True
+        self.connection.settimeout(15)
+        self.send_header("Connection", "close")
         self.end_headers()
         q = subscribe_events()
         try:
@@ -27732,7 +28503,11 @@ class ApplicationHandler:
         seen = data.get("hash") if isinstance(data.get("hash"), str) else None
         try:
             if action == "verdict":
-                qa_hub.set_verdict(run_dir, run_id, document, step, data.get("verdict"), seen)
+                qa_hub.set_verdict(run_dir, run_id, document, step, data.get("verdict"), seen, data.get("page"))
+            elif action == "send-failures":
+                send_qa_failures(run_id, meta, document, data.get("steps"))
+            elif action == "retest":
+                qa_hub.retest(run_dir, run_id, document, step, seen)
             elif action == "note":
                 qa_hub.set_note(run_dir, run_id, document, step, data.get("note"), seen)
             elif action == "screenshot":
@@ -27923,7 +28698,8 @@ class ApplicationHandler:
             return self.post_config()
         if path == "/api/theme":
             return self.post_theme()
-        if path in ("/api/chat-settings/change", "/api/chat-settings/undo", "/api/chat-settings/prefs"):
+        if path in ("/api/chat-settings/change", "/api/chat-settings/undo", "/api/chat-settings/prefs",
+                    "/api/chat-settings/dev-server"):
             return self.post_chat_settings(path.rsplit("/", 1)[1])
         if path == "/api/power-mode":
             return self.post_power_mode()
@@ -28763,7 +29539,7 @@ class ApplicationHandler:
         if broadcast({"type": "navigate", "fragment": fragment, "auto": auto,
                       "foreground": foreground, "force": force}) > 0:
             return self.send_body(b'{"ok": true}', "application/json")
-        return self.json_error(409, "no app connected")
+        return self.json_error(409, "no app ready for navigation")
 
     def artifact_feedback_draft(self, run_id, data):
         with run_mutation_lock(run_id):
@@ -29193,10 +29969,14 @@ class ApplicationHandler:
         notes = data.get("notes", "")
         if not isinstance(notes, str) or len(notes.encode("utf-8")) > MAX_FEEDBACK_BODY_BYTES:
             return self.json_error(400, "invalid notes")
+        submission = data.get("chatSubmission") if delivery == "send" and state["kind"] == "clarification" else None
+        if submission is not None and (not isinstance(submission, str) or not re.fullmatch(r"[0-9a-f]{32}", submission)):
+            return self.json_error(400, "invalid chat submission")
+        chat_rows = [] if submission else None
         try:
             els, lines = question_sets.encode(
                 state["schema"], data.get("answers"), notes,
-                clarification=state["kind"] == "clarification")
+                clarification=state["kind"] == "clarification", chat_answers=chat_rows)
         except ValueError as exc:
             return self.json_error(400, str(exc), False)
         if state["kind"] == "clarification":
@@ -29212,7 +29992,7 @@ class ApplicationHandler:
                 "text": "Clarification review (%s):\nIntent: answer clarification\n%s" % (
                     run_id, "\n".join(lines)),
                 "delivery": delivery,
-            })
+            }, chat_submission=submission, chat_rows=chat_rows, chat_notes=notes.strip() if state["shape"]["notes"] else "")
         text = "%s answers (%s):\n%s" % (state["shape"]["prefix"], run_id, "\n".join(lines))
         if delivery == "copy":
             return self.send_body(json.dumps({
@@ -29235,7 +30015,7 @@ class ApplicationHandler:
             return self.send_answers(run_id, {
                 "text": text, "gatePage": PLANNING_TAB, "gateGeneration": state["generation"]})
 
-    def clarification_review_submit(self, run_id, data):
+    def clarification_review_submit(self, run_id, data, *, chat_submission=None, chat_rows=None, chat_notes=""):
         """Commit one lifecycle-v3 Clarification answer and wake once."""
         with run_mutation_lock(run_id):
             delivery = data.get("delivery", "send") if isinstance(data, dict) else None
@@ -29271,6 +30051,7 @@ class ApplicationHandler:
                         "ok": True, "status": "delivered",
                         "delivery": state.get("delivery", "send"),
                         "text": clarification_review_delivery_text(review),
+                        "chatSubmission": state.get("chatSubmission"),
                         "deliveryIdentity": delivery_identity,
                         "idempotent": True,
                     }).encode(), "application/json")
@@ -29341,6 +30122,15 @@ class ApplicationHandler:
             pane = delivery_pane(run_id)
             if not pane:
                 return self.json_error(409, "run has no live session — use Copy answer")
+            if chat_submission:
+                gate_answers = {"label": "Clarification", "runId": run_id, "answers": [
+                    {"question": run_chat.clip(row["question"], 2000), "answer": run_chat.clip(row["answer"], 4000)}
+                    for row in chat_rows]}
+                if chat_notes:
+                    gate_answers["notes"] = run_chat.clip(chat_notes, 4000)
+                receipt = {"manifest": key, "gateAnswers": gate_answers}
+                if not _atomic_json(os.path.join(root, "chat", chat_submission + ".json"), receipt, immutable=True):
+                    return self.json_error(409, "could not save chat submission")
             dispatching = {
                 "schemaVersion": 1, "idempotencyKey": key,
                 "status": "dispatching", "updatedAt": _feedback_now(),
@@ -29354,7 +30144,7 @@ class ApplicationHandler:
                     dispatching, status="created", updatedAt=_feedback_now(),
                     deliveryError=error))
                 return self.json_error(409, error)
-            text = clarification_review_delivery_text(review)
+            text = clarification_review_delivery_text(review, chat_submission)
             result = paste_to_pane(pane, text, escape_first=False, queue_when_busy=True)
             if result:
                 restored = restore_run_status(run_id, status, "awaiting-gate")
@@ -29370,6 +30160,8 @@ class ApplicationHandler:
                 "status": "delivered", "delivery": "send",
                 "updatedAt": _feedback_now(), "deliveredAt": _feedback_now(),
             }
+            if chat_submission:
+                delivered["chatSubmission"] = chat_submission
             if not _atomic_json(state_path, delivered):
                 return self.json_error(
                     500, "answer sent but delivery receipt could not be saved", False)
@@ -29808,7 +30600,7 @@ class ApplicationHandler:
                 _, error = append_follow_up(run_id, queue, message, source="chat")
                 if error:
                     return self.json_error(*error)
-                return delivered(dict(queue, items=run_chat.queued_view(queue["items"]),
+                return delivered(dict(queue, items=chat_queue_view(run_id, queue["items"]),
                                       sent=False, queued=True))
             thread_id = local_codex_thread(meta)
             if thread_id:
@@ -29839,7 +30631,7 @@ class ApplicationHandler:
             if error:
                 return self.json_error(*error)
             queue = read_follow_ups(run_id)
-            return delivered(dict(queue, items=run_chat.queued_view(queue["items"]),
+            return delivered(dict(queue, items=chat_queue_view(run_id, queue["items"]),
                                   sent=False, queued=True))
         if delivery.busy:
             return self.json_error(409, "the agent did not stop in time; your message was not sent", True)
@@ -29929,7 +30721,7 @@ class ApplicationHandler:
                     500, "Message sent, but the queue could not be updated. Check the conversation before retrying.",
                     False)
         queue = read_follow_ups(run_id)
-        payload = dict(queue, items=run_chat.queued_view(queue["items"]), sent=True)
+        payload = dict(queue, items=chat_queue_view(run_id, queue["items"]), sent=True)
         return self.send_body(json.dumps(payload).encode(), "application/json")
 
     def chat_resume_queue(self, run_id):
@@ -29949,7 +30741,7 @@ class ApplicationHandler:
         schedule_focus(start=run_id)
         sent = flush_follow_ups(run_id)
         queue = read_follow_ups(run_id)
-        payload = dict(queue, items=run_chat.queued_view(queue["items"]), sent=sent)
+        payload = dict(queue, items=chat_queue_view(run_id, queue["items"]), sent=sent)
         return self.send_body(json.dumps(payload).encode(), "application/json")
 
     def chat_stop(self, run_id):
@@ -30014,7 +30806,8 @@ class ApplicationHandler:
             state["items"] = [item for item in state["items"] if item["id"] != item_id]
             if not write_follow_ups(run_id, state):
                 return self.json_error(500, "could not update the queue")
-        self.send_body(json.dumps(read_follow_ups(run_id)).encode(),
+        state = read_follow_ups(run_id)
+        self.send_body(json.dumps(dict(state, items=chat_queue_view(run_id, state["items"]))).encode(),
                        "application/json")
 
     def session_action(self, run_id, data):
@@ -30271,8 +31064,10 @@ class ApplicationHandler:
             _write_run_meta(run_id, meta)
         self.send_body(b'{"ok": true}', "application/json")
 
-    def _planning_fork(self, run_id, meta, text, step=None, choices=None, cwd=None):
-        return planning_fork(run_id, meta, text, step, choices, cwd=cwd)
+    def _planning_fork(self, run_id, meta, text, step=None, choices=None, cwd=None,
+                       auto_merge=False):
+        return planning_fork(run_id, meta, text, step, choices, cwd=cwd,
+                             **({"auto_merge": True} if auto_merge else {}))
 
     def forward_answer_follow_up(self, run_id, data, store):
         if not _origin_may_mutate(self.headers):
@@ -30466,111 +31261,10 @@ class ApplicationHandler:
             return self._planning_start(run_id, data)
 
     def _planning_start(self, run_id, data):
-        meta = run_meta(run_id)
-        if not planning_complete(meta):
-            return self.json_error(409, "planning session is not complete", False)
-        if _has_active_feedback_batch(run_id, artifact_key=PLANNING_TAB):
-            return self.json_error(409, "the plan is being revised", False)
-        text = whole_plan_build_prompt(run_id)
-        # A plan lists its runs under `## Work`; `step` starts one of them.
-        # Without it the child builds the whole plan in one run, unless the
-        # steps name their repositories: then each step is its own run.
-        number = data.get("step") if isinstance(data, dict) else None
-        step = None
-        steps = plan_step_list(run_id)
-        names = [entry["title"] for entry in steps]
-        choices = {key: data[key] for key in PLAN_BUILD_CHOICES
-                   if isinstance(data, dict) and key in data}
-        if number is None and plan_names_repositories(steps):
-            return self._planning_start_group(run_id, meta, steps, choices)
-        if number is None:
-            # One run for every step, so the steps show it and offer no Start.
-            # A plan of one step or none has only this Start, and one build.
-            if planning_started_steps(run_id):
-                return self.json_error(409, "the plan already has work started", False)
-            if len(names) > 1:
-                step = {"planWhole": True}
-        if number is not None:
-            if type(number) is not int or not 1 <= number <= len(names):
-                return self.json_error(400, "the plan has no step %s" % number, False)
-            started = planning_started_steps(run_id)
-            if "whole" in started:
-                return self.json_error(409, "a run is already building the whole plan", False)
-            if number in started:
-                return self.json_error(409, "step %d already has a run" % number, False)
-            step = {"planStep": number, "planStepTitle": names[number - 1],
-                    "planSteps": len(names)}
-            text = ('Build step %d of %d, "%s", from the plan the planning session '
-                    "settled in planning/planning.mdx (run %s). Build only that step: "
-                    "the plan's other steps are separate runs. Its decisions are "
-                    "settled direction; do not reopen them."
-                    % (number, len(names), names[number - 1], run_id))
-        cwd = None
-        if number is not None and plan_names_repositories(steps):
-            # A step of a plan that names repositories builds in its own.
-            plan_cwd = configured_repo_cwd(meta.get("mainRepoPath") or meta.get("repoPath"))
-            cwd = resolve_plan_repo(steps[number - 1].get("repo"), plan_cwd)
-            if not cwd:
-                return self.json_error(409, "no configured project is named %s"
-                                       % steps[number - 1].get("repo"), False)
-            places = {resolve_plan_repo(entry.get("repo"), plan_cwd) for entry in steps}
-            step.update(planGroup=True, planRepo=steps[number - 1].get("repo") or "",
-                        planRepos=len(places))
-            text = plan_step_prompt(run_id, number, steps, cwd)
-        text += plan_notes_for_build(run_id)
-        result, error = self._planning_fork(run_id, meta, text, step, choices,
-                                            **({"cwd": cwd} if cwd else {}))
+        payload, error = start_plan_work(run_id, data, fork=self._planning_fork)
         if error:
             return self.json_error(*error)
-        with contextlib.suppress(OSError):
-            if run_unread.mark_read(UNREAD_PATH, run_id):
-                invalidate_runs_body()
-                _refresh_boot_live()
-        return self.send_body(json.dumps({
-            "ok": True, "childRunId": result.get("runId")}).encode(), "application/json")
-
-    def _planning_start_group(self, run_id, meta, steps, choices):
-        """Start work on a plan whose steps name their repositories: one run
-        per step, each in its repository, all at once. A step that waits on
-        another is recorded as waiting and starts when that run reaches Ship."""
-        if planning_started_steps(run_id):
-            return self.json_error(409, "the plan already has work started", False)
-        plan_cwd = configured_repo_cwd(meta.get("mainRepoPath") or meta.get("repoPath"))
-        places = [resolve_plan_repo(entry.get("repo"), plan_cwd) for entry in steps]
-        missing = sorted({entry.get("repo") or "this plan's project"
-                          for entry, cwd in zip(steps, places) if not cwd})
-        # Every repository must resolve before the first run opens.
-        if missing:
-            return self.json_error(409, "no configured project is named %s"
-                                   % ", ".join(missing), False)
-        notes = plan_notes_for_build(run_id)
-        launched, failures = [], []
-        for number, (entry, cwd) in enumerate(zip(steps, places), 1):
-            row = {"planStep": number, "planStepTitle": entry["title"],
-                   "planSteps": len(steps), "planGroup": True,
-                   "planRepos": len(set(places)),
-                   "planRepo": entry.get("repo") or "",
-                   "waitsOn": list(entry.get("waitsOn") or [])}
-            text = plan_step_prompt(run_id, number, steps, cwd) + notes
-            if row["waitsOn"]:
-                run_relationships.upsert_child(CONFIG_DIR, {
-                    "launchToken": secrets.token_hex(12), "sourceRunId": run_id,
-                    "targetProject": cwd, "mode": "orc", "planStart": True,
-                    "text": text, "choices": choices, "state": "waiting",
-                    "requestedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                    **row})
-                continue
-            result, error = self._planning_fork(run_id, meta, text, row, choices, cwd=cwd)
-            if error:
-                failures.append("step %d: %s" % (number, error[1]))
-            else:
-                launched.append(result.get("runId"))
-        invalidate_runs_body()
-        if not launched and failures:
-            return self.json_error(409, "; ".join(failures), False)
-        return self.send_body(json.dumps({
-            "ok": True, "childRunId": launched[0] if launched else None,
-            "childRunIds": launched, "errors": failures}).encode(), "application/json")
+        return self.send_body(json.dumps(payload).encode(), "application/json")
 
     def open_sibling(self, run_id, data):
         """A run that finds it needs a second repository opens a sibling run
@@ -30688,64 +31382,10 @@ class ApplicationHandler:
         reason = data.get("reason") if isinstance(data, dict) else None
         if reason is not None and (not isinstance(reason, str) or len(reason) > 500):
             return self.json_error(400, "invalid reason")
-        reason = (reason or "").strip()
-        with run_mutation_lock(run_id), RUN_STATUS_LOCK:
-            meta = run_meta(run_id)
-            if not meta:
-                return self.json_error(404, "run not found")
-            if meta.get("status") in (
-                    "complete", "merged", "merged-to-parent", "cancelled"):
-                return self.json_error(409, "run already finished")
-            ownership_error = merge_ownership_error(run_id, meta)
-            if ownership_error:
-                return self.json_error(409, ownership_error, False)
-            if merge_repo_identity(meta) is not None:
-                queue_data, queue_error = _read_merge_queue(meta)
-                if queue_error:
-                    return self.json_error(409, queue_error, False)
-                queue_index, queue_entry = _queue_entry(queue_data, run_id)
-                if queue_entry is not None:
-                    if queue_entry.get("claimToken") or meta.get("status") == "merging":
-                        return self.json_error(
-                            409, "active merge must stop before cancellation", False)
-                    del queue_data["entries"][queue_index]
-                    if not _write_merge_queue(meta, queue_data):
-                        return self.json_error(500, "could not update merge queue", False)
-            meta["status"] = "cancelled"
-            if reason:
-                meta["cancelReason"] = reason
-            if not _write_run_meta(run_id, meta):
-                return self.json_error(500, "could not save run status")
-        safe_reason = re.sub(r"[`$\\;|&<>]", "", reason)
-        note = ("orc: run %s cancelled via orc-ui%s. Stop work on this "
-                "run — meta.json status is already cancelled; commit "
-                "nothing further." % (
-                    run_id,
-                    " (reason: %s)" % safe_reason if safe_reason else ""))
-        if headless_session.is_headless(meta):
-            outcome = headless_session.interrupt(os.path.join(RUNS, run_id))
-            stopped = outcome in ("stopped", "idle")
-            still_working = outcome == "failed"
-        else:
-            # A terminal session Orc cannot interrupt. Only one that is mid-turn
-            # needs the notice: an idle or closed one does nothing more on its own.
-            stopped = False
-            still_working = _terminal_session_activity(run_id) == "running"
-        if stopped:
-            # the interrupted agent may have had a meta write in flight that
-            # clobbered the cancel — re-assert it now that the turn is aborted
-            with RUN_STATUS_LOCK:
-                meta = run_meta(run_id)
-                if meta and meta.get("status") != "cancelled":
-                    meta["status"] = "cancelled"
-                    if reason:
-                        meta["cancelReason"] = reason
-                    _write_run_meta(run_id, meta)
-        body = {"ok": True, "stopped": stopped, "closed": False}
-        if still_working:
-            body["note"] = note   # an agent is still working -> the user pastes it
-        self.send_body(json.dumps(body).encode(),
-                       "application/json")
+        body, error = cancel_run_now(run_id, (reason or "").strip())
+        if error:
+            return self.json_error(*error)
+        self.send_body(json.dumps(body).encode(), "application/json")
 
     def stop_dev_server(self):
         if not _origin_may_mutate(self.headers):
@@ -32097,12 +32737,14 @@ class ApplicationHandler:
         return self.send_body(json.dumps({"theme": theme}).encode(), "application/json")
 
     def post_chat_settings(self, action):
-        """A setting a chat changed (`change`: {setting, value, source}), its
-        Undo (`undo`: {id}), or a browser's own Settings flip of a browser
-        setting (`prefs`: {key: bool}) for every other browser to follow."""
+        """A setting a chat changed (`change`: {setting, value, source}), a
+        project's Live dev server a run saved (`dev-server`: {project,
+        command, install, copy, replace, source}), its Undo (`undo`: {id}),
+        or a browser's own Settings flip of a browser setting (`prefs`:
+        {key: bool}) for every other browser to follow."""
         if not _origin_may_mutate(self.headers):
             return self.json_error(403, "cross-site request rejected")
-        data = self.read_json_object(4096)
+        data = self.read_json_object(16384 if action == "dev-server" else 4096)
         if data is None:
             return self.json_error(400, "expected a JSON object")
         try:
@@ -32118,7 +32760,13 @@ class ApplicationHandler:
                         and not (isinstance(source.get("runId"), str) and run_relationships.valid_run_id(source["runId"])
                                  and os.path.isdir(os.path.join(RUNS, source["runId"])))):
                     return self.json_error(404, "no run has that id")
-                result = chat_settings.change(chat_settings_stores(), data.get("setting"), data.get("value"), source)
+                if action == "dev-server":
+                    result = chat_settings.save_dev_server(
+                        chat_settings_stores(), data.get("project"),
+                        {name: data.get(name) for name in ("command", "install", "copy")}, source,
+                        replace=data.get("replace") is True)
+                else:
+                    result = chat_settings.change(chat_settings_stores(), data.get("setting"), data.get("value"), source)
         except chat_settings.SettingError as error:
             return self.json_error(error.status, str(error))
         except OSError as error:

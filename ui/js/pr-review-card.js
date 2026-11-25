@@ -18,6 +18,20 @@ const IMAGE_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp';
 const MAX_IMAGES = 10;
 
 const cards = new Map();
+export const roundCards = new Map();
+const RECENT_CARDS = 12;
+let nextReviewEdit = 0;
+
+// Keep recent models for a return visit. A draft being edited or sent still
+// belongs to its caller even when several other reviews have since opened.
+export function rememberReviewCard(cache, id, entry) {
+  cache.delete(id);
+  cache.set(id, entry);
+  for (const [oldId, old] of cache) {
+    if (cache.size <= RECENT_CARDS) break;
+    if (oldId !== id && !old.editing && !old.saving && !old.posting && !old.sent) cache.delete(oldId);
+  }
+}
 // Reviews GitHub has accepted that the run list has not caught up with yet,
 // by run id. The sidebar row reads meta.review.posted, so it shows the posted
 // label in the same moment as the card instead of on the next poll.
@@ -30,6 +44,19 @@ function withPostedReview(run, posted) {
 
 // Keeps each accepted review on its row until a run list carries it.
 export function holdPostedReviews(list) {
+  if (cards.size || roundCards.size || postedReviews.size) {
+    const missing = new Set([...cards.keys(), ...roundCards.keys(), ...postedReviews.keys()]);
+    for (const run of list) {
+      if (!missing.delete(run.id)) continue;
+      if (roundCards.get(run.id)?.sent && !['awaiting-gate', 'running'].includes(run.meta?.status)) roundCards.delete(run.id);
+      if (!missing.size) break;
+    }
+    for (const id of missing) {
+      cards.delete(id);
+      roundCards.delete(id);
+      postedReviews.delete(id);
+    }
+  }
   if (!postedReviews.size) return list;
   return list.map(run => {
     const posted = postedReviews.get(run.id);
@@ -92,8 +119,8 @@ function entryFor(runId) {
   let entry = cards.get(runId);
   if (!entry) {
     entry = { runId, key: null, model: null, error: '', editing: null, editImages: [], saving: false, saveError: '', posting: null, postError: '', isCurrent: null };
-    cards.set(runId, entry);
   }
+  rememberReviewCard(cards, runId, entry);
   return entry;
 }
 
@@ -266,7 +293,7 @@ function paint(host, run, entry) {
   if (editor) {
     if (editor.dataset.prrImages != null) {
       // One tray per run and target, so no other box reads these images.
-      editor.dataset.orcAttachmentKey = `prr:${run.id}:${entry.editing}`;
+      editor.dataset.orcAttachmentKey = `prr:${run.id}:${entry.editing}:${entry.editGeneration}`;
       if (pasted.length && draftTarget === entry.editing) window.orcRestoreAttachments?.(editor, pasted);
       wireImages(host, run, entry, editor);
     }
@@ -277,6 +304,7 @@ function paint(host, run, entry) {
     button.onclick = () => {
       const target = button.dataset.prrEdit;
       entry.editing = target;
+      entry.editGeneration = ++nextReviewEdit;
       entry.editImages = [...savedImages(entry.model, target)];
       entry.saveError = '';
       paint(host, run, entry);

@@ -12,7 +12,7 @@ import { q } from './diff.js';
 import { projectOrderKeys, queryRank, rememberSettle, renderList, runProject, selectProjectFilter } from './filters.js';
 import { runPauseActions } from './run-presentation.js';
 import { openMergePlanner } from './merge-plan.js';
-import { openYearInReview } from './year-in-review.js';
+import { openYearInReview } from './secondary-screens.js';
 import { closeSettingsToOrigin, focusSettingsHeading, normPath, projectOrderFromConfigPayload, requestSettingsSpotlight, settingsDirty, settingsViewActive } from './settings.js';
 import { hasUnsavedInstructions, syncInstructionsFromCommand } from './instructions.js';
 import { TICKET_STATUS_LABELS } from './tickets.js';

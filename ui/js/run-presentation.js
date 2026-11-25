@@ -307,6 +307,13 @@ export const isPlanRevealPending = meta => isPlanTabHidden(meta) && isPlanningCo
 // Done wrote the terminal triple; the record is read-only from here.
 export const isPlanningClosed = meta => isPlanningRun(meta) && meta.outcome === 'planning'
   && meta.phase === 'done' && meta.status === 'complete';
+// The plan is not written yet: from the launch, through any question rounds,
+// until it is ready to read. A run that turns out to answer a question is one
+// too, until publishing its answer takes the route away.
+export const isDraftingPlan = meta => isPlanningRun(meta) && !isPlanningComplete(meta)
+  && !isPlanningClosed(meta) && meta.status !== 'cancelled';
+// What a busy run is doing, as its row, its lamp and Chat say it.
+export const busyLabel = meta => (isDraftingPlan(meta) ? 'Planning' : RUN_STATE_LABELS.working);
 const planningLabel = meta => {
   const state = planningState(meta);
   if (isPlanningClosed(meta)) return 'Plan closed';
@@ -335,6 +342,10 @@ export const chatChecksReady = (meta, files = []) => !!meta
   && meta.status !== 'cancelled'
   && !meta.shipHold
   && (meta.phase === 'ship' || isFinalReady(meta) || isDone(meta, files));
+// The steps a run leaves for the user (a deploy, a token, a setting) are for
+// after the work lands, so Chat and the sidebar show them by the same rule as
+// failed checks: once the run reaches Ship, or is done.
+export const manualStepsDue = chatChecksReady;
 // membership comes from the queue file via the payload — a recap-ready run is
 // only "in merge queue" once someone actually queued it.
 export const isMergeQueued = meta => meta.mergeQueued === true;
@@ -400,7 +411,7 @@ export const isHeadlessRun = meta => meta?.sessionBackend === 'headless';
 export const sessionStatus = meta => meta.sessionAlive === true
   ? ((sessionActivity(meta) || statusActivity(meta)) === 'running' ? 'running' : 'idle')
   : 'offline';
-export const sessionStatusLabel = meta => sessionStatus(meta) === 'running' ? 'Working' : '';
+export const sessionStatusLabel = meta => sessionStatus(meta) === 'running' ? busyLabel(meta) : '';
 // The run's agent reports a turn in progress. A run resting at a gate or a
 // finished plan reads Working while this holds (see runState). Unlike
 // sessionStatus it never guesses from the run's own status: a run waiting to
@@ -431,6 +442,8 @@ export const isForking = (meta, now = Date.now()) => (Array.isArray(meta.relatio
 // The host's count of the steps a run left for the user (`orc-manual-step`) that are still open.
 export const openManualSteps = meta => Number.isInteger(meta?.manualSteps) && meta.manualSteps > 0
   ? meta.manualSteps : 0;
+// The open steps the sidebar shows: none until they are due.
+export const shownManualSteps = (meta, files = []) => manualStepsDue(meta, files) ? openManualSteps(meta) : 0;
 const manualStepsText = count => `${count} step${count === 1 ? '' : 's'} left for you. `
   + `Tick ${count === 1 ? 'it' : 'them'} off in Chat.`;
 export const showsWaitingOnYou = meta => meta.waitingOnYou === true
@@ -587,7 +600,7 @@ export function runPauseDetail(mode) {
 }
 
 export const RUN_STATE_LABELS = {
-  working: 'Working', queued: 'Queued', paused: 'Paused', idle: 'Your turn', blocked: 'Blocked', ready: 'Ready', started: 'Started',
+  working: 'Working', queued: 'Queued', paused: 'Paused', idle: 'Your turn', blocked: 'Needs you', ready: 'Ready', started: 'Started',
   done: 'Done', cancelled: 'Cancelled', superseded: 'Superseded',
 };
 export const STATE_COLORS = {
@@ -623,6 +636,11 @@ export function statusOrderFromConfigPayload(data) {
   return normalizeStatusOrder((((data || {}).config || {}).ui || {}).statusOrder);
 }
 const state = (key, detail = '', label = RUN_STATE_LABELS[key]) => ({ key, label, detail, color: STATE_COLORS[key] });
+// The detail adds to the label, so it is left out when it only repeats it.
+const busy = (meta, detail) => {
+  const label = busyLabel(meta);
+  return state('working', detail === label ? '' : detail, label);
+};
 // An accepted merge, from the queue taking it until it lands.
 const merging = detail => ({ ...state('working', detail, 'Merging'), merging: true });
 // What a run rests at between turns. While its agent works the run reads
@@ -640,7 +658,7 @@ export function runState(meta, files = [], now = Date.now(), options = {}) {
   // review's gate stays put so its parent row is not handed the review's state.
   if (RESTING_KEYS.includes(own.key) && agentWorking(meta || {}) && !isMergeQueued(meta || {})
       && !isLocalReviewRun(meta)) {
-    return { ...state('working', restingDetail(own)), resting: own };
+    return { ...busy(meta, restingDetail(own)), resting: own };
   }
   const review = prReview(meta);
   if (!review || !['done', 'idle', 'ready'].includes(own.key)) return own;
@@ -650,7 +668,7 @@ export function runState(meta, files = [], now = Date.now(), options = {}) {
 }
 function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {}) {
   meta = meta || {};
-  if (pending) return state('working', 'Starting');
+  if (pending) return busy(meta, 'Starting');
   if (isProjectRedirect(meta)) return state('superseded', meta.cancelReason.trim());
   if (meta.status === 'cancelled') return state('cancelled', String(meta.cancelReason || '').trim());
   if (!isMergeQueued(meta)) {
@@ -743,7 +761,7 @@ function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {
   if (meta.status === 'merging-to-parent') return merging('Merging to parent');
   if (meta.status === 'merging') return merging('Merging');
   if (meta.status === 'awaiting-gate' && !isFinalReady(meta)) {
-    return state('blocked', canonicalPhase(meta.phase, meta.lifecycleVersion) === 'mvp' ? 'MVP ready' : gateNoun(meta));
+    return state('blocked', canonicalPhase(meta.phase, meta.lifecycleVersion) === 'mvp' ? 'MVP ready' : gateNoun(meta), gateAsk(meta));
   }
   if (meta.broughtToMainAt) return finished('On main');
   if (meta.status === 'complete') {
@@ -786,12 +804,16 @@ function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {
     return state('blocked', reason || 'Read the latest reply in Chat, then respond to continue.', 'Needs input');
   }
   if (meta.phase === 'done') return finished();
-  if (showsWaitingOnYou(meta)) return state('blocked', 'Waiting on you');
+  if (showsWaitingOnYou(meta)) {
+    // The label counts the agent's questions, so the row needs no separate count.
+    const asked = questionsAsked(meta);
+    return { ...state('blocked', 'Waiting on you', waitingAsk(meta, asked)), ...asked && { countsQuestions: true } };
+  }
   if (isHeadlessRun(meta) && meta.sessionActivity === 'idle') {
-    if (tasksRunning(meta)) return state('working', tasksWaitingText(meta));
+    if (tasksRunning(meta)) return busy(meta, tasksWaitingText(meta));
     return state('idle', 'Reply in Chat to continue.');
   }
-  return state('working', meta.status === 'running' && meta.phase ? runningLabel(meta) : '');
+  return busy(meta, meta.status === 'running' && meta.phase ? runningLabel(meta) : '');
 }
 const GATE_NOUNS = {
   grilling: 'grilling decision', plan: 'plan gate', mvp: 'MVP checkpoint',
@@ -810,6 +832,24 @@ export const gateNoun = meta => {
   if (prRepliesPending(meta)) return 'PR comments — push comments';
   const phase = canonicalPhase(meta.phase, meta.lifecycleVersion);
   return GATE_NOUNS[phase] || (phase ? `${phase} gate` : 'gate');
+};
+// What a run waiting on you needs, as its sidebar row says it. A wait is not a
+// fault, so none of these reads Blocked.
+const GATE_ASKS = {
+  grilling: 'Questions for you', clarification: 'Questions for you', planning: 'Questions for you',
+  plan: 'Plan to approve', mvp: 'MVP to check', review: 'Review to read', qa: 'QA to walk through',
+  recap: 'Recap to read', present: 'Ship to approve', ship: 'Ship to approve',
+};
+const gateAsk = meta => {
+  if (prPushPending(meta) || prRepliesPending(meta)) return 'PR comments to push';
+  return GATE_ASKS[canonicalPhase(meta.phase, meta.lifecycleVersion)] || 'Waiting on you';
+};
+const questionsAsked = meta => (meta.questionCount > 0 ? meta.questionCount : meta.pendingQuestion?.questions?.length || 0);
+const waitingAsk = (meta, asked) => {
+  if (asked > 1) return `${asked} questions for you`;
+  if (asked === 1 || meta.pendingQuestion) return 'A question for you';
+  if (meta.secretRequests > 0) return meta.secretRequests > 1 ? `${meta.secretRequests} secrets to add` : 'A secret to add';
+  return 'Needs input';
 };
 function headerSession(meta, { merging }) {
   if (!isHeadlessRun(meta)) return null;

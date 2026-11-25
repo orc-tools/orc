@@ -220,6 +220,7 @@ final class DesktopDictation: DesktopMicrophoneHandling {
 
     func cancel() {
         guard let current = session else { return }
+        emit(current, state: "cancelled")
         session = nil
         current.cancelled = true
         stopAudio(current)
@@ -1235,6 +1236,10 @@ extension AppDelegate: WKScriptMessageHandler {
                   origin.protocol == baseURL.scheme, origin.host == baseURL.host, origin.port == port,
                   let path = message.frameInfo.request.url?.path, ["/", "/index.html"].contains(path) else { return }
             if #available(macOS 26.0, *) {
+                if body["action"] as? String == "start", !window.isVisible, let id = body["id"] as? String {
+                    sendDictationEvent(["id": id, "state": "cancelled"])
+                    return
+                }
                 if dictation == nil {
                     dictation = DesktopDictation { [weak self] payload in self?.sendDictationEvent(payload) }
                 }
@@ -1283,6 +1288,7 @@ extension AppDelegate: WKScriptMessageHandler {
 
 extension AppDelegate: NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        dictation?.cancel()
         sender.orderOut(nil)
         return false
     }

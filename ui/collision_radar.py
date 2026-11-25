@@ -939,8 +939,12 @@ def _update_meta_base(meta: dict, new_base: str, main_repo: str) -> None:
     meta.pop("buildMergeConflict", None)
     meta.pop("buildSyncNotifiedCommit", None)
     if meta.get("parentBranch"):
+        # The run stops building on its parent once the parent lands on main,
+        # not when it merges the parent's own new commits.
         parent_sha = ref_sha(main_repo, f"refs/heads/{meta['parentBranch']}")
-        if not parent_sha or is_ancestor(main_repo, parent_sha, new_base):
+        _main_branch, main_head = default_branch_head(main_repo)
+        if not parent_sha or (main_head and is_ancestor(main_repo, parent_sha, main_head)
+                              and is_ancestor(main_repo, parent_sha, new_base)):
             meta.pop("parentBranch", None)
     repos = meta.get("repositories")
     if isinstance(repos, list):
@@ -967,6 +971,54 @@ def _git_op_in_progress(checkout: str) -> str | None:
         if os.path.exists(os.path.join(git_dir, marker)):
             return marker
     return None
+
+
+LANDED_RUN_STATUSES = ("merged", "merged-to-parent", "complete")
+
+
+def stack_parents(runs_dir: Path, meta: dict, main_repo: str, main_head: str) -> list[dict]:
+    """The runs a stacked run builds on, as `stackedOn` (a plan step stacked
+    on the steps it waits on) or `basedOnRun` (Build on) records them, each
+    with its branch tip and whether that has landed on main."""
+    rows = meta.get("stackedOn")
+    based_on = meta.get("basedOnRun")
+    if not isinstance(rows, list) or not rows:
+        rows = [based_on] if isinstance(based_on, dict) else []
+    parents = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("branch"), str) or not row["branch"].strip():
+            continue
+        tip = ref_sha(main_repo, f"refs/heads/{row['branch'].strip()}")
+        run_id = row.get("runId")
+        parent = _read_json_dict(runs_dir / run_id / "meta.json") if (
+            isinstance(run_id, str) and run_relationships.valid_run_id(run_id)) else None
+        # A parent squash-merged on GitHub, or whose branch was deleted once it
+        # merged, has landed too.
+        merged = bool(parent) and (parent.get("status") in ("merged", "merged-to-parent")
+                                   or parent.get("prState") == "merged")
+        if tip:
+            landed = merged or is_ancestor(main_repo, tip, main_head)
+        else:
+            # One deleted unmerged has nothing more to bring in either.
+            landed = not parent or merged or parent.get("status") in LANDED_RUN_STATUSES
+        parents.append({"runId": row.get("runId"), "branch": row["branch"].strip(),
+                        "tip": tip, "landed": landed})
+    return parents
+
+
+def _stack_base_commit(worktree: str, build_base: str, tip: str, branch: str) -> str | None:
+    """The base a stacked run takes when it brings in a parent's new commits:
+    the parent's tip when the run's base is behind it, else a merge of the two
+    made without a checkout (a run stacked on two steps starts from one)."""
+    if is_ancestor(worktree, build_base, tip):
+        return tip
+    tree = run_git(worktree, "merge-tree", "--write-tree", build_base, tip, readonly=True)
+    if tree is None or tree.returncode != 0 or not tree.stdout.split():
+        return None
+    commit = run_git(worktree, "commit-tree", tree.stdout.split()[0], "-p", build_base, "-p", tip,
+                     "-m", f"chore: bring {branch} ({tip[:7]}) into the stack base")
+    sha = commit.stdout.strip().lower() if commit is not None and commit.returncode == 0 else ""
+    return sha if SHA_RE.fullmatch(sha) else None
 
 
 def sync_worktree_with_main(
@@ -1070,13 +1122,25 @@ def sync_worktree_with_main(
                 _write_json_atomic(meta_path, meta)
             return {"state": "up-to-date", "base": build_base, "head": worktree_head}
 
-        # Stacked ("build on its branch") runs wait until their base commit is
-        # contained in `main` before rebasing `buildBaseCommit` onto `main`.
+        # Stacked runs (Build on, or a plan step stacked on the step it waits
+        # on) bring in their parent's new commits until the parent lands on
+        # `main`, then merge `main` like any other run.
+        target_branch, target_head, new_base = main_branch, main_head, main_head
         if not is_ancestor(worktree, build_base, main_head):
-            return {"state": "waiting-parent-branch", "base": build_base, "mainHead": main_head}
+            parents = stack_parents(run_path.parent, meta, main_repo, main_head)
+            if not parents or not all(parent["landed"] for parent in parents):
+                moved = next((parent for parent in parents
+                              if not parent["landed"] and parent["tip"]
+                              and not is_ancestor(worktree, parent["tip"], worktree_head)), None)
+                stack_base = moved and _stack_base_commit(
+                    worktree, build_base, moved["tip"], moved["branch"])
+                if not stack_base:
+                    return {"state": "waiting-parent-branch", "base": build_base, "mainHead": main_head}
+                target_branch, target_head, new_base = moved["branch"], moved["tip"], stack_base
 
         # Settling a Build merge conflict manually commits the merge before re-running sync.
-        if is_ancestor(worktree, main_head, worktree_head) and worktree_head != build_base:
+        if (new_base == main_head and is_ancestor(worktree, main_head, worktree_head)
+                and worktree_head != build_base):
             old_base = build_base
             _update_meta_base(meta, main_head, main_repo)
             _write_json_atomic(meta_path, meta)
@@ -1090,7 +1154,7 @@ def sync_worktree_with_main(
                 "regeneratedFiles": [],
             }
 
-        main_changed_res = run_git(worktree, "diff", "--name-only", f"{build_base}..{main_head}", readonly=True)
+        main_changed_res = run_git(worktree, "diff", "--name-only", f"{build_base}..{new_base}", readonly=True)
         main_changed = {line for line in (main_changed_res.stdout.splitlines() if main_changed_res and main_changed_res.returncode == 0 else []) if line}
         run_changed_res = run_git(worktree, "diff", "--name-only", f"{build_base}..{worktree_head}", readonly=True)
         run_changed = {line for line in (run_changed_res.stdout.splitlines() if run_changed_res and run_changed_res.returncode == 0 else []) if line}
@@ -1101,33 +1165,33 @@ def sync_worktree_with_main(
         if dirty_overlap:
             return {
                 "state": "dirty-overlap",
-                "targetBranch": main_branch,
-                "targetHead": main_head,
+                "targetBranch": target_branch,
+                "targetHead": target_head,
                 "files": dirty_overlap,
             }
 
         old_base = build_base
         old_head = worktree_head
         if worktree_head == build_base:
-            ff = run_git(worktree, "merge", "--ff-only", "--quiet", main_head)
+            ff = run_git(worktree, "merge", "--ff-only", "--quiet", new_base)
             if ff is None or ff.returncode != 0:
                 detail = (ff.stderr or ff.stdout).strip() if ff else "fast-forward failed"
                 return {"state": "error", "error": detail}
-            _update_meta_base(meta, main_head, main_repo)
+            _update_meta_base(meta, new_base, main_repo)
             _write_json_atomic(meta_path, meta)
             return {
                 "state": "synced",
                 "fastForward": True,
-                "targetBranch": main_branch,
+                "targetBranch": target_branch,
                 "oldBase": old_base,
-                "newBase": main_head,
+                "newBase": new_base,
                 "oldHead": old_head,
-                "head": main_head,
+                "head": new_base,
                 "sharedFiles": [],
                 "regeneratedFiles": [],
             }
 
-        merge_res = run_git(worktree, "merge", "--no-ff", "--no-commit", main_head)
+        merge_res = run_git(worktree, "merge", "--no-ff", "--no-commit", new_base)
         unmerged = unmerged_paths(worktree)
         rules = repo_generated_rules(main_repo, config_dir=config_dir)
         unmerged_gen, unmerged_code, unmerged_rules = partition_generated_paths(unmerged, rules)
@@ -1154,7 +1218,7 @@ def sync_worktree_with_main(
                 if not ok:
                     run_git(worktree, "merge", "--abort")
                     return {"state": "error", "error": err}
-            msg = f"chore: merge {main_branch} ({main_head[:7]}) into {branch}"
+            msg = f"chore: merge {target_branch} ({target_head[:7]}) into {branch}"
             commit_res = run_git(worktree, "commit", "-m", msg, "--no-verify")
             if commit_res is None or commit_res.returncode != 0:
                 # Merging main into an identical tree rejects plain commit without --allow-empty,
@@ -1165,15 +1229,15 @@ def sync_worktree_with_main(
                 run_git(worktree, "merge", "--abort")
                 return {"state": "error", "error": detail}
             new_head = ref_sha(worktree, "HEAD") or worktree_head
-            _update_meta_base(meta, main_head, main_repo)
+            _update_meta_base(meta, new_base, main_repo)
             _write_json_atomic(meta_path, meta)
             non_gen_shared = [f for f in shared_files if f not in set(both_gen)]
             return {
                 "state": "synced",
                 "fastForward": False,
-                "targetBranch": main_branch,
+                "targetBranch": target_branch,
                 "oldBase": old_base,
-                "newBase": main_head,
+                "newBase": new_base,
                 "oldHead": old_head,
                 "head": new_head,
                 "sharedFiles": non_gen_shared,
@@ -1185,15 +1249,15 @@ def sync_worktree_with_main(
             return {
                 "state": "conflicted",
                 "aborted": True,
-                "targetBranch": main_branch,
-                "targetHead": main_head,
+                "targetBranch": target_branch,
+                "targetHead": target_head,
                 "files": unmerged_code,
                 "regenerableFiles": unmerged_gen,
             }
 
         conflict_record = {
-            "target": main_branch,
-            "targetHead": main_head,
+            "target": target_branch,
+            "targetHead": target_head,
             "files": unmerged_code,
             "regenerableFiles": unmerged_gen,
             "detectedAt": now_iso(),
@@ -1203,8 +1267,8 @@ def sync_worktree_with_main(
         return {
             "state": "conflicted",
             "aborted": False,
-            "targetBranch": main_branch,
-            "targetHead": main_head,
+            "targetBranch": target_branch,
+            "targetHead": target_head,
             "files": unmerged_code,
             "regenerableFiles": unmerged_gen,
         }

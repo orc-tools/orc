@@ -312,7 +312,7 @@ function pausedTurns(turns, pauses) {
 // Out of a settled turn's fold: its final reply, anything that went wrong,
 // and anything the person said into it.
 const staysVisible = (item, terminal) => item === terminal || item.kind === 'user' || (item.kind !== 'tool' && item.images?.length > 0)
-  || item.kind === 'compaction' || item.kind === 'interrupt'
+  || item.kind === 'compaction' || item.kind === 'interrupt' || item.kind === 'auto-merge'
   || (item.kind === 'notice' && item.tone !== 'info')
   || (item.kind === 'tool' && item.category === 'plan');
 
@@ -453,7 +453,7 @@ function passedNoticeDividers(turns, working, now) {
   const afterTurn = new Map();
   const switchedAfterNotice = new Set();
   turns.forEach((turn, turnIndex) => {
-    if (turn.divider) return;
+    if (turn.divider || !turn.body.some(item => item.kind === 'notice')) return;
     const active = turnIndex === turns.length - 1 && working;
     const laterSlice = turns.slice(turnIndex + 1);
     const nextSwitchIndex = laterSlice.findIndex(later => Boolean(later.divider));
@@ -490,6 +490,23 @@ function passedNoticeDividers(turns, working, now) {
   return { afterNotice, afterTurn, switchedAfterNotice };
 }
 
+const autoMergeRow = item => ({ kind: 'auto-merge', id: `auto-merge:${item.id}`, item });
+
+// Puts the flips that happened during a turn where they happened in it: the
+// ones before its first step under the prompt (`lead`), the rest among its
+// steps, and any made since its newest step last (`since`).
+function placeFlips(turn, flips) {
+  const lead = [], since = [], inside = [...turn.body];
+  for (const flip of flips) {
+    const at = Date.parse(flip.at);
+    const next = inside.findIndex(item => Date.parse(item.at) > at);
+    if (next === 0 || Date.parse(turn.prompt?.at) >= at) lead.push(flip);
+    else if (next === -1) since.push(flip);
+    else inside.splice(next, 0, flip);
+  }
+  return { lead, since, inside };
+}
+
 // A live turn draws each group as a log of its latest steps (`log`), so a
 // group a reply closes keeps its lines instead of turning into a summary.
 export function groupRows(items, { live = false, afterNotice = null, switchedAfterNotice = null } = {}) {
@@ -516,6 +533,7 @@ export function groupRows(items, { live = false, afterNotice = null, switchedAft
     }
     else if (item.kind === 'compaction') rows.push({ kind: 'divider', id: item.id, item });
     else if (item.kind === 'interrupt') rows.push({ kind: 'interrupt', id: item.id, item });
+    else if (item.kind === 'auto-merge') rows.push(autoMergeRow(item));
   }
   for (const row of rows) {
     if (row.kind === 'work') row.items = groupItems(row.items);
@@ -548,6 +566,8 @@ export function groupRows(items, { live = false, afterNotice = null, switchedAft
 //                  before the first prompt sent after it
 //   settingChanges Orc settings this run changed (ui/chat_settings.py),
 //                  placed the same way, each with its Undo
+//   autoMergeChanges  each time Auto merge was turned on or off, placed where
+//                  it happened, inside a turn too
 //   deploy         the run's Deploy after merge (ui/deploys.py), shown after
 //                  the conversation while it runs and once it has ended
 export function chatRows(items, {
@@ -555,10 +575,17 @@ export function chatRows(items, {
   queued = [], outbox = [], supported = true, transcriptState = 'ready',
   agentName = 'The agent', hasDiff = false, diffFiles = null, folderClips = [], waitingOnYou = false,
   queueStranded = false, queueError = null, answer = null, turnFailure = null,
-  permissionFallback = null, detailed = true, now = Date.now(), prUpdates = [], settingChanges = [], background = null,
-  deploy = null, pauses = [],
+  permissionFallback = null, detailed = true, now = Date.now(), prUpdates = [], settingChanges = [],
+  autoMergeChanges = [], background = null,
+  deploy = null, pauses = [], cache = null,
 } = {}) {
-  items = shownItems(items);
+  let turns;
+  if (cache && cache.items === items) {
+    turns = cache.turns;
+  } else {
+    turns = splitTurns(shownItems(items));
+    if (cache) Object.assign(cache, { items, turns });
+  }
   const rows = [];
   if (permissionFallback) {
     const names = { bypass: 'bypass permissions', auto: 'auto mode', default: 'Manual mode' };
@@ -566,7 +593,6 @@ export function chatRows(items, {
     rows.push({ kind: 'notice', id: 'permission-fallback', item: { id: 'permission-fallback', kind: 'notice', tone: 'warning',
       text: `${permissionFallback.reason}, so this run uses ${mode(permissionFallback.effective)} instead of ${mode(permissionFallback.requested)}.` } });
   }
-  const turns = splitTurns(items);
   const paused = pausedTurns(turns, pauses);
   const { afterNotice, afterTurn, switchedAfterNotice } = passedNoticeDividers(turns, working, now);
   const lastWorkTurnIndex = turns.findLastIndex(turn => !turn.divider);
@@ -577,6 +603,7 @@ export function chatRows(items, {
   const updates = [
     ...prUpdates.map(item => ({ kind: 'pr-update', item })),
     ...settingChanges.map(item => ({ kind: 'setting-change', item })),
+    ...autoMergeChanges.map(change => ({ kind: 'auto-merge', item: { ...change, kind: 'auto-merge' } })),
   ].sort((a, b) => Date.parse(a.item.at) - Date.parse(b.item.at));
   const pushUpdatesBefore = at => {
     const limit = at === null ? Infinity : Date.parse(at);
@@ -584,6 +611,16 @@ export function chatRows(items, {
       const { kind, item } = updates.shift();
       rows.push({ kind, id: `${kind}:${item.id}`, item });
     }
+  };
+  // The flips made while a turn ran: up to its last step, or up to now while
+  // it runs. Later ones wait for the next prompt, like every other update.
+  const takeFlips = (turn, active) => {
+    if (!updates.length) return [];
+    const ended = active ? Infinity
+      : Date.parse((turn.body.findLast(item => item.at && item.kind !== 'turn-end') || turn.prompt)?.at);
+    const flips = updates.filter(update => update.kind === 'auto-merge' && Date.parse(update.item.at) < ended);
+    for (const flip of flips) updates.splice(updates.indexOf(flip), 1);
+    return flips.map(flip => flip.item);
   };
   turns.forEach((turn, index) => {
     const last = index === turns.length - 1;
@@ -605,7 +642,28 @@ export function chatRows(items, {
       const showQuota = turn.prompt.kind !== 'user' && isQuotaNotice(turn.prompt) && !switchedAfterNotice.has(turn.prompt.id);
       rows.push({ kind: turn.prompt.kind === 'user' ? 'user' : 'notice', id: turn.prompt.id, item: turn.prompt, ...(showQuota && { quota: true }) });
     }
-    const body = turn.body.filter(item => item.kind !== 'turn-end');
+    const { lead, since, inside } = placeFlips(turn, takeFlips(turn, active));
+    rows.push(...lead.map(autoMergeRow));
+    const foldId = `fold:${id}`;
+    const open = expanded.has(foldId);
+    const filesOpen = expanded.has(`files:${id}:more`);
+    const pausedBy = paused.get(index);
+    // Notices depend on later turns and the clock. The most recent turn also
+    // owns the run's live file and media cards. A turn with Auto merge flips
+    // among its rows is drawn again, since those arrive apart from its items.
+    const reusable = cache && turn.prompt && index < lastWorkTurnIndex
+      && inside.length === turn.body.length && !since.length
+      && !turn.body.some(item => item.kind === 'notice');
+    const prior = reusable && cache.completed.get(turn.prompt);
+    if (prior && prior.open === open && prior.filesOpen === filesOpen
+        && prior.hasDiff === hasDiff && prior.pausedBy === pausedBy
+        && (prior.body === turn.body || (prior.body.length === turn.body.length
+          && turn.body.every((item, i) => item === prior.body[i])))) {
+      for (const row of prior.rows) rows.push(row);
+      return;
+    }
+    const start = rows.length;
+    const body = inside.filter(item => item.kind !== 'turn-end');
     if (active) {
       const steps = body.filter(item => item.kind === 'tool' && item.category !== 'plan').length;
       // A question it asked stops the clock: the turn is waiting on a person.
@@ -625,6 +683,7 @@ export function chatRows(items, {
         grouped.splice(-1, 1, ...(rest.length ? [{ ...tail, items: rest }] : []));
       }
       rows.push(...(detailed ? grouped : grouped.filter(row => row.kind !== 'work')));
+      rows.push(...since.map(autoMergeRow));
       // One slot at the turn's foot for the whole turn, so the live chip never
       // moves between rows. groupId keeps the step's toggle key once it lands
       // in that group's log.
@@ -633,8 +692,6 @@ export function chatRows(items, {
     }
     const terminal = [...body].reverse().find(item => item.kind === 'assistant') || null;
     const foldable = body.filter(item => !staysVisible(item, terminal));
-    const foldId = `fold:${id}`;
-    const open = expanded.has(foldId);
     // The fold line always shows when the final reply landed, so that reply
     // keeps no hover time of its own.
     const foldAt = foldable.length ? terminal?.at || null : null;
@@ -655,6 +712,7 @@ export function chatRows(items, {
       }
       rows.push(row);
     }
+    rows.push(...since.map(autoMergeRow));
     const isLastWorkTurn = index === lastWorkTurnIndex;
     const fromDiff = isLastWorkTurn && !!diffFiles?.length;
     const files = fromDiff ? diffFiles : changedFiles(body);
@@ -664,6 +722,9 @@ export function chatRows(items, {
     }
     const resetDivider = afterTurn.get(index);
     if (resetDivider) rows.push(resetDivider);
+    if (reusable) cache.completed.set(turn.prompt, {
+      open, filesOpen, hasDiff, pausedBy, body: turn.body, rows: rows.slice(start),
+    });
   });
   pushUpdatesBefore(null);
   if (deploy?.state) rows.push({ kind: 'deploy', id: 'deploy', deploy });
