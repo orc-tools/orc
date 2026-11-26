@@ -133,13 +133,10 @@ function lifecycleTabs(meta, tabs, chat) {
     return isPlanningComplete(meta) ? planning.map(tab => ({ ...tab, label: 'Plan' })) : planning;
   }
   if (meta.lifecycleVersion === 4) {
-    if (!['complete', 'merged', 'merged-to-parent', 'cancelled'].includes(meta.status)) {
-      tabs = tabs.filter(tab => tab.key !== 'ship/ship.html');
-    }
+    // The Pull request panel replaced the Ship page, whatever the run's status.
     const allowed = new Set([
       'clarification/clarification.html', 'plan.html', 'build-summary.md',
-      'ship/ship.html', 'docs/feature.md',
-      'pr-comments.html',
+      'docs/feature.md', 'pr-comments.html',
     ]);
     return tabs.filter(tab => allowed.has(tab.key));
   }
@@ -458,9 +455,7 @@ export function openRun(id, file, opts) {
   if (diffLink) { file = null; revealDiffPanel(); }
   // PR bodies moved the same way, to the panel's Pull request view.
   const prBodyLink = file === 'pr-body.md' || PR_BODY_RE.test(file || '')
-    || (meta.lifecycleVersion === 4 && file === 'ship/ship.html'
-      && (paths.includes('pr-body.md')
-        || !['complete', 'merged', 'merged-to-parent', 'cancelled'].includes(meta.status)));
+    || (meta.lifecycleVersion === 4 && file === 'ship/ship.html');
   if (prBodyLink) { file = null; revealDiffPanel('pr'); }
   // An eval's candidates and report moved there too, to its Evals view.
   const evalsLink = meta.route === 'evals' && [EVALS_KEY, EVALS_REPORT].includes(file);
@@ -574,7 +569,10 @@ export function openRun(id, file, opts) {
     ? (chat ? [] : tabsFor(run).filter(tab => tab.key === 'answer.md'))
     : lifecycleTabs(meta, tabsFor(run), chat);
   // A run a plan started reads that plan in a Plan tab after Chat and Factory.
-  if (!answered && planOf(run, runs)) tabs.unshift({ key: PLANNING_TAB, label: 'Plan' });
+  // Both share one key, so a run that already has its own Plan tab keeps it.
+  if (!answered && !tabs.some(tab => tab.key === PLANNING_TAB) && planOf(run, runs)) {
+    tabs.unshift({ key: PLANNING_TAB, label: 'Plan' });
+  }
   const linkedTab = linkedMarkdownTab(run, file);
   if (linkedTab && !tabs.some(tab => tab.key === linkedTab.key)) tabs.push(linkedTab);
   const factory = chat && factoryVisualsEnabled();

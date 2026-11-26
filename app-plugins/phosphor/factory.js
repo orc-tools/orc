@@ -1472,11 +1472,148 @@ function weather(kit) {
   };
 }
 
+// ---------- advisor ----------
+
+// The oracle's printout: greenbar paper with the lines it reads, tiled so it
+// can scroll up through its hands.
+function printout(kit) {
+  return memo(kit, 'oracle-printout', () => {
+    const css = key => '#' + kit.color(key).getHexString();
+    const map = kit.canvas(256, 256, (ctx, w, h) => {
+      for (let band = 0; band < 8; band += 1) {
+        ctx.fillStyle = css(band % 2 ? 'paper' : 'band');
+        ctx.fillRect(0, band * 32, w, 32);
+      }
+      ctx.fillStyle = css('dim');
+      for (let y = 8; y < h; y += 32) {
+        ctx.beginPath(); ctx.arc(8, y + 8, 4, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(w - 8, y + 8, 4, 0, TAU); ctx.fill();
+      }
+      ctx.fillStyle = css('ink');
+      ctx.font = `bold 13px ${MONO}`;
+      ctx.textBaseline = 'middle';
+      const lines = ['> ASK ORACLE', 'READ 120K', 'RETRY WINDOW?', '  BACKOFF 2^N', '  JITTER ON', 'CHECK SWEEP', 'OK  ADVISE', '> ..........'];
+      lines.forEach((line, i) => ctx.fillText(line, 24, 16 + i * 32));
+    }, { repeat: [1, 1] });
+    return new MeshBasicMaterial({ map, toneMapped: false, side: DoubleSide });
+  });
+}
+
+// A cone of strokes: rings up its height and ribs down its sides.
+function coneSketch(sketch, r0, r1, h, x, y, z, rings = 3, ribs = 8) {
+  for (let i = 0; i <= rings; i += 1) sketch.ring(r0 + (r1 - r0) * (i / rings), x, y - h / 2 + h * (i / rings), z, 'y', 16);
+  for (let i = 0; i < ribs; i += 1) {
+    const a = (i / ribs) * TAU;
+    sketch.seg(x + Math.cos(a) * r0, y - h / 2, z + Math.sin(a) * r0, x + Math.cos(a) * r1, y + h / 2, z + Math.sin(a) * r1);
+  }
+  return sketch;
+}
+
+// The advisor is the oracle in the machine: a hooded sage drawn in vector
+// strokes, standing on a chip's plinth with a halo turning over its hood. It
+// reads a greenbar printout that scrolls up through its hands and folds down
+// to the board, its eyes running down the lines and blinking, its halo
+// brightening while it reads.
+function advisor(kit) {
+  const root = new Group();
+  const ctx = makeContext(kit, root);
+  const { I, W } = ctx;
+  // The plinth: a package with its pins.
+  const plinth = new Sketch();
+  ctx.box(plinth, 1.2, 0.12, 1.0, 0, 0.06, 0);
+  for (let i = 0; i < 6; i += 1) {
+    const z = -0.4 + i * 0.16;
+    for (const side of [-1, 1]) plinth.seg(side * 0.6, 0.04, z, side * 0.72, 0.04, z).seg(side * 0.72, 0.04, z, side * 0.72, 0, z);
+  }
+  plinth.ring(0.06, -0.48, 0.121, -0.38, 'y', 8);
+  ctx.wire(plinth, 'dim');
+  // The sage: robe, shoulders and a hood round a round head.
+  const sage = new Group();
+  sage.position.set(0, 0.12, -0.22);
+  root.add(sage);
+  const robe = new Sketch();
+  ctx.solid(new CylinderGeometry(0.14, 0.42, 0.9, 16), [0, 0.45, 0], sage);
+  coneSketch(robe, 0.42, 0.14, 0.9, 0, 0.45, 0, 3, 10);
+  ctx.wire(robe, 'ink', sage);
+  const head = new Group();
+  head.position.set(0, 1.02, 0);
+  sage.add(head);
+  const hood = new Sketch();
+  ctx.solid(new CylinderGeometry(0.02, 0.27, 0.5, 14), [0, 0.12, -0.02], head);
+  coneSketch(hood, 0.27, 0.02, 0.5, 0, 0.12, -0.02, 2, 8);
+  ctx.wire(hood, 'ink', head);
+  // The face in the hood's shadow: a dark disc with two glowing eyes.
+  const shade = new Mesh(new CircleGeometry(0.15, 16), I.void);
+  shade.position.set(0, 0.02, 0.215);
+  shade.rotation.x = -0.25;
+  head.add(shade);
+  const eyes = [];
+  for (const side of [-1, 1]) {
+    const eye = new Mesh(new BoxGeometry(0.06, 0.035, 0.01), I.flash);
+    eye.position.set(side * 0.06, 0.04, 0.24);
+    head.add(eye);
+    eyes.push(eye);
+  }
+  // The halo over its hood.
+  const halo = new Group();
+  halo.position.set(0, 0.5, -0.02);
+  halo.add(new Mesh(strokeGeometry(new Sketch().ring(0.2, 0, 0, 0, 'y', 20).v, W), I.amber));
+  const tick = new Sketch();
+  for (let i = 0; i < 6; i += 1) {
+    const a = (i / 6) * TAU;
+    tick.seg(Math.cos(a) * 0.2, 0, Math.sin(a) * 0.2, Math.cos(a) * 0.27, 0, Math.sin(a) * 0.27);
+  }
+  halo.add(new Mesh(strokeGeometry(tick.v, W), I.amber));
+  head.add(halo);
+  // Its arms, out to the printout's edges.
+  const arms = new Sketch();
+  for (const side of [-1, 1]) arms.path([[side * 0.16, 0.85, 0.02], [side * 0.3, 0.66, 0.2], [side * 0.3, 0.66, 0.42]]);
+  ctx.wire(arms, 'ink', sage);
+  // The printout: a sheet held up to read and its fanfold down to the board.
+  const sheet = new Group();
+  sheet.position.set(0, 0.8, 0.26);
+  sheet.rotation.x = -0.55;
+  root.add(sheet);
+  const paper = printout(kit);
+  sheet.add(new Mesh(new PlaneGeometry(0.62, 0.42), paper));
+  sheet.add(new Mesh(strokeGeometry(new Sketch().rect(0.62, 0.42, 0, 0, 0.004).v, W * 0.8), I.ink));
+  const fold = new Sketch();
+  const folds = [[0.8, 0.26], [0.6, 0.44], [0.42, 0.3], [0.24, 0.48], [0.13, 0.36]];
+  for (let i = 0; i < folds.length - 1; i += 1) {
+    const [y0, z0] = folds[i];
+    const [y1, z1] = folds[i + 1];
+    for (const x of [-0.31, 0.31]) fold.seg(x, y0 - (i ? 0 : 0.18), z0 + (i ? 0 : 0.1), x, y1, z1);
+    fold.seg(-0.31, y1, z1, 0.31, y1, z1);
+  }
+  ctx.wire(fold, 'dim');
+  const scale = 1.35;
+  root.scale.setScalar(scale);
+  root.userData = {
+    labelY: 1.95 * scale,
+    page: new Vector3(0, 0.84 * scale, 0.3 * scale),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      paper.map.offset.y = (time * 0.12 * reading) % 1;
+      head.rotation.x = 0.3 * reading + Math.sin(time * 0.6) * 0.03;
+      head.rotation.y = Math.sin(time * 0.5) * 0.15 * reading;
+      sage.rotation.z = Math.sin(time * 0.8) * 0.02;
+      halo.rotation.y = time * (0.4 + reading * 0.8);
+      halo.scale.setScalar(0.9 + 0.1 * reading);
+      const blink = (time % 4.1) < 0.14;
+      for (const eye of eyes) {
+        eye.visible = !blink;
+        eye.position.y = 0.04 - 0.02 * reading * (0.5 + 0.5 * Math.sin(time * 2.4));
+      }
+    },
+  };
+  return root;
+}
+
 export default {
   palette: PALETTE,
   backdrop: BACKDROP,
   layout: { bend: 0, stagger: STAGGER, jitter: 0, turn: 0 },
   view: { elevation: 0.78, azimuth: 0.05 },
   pad: false,
-  floor, hall, station, ghost, crate, carrier, packet, dock, decor, weather,
+  floor, hall, station, ghost, crate, carrier, packet, dock, decor, weather, advisor,
 };

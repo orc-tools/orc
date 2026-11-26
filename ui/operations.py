@@ -250,7 +250,7 @@ def build_catalog(runtime):
                            takeOver=BOOLEAN, mode=enum(*runtime['CONTEXT_CHILD_MODES'])), ()),
         'cancel': (dict(reason=STRING), ()), 'push-main': ({}, ()), 'deploy-retry': ({}, ()),
         'deploy-dismiss': ({}, ()),
-        'planning-start': (dict(step={'type': 'integer', 'minimum': 1}, each=BOOLEAN,
+        'planning-start': (dict(step={'type': 'integer', 'minimum': 1}, each=BOOLEAN, now=BOOLEAN,
                                 agent=enum(*runtime['NEW_CONV_AGENTS']), model=STRING, effort=STRING,
                                 fast={'type': ['boolean', 'string']}, permissionMode=STRING,
                                 claudeAccount=STRING, orchestration=BOOLEAN, orchestrationPreset=STRING), ()),

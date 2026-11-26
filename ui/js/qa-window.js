@@ -148,8 +148,12 @@ async function load() {
     apply(data);
   } catch (error) {
     if (mine < applied) return;
-    state.loadError = 'Could not load the QA steps. Trying again.';
-    if (!state.data) render();
+    applied = mine;
+    const message = state.data ? 'Updates interrupted. Showing the last checklist. Retrying…' : 'Could not load the QA steps. Trying again.';
+    if (state.loadError !== message) {
+      state.loadError = message;
+      render();
+    }
   } finally {
     schedulePoll();
   }
@@ -248,7 +252,7 @@ root.addEventListener('click', event => {
 let lastJson = null;
 function apply(data) {
   const json = JSON.stringify(data);
-  if (json === lastJson && !state.missing) return;
+  if (json === lastJson && !state.missing && !state.loadError) return;
   lastJson = json;
   const before = state.data;
   state.data = data;
@@ -257,6 +261,7 @@ function apply(data) {
   state.loadError = null;
   if (before) announceChanges(before, data);
   pickCurrent();
+  if (state.editing && state.editing.stepId !== state.current) state.editing = null;
   render();
 }
 
@@ -292,12 +297,13 @@ function failedPage(step) {
 }
 
 async function setVerdict(step, verdict) {
+  if (state.busy.has('verdict:' + step.id)) return;
   const next = step.result?.verdict === verdict ? null : verdict;
   const page = next === 'fail' ? failedPage(step) : null;
   const done = await act({ action: 'verdict', step: step.id, verdict: next, ...(page ? { page } : {}) }, 'verdict:' + step.id);
   if (!done) return;
   announce(next === 'pass' ? `Step ${step.number} passed.` : next === 'fail' ? `Step ${step.number} failed.` : `Step ${step.number} cleared.`);
-  if (next) {
+  if (next && state.current === step.id && tabs.active === tabs.qa && !state.editing) {
     const following = nextUnchecked(step.id);
     if (following) setCurrent(following.id);
   }
@@ -339,9 +345,12 @@ function openNote(step) {
 }
 
 async function saveNote(step) {
-  const text = state.editing?.node.querySelector('textarea').value.trim() ?? '';
+  const editor = state.editing;
+  if (!editor || editor.stepId !== step?.id || state.busy.has('note:' + step.id)) return;
+  const input = editor.node.querySelector('textarea');
+  const text = input.value.trim();
   const done = await act({ action: 'note', step: step.id, note: text }, 'note:' + step.id);
-  if (done) {
+  if (done && state.editing === editor && input.value.trim() === text) {
     state.editing = null;
     announce(text ? 'Note saved.' : 'Note removed.');
     render();
@@ -788,6 +797,7 @@ function renderRail() {
       <h1>${escapeHtml(run.title || run.id)}</h1>
       ${appRow(data.app)}
       ${reviewRow(data.review)}
+      ${state.loadError ? `<p class="qa-error" role="status">${escapeHtml(state.loadError)}</p>` : ''}
     </div>
     <div class="qa-steps-head"><span>Steps · ${checked} of ${total} checked</span><span class="qa-bar" role="progressbar" aria-label="Steps checked" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${checked}"><i style="width:${pct}%"></i></span></div>
     ${data.source === 'diff' && !data.writing ? '<p class="qa-source">No QA section in this pull request. Orc wrote these steps from the diff.</p>' : ''}
@@ -853,7 +863,7 @@ rail.addEventListener('keydown', event => {
 });
 
 document.addEventListener('keydown', event => {
-  if (tabs.active !== tabs.qa) return;
+  if (tabs.active !== tabs.qa || state.editing) return;
   if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented || event.target.closest?.('dialog[open]')) return;
   if (event.target.closest?.('input, textarea, select, pre, [contenteditable=""], [contenteditable="true"], .qa-term-host, .xterm')) return;
   const list = steps();
@@ -1474,10 +1484,11 @@ let greg = null;
 function gregWhere() {
   const ready = Boolean(state.data) && !state.missing;
   const step = ready ? currentStep() : null;
-  const onPage = step?.kind === 'page' && step.url && !pageEmptyState(step);
+  const visible = ready ? paneStep() : null;
+  const onPage = visible?.kind === 'page' && visible.url && !pageEmptyState(visible);
   return {
     ready, review: isReview(), pr: state.data?.run?.pr || null, steps: steps().length, step,
-    page: onPage ? shownPage(step) : null,
+    page: onPage ? shownPage(visible) : null,
   };
 }
 
@@ -1501,7 +1512,9 @@ function render() {
     });
     greg.sync();
   }
-  if (focusKey && !rail.contains(focused)) {
+  if (state.editing?.node.contains(focused) && rail.contains(focused) && document.activeElement !== focused) {
+    focused.focus({ preventScroll: true });
+  } else if (focusKey && !rail.contains(focused)) {
     const selector = (focusKey[0] ? `[data-step="${CSS.escape(focusKey[0])}"] ` : '') + (focusKey[1] ? `[data-act="${focusKey[1]}"]` : '');
     if (selector.trim()) rail.querySelector(selector)?.focus({ preventScroll: true });
   }

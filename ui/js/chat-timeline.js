@@ -18,6 +18,7 @@ const CATEGORY_SUMMARY = {
   agent: n => `ran ${PLURAL(n, 'agent')}`,
   mcp: n => `called ${PLURAL(n, 'tool')}`,
   question: n => `asked ${PLURAL(n, 'question')}`,
+  advisor: n => `asked the advisor${n === 1 ? '' : ` ${n} times`}`,
   skill: n => `loaded ${PLURAL(n, 'skill')}`,
   todo: () => 'updated the task list',
   other: n => `used ${PLURAL(n, 'tool')}`,
@@ -95,6 +96,7 @@ export function workLabel(item, live = false) {
     case 'agent': return { verb: verb('Running agent', 'Ran agent'), subject, mono: false };
     case 'mcp': return { verb: verb('Calling', 'Called'), subject, mono: false };
     case 'question': return { verb: 'Asked', subject, mono: false };
+    case 'advisor': return { verb: verb('Asking', 'Asked'), subject: 'the advisor', mono: false };
     case 'skill': return { verb: verb('Loading skill', 'Loaded skill'), subject, mono: true };
     case 'todo': return { verb: 'Updated the task list', subject: '', mono: false };
     case 'plan': return { verb: 'Proposed a plan', subject: '', mono: false };
@@ -289,6 +291,9 @@ function turnDuration(turn) {
 // interrupt a moment later still, so each pause goes to the stop nearest it
 // in time, within PAUSE_SLACK_MS. A stop with no pause by it was Stop.
 const PAUSE_SLACK_MS = 30000;
+// Who held a paused turn, as its fold line and lone pause line read.
+export const pausedLabel = by => (by === 'queue' ? 'Paused by the queue' : by === 'you' ? 'Paused by you' : 'Paused');
+
 function pausedTurns(turns, pauses) {
   const found = new Map();
   if (!pauses?.length) return found;
@@ -490,6 +495,18 @@ function passedNoticeDividers(turns, working, now) {
   return { afterNotice, afterTurn, switchedAfterNotice };
 }
 
+// A message Orc resumed the run with. Whatever the person had queued went out
+// in the same prompt, and stays their own message under the badge.
+const hasOwnWords = item => !!((item.text || '').trim() || item.attachments?.length || item.imageCount
+  || item.note || item.gateAnswers || item.promptFile);
+function userRows(item) {
+  const user = { kind: 'user', id: item.id, item };
+  if (!item.resumed) return [user];
+  const joined = hasOwnWords(item);
+  const badge = { kind: 'resumed', id: `resumed:${item.id}`, item, joined };
+  return joined ? [badge, user] : [badge];
+}
+
 const autoMergeRow = item => ({ kind: 'auto-merge', id: `auto-merge:${item.id}`, item });
 
 // Puts the flips that happened during a turn where they happened in it: the
@@ -523,7 +540,7 @@ export function groupRows(items, { live = false, afterNotice = null, switchedAft
     }
     group = null;
     if (item.kind === 'assistant') rows.push({ kind: 'assistant', id: item.id, item });
-    else if (item.kind === 'user') rows.push({ kind: 'user', id: item.id, item });
+    else if (item.kind === 'user') rows.push(...userRows(item));
     else if (item.kind === 'tool') rows.push({ kind: 'plan', id: item.id, item });
     else if (item.kind === 'notice') {
       const showQuotaAction = isQuotaNotice(item) && !switchedAfterNotice?.has(item.id);
@@ -638,9 +655,10 @@ export function chatRows(items, {
     const id = turn.prompt ? turn.prompt.id : `turn:${index}`;
     if (index > 0 && turn.prompt?.at) pushUpdatesBefore(turn.prompt.at);
     const active = last && working;
-    if (turn.prompt && turn.prompt.kind !== 'handoff') {
-      const showQuota = turn.prompt.kind !== 'user' && isQuotaNotice(turn.prompt) && !switchedAfterNotice.has(turn.prompt.id);
-      rows.push({ kind: turn.prompt.kind === 'user' ? 'user' : 'notice', id: turn.prompt.id, item: turn.prompt, ...(showQuota && { quota: true }) });
+    if (turn.prompt?.kind === 'user') rows.push(...userRows(turn.prompt));
+    else if (turn.prompt && turn.prompt.kind !== 'handoff') {
+      const showQuota = isQuotaNotice(turn.prompt) && !switchedAfterNotice.has(turn.prompt.id);
+      rows.push({ kind: 'notice', id: turn.prompt.id, item: turn.prompt, ...(showQuota && { quota: true }) });
     }
     const { lead, since, inside } = placeFlips(turn, takeFlips(turn, active));
     rows.push(...lead.map(autoMergeRow));
@@ -673,13 +691,16 @@ export function chatRows(items, {
       const grouped = groupRows(body, { live: true, afterNotice, switchedAfterNotice });
       const tail = grouped.at(-1)?.kind === 'work' ? grouped.at(-1) : null;
       const newest = tail?.items.at(-1);
-      // The step it is on now leaves the log for the live slot, so finished
+      // The steps it is on now leave the log for the live slot, so finished
       // steps only ever add lines above the slot, never swap rows with it.
+      // Several can be unfinished at once, and they often run in turn, so the
+      // slot shows the oldest and counts the rest.
       // A question it is waiting on stays in the log: the slot is blank then.
-      const current = !tail || waitingOnYou ? null
-        : newest.kind === 'thinking' ? newest : tail.items.findLast(item => item.status === 'running') || null;
+      const inSlot = !tail || waitingOnYou ? [] : tail.items.filter(item => item.status === 'running');
+      if (tail && !waitingOnYou && newest.kind === 'thinking') inSlot.unshift(newest);
+      const [current = null, ...more] = inSlot;
       if (current) {
-        const rest = tail.items.filter(item => item !== current);
+        const rest = tail.items.filter(item => !inSlot.includes(item));
         grouped.splice(-1, 1, ...(rest.length ? [{ ...tail, items: rest }] : []));
       }
       rows.push(...(detailed ? grouped : grouped.filter(row => row.kind !== 'work')));
@@ -687,25 +708,30 @@ export function chatRows(items, {
       // One slot at the turn's foot for the whole turn, so the live chip never
       // moves between rows. groupId keeps the step's toggle key once it lands
       // in that group's log.
-      rows.push({ kind: 'live', id: `thinking:${id}`, item: current, groupId: tail?.id || null, quiet: waitingOnYou });
+      rows.push({ kind: 'live', id: `thinking:${id}`, item: current, more, groupId: tail?.id || null, quiet: waitingOnYou });
       return;
     }
-    const terminal = [...body].reverse().find(item => item.kind === 'assistant') || null;
-    const foldable = body.filter(item => !staysVisible(item, terminal));
+    // A paused turn folds away whole: Orc or the person paused it, so its
+    // last message was a note mid-work, not a reply. The fold line says who
+    // paused it, in place of a line of its own.
+    const stop = pausedBy ? body.find(item => item.kind === 'interrupt') : null;
+    const terminal = pausedBy ? null : [...body].reverse().find(item => item.kind === 'assistant') || null;
+    const foldable = body.filter(item => item !== stop && !staysVisible(item, terminal));
+    const shown = foldable.length && stop ? body.filter(item => item !== stop) : body;
     // The fold line always shows when the final reply landed, so that reply
     // keeps no hover time of its own.
-    const foldAt = foldable.length ? terminal?.at || null : null;
+    const foldAt = foldable.length ? (stop || terminal)?.at || null : null;
     if (foldable.length) {
       const ms = turnDuration(turn);
       const interrupted = body.some(item => item.kind === 'interrupt');
-      const ended = paused.has(index) ? 'Paused' : 'Stopped';
+      const ended = pausedBy ? pausedLabel(pausedBy) : 'Stopped';
       const verb = interrupted ? `${ended} after` : 'Worked for';
       rows.push({ kind: 'fold', id: foldId, expanded: open, at: foldAt,
                   label: ms === null ? (interrupted ? ended : 'Worked') : `${verb} ${formatDuration(ms)}` });
     }
-    const visible = foldable.length && !open ? body.filter(item => staysVisible(item, terminal)) : body;
+    const visible = foldable.length && !open ? shown.filter(item => staysVisible(item, terminal)) : shown;
     for (const row of groupRows(visible, { afterNotice, switchedAfterNotice })) {
-      if (row.kind === 'interrupt' && paused.has(index)) row.pausedBy = paused.get(index);
+      if (row.kind === 'interrupt' && pausedBy) row.pausedBy = pausedBy;
       if (row.kind === 'assistant' && row.item === terminal) {
         row.terminal = true;
         if (foldAt) row.timeOnFold = true;
@@ -808,7 +834,8 @@ export function windowStart(rows, count, end = rows.length) {
   const start = Math.max(0, end - count);
   if (start <= WINDOW_SLACK) return 0;
   for (let index = start; index > start - WINDOW_SLACK; index -= 1) {
-    if (rows[index].kind === 'user') return index;
+    if (rows[index].kind === 'user') return index - (rows[index - 1]?.joined ? 1 : 0);
+    if (rows[index].kind === 'resumed') return index;
   }
   return start;
 }

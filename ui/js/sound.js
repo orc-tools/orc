@@ -11,6 +11,7 @@ export const SOUNDS = [
     ['wooden-double-tap', 'Wooden double tap'], ['glass-chime', 'Glass chime'], ['home-chord', 'Home chord'],
     ['reed-call', 'Reed call'], ['thumb-piano', 'Thumb piano'], ['sonar-ping', 'Sonar ping'],
     ['pocket-drum', 'Pocket drum'], ['silver-string', 'Silver string'],
+    ['clockwork', 'Clockwork'], ['steam-whistle', 'Steam whistle'], ['bass-bloom', 'Bass bloom'],
   ].map(([id, label]) => ({ id, label, clip: `/sounds/${id}.mp3` })),
 ];
 export const NO_SOUND = 'none';

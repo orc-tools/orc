@@ -10,7 +10,7 @@ import './fast-toggle.js';
 import './model-picker.js';
 import { undoSettingChange } from './chat-settings.js';
 import { requestDevServerSetup } from './settings.js';
-import { $, CHAT_KEY, announce, calendarAvailable, esc, flashcardMeeting, FLASHCARD_ASK, isFlashcardRun, parseFlashcardPrompt, fileUrl, linkHtml, hasOwnedLivePane, isDone, isHeadlessRun, isQuestionRun, isReadOnlyRun, isShipReady, mergeWrappingUp, reviewsForRun, runState, runs, sessionStatus, showInCalendar, showToast } from './core.js';
+import { $, CHAT_KEY, announce, calendarAvailable, esc, flashcardMeeting, FLASHCARD_ASK, isFlashcardRun, parseFlashcardPrompt, fileUrl, linkHtml, hasOwnedLivePane, isDone, isHeadlessRun, isQuestionRun, isReadOnlyRun, isShipReady, mergeWrappingUp, reviewsForRun, runState, runs, sessionStatus, showInCalendar, showToast, startWorkLabel } from './core.js';
 import { autoGrow, bindPromptComposer, composerText, promptComposerHtml } from './prompt-composer.js';
 import { bindDictation, cancelDictation } from './dictation.js';
 import { bindChatSkills, bindSkillRefs, skillRefsHtml } from './chat-skills.js';
@@ -22,13 +22,13 @@ import { openRunFile } from './files-panel.js';
 import { bindChatLinkMenu } from './chat-link-menu.js';
 import { deployRowHtml, openDeployLog } from './deploy-card.js';
 import { refresh, restoreFailedLaunchPrompt } from './activity.js';
-import { ROWS_EARLIER, ROWS_SHOWN, attachmentUrl, catchUpState, chatRows, chatWorking, formatElapsed, isVideoAttachment, pairedChatRows, runFolderClips, splitAttachments, summarizeWork, windowStart, workLabel } from './chat-timeline.js';
+import { ROWS_EARLIER, ROWS_SHOWN, attachmentUrl, catchUpState, chatRows, chatWorking, formatDuration, formatElapsed, isVideoAttachment, pairedChatRows, pausedLabel, runFolderClips, splitAttachments, summarizeWork, windowStart, workLabel } from './chat-timeline.js';
 import { ncAgents, runModelLabel, sessionModelBadge, sessionSpeedHtml, switchDividerLabel } from './launch-options.js';
 import { knownHarness } from './harnesses.js';
 import { createLaunchSelection, launchModelFor, projectCloudAvailability } from './launch-selection.js';
 import { failedFirstLaunch, isSettledSession, rescueExpectedOwner, switchBlocker } from './run-rescue.js';
 import { launchAttempts } from './launch-attempts.js';
-import { chatChecksReady, conflictResolutionWaitingText, deployHoldsRun, isConflictResolutionPending, isDraftingPlan, isPlanReady, isPlanRevealPending, isPlanningComplete, isSidebarDone, manualStepsDue, openManualSteps, pairedPlanOf, prHasUnpushedCommits, prNeedsAttention, prPushButton, prPushPending, prRepliesPending, shipGateMissing, showsWaitingOnYou, tasksRunning, tasksWaitingText } from './run-presentation.js';
+import { chatChecksReady, conflictResolutionWaitingText, modelLabel, deployHoldsRun, isConflictResolutionPending, isDraftingPlan, isPlanReady, isPlanRevealPending, isPlanningComplete, isSidebarDone, manualStepsDue, openManualSteps, pairedPlanOf, prHasUnpushedCommits, prNeedsAttention, prPushButton, prPushPending, prRepliesPending, shipGateMissing, showsWaitingOnYou, tasksRunning, tasksWaitingText } from './run-presentation.js';
 import { planUnseen, revealPlan, revealedMeta } from './plan-reveal.js';
 import { feedbackBatchModel, openNoteImages, planNotesCount, planNotesTurn, sentNotesHtml } from './plan-notes.js';
 import { clearRunWarning, isSettledByHand, settleWithScene, stepsWarningShown } from './filters.js';
@@ -401,7 +401,7 @@ function applyPayload(session, data) {
   const recorded = new Set((data.items || []).map(item => item.chatSubmission).filter(Boolean));
   session.outbox = session.outbox.filter(entry => entry.chatSubmission
     ? !recorded.has(entry.chatSubmission)
-    : promptCount(session, entry.text) <= entry.seen && (entry.state === 'sending' || now - entry.at < OUTBOX_TTL_MS));
+    : promptCount(session, entry.text, entry.resumed) <= entry.seen && (entry.state === 'sending' || now - entry.at < OUTBOX_TTL_MS));
 }
 
 // 32 hex characters. crypto.randomUUID is missing over plain http, such as a phone on LAN.
@@ -434,13 +434,13 @@ export function showSendingAnswers(runId, gateAnswers) {
 // follow-up reaches the agent wrapped in the orc entry command, which the
 // transcript records as the message's command. The server picks that wrapper
 // from run state Chat may not have polled yet, so either form counts.
-function promptCount(session, text) {
+function promptCount(session, text, resumed = false) {
   const wanted = displayCommand(splitAttachments(text).text.trim());
   const answer = questionReplyAnswers(text);
   let count = 0;
   for (const item of session.items.values()) {
     if (item.kind === 'notice' && answer !== null && item.answer === answer) count += 1;
-    if (item.kind !== 'user') continue;
+    if (item.kind !== 'user' || (resumed && !item.resumed)) continue;
     const recorded = (item.text || '').trim();
     const forms = [[item.command, recorded].filter(Boolean).join(' ')];
     if (ORC_ENTRY.test(item.command || '')) forms.push(recorded);
@@ -586,6 +586,7 @@ function safeHref(href) {
   const value = String(href || '').trim();
   return /^(https?:|mailto:)/i.test(value) ? value : null;
 }
+const ANSWER_MOCKUP = /^(?:\.\/)?media\/[\w.-]+\.html$/i;
 function localHtmlPath(value) {
   return /^(?:\.\/)?[\w-][\w ./-]*\.html?$/i.test(value)
     && !value.split('/').some(part => part === '..' || part === '.git');
@@ -694,6 +695,13 @@ function markdownParser(breaks, followups = false, user = false) {
         try { text = this.parser.parseInline(token.tokens); }
         finally { linkDepth -= 1; }
         const href = safeHref(token.href);
+        // A question answer's mockup sits in the run's own media/ folder
+        // (ui/question_media.py), not the checkout, so it opens from there.
+        const media = !href && mounted && ANSWER_MOCKUP.test(token.href || '')
+          && token.href.replace(/^\.\//, '');
+        if (media && (mounted.run?.files || []).some(file => file.path === media)) {
+          return linkHtml(fileUrl(mounted.runId, media), text);
+        }
         const file = mounted && fileReferencePath(token.href);
         const folder = mounted && !file && finderPath(token.href);
         return href ? linkHtml(href, text) : file ? chatFileLink(file, text, fileReferenceLines(token.href))
@@ -878,7 +886,9 @@ function pendingMessageHtml(entry, expanded) {
 
 function queuedMessageStatus(row, context) {
   if (row.stranded) return 'Not sent · this run no longer sends queued messages';
-  if (context.runPause || context.focusPaused) return 'Queued · sends when the run resumes';
+  if (context.runPause) return 'Queued · sends when the run resumes';
+  // The Paused in the queue card already says that anything sent waits.
+  if (context.focusPaused) return 'Queued';
   if (context.queueHeld) {
     if (context.queueError) return 'Held · check delivery before retrying';
     return 'Held after Stop · send individually or resume queue';
@@ -886,6 +896,28 @@ function queuedMessageStatus(row, context) {
   return row.entry.steer
     ? `Queued · ${context.agent} reads it after its current step`
     : `Queued · sends when ${context.agent} finishes this turn`;
+}
+
+// A badge that records what happened: it names the event, and hovering it
+// says the rest and when.
+function recordBadgeHtml(icon, label, { tone = '', detail = '', at } = {}) {
+  const date = new Date(at || '');
+  const title = [detail, Number.isNaN(date.getTime()) ? '' : FULL_TIME.format(date)].filter(Boolean).join('\n');
+  return `<span class="chat-system-badge${tone ? ` is-${tone}` : ''}"${title ? ` title="${esc(title)}"` : ''}>${icon}<span>${esc(label)}</span></span>`;
+}
+
+// The note Orc resumes a paused run with (`resumed`, ui/run_chat.py).
+function resumedBadgeHtml(item, at) {
+  return recordBadgeHtml(ICONS.play, 'Run resumed', { detail: item.resumed.replace(/^\[Orc\] /, ''), at });
+}
+
+// A message not yet in the transcript: the badge alone when all it says is
+// that the run resumed. A queued one never shows the badge: the run has not
+// resumed until Orc sends it.
+function pendingBodyHtml(entry, context, lead = '', { queued = false } = {}) {
+  const badge = entry.resumed && !queued ? resumedBadgeHtml(entry, entry.queuedAt || entry.at) : '';
+  const bubble = badge && !entry.text ? '' : `<div class="chat-bubble" data-part="chat-bubble">${lead}${pendingMessageHtml(entry, context.expanded)}</div>`;
+  return badge + bubble;
 }
 
 function forwardedBadge(item) {
@@ -1150,18 +1182,26 @@ function assistantRowHtml(row) {
 
 const ICON_FOR = item => item.kind === 'thinking' ? 'thinking' : (ICONS[item.category] ? item.category : 'other');
 const STATUS_TEXT = { error: 'failed', declined: 'declined', interrupted: 'stopped' };
+const failedExit = item => Number.isInteger(item.exitCode) && item.exitCode !== 0;
 
-function failureLabel(item) {
-  if (item.status !== 'error') return STATUS_TEXT[item.status] || '';
-  const action = item.category === 'search' ? 'search' : item.category === 'command' ? 'command' : '';
-  if (action && Number.isInteger(item.exitCode)) return `${action} exited ${item.exitCode}`;
-  return 'failed';
+// Most failed steps are followed by one that works, so a failure reads as a
+// plain note; red is for what needs the person.
+// An advisor step says which model read and for how long, or that no
+// answer came and why.
+function advisorStatus(item) {
+  const facts = item.advisor || {};
+  if (item.status === 'running') return '';
+  if (item.status === 'done') {
+    return [modelLabel(facts.model).replace(/^Claude /, ''), formatDuration(facts.durationMs)].filter(Boolean).join(', ');
+  }
+  return ['no answer', facts.errorText].filter(Boolean).join(': ');
 }
 
-function failureSummary(items) {
-  const failures = items.filter(item => item.status === 'error');
-  if (failures.length === 1) return failureLabel(failures[0]);
-  return failures.length ? `${failures.length} steps failed` : '';
+function statusText(item) {
+  if (item.category === 'advisor') return advisorStatus(item);
+  if (item.status !== 'error' || !failedExit(item)) return STATUS_TEXT[item.status] || '';
+  if (item.category === 'search' && item.exitCode === 1 && !item.output) return 'no matches';
+  return `exited ${item.exitCode}`;
 }
 
 function hasDetail(item) {
@@ -1169,7 +1209,7 @@ function hasDetail(item) {
   if (item.kind === 'thinking') return !!item.text;
   if (item.category === 'read' && !item.output) return false;
   return !!((item.detail && item.detail !== item.title) || item.output || item.diff || item.description
-    || (item.todos && item.todos.length) || (Number.isInteger(item.exitCode) && item.exitCode !== 0));
+    || (item.todos && item.todos.length) || failedExit(item));
 }
 
 function diffHtml(diff) {
@@ -1192,35 +1232,44 @@ function detailHtml(item) {
     }
     if (item.diff) parts.push(`<pre class="chat-pre chat-diff">${diffHtml(item.diff)}</pre>`);
     if (item.output) parts.push(`<pre class="chat-pre chat-output">${esc(item.output)}</pre>`);
-    if (Number.isInteger(item.exitCode) && item.exitCode !== 0) parts.push(`<p class="chat-detail-note is-error">Exit code ${item.exitCode}</p>`);
+    if (failedExit(item)) parts.push(`<p class="chat-detail-note">Exit code ${item.exitCode}</p>`);
   }
   return `<div class="chat-work-detail">${parts.join('')}${toolImagesHtml([item])}</div>`;
 }
 
-// A running step's verb carries the travelling sheen, which chat.css draws
-// from data-text so the word is in the page once.
-function workVerbHtml(verb, running) {
+// The live slot's verb carries the travelling sheen, which chat.css draws
+// from data-text so the word is in the page once. Only the slot's does: an
+// unfinished step in the log stays a plain line, so one chip shows at a time.
+function workVerbHtml(verb, live) {
   const text = esc(verb);
-  return `<span class="chat-work-verb${running ? ' chat-live' : ''}">${text}${running
+  return `<span class="chat-work-verb${live ? ' chat-live' : ''}">${text}${live
     ? `<span class="chat-sheen" aria-hidden="true" data-text="${text}"></span>` : ''}</span>`;
 }
 
-function workLineHtml(item, { live = false, rowId, expanded, nested = false }) {
+const workIconHtml = icon => `<span class="chat-work-icon" aria-hidden="true">${ICONS[icon]}</span>`;
+
+function workToggleHtml(key, open, body, tone = '') {
+  return `<button type="button" class="chat-work-line chat-toggle${tone}" data-toggle="${esc(key)}" data-focus-key="toggle:${esc(key)}" aria-expanded="${open}">${body}${ICONS.chevron}</button>`;
+}
+
+// more: the other unfinished steps the live slot stands for.
+function workLineHtml(item, { live = false, more = [], rowId, expanded }) {
   const { verb, subject, mono } = workLabel(item, live && item.kind === 'thinking');
-  const failed = failureLabel(item);
-  const running = item.status === 'running' || (live && item.kind === 'thinking');
+  const status = statusText(item) || (item.category === 'read' && item.detail) || '';
+  const others = more.map(other => {
+    const label = workLabel(other);
+    return `${label.verb} ${label.subject}`.trim();
+  });
   // Outside the label, so a long command truncates before the state does.
-  const suffix = failed ? `<span class="chat-work-status">${esc(failed)}</span>`
-    : item.category === 'read' && item.detail ? `<span class="chat-work-status">${esc(item.detail)}</span>` : '';
-  const label = `<span class="chat-work-label">${workVerbHtml(verb, running)}${subject ? ` <span class="chat-work-subject${mono ? ' chat-mono' : ''}">${esc(subject)}</span>` : ''}</span>${suffix}`;
-  const tone = item.status === 'error' ? ' is-error' : failed ? ' is-muted' : '';
-  const icon = `<span class="chat-work-icon${tone}" aria-hidden="true">${ICONS[item.status === 'error' ? 'error' : ICON_FOR(item)]}</span>`;
+  const suffix = `${status ? `<span class="chat-work-status">${esc(status)}</span>` : ''}${more.length
+    ? `<span class="chat-work-status" title="${esc(others.join('\n'))}">+${more.length} more</span>` : ''}`;
+  const label = `<span class="chat-work-label">${workVerbHtml(verb, live)}${subject ? ` <span class="chat-work-subject${mono ? ' chat-mono' : ''}">${esc(subject)}</span>` : ''}</span>${suffix}`;
+  const tone = item.status === 'declined' || item.status === 'interrupted' ? ' is-muted' : '';
+  const body = `${workIconHtml(ICON_FOR(item))}${label}`;
   const detail = hasDetail(item);
   const key = `${rowId}:${item.id}`;
   const open = detail && expanded.has(key);
-  const line = detail
-    ? `<button type="button" class="chat-work-line chat-toggle${tone}${nested ? ' is-nested' : ''}" data-toggle="${esc(key)}" data-focus-key="toggle:${esc(key)}" aria-expanded="${open}">${icon}${label}${ICONS.chevron}</button>`
-    : `<div class="chat-work-line${tone}${nested ? ' is-nested' : ''}">${icon}${label}</div>`;
+  const line = detail ? workToggleHtml(key, open, body, tone) : `<div class="chat-work-line${tone}">${body}</div>`;
   return `${line}${open ? detailHtml(item) : ''}`;
 }
 
@@ -1233,9 +1282,8 @@ function workLogHtml(row, expanded) {
   const items = row.items;
   const earlier = items.slice(0, Math.max(0, items.length - LOG_STEPS));
   const open = earlier.length > 0 && expanded.has(row.id);
-  const failed = earlier.some(item => item.status === 'error');
   const toggle = earlier.length
-    ? `<button type="button" class="chat-work-line chat-toggle" data-toggle="${esc(row.id)}" data-focus-key="toggle:${esc(row.id)}" aria-expanded="${open}"><span class="chat-work-icon${failed ? ' is-error' : ''}" aria-hidden="true">${ICONS[failed ? 'error' : 'more']}</span><span class="chat-work-label">${earlier.length} earlier step${earlier.length === 1 ? '' : 's'}</span>${failed ? `<span class="chat-work-status">${esc(failureSummary(earlier))}</span>` : ''}${ICONS.chevron}</button>`
+    ? workToggleHtml(row.id, open, `${workIconHtml('more')}<span class="chat-work-label">${earlier.length} earlier step${earlier.length === 1 ? '' : 's'}</span>`)
     : '';
   const shown = open ? items : items.slice(earlier.length);
   return `<div class="chat-row chat-row-work">${toggle}${shown.map(item =>
@@ -1249,12 +1297,10 @@ function workRowHtml(row, expanded) {
     return `<div class="chat-row chat-row-work">${workLineHtml(items[0], { rowId: row.id, expanded })}</div>`;
   }
   const open = expanded.has(row.id);
-  const failed = items.some(item => item.status === 'error');
-  const head = `<span class="chat-work-label">${esc(summarizeWork(items))}</span>${failed ? `<span class="chat-work-status">${esc(failureSummary(items))}</span>` : ''}`;
-  const icon = `<span class="chat-work-icon${failed ? ' is-error' : ''}" aria-hidden="true">${ICONS[failed ? 'error' : ICON_FOR(items.find(item => item.kind === 'tool') || items.at(-1))]}</span>`;
+  const icon = workIconHtml(ICON_FOR(items.find(item => item.kind === 'tool') || items.at(-1)));
   return `<div class="chat-row chat-row-work">
-    <button type="button" class="chat-work-line chat-toggle" data-toggle="${esc(row.id)}" data-focus-key="toggle:${esc(row.id)}" aria-expanded="${open}">${icon}${head}${ICONS.chevron}</button>
-    ${open ? `<div class="chat-work-group">${items.map(item => workLineHtml(item, { rowId: row.id, expanded, nested: true })).join('')}</div>` : ''}
+    ${workToggleHtml(row.id, open, `${icon}<span class="chat-work-label">${esc(summarizeWork(items))}</span>`)}
+    ${open ? `<div class="chat-work-group">${items.map(item => workLineHtml(item, { rowId: row.id, expanded })).join('')}</div>` : ''}
   </div>`;
 }
 
@@ -1353,8 +1399,8 @@ function rowHtml(row, context) {
     case 'live': return row.quiet
       ? '<div class="chat-row chat-row-thinking is-quiet" aria-hidden="true"><div class="chat-work-line"></div></div>'
       : `<div class="chat-row chat-row-work chat-row-thinking">${row.item
-        ? workLineHtml(row.item, { live: true, rowId: row.groupId, expanded: context.expanded })
-        : `<div class="chat-work-line"><span class="chat-work-icon" aria-hidden="true">${ICONS.thinking}</span><span class="chat-work-label">${workVerbHtml('Thinking', true)}</span></div>`}</div>`;
+        ? workLineHtml(row.item, { live: true, more: row.more, rowId: row.groupId, expanded: context.expanded })
+        : `<div class="chat-work-line">${workIconHtml('thinking')}<span class="chat-work-label">${workVerbHtml('Thinking', true)}</span></div>`}</div>`;
     case 'files': return filesRowHtml(row);
     case 'notice': {
       const error = row.item.tone === 'error' || row.item.tone === 'warning';
@@ -1365,7 +1411,7 @@ function rowHtml(row, context) {
       const switchAction = row.quota && context.canSwitch
         ? `<button type="button" class="chat-action chat-notice-action" data-chat-action="switch-model" data-focus-key="switch:${esc(row.id)}">Switch model or account</button>` : '';
       return `<div class="chat-row chat-row-notice${error ? ' is-error' : ''}">${row.item.detail
-        ? `<button type="button" class="chat-work-line chat-toggle" data-toggle="${esc(key)}" data-focus-key="toggle:${esc(key)}" aria-expanded="${open}">${body}${ICONS.chevron}</button>${switchAction}${timeHtml(row.item.at)}${open ? `<div class="chat-work-detail"><pre class="chat-pre chat-output">${esc(row.item.detail)}</pre></div>` : ''}`
+        ? `${workToggleHtml(key, open, body)}${switchAction}${timeHtml(row.item.at)}${open ? `<div class="chat-work-detail"><pre class="chat-pre chat-output">${esc(row.item.detail)}</pre></div>` : ''}`
         : `<div class="chat-work-line">${body}</div>${switchAction}${timeHtml(row.item.at)}`}</div>`;
     }
     case 'pr-update': {
@@ -1380,10 +1426,12 @@ function rowHtml(row, context) {
     case 'setting-change': return settingChangeRowHtml(row);
     case 'auto-merge': {
       const { enabled, at } = row.item;
-      const date = new Date(at || '');
-      const when = Number.isNaN(date.getTime()) ? '' : ` title="${esc(FULL_TIME.format(date))}"`;
-      return `<div class="chat-row chat-row-badge"><span class="chat-system-badge is-${enabled ? 'on' : 'off'}"${when}>${ICONS.ship}<span>Auto merge ${enabled ? 'on' : 'off'}</span></span></div>`;
+      const state = enabled ? 'on' : 'off';
+      return `<div class="chat-row chat-row-badge">${recordBadgeHtml(ICONS.ship, `Auto merge ${state}`, { tone: state, at })}</div>`;
     }
+    case 'resumed': return row.joined
+      ? `<div class="chat-row chat-row-badge is-joined">${resumedBadgeHtml(row.item, row.item.at)}</div>`
+      : `<div class="chat-row chat-row-badge" data-part="transcript-message" data-message-id="${esc(row.item.id)}">${resumedBadgeHtml(row.item, row.item.at)}</div>`;
     case 'earlier': return `<div class="chat-row chat-row-divider chat-row-earlier">
       <button type="button" class="chat-fold" data-chat-action="earlier" data-focus-key="earlier">Show earlier messages</button></div>`;
     case 'divider': {
@@ -1394,8 +1442,8 @@ function rowHtml(row, context) {
       return `<div class="chat-row chat-row-divider${part ? ` ${part}` : ''}" role="separator">${row.item.kind === 'compaction' ? ICONS.compact : ''}<span>${esc(label)}</span></div>`;
     }
     case 'interrupt': {
-      const label = row.pausedBy === 'queue' ? `Orc paused ${esc(context.agent)} for the queue`
-        : row.pausedBy === 'you' ? `You paused ${esc(context.agent)}` : `You stopped ${esc(context.agent)}`;
+      // A paused turn with steps says this on its fold line instead.
+      const label = row.pausedBy ? pausedLabel(row.pausedBy) : `You stopped ${esc(context.agent)}`;
       return `<div class="chat-row chat-row-notice"><div class="chat-work-line"><span class="chat-work-icon" aria-hidden="true">${ICONS[row.pausedBy ? 'pause' : 'stop']}</span><span class="chat-work-label">${label}</span></div></div>`;
     }
     case 'launch': return `<div class="chat-row chat-row-launch is-${esc(row.state)}"><orc-callout variant="${row.state === 'failed' ? 'red' : 'orange'}"><p>${esc(row.text)}</p>${row.state === 'failed'
@@ -1404,16 +1452,17 @@ function rowHtml(row, context) {
     case 'background': return backgroundRowHtml(row);
     case 'deploy': return deployRowHtml(row.deploy);
     case 'turn-failed': return `<div class="chat-row chat-row-launch is-failed"><orc-callout variant="red"><p>${esc(row.text)}</p><div class="chat-callout-actions"><button type="button" class="chat-action" data-chat-action="retry" data-turn="${esc(String(row.turn))}" data-focus-key="retry:${esc(String(row.turn))}">Retry</button>${context.canSwitch ? `<button type="button" class="chat-action" data-chat-action="switch-model" data-focus-key="switch-turn:${esc(String(row.turn))}">Switch model or account</button>` : ''}</div></orc-callout></div>`;
-    case 'queue-held': return queueHeldHtml(row, context);
-    case 'start-after-waiting': return `<div class="chat-row chat-row-notice"><orc-callout variant="orange"><p>Waiting for <a href="#${encodeURIComponent(row.targetRunId)}">${esc(row.targetTitle)}</a> to finish before branching, so this run starts cleanly on its changes.</p><button type="button" class="chat-action" data-chat-action="start-now" data-focus-key="start-now">Start now</button></orc-callout></div>`;
+    case 'queue-held': return queueHeldHtml(row);
+    case 'start-after-waiting': return heldLineHtml({ icon: 'pause', action: 'start-now', label: 'Start now',
+      html: `<strong>Waiting for <a href="#${encodeURIComponent(row.targetRunId)}">${esc(row.targetTitle)}</a> to finish.</strong> This run branches from its changes once it lands.` });
     case 'queued': return `<div class="chat-row chat-row-user is-queued${row.stranded ? ' is-stranded' : ''}" data-part="transcript-message">
       <div class="chat-bubble-head"><span class="chat-bubble-label">${esc(queuedMessageStatus(row, context))}</span></div>
-      <div class="chat-bubble" data-part="chat-bubble">${forwardedBadge(row.entry)}${pendingMessageHtml(row.entry, context.expanded)}</div>
-      <div class="chat-meta"><button type="button" class="chat-unqueue" ${context.runPause ? 'disabled' : ''} data-send-now="${esc(row.entry.id)}" data-focus-key="send-now:${esc(row.entry.id)}" title="Stops ${esc(context.agent)}'s turn and sends this now">Send now</button>${row.stranded ? `<button type="button" class="chat-unqueue" data-unqueue="${esc(row.entry.id)}" data-to-composer="1" data-focus-key="recompose:${esc(row.entry.id)}">Move to the composer</button>` : ''}<button type="button" class="chat-unqueue" data-unqueue="${esc(row.entry.id)}" data-focus-key="unqueue:${esc(row.entry.id)}">Remove from queue</button></div>
+      ${pendingBodyHtml(row.entry, context, forwardedBadge(row.entry), { queued: true })}
+      <div class="chat-meta"><button type="button" class="chat-unqueue" ${context.runPause ? 'disabled' : ''} data-send-now="${esc(row.entry.id)}" data-focus-key="send-now:${esc(row.entry.id)}" title="Stops ${esc(context.agent)}'s turn and sends this now">Send now</button>${row.stranded && row.entry.text ? `<button type="button" class="chat-unqueue" data-unqueue="${esc(row.entry.id)}" data-to-composer="1" data-focus-key="recompose:${esc(row.entry.id)}">Move to the composer</button>` : ''}<button type="button" class="chat-unqueue" data-unqueue="${esc(row.entry.id)}" data-focus-key="unqueue:${esc(row.entry.id)}">Remove from queue</button></div>
     </div>`;
     case 'outbox': return `<div class="chat-row chat-row-user is-outbox" data-part="transcript-message">
       <div class="chat-bubble-head"><span class="chat-bubble-label">${row.entry.state === 'sending' ? 'Sending…' : 'Sent'}</span></div>
-      <div class="chat-bubble" data-part="chat-bubble">${pendingMessageHtml(row.entry, context.expanded)}</div>
+      ${pendingBodyHtml(row.entry, context)}
     </div>`;
     case 'empty': return `<div class="chat-row chat-row-empty"><p>${esc(row.text)}</p></div>`;
     default: return '';
@@ -1421,32 +1470,40 @@ function rowHtml(row, context) {
 }
 
 // Why the run is holding still, in the words of whoever held it: a failed
-// send is a problem to fix, while a pause or a Stop is a choice, so those
-// read as calm state with the one button that undoes them.
+// send is a problem to fix, so it keeps its callout. A pause or a Stop is a
+// choice, so those read as one calm line with the one button that undoes it.
 function queueHeld(row) {
-  const waits = 'Anything you send waits until then.';
-  if (row.error) return { variant: 'orange', text: `Queue held. ${row.error}`, action: 'Resume queue' };
+  const waits = 'anything you send waits.';
+  if (row.error) return { error: true, text: `Queue held. ${row.error}`, action: 'Resume queue' };
   if (row.runPause === 'until-idle') {
-    return { heading: 'Paused until other runs are idle', action: 'Resume now',
-      text: `Orc resumes this run by itself once no other run is working. ${waits}` };
+    return { lead: 'Paused until other runs are idle.', action: 'Resume now',
+      text: `Orc picks it up once no other run is working; ${waits}` };
   }
   if (row.runPause) {
-    return { heading: 'Paused', action: 'Resume run',
-      text: `You paused this run. It picks up where it left off when you resume it. ${waits}` };
+    return { lead: 'Paused by you.', action: 'Resume run', text: `It picks up here when you resume it; ${waits}` };
   }
   if (row.focusPaused) {
-    const queue = row.focus?.scope === 'project' ? 'This project’s run queue' : 'Queue mode';
-    const place = row.focus?.position ? `, and this run is #${row.focus.position} in line` : '';
-    return { heading: 'Paused in the queue', action: 'Start now', title: 'Start this run now, beside the runs ahead of it',
-      text: `${queue} is running other runs first${place}. It picks up where it left off when its turn comes. ${waits}` };
+    const queue = row.focus?.scope === 'project' ? 'this project’s queue' : 'the queue';
+    const lead = row.focus?.position ? `#${row.focus.position} in ${queue}.` : `Waiting in ${queue}.`;
+    return { lead, action: 'Start now', title: 'Start this run now, beside the runs ahead of it',
+      text: `It picks up here when its turn comes; ${waits}` };
   }
-  return { heading: 'Stopped', action: 'Resume queue', text: 'Messages you queue wait until you resume the queue.' };
+  return { lead: 'Stopped.', icon: 'stop', action: 'Resume queue', text: 'Messages you queue wait until you resume the queue.' };
 }
 
-function queueHeldHtml(row, context) {
+function heldLineHtml({ icon, html, action, label, title }) {
+  return `<div class="chat-row chat-row-held" role="status"><span class="chat-held-icon" aria-hidden="true">${ICONS[icon]}</span>`
+    + `<p>${html}</p><button type="button" class="chat-action" data-chat-action="${action}" data-focus-key="${action}"${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</button></div>`;
+}
+
+function queueHeldHtml(row) {
   const held = queueHeld(row);
-  return `<div class="chat-row chat-row-notice chat-row-held"><orc-callout variant="${held.variant || 'accent'}"${held.heading ? ` heading="${esc(held.heading)}"` : ''}>`
-    + `<p>${esc(held.text)}</p><button type="button" class="chat-action" data-chat-action="resume-queue" data-focus-key="resume-queue"${held.title ? ` title="${esc(held.title)}"` : ''}>${esc(held.action)}</button></orc-callout></div>`;
+  if (held.error) {
+    return `<div class="chat-row chat-row-notice chat-row-held-error"><orc-callout variant="orange"><p>${esc(held.text)}</p>`
+      + `<button type="button" class="chat-action" data-chat-action="resume-queue" data-focus-key="resume-queue">${esc(held.action)}</button></orc-callout></div>`;
+  }
+  return heldLineHtml({ icon: held.icon || 'pause', action: 'resume-queue', label: held.action, title: held.title,
+    html: `<strong>${esc(held.lead)}</strong> ${esc(held.text)}` });
 }
 
 function elementFrom(html) {
@@ -1664,8 +1721,8 @@ async function rebuildBar(frame, runId) {
 // plan while it waits at its gate for Start work. Once work has started the
 // run's Plan tab keeps it one click away.
 const PLAN_NOTES = {
-  asked: 'Nothing is built until you read the plan and press Start work.',
-  automatic: 'The build starts by itself when the plan is ready.',
+  asked: () => `Nothing is built until you read the plan and press ${startWorkLabel()}.`,
+  automatic: () => 'The build starts by itself when the plan is ready.',
 };
 
 // The agent is at work on a plan and nothing waits on the user.
@@ -1680,7 +1737,7 @@ function syncPlanBar(bar, target, planning, automatic) {
   const reveal = target?.kind === 'reveal';
   bar.hidden = !target && !planning;
   if (bar.hidden) return;
-  const [name, say, note] = planning ? ['Planning', 'Planning', PLAN_NOTES[automatic ? 'automatic' : 'asked']]
+  const [name, say, note] = planning ? ['Planning', 'Planning', PLAN_NOTES[automatic ? 'automatic' : 'asked']()]
     : reveal ? ['Plan ready', 'The plan is ready.', ''] : ['Plan', 'This run has a plan.', ''];
   bar.classList.toggle('is-planning', planning);
   bar.setAttribute('aria-label', name);
@@ -2057,7 +2114,9 @@ function renderChat() {
     session.loaded ? catchUpState(items, session.data.catchUp, { working: working || starting }) : null);
   const agent = chatAgentName(meta);
   const launchPrompt = launch.prompt ? splitAttachments(launch.prompt) : null;
-  const queued = (session.data.queued || []).filter(entry => entry.id !== session.sendingNow);
+  // Orc's own resume note stays out of Chat while it waits: the held card
+  // already says the run is paused, and the note shows as Run resumed once sent.
+  const queued = (session.data.queued || []).filter(entry => entry.id !== session.sendingNow && (entry.text || !entry.resumed));
   const queuedAnswers = new Set(queued.map(entry => entry.chatSubmission).filter(Boolean));
   const recordedAnswers = queuedAnswers.size ? new Set(items.map(item => item.chatSubmission)) : null;
   let rows = chatRows(items, {
@@ -2145,7 +2204,8 @@ function renderChat() {
     agent.status === 'running' && meta.sessionAlive === false
       ? { ...agent, status: 'unknown' } : agent);
   const agentsRunning = subagents.some(agent => agent.status === 'running');
-  root.querySelector('.chat-ship-missing').hidden = !shipGateMissing(meta, working || agentsRunning);
+  // A held queue (a Stop included) means the person stopped it, not the agent.
+  root.querySelector('.chat-ship-missing').hidden = !!session.data.queueHeld || !shipGateMissing(meta, working || agentsRunning);
   const tasksWaiting = root.querySelector('.chat-tasks-waiting');
   const waitingOnTasks = !working && tasksRunning(meta) > 0 && meta.status === 'running' && !meta.pendingQuestion;
   const waitingHtml = waitingOnTasks ? esc(tasksWaitingText(meta))
@@ -2988,8 +3048,8 @@ async function sendNow(itemId) {
   if (!item) return;
   const text = item.text || '';
   const existing = item.chatSubmission && session.outbox.find(entry => entry.chatSubmission === item.chatSubmission);
-  const entry = existing || { id: ++outboxSeq, text, gateAnswers: item.gateAnswers, chatSubmission: item.chatSubmission,
-    at: Date.now(), seen: promptCount(session, text) };
+  const entry = existing || { id: ++outboxSeq, text, resumed: item.resumed, gateAnswers: item.gateAnswers, chatSubmission: item.chatSubmission,
+    at: Date.now(), seen: promptCount(session, text, item.resumed) };
   entry.state = 'sending';
   if (!existing) session.outbox.push(entry);
   session.sendingNow = itemId;

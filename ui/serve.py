@@ -178,6 +178,7 @@ import run_timings
 import run_waterfall
 import token_usage
 import agent_browser
+import config_guard
 import project_setup
 import command_suggestions
 import turn_nudges
@@ -190,6 +191,13 @@ import github_emoji
 RUNS = os.environ.get("ORC_RUNS_DIR") \
     or os.path.join(os.path.expanduser("~"), ".orc", "runs")
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".orc")
+# Under bin/test (ORC_TEST_REAL_HOME) the real ~/.orc is off limits too: a test
+# that reached its queue files rewrote the live queue and paused started runs.
+if (os.environ.get("ORC_TEST_REAL_HOME")
+        and os.path.realpath(CONFIG_DIR)
+        == os.path.realpath(os.path.join(os.environ["ORC_TEST_REAL_HOME"], ".orc"))):
+    CONFIG_DIR = (os.path.join(RUNS, ".config") if os.environ.get("ORC_RUNS_DIR")
+                  else tempfile.mkdtemp(prefix="orc-test-config."))
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 # The year-in-review token cache. A redirected run store keeps its own.
@@ -235,6 +243,9 @@ OWNS_NATIVE_APP = INSTANCE_KIND == "default" and PORT == 4173
 
 
 SERVER_STARTED = False
+# The last good settings, kept only by the server the user's own Orc.app uses:
+# fixture servers rewrite theirs at will (config_guard).
+CONFIG_KEEPER = None
 
 
 def plugin_proposal_links():
@@ -248,9 +259,10 @@ def plugin_proposal_links():
 
 
 def runs_schedules():
-    """Whether this server is the one that does things on a schedule: the
-    assistant's watch and a vault's automations. A preview shares the real
-    config, so it leaves them to the server it previews."""
+    """Whether this server is the one that does things on a schedule: the run
+    queue, the assistant's watch and a vault's automations. A preview shares
+    the real config, so it leaves them to the server it previews, and so does
+    a test, which imports this file beside the real config."""
     return SERVER_STARTED and not IS_PREVIEW
 
 
@@ -542,6 +554,11 @@ ANSWER_TAB = "answer.md"
 # The frozen route stamp lets delivery validate a request without a Plan.
 MINIMAL_SHELL_ROUTE = "minimal-shell"
 MINIMAL_SHELL_SHIP_PHASES = ("plan", "build", SHIP_PHASE)
+
+
+def replaces_ship_page(meta):
+    """True when the Pull request panel stands in for the run's Ship page."""
+    return isinstance(meta, dict) and meta.get("lifecycleVersion") == 4
 
 
 def minimal_shell_run(meta):
@@ -6533,9 +6550,13 @@ def plan_step_launch(plan_id, step_row, rows=None):
         step["stackedOn"] = [parent["step"] for parent in stack["stackedOn"]]
         text = text + plan_stack_prompt(step_row.get("planStep"), stack)
     auto_merge = bool(step_row.get("autoMerge")) and bool(APP_PLUGINS.enabled_root("auto-merge"))
-    return planning_fork(plan_id, meta, text, step, choices,
-                         cwd=step_row.get("targetProject"), token=step_row.get("launchToken"),
-                         stack=stack, **({"auto_merge": True} if auto_merge else {}))
+    result, error = planning_fork(plan_id, meta, text, step, choices,
+                                  cwd=step_row.get("targetProject"), token=step_row.get("launchToken"),
+                                  stack=stack, **({"auto_merge": True} if auto_merge else {}))
+    # A step Start now opened waited for its turn in the plan, not the queue.
+    if not error and step_row.get("startNow") is True:
+        start_beside_queue([result.get("runId")])
+    return result, error
 
 
 def plan_step_runs(plan_id, number, rows):
@@ -6823,8 +6844,10 @@ def start_plan_work(run_id, data=None, fork=None, auto_merge=None):
     # Start each step opens one run per step in a plan of one repository,
     # as a plan whose steps name their repositories always does.
     each = isinstance(data, dict) and data.get("each") is True
+    # Start now: in Queue mode the build works beside the queue at once.
+    now = isinstance(data, dict) and data.get("now") is True
     if number is None and (plan_names_repositories(steps) or (each and len(steps) > 1)):
-        return _start_plan_group(run_id, meta, steps, choices, fork, auto_merge=auto_merge)
+        return _start_plan_group(run_id, meta, steps, choices, fork, auto_merge=auto_merge, now=now)
     if number is None:
         # One run for every step, so the steps show it and offer no Start.
         # A plan of one step or none has only this Start, and one build.
@@ -6865,6 +6888,8 @@ def start_plan_work(run_id, data=None, fork=None, auto_merge=None):
                          **({"auto_merge": True} if auto_merge else {}))
     if error:
         return None, error
+    if now:
+        start_beside_queue([result.get("runId")])
     with contextlib.suppress(OSError):
         if run_unread.mark_read(UNREAD_PATH, run_id):
             invalidate_runs_body()
@@ -6872,11 +6897,31 @@ def start_plan_work(run_id, data=None, fork=None, auto_merge=None):
     return {"ok": True, "childRunId": result.get("runId")}, None
 
 
-def _start_plan_group(run_id, meta, steps, choices, fork, auto_merge=False):
+def start_beside_queue(run_ids):
+    """Start now on the plan page: each build works beside Queue mode's
+    queue straight away, as a queued run's Start does, so Orc never pauses
+    it for the build ahead. Outside Queue mode nothing queues it."""
+    if not runs_schedules() or power_mode.mode(read_config()[0]) != "low":
+        return
+    for run_id in run_ids:
+        if not run_relationships.valid_run_id(run_id):
+            continue
+        # The build has already launched, so a pass that fails leaves it
+        # queued rather than failing the start.
+        try:
+            schedule_focus(start=run_id)
+        except (OSError, ValueError) as exc:
+            print("orc-ui: could not start %s beside the queue: %s" % (run_id, exc), file=sys.stderr)
+    invalidate_runs_body()
+
+
+def _start_plan_group(run_id, meta, steps, choices, fork, auto_merge=False, now=False):
     """Start work on a plan whose steps name their repositories, or Start
     each step on any plan of several steps: one run per step, each in its
     repository, all at once. A step that waits on another is recorded as
-    waiting and starts when that run reaches Ship."""
+    waiting and starts when that run reaches Ship. With `now` (Start now)
+    every run starts beside Queue mode's queue, a waiting one once its wait
+    is over."""
     if planning_started_steps(run_id):
         return None, (409, "the plan already has work started", False)
     plan_cwd = configured_repo_cwd(meta.get("mainRepoPath") or meta.get("repoPath"))
@@ -6907,6 +6952,7 @@ def _start_plan_group(run_id, meta, steps, choices, fork, auto_merge=False):
                 "targetProject": cwd, "mode": "orc", "planStart": True,
                 "text": text, "choices": choices, "state": "waiting",
                 **({"autoMerge": True} if auto_merge else {}),
+                **({"startNow": True} if now else {}),
                 "requestedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 **row})
             waiting.append(number)
@@ -6917,6 +6963,8 @@ def _start_plan_group(run_id, meta, steps, choices, fork, auto_merge=False):
             failures.append("step %d: %s" % (number, error[1]))
         else:
             launched.append(result.get("runId"))
+    if now:
+        start_beside_queue(launched)
     if launched:
         with contextlib.suppress(OSError):
             if run_unread.mark_read(UNREAD_PATH, run_id):
@@ -8651,14 +8699,18 @@ function baPane(label, alt, src) {
 // pane is never rescanned, and skips fenced/inline code for the same
 // reason mdImages does.
 function pairBeforeAfter(s) {
+  var answerMedia = /^(?:\\.\\/)?media\\/[^/]+\\.(?:png|jpe?g|gif|webp)$$/i;
+  var mockupPicture = /-mockup\\.(?:png|jpe?g|gif|webp)$$/i;
   return s.split(/(```[\\s\\S]*?```|`[^`\\n]*`)/).map(function (part, i) {
     if (i % 2) return part;
     return part.replace(
       /^([ \\t]*)!\\[([^\\]]*)\\]\\(([^)\\s]+)\\)[ \\t]*\\r?\\n\\1!\\[([^\\]]*)\\]\\(([^)\\s]+)\\)[ \\t]*$$/gm,
       function (m, indent, alt1, src1, alt2, src2) {
-        return (/(^|\\/)shots\\/before\\//.test(src1) && /(^|\\/)shots\\/after\\//.test(src2))
-          ? indent + '<div class="before-after">' + baPane('Before', alt1, src1) + baPane('After', alt2, src2) + '</div>'
-          : m;
+        if (/(^|\\/)shots\\/before\\//.test(src1) && /(^|\\/)shots\\/after\\//.test(src2))
+          return indent + '<div class="before-after">' + baPane('Before', alt1, src1) + baPane('After', alt2, src2) + '</div>';
+        if (answerMedia.test(src1) && answerMedia.test(src2) && mockupPicture.test(src2))
+          return indent + '<div class="before-after">' + baPane('Today', alt1, src1) + baPane('Mockup', alt2, src2) + '</div>';
+        return m;
       }
     );
   }).join('');
@@ -10204,8 +10256,8 @@ def synthesized_stage_pending(run_dir, page, meta=None, run_id=None,
         # A worker writes no Plan and reports to its coordinator.
         return False
     if minimal_shell_run(meta):
-        # Minimal shell: the run writes no Plan, so Ship is its only page
-        # and carries the loader from the first phase instead of plan.html.
+        # Minimal shell: the run writes no Plan, and a Ship page saved before
+        # the Pull request panel replaced it stays held until the gate opens.
         if page == "plan.html":
             return False
         if page == SHIP_TAB:
@@ -10723,9 +10775,9 @@ def pending_stage_page(meta):
         if phase == "clarification":
             return CLARIFICATION_TAB
         if phase in ("plan", "build"):
-            # The minimal shell has no Plan page to stand in for the build.
-            return SHIP_TAB if minimal_shell_run(meta) else "plan.html"
-        if phase == SHIP_PHASE:
+            # The minimal shell writes no Plan to stand in for the build.
+            return None if minimal_shell_run(meta) else "plan.html"
+        if phase == SHIP_PHASE and not replaces_ship_page(meta):
             return SHIP_TAB
         return None
     if phase == "grilling":
@@ -12609,7 +12661,7 @@ def ship_at_landing_stop(run_id, skip_digest=None, wanted=lambda: True):
         error = deliver_ship_pr(run_id, pr_action, digest)
     elif send:
         pane, text, status = send
-        failure = paste_to_pane(pane, text, queue_when_busy=True)
+        failure = paste_to_pane(pane, text, queue_when_busy=True, source="ship-action")
         if failure:
             restore_run_status(run_id, status, "awaiting-gate")
             error = failure[1]
@@ -14485,7 +14537,8 @@ def mark_send_failed(run_id, delivery_identity=None):
         status = meta.get("status")
         if status == "escalated":
             return "escalated", None
-        if status != "running":
+        # An answer waiting for the run's turn was sent; its agent is not due yet.
+        if status != "running" or focus_wants_turn(run_id, meta, read_follow_ups(run_id)):
             return "moved-on", None
         phase = meta.get("phase")
         sent = meta.get("sentPhases")
@@ -14851,6 +14904,11 @@ def _submit_queued_command(run_id, state, pane, text, *, immediate=False, from_o
     return delivery
 
 
+# Messages that never wait for a run's turn in Queue mode: a Ship action, and a
+# note from another run, whose sender may wait on it.
+UNQUEUED_SOURCES = ("ship-action", "orc-note")
+
+
 def flush_follow_ups(run_id, now=None):
     """Send eligible queued notes as one prompt once the session is idle.
 
@@ -14869,11 +14927,15 @@ def flush_follow_ups(run_id, now=None):
         last = state.get("lastAttemptAt")
         if last is not None and now - last < FOLLOW_UP_RETRY_SECONDS:
             return False
+        if (any(item.get("source") not in UNQUEUED_SOURCES and not item.get("orc") for item in state["items"])
+                and hold_for_turn(run_id, run_meta(run_id), state)):
+            write_follow_ups(run_id, state)
+            return False
         pane = follow_up_target_pane(run_id)
         items = state["items"]
         if not pane:
             items = [item for item in items
-                     if item.get("source") in ("chat", "collision-radar", "artifact-feedback", "orc-note")]
+                     if item.get("source") in ("chat", "collision-radar", "artifact-feedback", *UNQUEUED_SOURCES)]
             pane = follow_up_target_pane(run_id, chat=True) if items else None
         if not pane:
             return False
@@ -14931,7 +14993,6 @@ def interrupt_run_turn(run_id, meta):
 # with a run queue (`runsAtOnce`) in Standard. A merge is delivery, which the
 # queue leaves alone.
 FOCUS_ACTIVE_STATUSES = ("running", "awaiting-gate", "escalated")
-FOCUS_RESUME_NOTE = "[Orc] This run has resumed. Continue where you left off."
 
 
 def focus_queue_member(meta):
@@ -14942,6 +15003,12 @@ def focus_queue_member(meta):
             and meta.get("outcome") != "question"
             and meta.get("route") != "orchestration-worker"
             and not run_relationships.retired_lifecycle(meta))
+
+
+def low_queue_member(meta, config):
+    """Whether Queue mode queues the run. `focus_queue_member` is every run
+    that can be paused, whether or not it queues."""
+    return focus_queue_member(meta) and power_mode.queues_in_low(meta, config)
 
 
 FOCUS_RESUME_GRACE_SECONDS = 60
@@ -15022,6 +15089,100 @@ def focus_waiting(run_id, meta, queue, resumed=False):
                 or _terminal_session_activity(run_id) == "running")
 
 
+def focus_wants_turn(run_id, meta, queue):
+    """A message waits on Orc's own hold for the run's turn, so the run has
+    work to do wherever it stopped. A question is answered in its own box."""
+    return bool(queue.get("focusPaused") and not queue.get("runPause") and queue.get("items")
+                and not waiting_for_start(meta)
+                and not pending_question(meta, os.path.join(RUNS, run_id)))
+
+
+def focus_shipped(meta):
+    """The run has reached its Ship stop, whatever it does there now."""
+    return meta.get("phase") == SHIP_PHASE or is_final_landing_phase(meta.get("phase"))
+
+
+def low_queue_waiting(run_id, meta, queue, resumed=False, has_place=False):
+    """`focus_waiting` for Queue mode. A build at Ship without the place is
+    delivering (opening a PR, resolving a merge conflict), which the queue
+    leaves alone, and one with the place is making changes."""
+    if focus_wants_turn(run_id, meta, queue):
+        return False
+    if power_mode.builds(meta) and focus_shipped(meta) and not queue.get("focusPaused"):
+        return not (has_place and not queue.get("runPause")
+                    and (resumed or _terminal_session_activity(run_id) == "running"))
+    return focus_waiting(run_id, meta, queue, resumed)
+
+
+def low_queue_keeps(run_id, meta, queue, resumed=False):
+    """Whether the run working in Queue mode keeps its place. A build keeps it
+    until Ship, and a plan until it is ready to read, so one waiting for the
+    user's answer still holds the line. Pause, Stop and a failed turn give it
+    up, and so does Ship once the turn that reached it ends."""
+    if queue.get("runPause") or waiting_for_start(meta) or headless_turn_failure(run_id):
+        return False
+    working = resumed or _terminal_session_activity(run_id) == "running"
+    if not working and queue.get("held") and not queue.get("focusPaused"):
+        # A delivery in flight saves a hold of its own, which is not a Stop.
+        queue = displayed_follow_ups(run_id)
+        if queue.get("held") and not queue.get("focusPaused"):
+            return False
+    if working or queue.get("items"):
+        return True
+    if power_mode.builds(meta):
+        return not (at_final_landing_stop(meta)
+                    or (focus_shipped(meta) and isinstance(meta.get("mergeConflict"), dict)))
+    return planning_run(meta) and not planning_complete(meta)
+
+
+def hold_for_turn(run_id, meta, state):
+    """Put Orc's hold on `state` when the run has no place in Queue mode, so a
+    message to it waits for the scheduler to give it one instead of starting a
+    turn Orc would interrupt. The caller holds the run's follow-up lock and
+    writes `state`, so this takes no focus lock: the scheduler takes that one
+    first. The next pass frees the run when its turn has already come."""
+    if state.get("runPause"):
+        return False
+    if state.get("focusPaused"):
+        return True
+    config = read_config()[0]
+    if (not runs_schedules() or power_mode.mode(config) != "low" or not low_queue_member(meta, config)
+            or power_mode.has_place(run_id, power_mode.read_focus(CONFIG_DIR))
+            or queue_place(run_id)
+            or pending_question(meta, os.path.join(RUNS, run_id))):
+        return False
+    # Resuming must not send what a Stop or a failed delivery holds.
+    if state.get("held") and (state["items"] or state.get("lastError")):
+        return False
+    # The scheduler pauses a working turn itself. At Ship that turn delivers,
+    # so it finishes and only the message waits.
+    if not focus_shipped(meta) and _terminal_session_activity(run_id) == "running":
+        return False
+    state.update(held=True, focusPaused=_feedback_now())
+    return True
+
+
+def queue_until_turn(run_id, text, *, source="chat"):
+    """Queue the user's message while the run waits behind another build:
+    ``(queued, error)``."""
+    if not runs_schedules():
+        return False, None
+    with follow_up_lock(run_id):
+        state = read_follow_ups(run_id)
+        if not hold_for_turn(run_id, run_meta(run_id), state):
+            return False, None
+        _, error = append_follow_up(run_id, state, text, source=source)
+    kick_focus_schedule()
+    return True, error[:2] if error else None
+
+
+def send_in_turn(run_id, pane, text, **options):
+    """`paste_to_pane` for work the user sends a run, which waits for the
+    run's turn in Queue mode. Delivery never waits."""
+    queued, error = queue_until_turn(run_id, text)
+    return error if queued else paste_to_pane(pane, text, queue_when_busy=True, **options)
+
+
 def _focus_started(run_id):
     match = re.search(r"-(\d{8})-(\d{4,6})$", run_id)
     return match.group(1) + match.group(2).ljust(6, "0") if match else ""
@@ -15061,6 +15222,9 @@ def focus_pause(run_id):
         if state.get("held"):
             return False
         state.update(held=True, focusPaused=_feedback_now())
+        # At Ship nothing else says the interrupted changes are still to make.
+        if focus_shipped(run_meta(run_id)):
+            _queue_focus_note(state)
         if not write_follow_ups(run_id, state):
             return False
     if interrupt_run_turn(run_id, run_meta(run_id)) is None:
@@ -15069,9 +15233,11 @@ def focus_pause(run_id):
 
 
 def _queue_focus_note(state):
+    if any(item["text"] == run_chat.RESUME_NOTE for item in state["items"]):
+        return
     if len(state["items"]) < FOLLOW_UPS_MAX:
-        state["items"].insert(0, {"id": secrets.token_hex(6), "text": FOCUS_RESUME_NOTE,
-                                  "queuedAt": _feedback_now()})
+        state["items"].insert(0, {"id": secrets.token_hex(6), "text": run_chat.RESUME_NOTE,
+                                  "queuedAt": _feedback_now(), "source": "chat", "orc": True})
 
 
 def focus_resume(run_id, *, note=True):
@@ -15080,8 +15246,11 @@ def focus_resume(run_id, *, note=True):
         if state.get("runPause") or not state.get("focusPaused"):
             return False
         state.pop("held", None)
-        state.pop("focusPaused", None)
-        if note:
+        since = state.pop("focusPaused")
+        # A message that waited for its turn interrupted nothing, so there is
+        # nothing to pick up again but the message itself.
+        interrupted = any(pause["at"] >= since for pause in run_pauses(run_id))
+        if note and (interrupted or not state["items"]):
             _queue_focus_note(state)
         if not write_follow_ups(run_id, state):
             return False
@@ -15110,13 +15279,13 @@ def focus_lane(meta):
     return (canonical_path(main_repo), limit) if limit else (None, None)
 
 
-def _existing_queue_exempt_runs(names=None):
+def _existing_queue_exempt_runs(config, names=None):
     """Queue members not already auto-paused by a queue when Queue mode starts
     with scope 'new-only'. Must be called under `power_mode.focus_lock`."""
     names = _run_names() if names is None else names
     exempt = []
     for name in names:
-        if not focus_queue_member(run_meta(name)):
+        if not low_queue_member(run_meta(name), config):
             continue
         held = read_follow_ups(name)
         if held.get("focusPaused") and not held.get("runPause"):
@@ -15125,14 +15294,76 @@ def _existing_queue_exempt_runs(names=None):
     return exempt
 
 
+def queue_place(run_id):
+    """Why the run keeps working in the queue (`power_mode.PLACES`), or None."""
+    return power_mode.read_place(os.path.join(RUNS, run_id))
+
+
+def _set_queue_place(run_id, place, before):
+    if place != before and not power_mode.write_place(os.path.join(RUNS, run_id), place):
+        print("orc-ui: could not save %s's place in the queue" % run_id, file=sys.stderr)
+        return before
+    return place
+
+
+def _queue_places(queued, previous, places, start):
+    """`previous` with what each run remembers of its place added, so a queue
+    file that lost them (rewritten by an older checkout, reset by an update)
+    still never pauses a run the user started, one kept going by "only new
+    runs", or the build whose turn it is."""
+    if start in queued:
+        places[start] = _set_queue_place(start, "hand", places[start])
+    previous = dict(previous)
+    for key, place in (("beside", "hand"), ("exempt", "kept")):
+        previous[key] = power_mode.sanitize_priority(
+            (previous.get(key) or []) + [name for name in queued if places[name] == place])
+    active = previous.get("active")
+    if not isinstance(active, list):
+        active = [previous["focused"]] if previous.get("focused") else []
+    previous["active"] = power_mode.sanitize_priority(
+        active + [name for name in queued if places[name] == "turn"])
+    return previous
+
+
+def _save_queue_places(queued, state, places):
+    beside, kept, active = set(state["beside"]), set(state.get("exempt") or []), set(state["active"])
+    for name in queued:
+        place = ("hand" if name in beside or places[name] == "hand"
+                 else "kept" if name in kept else "turn" if name in active else None)
+        places[name] = _set_queue_place(name, place, places[name])
+
+
+def _reset_queue_places(names, exempt, *, forget_starts):
+    """A Queue mode change starts the queue afresh: `exempt` runs are kept
+    going, and with "queue everything" (`forget_starts`) every other run queues,
+    even one the user started by hand."""
+    exempt = set(exempt or [])
+    for name in names:
+        before = queue_place(name)
+        place = ("kept" if name in exempt and before != "hand"
+                 else before if before == "hand" and not forget_starts else None)
+        _set_queue_place(name, place, before)
+    if forget_starts:
+        state = power_mode.read_focus(CONFIG_DIR)
+        if state.pop("beside", None) is not None:
+            power_mode.write_focus(state, CONFIG_DIR)
+
+
 def _schedule_focus_locked(names=None, *, prioritise=None, start=None, metas=None, exempt=None):
     """Scheduling pass body; caller must hold `power_mode.focus_lock(CONFIG_DIR)`."""
     names = _run_names() if names is None else names
     state = power_mode.read_focus(CONFIG_DIR)
-    low = power_mode.mode(read_config()[0]) == "low"
+    config = read_config()[0]
+    low = power_mode.mode(config) == "low"
     metas = {name: run_meta(name) for name in names
              if metas is None or focus_queue_member(metas[name])}
     queued = [name for name in metas if focus_queue_member(metas[name])]
+    places = {name: queue_place(name) for name in names}
+    # A finished run forgets its place, so nothing carries over if it reopens.
+    queued_set = set(queued)
+    for name, place in places.items():
+        if place and name not in queued_set:
+            places[name] = _set_queue_place(name, None, place)
     held = {name: read_follow_ups(name) for name in names}
     now = time.time()
     resumed = {name: at for name, at in state.get("resumedAt", {}).items()
@@ -15157,7 +15388,9 @@ def _schedule_focus_locked(names=None, *, prioritise=None, start=None, metas=Non
                     held[name] = current
                     invalidate_runs_body()
     lanes, lane_limits = {}, {}
-    if not low:
+    if low:
+        queued = [name for name in queued if power_mode.queues_in_low(metas[name], config)]
+    else:
         for name in queued:
             lane, limit = focus_lane(metas[name])
             if lane:
@@ -15172,12 +15405,24 @@ def _schedule_focus_locked(names=None, *, prioritise=None, start=None, metas=Non
             [prioritise] + [run_id for run_id in priority if run_id != prioritise],
             CONFIG_DIR,
         )
-    members = [{"id": name, "started": _focus_started(name), "lane": lanes.get(name),
-                "waiting": focus_waiting(name, metas[name], held[name], name in resumed)}
-               for name in queued]
+    previous = state = _queue_places(queued, state, places, start)
+
+    def member(name):
+        meta, queue, again = metas[name], held[name], name in resumed
+        row = {"id": name, "started": _focus_started(name), "lane": lanes.get(name)}
+        if not low:
+            return {**row, "waiting": focus_waiting(name, meta, queue, again)}
+        active = name in (previous.get("active") or [])
+        return {**row, "waiting": low_queue_waiting(name, meta, queue, again,
+                                                    power_mode.has_place(name, previous)),
+                "keeps": active and low_queue_keeps(name, meta, queue, again),
+                "shipped": power_mode.builds(meta) and focus_shipped(meta)}
+
+    members = [member(name) for name in queued]
     state = power_mode.plan(members, state, priority=priority, prioritise=prioritise,
                             start=start, limit=1 if low else None, lane_limits=lane_limits,
                             exempt=exempt if low else [])
+    _save_queue_places(queued, state, places)
     waiting = {member["id"] for member in members if member["waiting"]}
     runnable = {*state["active"], *state["beside"]}
     state["paused"] = []
@@ -15188,6 +15433,9 @@ def _schedule_focus_locked(names=None, *, prioritise=None, start=None, metas=Non
             state["paused"].append(name)
         elif held[name].get("focusPaused"):
             state["paused"].append(name)
+    # A resumed run's messages go out below, and the send asks whose turn it is.
+    if limited:
+        power_mode.write_focus(state, CONFIG_DIR)
     # A run that stopped for the user, left the queue, or became the
     # active run releases Orc's queue hold; user Stops stay untouched.
     for name in names:
@@ -15207,9 +15455,11 @@ def _schedule_focus_locked(names=None, *, prioritise=None, start=None, metas=Non
 def schedule_focus(names=None, *, prioritise=None, start=None, metas=None, exempt=None):
     """One pass of run-queue scheduling.
 
-    In Low power only the top-priority working run (plus any run explicitly
+    In Queue mode only the top-priority working run (plus any run explicitly
     started `beside` it, or exempt existing runs under `new-only` scope) stays
-    runnable, and other working runs pause until their turn. In Standard only
+    runnable, and other working runs pause until their turn. The working run
+    keeps its place until Ship, and runs that build nothing do not queue unless
+    `ui.queueBuildsOnly` is off. In Standard only
     projects with a run queue (`runsAtOnce`) queue: each lets that many of its
     runs work and pauses the rest. A pass also releases holds that no queue
     needs any more.
@@ -15218,7 +15468,7 @@ def schedule_focus(names=None, *, prioritise=None, start=None, metas=None, exemp
     never act on divergent queues. `metas`, a read of every run taken before
     the lock, only screens out the runs no queue can hold: the rest are read
     again under it, so a pass still acts on what another pass left."""
-    if IS_PREVIEW:
+    if not runs_schedules():
         return None
     with power_mode.focus_lock(CONFIG_DIR):
         return _schedule_focus_locked(names, prioritise=prioritise, start=start, metas=metas, exempt=exempt)
@@ -15242,11 +15492,23 @@ def focus_marks(state):
     return marks
 
 
+def project_focus_queue(meta, name, focus):
+    meta.pop("runPause", None)
+    meta.pop("focusQueue", None)
+    if not focus_queue_member(meta):
+        return
+    pause = read_follow_ups(name).get("runPause")
+    if pause:
+        meta["runPause"] = pause
+    if name in focus:
+        meta["focusQueue"] = focus[name]
+
+
 def schedule_focus_for_watch_tick(names=None, metas=None):
     try:
         before = focus_marks(power_mode.read_focus(CONFIG_DIR))
         if focus_marks(schedule_focus(names, metas=metas) or {}) != before:
-            invalidate_runs_body()
+            invalidate_runs_body(queue_changed=True)
     except (OSError, ValueError) as exc:
         print("orc-ui: focus scheduling failed: %s" % exc, file=sys.stderr)
 
@@ -18948,6 +19210,16 @@ def delegate_task(run_id, data):
                                      error="launch acceptance unknown: " + str(exc))
 
 
+def finish_interrupted_launches_for_watch_tick():
+    """Settle launch rows a restart cut short (run_relationships), so a plan
+    whose build launched across a restart still settles with that build."""
+    if IS_PREVIEW:
+        return
+    if run_relationships.finish_interrupted_launches(
+            CONFIG_DIR, lambda run_id: bool(run_meta(run_id))):
+        invalidate_runs_body()
+
+
 def reconcile_tasks_for_watch_tick():
     if IS_PREVIEW:
         return
@@ -20895,6 +21167,7 @@ def _reconcile_boot_live(raw_live, queued):
     # A run queued since live.json was saved is not listed here yet; wait for scan().
     if queued.keys() - by_id:
         return None
+    focus = focus_marks(power_mode.read_focus(CONFIG_DIR))
     session_reads = run_session.RunSessions(RUNS)
     reconciled = []
     reconciled_ids = set()
@@ -20930,10 +21203,7 @@ def _reconcile_boot_live(raw_live, queued):
         project_merge_queue(meta, queued.get(name))
         if conflict_resolution_pending(meta) and "mergeWaitingOn" in saved:
             meta["mergeWaitingOn"] = saved["mergeWaitingOn"]
-        if focus_queue_member(meta):
-            for key in ("runPause", "focusQueue"):
-                if key in saved:
-                    meta[key] = saved[key]
+        project_focus_queue(meta, name, focus)
         meta.update(session.display_fields())
         if (meta.get("orchestration") is True and meta.get("status") in LIVE_STATUSES
                 and not meta.get("orchestrationQueueHeld") and "tasksRunning" in saved):
@@ -21006,6 +21276,7 @@ def _reconcile_boot_live(raw_live, queued):
                 session = session_reads.read(child_id, current)
                 meta = dict(session.meta)
                 project_merge_queue(meta, queued.get(child_id))
+                project_focus_queue(meta, child_id, focus)
                 meta["shipAction"] = ship_action(meta)
                 meta["offerMergeToMain"] = meta["shipAction"] != "pr"
                 meta.update(session.display_fields())
@@ -21062,6 +21333,8 @@ def _reconcile_boot_live(raw_live, queued):
                 children_of, parent_row, question_flags.get(entry["id"], False), latest_notes)
         inherit_plan_source(reconciled)
         pair_plan_builds(reconciled, plan_launches(parent_row))
+    if focus.keys() - reconciled_ids:
+        return None
     run_unread.apply(UNREAD_PATH, reconciled)
     reconciled.sort(key=lambda r: r.get("mtime") or 0, reverse=True)
     return json.dumps(reconciled, separators=(",", ":")).encode()
@@ -21379,14 +21652,7 @@ def scan():
                 {k: s[k] for k in ("id", "name", "command", "icon")}
                 for s in scripts]
         meta.pop("browser", None)
-        meta.pop("runPause", None)
-        if focus_queue_member(meta):
-            pause = read_follow_ups(name).get("runPause")
-            if pause:
-                meta["runPause"] = pause
-        meta.pop("focusQueue", None)  # payload-only
-        if name in focus:
-            meta["focusQueue"] = focus[name]
+        project_focus_queue(meta, name, focus)
         meta.update(session.display_fields())
         # payload-only: results arrive as the parent's next turn, so an idle
         # parent with tasks out is working, not waiting on the user. Stop
@@ -21553,20 +21819,35 @@ def scan():
     return runs
 
 
+def starts_own_work(meta):
+    """Whether a run nested under another is its own work rather than part of
+    the plan that run builds: a planning session has its own plan, a
+    follow-up or fork started from a run (a context fork) is new work, and an
+    Orchestrate worker builds the task its coordinator handed it."""
+    return (meta.get("route") == PLANNING_ROUTE or meta.get("source") == "context-fork"
+            or is_orchestration_worker(meta))
+
+
 def inherit_plan_source(runs):
-    """Runs nested under started work, such as its per-repository split
-    children, build from the same plan. An Orchestrate worker builds a task
-    its coordinator handed it, not the plan, so it shows no Plan tab."""
+    """Runs nested under a plan's started work, such as its per-repository
+    split children, build from the same plan and read it in a Plan tab. The
+    walk up parentRunId stops at a run that starts its own work
+    (starts_own_work), so neither it nor anything nested under it inherits.
+    Start work's own launches already carry planRunId from their
+    relationship row, so the walk finds them before that check."""
     by_id = {run["id"]: run["meta"] for run in runs}
     for meta in by_id.values():
-        if is_orchestration_worker(meta):
+        if "planRunId" in meta or starts_own_work(meta):
             continue
         seen, parent_id = set(), meta.get("parentRunId")
-        while "planRunId" not in meta and parent_id in by_id and parent_id not in seen:
+        while parent_id in by_id and parent_id not in seen:
             seen.add(parent_id)
             parent = by_id[parent_id]
             if "planRunId" in parent:
                 meta["planRunId"] = parent["planRunId"]
+                break
+            if starts_own_work(parent):
+                break
             parent_id = parent.get("parentRunId")
 
 
@@ -22042,19 +22323,51 @@ def read_config():
     try:
         mtime = os.path.getmtime(CONFIG_PATH)
     except OSError:
-        return {}, None, False
+        return _kept_config() or {}, None, False
     with CONFIG_CACHE_LOCK:
         if CONFIG_CACHE["mtime"] == mtime and CONFIG_CACHE["value"] is not None:
             return CONFIG_CACHE["value"]
+    # Nothing may build a save on a wiped file, so a wipe reads as the settings
+    # it replaced until heal_config puts them back.
+    kept = _kept_config()
+    if kept is not None:
+        return kept, mtime, False
     try:
         with open(CONFIG_PATH) as f:
             config = json.load(f)
     except (OSError, ValueError):
         return {}, mtime, True
     value = ((config if isinstance(config, dict) else {}), mtime, False)
+    if CONFIG_KEEPER is not None:
+        try:
+            CONFIG_KEEPER.accept(value[0])
+        except OSError as error:
+            print("settings backup: %s" % error, file=sys.stderr)
     with CONFIG_CACHE_LOCK:
         CONFIG_CACHE.update({"mtime": mtime, "value": value})
     return value
+
+
+def _kept_config():
+    return CONFIG_KEEPER.replacement() if CONFIG_KEEPER is not None else None
+
+
+def heal_config():
+    """Put the user's settings back when something emptied config.json."""
+    if CONFIG_KEEPER is None:
+        return
+    with contextlib.suppress(OSError):
+        if CONFIG_CACHE["mtime"] == os.path.getmtime(CONFIG_PATH):
+            return
+    if CONFIG_KEEPER.replacement() is None:
+        return
+    with config_write_guard():
+        kept = CONFIG_KEEPER.heal()
+        with CONFIG_CACHE_LOCK:
+            CONFIG_CACHE.update({"mtime": None, "value": None})
+    if kept is not None:
+        print("settings backup: something wiped config.json; put the settings back%s"
+              % (" and kept the wiped copy at %s" % kept if kept else ""), file=sys.stderr)
 
 
 def synthesized_snapshot_request(rest):
@@ -23112,6 +23425,10 @@ def watch_runs():
     while True:
         exit_if_orphaned()
         try:
+            try:
+                heal_config()
+            except OSError as error:
+                print("settings backup: %s" % error, file=sys.stderr)
             names = _run_names()
             with TEARDOWN_SCHEDULE_LOCK:
                 for gone in set(TEARDOWN_SCHEDULE) - set(names):
@@ -23127,6 +23444,11 @@ def watch_runs():
                     and (update_process is None or update_process.poll() is not None)):
                 update_process = retry_desktop_update()
             dispatch_merge_queues_for_watch_tick()
+            if tick % PR_POLL_EVERY == 0:
+                try:
+                    finish_interrupted_launches_for_watch_tick()
+                except (ValueError, OSError, run_relationships.RelationshipStoreError):
+                    pass
             try:
                 reconcile_tasks_for_watch_tick()
             except (ValueError, OSError):
@@ -24272,20 +24594,12 @@ def _valid_project_delete_journal(journal, project):
             and set(completed["privateFiles"]).issubset(private_targets))
 
 
-def _writes_real_config_under_tests():
-    """A test that mocked read_config but kept CONFIG_PATH once replaced the
-    user's whole config.json with its fixture. bin/test exports
-    ORC_TEST_REAL_HOME, so under it the real file is never written."""
-    real_home = os.environ.get("ORC_TEST_REAL_HOME")
-    if not real_home:
-        return False
-    real = os.path.realpath(os.path.join(real_home, ".orc", "config.json"))
-    return os.path.realpath(CONFIG_PATH) == real
-
-
 def _write_config_atomic(config):
-    if _writes_real_config_under_tests():
-        return None, "refusing to write the real config.json under the test suite"
+    refusal = config_guard.test_refusal(CONFIG_PATH)
+    if refusal:
+        return None, refusal
+    if CONFIG_KEEPER is not None and config_guard.wipes(CONFIG_KEEPER.good, config):
+        return None, "refusing to save settings that drop most of config.json"
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         fd, temporary = tempfile.mkstemp(
@@ -24354,7 +24668,9 @@ def config_saved(before, after):
     # Run rows carry project settings such as the Ship action.
     invalidate_runs_body()
     failures = apply_attribution_changes(before, after)
-    if power_mode.mode(before) != power_mode.mode(after) or run_queue_limits(before) != run_queue_limits(after):
+    if (power_mode.mode(before) != power_mode.mode(after)
+            or power_mode.builds_only(before) != power_mode.builds_only(after)
+            or run_queue_limits(before) != run_queue_limits(after)):
         kick_focus_schedule()
     return failures
 
@@ -24631,14 +24947,6 @@ def add_project(raw_path):
         return {"error": "No folder at %s" % initial_key, "key": initial_key}, 404
     repo_root = project_setup.canonical_repo(expanded, expanduser=os.path.expanduser)
     key = canonical_path(str(repo_root))
-    config, _mtime, broken = read_config()
-    if any(isinstance(k, str) and canonical_path(k) == key
-           for k in (config.get("repos") or {})):
-        return {"ok": True, "key": key, "added": False}, 200
-    entry = {"setupVersion": 1, "worktree": True, "a11y": False}
-    if not broken:
-        entry, _action = project_setup.initial_repo_entry(
-            config, RUNS, repo_root, home=Path(os.path.expanduser("~")))
     try:
         with config_write_guard():
             config, _mtime, broken = read_config()
@@ -24650,6 +24958,8 @@ def add_project(raw_path):
                 repos = config["repos"] = {}
             if any(isinstance(k, str) and canonical_path(k) == key for k in repos):
                 return {"ok": True, "key": key, "added": False}, 200
+            entry, _ = project_setup.initial_repo_entry(
+                config, RUNS, repo_root, home=Path(os.path.expanduser("~")))
             project_settings.pin_default_ship_action(config)
             repos[key] = entry
             ui = config.get("ui")
@@ -26079,8 +26389,10 @@ class ApplicationHandler:
             else:
                 result = operations.runs_list(globals(), raw=True)
                 body, etag, entry = result.data, result.headers["ETag"], {}
+            config = read_config()[0]
             headers = {"ETag": etag, "X-Orc-Build": UI_BUILD, "Vary": "X-Orc-Runs-Part",
-                       "X-Orc-Power-Mode": power_mode.mode(read_config()[0]),
+                       "X-Orc-Power-Mode": power_mode.mode(config),
+                       "X-Orc-Queue-Builds-Only": str(power_mode.builds_only(config)).lower(),
                        "X-Orc-Priority-Runs": json.dumps(power_mode.read_priority(CONFIG_DIR))}
             if "settledEtag" in entry:
                 headers["X-Orc-Settled-Etag"] = entry["settledEtag"]
@@ -26542,7 +26854,7 @@ class ApplicationHandler:
         if path == "/api/desktop-update":
             return self.send_body(json.dumps(desktop_update_status()).encode(), "application/json")
         if path == "/api/harness-compat":
-            return self.send_body(json.dumps(harness_compat.status(CONFIG_DIR)).encode(), "application/json")
+            return self.send_body(json.dumps(self._harness_compat_status()).encode(), "application/json")
         if path == "/api/installer":
             repo = os.path.expanduser(_orc_source_repo())
             local = self._secret_entry_local()
@@ -26638,12 +26950,22 @@ class ApplicationHandler:
                     break
             if not raw:
                 return self.json_error(400, "missing path")
-            canon = canonical_path(raw)
-            exists = os.path.isdir(os.path.expanduser(canon))
+            canon = canonical_path(windows_host.project_path(raw))
+            expanded = os.path.expanduser(canon)
+            exists = os.path.isdir(expanded)
+            initial_ship_action = None
+            if exists:
+                repo = project_setup.canonical_repo(expanded, expanduser=os.path.expanduser)
+                canon = canonical_path(str(repo))
+                config, _, _ = read_config()
+                profile, _ = project_setup.initial_repo_entry(
+                    config, RUNS, repo, home=Path(os.path.expanduser("~")))
+                initial_ship_action = profile.get("shipAction")
             return self.send_body(json.dumps({
                 "key": canon,
                 "exists": exists,
                 "lastEdited": project_last_edited(canon) if exists else None,
+                "initialShipAction": initial_ship_action,
             }).encode(), "application/json")
         if path == "/api/path-complete":
             query = self.path.split("?", 1)[1] if "?" in self.path else ""
@@ -26832,6 +27154,15 @@ class ApplicationHandler:
                         "text/plain")
                 if on_disk:
                     return self.send_run_file("run", run_id, rest, full)
+                if (page == SHIP_TAB and not snap and not authored
+                        and replaces_ship_page(run_meta(run_id))
+                        and gate_source(os.path.join(RUNS, run_id),
+                                        GATE_SYNTH[page]) is None):
+                    # The viewer opens its Pull request panel for this link.
+                    self.send_response(302)
+                    self.send_header("Location", "/#" + quote(run_id) + "/" + page)
+                    self.end_headers()
+                    return
                 pending = gate_pending(run_id, page) if page and not snap else False
                 body = render_gate_page(
                     run_id, page, pending=pending,
@@ -29615,7 +29946,10 @@ class ApplicationHandler:
         follow_up = (not wakes) or active_batches
         queued = False
         steered = False
-        if thread_id:
+        waits, result = queue_until_turn(run_id, text, source="artifact-feedback")
+        if waits:
+            queued = True
+        elif thread_id:
             outcome, reason = codex_direct_input(thread_id, text, run_id=run_id)
             if outcome == "sent":
                 result = None
@@ -29883,7 +30217,10 @@ class ApplicationHandler:
             feedback = text.strip()
             command = agent_skill_command(run_meta(run_id).get("harness"), "orc")
             text = "%s %s %s" % (command, run_id, feedback)
-        result = paste_to_pane(pane, text, escape_first=action == "feedback", queue_when_busy=True)
+        # The other actions deliver what the run already built.
+        result = (send_in_turn(run_id, pane, text, escape_first=action == "feedback")
+                  if action in (None, "feedback")
+                  else paste_to_pane(pane, text, queue_when_busy=True, source="ship-action"))
         if result:
             return delivery_error(*result)
         if feedback is not None and not record_feedback(run_id, feedback):
@@ -30145,7 +30482,7 @@ class ApplicationHandler:
                     deliveryError=error))
                 return self.json_error(409, error)
             text = clarification_review_delivery_text(review, chat_submission)
-            result = paste_to_pane(pane, text, escape_first=False, queue_when_busy=True)
+            result = send_in_turn(run_id, pane, text)
             if result:
                 restored = restore_run_status(run_id, status, "awaiting-gate")
                 _atomic_json(state_path, dict(
@@ -30298,7 +30635,7 @@ class ApplicationHandler:
                     deliveryError=error))
                 return self.json_error(409, error)
             text = grilling_review_delivery_text(review, manifest)
-            result = paste_to_pane(pane, text, escape_first=False, queue_when_busy=True)
+            result = send_in_turn(run_id, pane, text)
             if result:
                 restored = restore_run_status(run_id, status, "awaiting-gate")
                 _atomic_json(state_path, dict(
@@ -30468,7 +30805,7 @@ class ApplicationHandler:
                 return self.json_error(409, error)
             batch_id = manifest.get("feedbackBatchId")
             text = plan_review_delivery_text(review, manifest)
-            result = paste_to_pane(pane, text, escape_first=False, queue_when_busy=True)
+            result = send_in_turn(run_id, pane, text)
             if result:
                 restored = restore_run_status(run_id, status, "awaiting-gate")
                 _atomic_json(state_path, dict(
@@ -30523,7 +30860,7 @@ class ApplicationHandler:
             meta["status"] = "running"
             if not _write_run_meta(run_id, meta):
                 return self.json_error(500, "could not save run status")
-        result = paste_to_pane(pane, text, escape_first=wakes_prompt, queue_when_busy=True)
+        result = send_in_turn(run_id, pane, text, escape_first=wakes_prompt)
         if result:
             if wakes_prompt:
                 current = run_meta(run_id)
@@ -30596,10 +30933,11 @@ class ApplicationHandler:
             message = run_chat.forwarded_prompt(forwarded_from, message, parent_items)
         with follow_up_lock(run_id):
             queue = read_follow_ups(run_id)
-            if queue.get("focusPaused") or queue.get("runPause"):
+            if queue.get("focusPaused") or queue.get("runPause") or hold_for_turn(run_id, meta, queue):
                 _, error = append_follow_up(run_id, queue, message, source="chat")
                 if error:
                     return self.json_error(*error)
+                kick_focus_schedule()
                 return delivered(dict(queue, items=chat_queue_view(run_id, queue["items"]),
                                       sent=False, queued=True))
             thread_id = local_codex_thread(meta)
@@ -30716,10 +31054,16 @@ class ApplicationHandler:
             if error:
                 return self.json_error(*error)
             state["items"] = [entry for entry in state["items"] if entry is not item]
+            started = state.pop("focusPaused", None)
+            if started:
+                state.pop("held", None)
             if not write_follow_ups(run_id, state):
                 return self.json_error(
                     500, "Message sent, but the queue could not be updated. Check the conversation before retrying.",
                     False)
+        if started:
+            # Sending now starts the run, as Start does.
+            schedule_focus(start=run_id)
         queue = read_follow_ups(run_id)
         payload = dict(queue, items=chat_queue_view(run_id, queue["items"]), sent=True)
         return self.send_body(json.dumps(payload).encode(), "application/json")
@@ -30777,7 +31121,7 @@ class ApplicationHandler:
             if action == "resume":
                 schedule_focus(start=run_id)
                 flush_follow_ups(run_id)
-            invalidate_runs_body()
+            invalidate_runs_body(queue_changed=True)
             return self.send_body(b'{"ok": true}', "application/json")
         if action not in ("prioritise", "start"):
             return self.json_error(400, "unknown run scheduling action")
@@ -30790,7 +31134,7 @@ class ApplicationHandler:
         mark = focus_marks(state or {}).get(run_id)
         if not mark:
             return self.json_error(409, "this run is not in the priority queue", False)
-        invalidate_runs_body()
+        invalidate_runs_body(queue_changed=True)
         return self.send_body(json.dumps(mark).encode(), "application/json")
 
     def remove_follow_up(self, run_id, item_id):
@@ -30804,6 +31148,11 @@ class ApplicationHandler:
             if target.get("source") == "artifact-feedback":
                 return self.json_error(409, "feedback notes cannot be cancelled", False)
             state["items"] = [item for item in state["items"] if item["id"] != item_id]
+            # A run that stopped for the user was held only for this message.
+            if (state.get("focusPaused") and not state["items"] and not state.get("runPause")
+                    and focus_needs_input(run_id, run_meta(run_id))):
+                state.pop("focusPaused")
+                state.pop("held", None)
             if not write_follow_ups(run_id, state):
                 return self.json_error(500, "could not update the queue")
         state = read_follow_ups(run_id)
@@ -32699,6 +33048,7 @@ class ApplicationHandler:
                     if config_error:
                         return self.json_error(
                             409, "config.json has a syntax error on disk — refusing to overwrite; fix it by hand and retry")
+                    changed = power_mode.mode(config) != data["mode"]
                     config = json.loads(json.dumps(config))
                     ui = config.get("ui") if isinstance(config.get("ui"), dict) else {}
                     ui.pop("highPower", None)
@@ -32710,10 +33060,14 @@ class ApplicationHandler:
                     config_mtime, write_error = _write_config_atomic(config)
                     if write_error:
                         return self.json_error(500, "write failed")
-                if not IS_PREVIEW:
-                    exempt = (_existing_queue_exempt_runs()
+                if runs_schedules():
+                    names = _run_names()
+                    exempt = (_existing_queue_exempt_runs(config, names)
                               if data["mode"] == "low" and scope == "new-only" else [])
-                    _schedule_focus_locked(exempt=exempt)
+                    if changed:
+                        _reset_queue_places(names, exempt,
+                                            forget_starts=data["mode"] == "low" and scope == "all")
+                    _schedule_focus_locked(names, exempt=exempt)
         except OSError:
             return self.json_error(500, "could not lock config.json")
         invalidate_runs_body()
@@ -32905,6 +33259,10 @@ class ApplicationHandler:
         return self.send_body(json.dumps({"ok": True, "ready": apns.credentials(CONFIG_DIR) is not None}).encode(),
                               "application/json")
 
+    def _harness_compat_status(self):
+        return {**harness_compat.status(CONFIG_DIR),
+                "canCheck": not self._on_lan() and harness_compat_config_dir() is not None}
+
     def post_harness_compat_check(self):
         if self._on_lan():
             return self.json_error(403, "check the agent CLIs on the host machine")
@@ -32913,7 +33271,7 @@ class ApplicationHandler:
         if not harness_compat_config_dir():
             return self.json_error(409, "This Orc window does not run the CLI compatibility check.")
         started = harness_compat.tick(CONFIG_DIR, force=True)
-        return self.send_body(json.dumps({"started": started, **harness_compat.status(CONFIG_DIR)}).encode(),
+        return self.send_body(json.dumps({"started": started, **self._harness_compat_status()}).encode(),
                               "application/json")
 
     def post_agent_account(self, action):
@@ -33122,7 +33480,18 @@ class ApplicationHandler:
                     return self.json_error(409, "remove run from merge queue first", False)
                 if state.get("state") == "unavailable":
                     return self.json_error(409, state.get("detail"), False)
-            shutil.rmtree(full)
+            # A turn left running would write its files back into the folder.
+            if (headless_session.is_headless(run_meta(run_id))
+                    and headless_session.interrupt(full) == "failed"):
+                return self.json_error(409, "the agent's turn did not stop", False)
+            # Moved aside first, so nothing writes into the folder mid-delete.
+            trash = os.path.join(RUNS, ".deleting")
+            os.makedirs(trash, exist_ok=True)
+            aside = tempfile.mkdtemp(dir=trash)
+            os.rename(full, os.path.join(aside, run_id))
+            shutil.rmtree(aside)
+            with contextlib.suppress(OSError):
+                os.rmdir(trash)
         self.send_body(b"{}", "application/json")
 
     # PATCH /api/runs/<id> {title?, status?} — rename / status override from the
@@ -33558,6 +33927,13 @@ if __name__ == "__main__":
     if RUN_FILE_ORIGIN.start(FileOriginHandler, PORT + run_file_origin.PORT_OFFSET) is None:
         print("run files: no port for their own origin; pages stay sandboxed")
     if not IS_PREVIEW:
+        if OWNS_NATIVE_APP:
+            # Before anything saves: the file may have been wiped while Orc was closed.
+            CONFIG_KEEPER = config_guard.Keeper(CONFIG_PATH)
+            try:
+                heal_config()
+            except OSError as error:
+                print("settings backup: %s" % error, file=sys.stderr)
         pin_default_ship_action()
         try:
             APP_PLUGINS.adopt_upgrades()

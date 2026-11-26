@@ -34,6 +34,17 @@ DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL")
 URL_ENV_KEYS = ("ORC_QA_APP_URL", "ORC_QA_MAIN_URL")
 INTERACTIVE_PS1 = r"\[\e[36m\]qa-sandbox\[\e[0m\] \W $ "
+# Version managers find their installs under $HOME by default. The sandbox
+# swaps $HOME for scratch, so without these their shims (asdf's `npx`, say)
+# find nothing and exit 126. Each points at the real, read-only install.
+TOOL_DIR_ENV = (
+    ("ASDF_DATA_DIR", ".asdf"),
+    ("MISE_DATA_DIR", ".local/share/mise"),
+    ("NVM_DIR", ".nvm"),
+    ("PYENV_ROOT", ".pyenv"),
+    ("RBENV_ROOT", ".rbenv"),
+    ("VOLTA_HOME", ".volta"),
+)
 
 DENY_READ_REL = (
     ".ssh",
@@ -229,10 +240,21 @@ def step_info(run_id: str, step_id: str) -> dict[str, Any]:
     return status
 
 
+def _tool_dirs() -> dict[str, str]:
+    home = os.path.expanduser("~")
+    dirs: dict[str, str] = {}
+    for key, rel in TOOL_DIR_ENV:
+        path = os.environ.get(key) or os.path.join(home, rel)
+        if os.path.isdir(path):
+            dirs[key] = os.path.realpath(path)
+    return dirs
+
+
 def scrubbed_env(
     scratch_dir: str,
     urls: dict[str, str] | None = None,
     interactive: bool = False,
+    checkout_dir: str | None = None,
 ) -> dict[str, str]:
     """Build a minimal environment stripped of host secrets."""
     env: dict[str, str] = {
@@ -246,13 +268,20 @@ def scrubbed_env(
         "XDG_CONFIG_HOME": os.path.join(scratch_dir, ".config"),
         "XDG_CACHE_HOME": os.path.join(scratch_dir, ".cache"),
         "ORC_QA_SANDBOX": "1",
+        # macOS bash otherwise opens every terminal with a "now zsh" notice.
+        "BASH_SILENCE_DEPRECATION_WARNING": "1",
+        **_tool_dirs(),
     }
+    if checkout_dir:
+        env["ORC_QA_CHECKOUT"] = checkout_dir
     for key in ("LANG", "LC_ALL"):
         value = os.environ.get(key)
         if isinstance(value, str) and value:
             env[key] = value
     if interactive:
-        env["PS1"] = INTERACTIVE_PS1
+        # The sandbox starts the shell through a non-interactive bash, which
+        # drops PS1, so the bundle sets PS1 from this when it execs the shell.
+        env["ORC_QA_PS1"] = INTERACTIVE_PS1
     if isinstance(urls, dict):
         for key in URL_ENV_KEYS:
             value = urls.get(key)
@@ -309,7 +338,7 @@ def _create_session_files(cwd: str, urls: dict[str, str] | None, interactive: bo
         paths.append(cfg_path)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(sandbox_config(scratch_dir, cwd), handle)
-        env = scrubbed_env(scratch_dir, urls=urls, interactive=interactive)
+        env = scrubbed_env(scratch_dir, urls=urls, interactive=interactive, checkout_dir=cwd)
     except BaseException:
         cleanup_paths(paths)
         raise
@@ -433,9 +462,11 @@ def send_terminal_command(
     cwd: str,
     urls: dict[str, str] | None = None,
 ) -> run_terminal.Shell:
-    """Start (if needed) and type ``command`` into the step's sandboxed shell."""
+    """Start (if needed) and type ``command`` into the step's sandboxed shell,
+    from the checkout root: a step's command is written against it, and an
+    earlier `cd` in the same shell would otherwise break a second send."""
     shell = get_terminal_shell(run_id, step_id, cwd, urls=urls)
-    shell.send(command + "\n")
+    shell.send('cd "$ORC_QA_CHECKOUT" && ' + command + "\n")
     return shell
 
 

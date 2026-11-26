@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Scaffold a self-contained Orc HTML mockup with real theme tokens and fonts.
 
-    orc-mockup-scaffold --run-dir <run-dir> --label <label>
+    orc-mockup-scaffold (--run-dir <run-dir> | --dir <folder>) --label <label>
                         [--theme swamp] [--mode dark|light]
                         [--width <px>] [--title "<title>"] [--force]
 
 Creates `<run-dir>/planning/mockups/<label>.html` with Orc's Swamp palette,
 `--orc-*` aliases, and local Inter + JetBrains Mono woff2 fonts copied into
 `<run-dir>/planning/mockups/fonts/`. No scripts or external requests.
+`--dir <folder>` writes `<folder>/<label>.html` and `<folder>/fonts/` instead,
+for a question's mockup that `orc-publish-question --media` then publishes.
 """
 
 import argparse
@@ -119,7 +121,9 @@ html, body {{
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="orc-mockup-scaffold")
-    parser.add_argument("--run-dir", required=True, help="Orc run directory")
+    target_dir = parser.add_mutually_exclusive_group(required=True)
+    target_dir.add_argument("--run-dir", help="Orc run directory (writes planning/mockups/)")
+    target_dir.add_argument("--dir", help="folder to write the mockup and its fonts/ into")
     parser.add_argument("--label", required=True, help="mockup basename (no .html)")
     parser.add_argument("--theme", default="swamp", help="Orc theme id (default: swamp)")
     parser.add_argument("--mode", choices=("dark", "light"), default="dark")
@@ -139,12 +143,16 @@ def main(argv=None):
         print("orc-mockup-scaffold: width must be between 160 and 4096", file=sys.stderr)
         return 2
 
-    run_dir = Path(args.run_dir).expanduser().resolve()
-    if not run_dir.is_dir():
-        print("orc-mockup-scaffold: run dir does not exist: %s" % run_dir, file=sys.stderr)
-        return 2
-
-    mockups_dir = (run_dir / "planning" / "mockups").resolve()
+    if args.dir:
+        run_dir = Path(args.dir).expanduser().resolve()
+        run_dir.mkdir(parents=True, exist_ok=True)
+        mockups_dir = run_dir
+    else:
+        run_dir = Path(args.run_dir).expanduser().resolve()
+        if not run_dir.is_dir():
+            print("orc-mockup-scaffold: run dir does not exist: %s" % run_dir, file=sys.stderr)
+            return 2
+        mockups_dir = (run_dir / "planning" / "mockups").resolve()
     if not mockups_dir.is_relative_to(run_dir):
         print("orc-mockup-scaffold: mockups directory escapes run dir", file=sys.stderr)
         return 2

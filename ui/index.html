@@ -253,7 +253,10 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   .logo-slash { color: var(--green-text, var(--green)); }
   #sidebar-head > h1 small { color: var(--muted-strong); font-weight: normal; }
   #count { display: none; }
-  #focus-indicator { flex-shrink: 0; padding: 1px 8px; border: 1px solid var(--accent); border-radius: 999px;
+  /* Each theme's font sits at its own height on the line, so the pills in the
+     head are trimmed to their capitals and centred by their padding. */
+  #focus-indicator, .link-switch, #link-menu-shown { text-box: trim-both cap alphabetic; }
+  #focus-indicator { flex-shrink: 0; padding: 5px 8px; border: 1px solid var(--accent); border-radius: 999px;
     color: var(--accent-text); font: inherit; font-size: 11px; font-weight: 600; line-height: 1.4; white-space: nowrap; text-decoration: none; }
   #focus-indicator:hover { background: var(--chip); }
   #focus-indicator:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -263,7 +266,7 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
      is toggled hidden needs this. */
   orc-chip[hidden] { display: none; }
   .link-switch { flex-shrink: 0; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel);
+    padding: 6px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel);
     color: var(--heading); font: inherit; font-size: 12px; line-height: 1.4; cursor: var(--orc-cursor-pointer, pointer); }
   .link-switch:hover { border-color: var(--accent); }
   .link-switch.is-peer { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
@@ -285,7 +288,8 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   #link-menu.is-peer::part(trigger) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
   #link-menu.is-asleep::part(trigger) { border-style: dashed; color: var(--muted-strong); }
   #link-menu.is-switching::part(trigger) { cursor: progress; border-color: var(--accent); animation: link-switching 1s ease-in-out infinite alternate; }
-  #link-menu-shown { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Its own padding, so the ellipsis clip clears the descenders. */
+  #link-menu-shown { padding-block: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #link-menu button {
     display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; position: relative;
     font: inherit; font-size: 13px; padding: 7px 10px 7px 26px; border: none; border-radius: 6px;
@@ -717,6 +721,7 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   :is(#run-menu, #chat-link-menu, #image-menu, #cmdk-menu, .orc-menu) button:hover, :is(#run-menu, #chat-link-menu, #image-menu, #cmdk-menu, .orc-menu) button:focus-visible { background: var(--chip); }
   :is(#run-menu, #chat-link-menu, #image-menu, #cmdk-menu, .orc-menu) button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
   :is(#run-menu, #chat-link-menu, #image-menu, #cmdk-menu, .orc-menu) button[aria-disabled="true"] { color: var(--muted-strong); cursor: default; }
+  #run-menu button.is-danger:not([aria-disabled="true"]) { color: var(--red-text); }
   :is(#run-menu, #chat-link-menu, #image-menu, #cmdk-menu, .orc-menu) button[aria-checked="true"]::before { content: '✓'; position: absolute; left: 9px; top: 7px; color: var(--accent-text); }
   #run-rename-form { display: grid; gap: 8px; }
   #run-rename-title { width: 100%; min-height: 36px; box-sizing: border-box; padding: 6px 10px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font: inherit; }
@@ -1060,19 +1065,32 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   .orc-machine-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   .orc-machine-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
   .orc-machine-name small { font-weight: 400; color: var(--muted-strong); }
+  /* Each theme's font sits at its own height on the line, so these labels are
+     trimmed to their capitals and centred by the box. */
+  .orc-machine-badge, .orc-machine .settings-btn-inline, .orc-machine-foot > span { text-box: trim-both cap alphabetic; }
+  .orc-machine-badge, .orc-machine .settings-btn-inline { align-content: center; }
   .orc-machine-badge {
-    display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 999px;
+    position: relative; min-height: 19px; padding: 5px 8px 5px 20px; border-radius: 999px;
     font-size: 11.5px; font-weight: 600; color: var(--text);
     background: color-mix(in srgb, var(--tone) 22%, transparent);
   }
-  .orc-machine-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); }
+  .orc-machine-badge::before {
+    content: ""; position: absolute; top: calc(50% - 3.5px); left: 8px;
+    width: 7px; height: 7px; border-radius: 50%; background: var(--tone);
+  }
   .orc-machine.is-busy .orc-machine-badge::before { animation: orc-machine-pulse 1s ease-in-out infinite alternate; }
   @keyframes orc-machine-pulse { to { opacity: 0.3; } }
 
   .orc-machine-commit { margin-left: auto; font-size: 11.5px; color: var(--muted-strong); }
   .orc-machine p { margin: 0; }
   .orc-machine-note { color: var(--red-text); }
-  .orc-machine .settings-btn-inline { justify-self: start; margin-top: 2px; }
+  .orc-machine .settings-btn-inline { justify-self: start; margin-top: 2px; padding-block: 8px; }
+  :where(.orc-machine) .settings-btn-inline { min-height: 32px; }
+  .orc-machine .settings-btn-inline[aria-disabled="true"] { opacity: .5; cursor: default; }
+  .orc-machine .settings-btn-inline[aria-disabled="true"]:hover { background: var(--chip); border-color: var(--border); }
+  .orc-machine-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; }
+  .orc-machine-foot .settings-btn-inline { margin-top: 0; }
+  .orc-machine-foot > span { flex: 1 1 10em; min-width: 0; font-size: 11.5px; color: var(--muted-strong); overflow-wrap: anywhere; }
   .orc-machine-commits { font-size: 11.5px; color: var(--muted-strong); overflow-wrap: anywhere; }
   .orc-machine orc-accordion::part(summary) { padding: 2px 0; }
   .orc-machine orc-accordion code { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1803,6 +1821,13 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
       overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
     }
   }
+  /* Every scroller that shows rendered Markdown is positioned, so the
+     absolutely placed .sr-only text inside it ("(opens in new tab)" on
+     external links) belongs to it. Unpositioned, that text lands on the
+     nearest positioned ancestor instead, at its offset in the scrolled
+     content, and stretches that ancestor into a second scroller: scrolling
+     past the page's end then slides everything up over blank space. */
+  #content, #run-answer-body, #run-pr-body, #run-diff-body { position: relative; }
   #content { height: 100%; overflow-y: auto; padding: 20px 22px 60px; background: var(--bg); }
   #content-shell:has(> #pending-q:not([hidden])) > #content:not(:has(> iframe)) {
     height: auto; min-height: 100%; overflow: visible;
@@ -3678,8 +3703,9 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
   /* the other modals get breathing room from an input/list between hint and
      actions; this dialog is hint-then-buttons, so space the row itself */
   #wt-cleanup-actions { margin-top: 16px; }
-  #delete-dialog ul { margin: 12px 0 16px; padding-left: 18px; font-size: 13px; }
+  #delete-dialog ul { margin: 12px 0 16px; padding-left: calc(1rem + 18px); font-size: 13px; }
   #delete-dialog li { margin: 4px 0; }
+  #delete-warning-text { margin: 0; font-size: 13px; }
   .settings-btn-inline.danger {
     border-color: color-mix(in srgb, var(--red) 45%, var(--border));
     /* red-text is AA-verified on panel (5.16:1 day / 6.80:1 night); any
@@ -4291,6 +4317,7 @@ window.ORC_OFFER_PERMISSIONS = false; window.ORC_PERMISSION_DEFAULT = "auto";
      screen-reader user a bucket-wide delete apart from a local one -->
 <orc-dialog id="delete-dialog" heading="Delete run?">
   <p class="settings-hint" id="delete-desc" slot="description"><strong id="delete-run-name"></strong> (<code id="delete-run-id"></code>) will be permanently deleted.</p>
+  <div id="delete-warning" slot="description" hidden><orc-callout variant="orange"><p id="delete-warning-text"></p></orc-callout></div>
   <!-- the slot is on the list, not the item: `slot` only counts on a direct
        child of the host, so a slotted <li> inside a plain <ul> is silently
        dropped from the description and the scope line stops being announced -->

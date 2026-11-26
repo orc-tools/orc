@@ -2190,6 +2190,11 @@ class Store:
                         git_url, parsed["refAndPath"], parsed.get("githubMode")
                     )
                 pinned_ref = bool(ref != "HEAD" and not matched_named_ref)
+                picked = [s.strip("/") for s in (selected_subdirs or []) if s and s.strip("/")]
+                if not subdir and len(picked) == 1 and "/" in picked[0]:
+                    # One skill picked by its folder: read only that folder, so a
+                    # large repository does not hit the file limit before the pick.
+                    subdir = safe_rel_path(picked[0]).as_posix()
 
                 clone_dir = tmp / "repo"
                 clone_args = ["clone", "--no-checkout"]

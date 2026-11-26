@@ -56,13 +56,13 @@ changes for them, then holds these parts in this order:
 Write `None.` under a part that has nothing in it. Add `## Work` after the
 mockup only when one run cannot build the plan: a list numbered from 1, one
 run per item as `**<Name>.**` and a sentence, then one sentence on which
-steps can run side by side. Without it the plan page offers one Start work.
+steps can run side by side. Without it the plan page offers one Start run.
 Each run builds in one repository. When the plan spans several, give each
 repository its own steps and name it by folder in brackets after the name,
 as `**Export worker** (`serverless`).`, and write `Waits on step N.` in a
-step that must wait for another: Start work then opens one run per step in
+step that must wait for another: the plan page's Start then opens one run per step in
 its repository, and Orc starts a waiting step when that run reaches Ship.
-In a plan of one repository, `Waits on step N.` matters to Start each step,
+In a plan of one repository, `Waits on step N.` matters to Split,
 which does the same and stacks the waiting step on that step's branch.
 
 The plan holds no file paths, no implementation diary, no checklist of
@@ -117,6 +117,10 @@ and never paste flat 2D SVGs onto 3D renders.
    tokens and fonts automatically); use today's screenshot as a background
    image (`../../shots/before/<file>`) only when nothing shifts or shrinks, and
    never mask out old UI with opaque cover-up boxes. Draw a new screen whole.
+   When the repository has an `.impeccable/` folder, it designs with the
+   impeccable skill: read that skill's `reference/craft-floor.md` before
+   writing the mockup and follow it under `DESIGN.md`. Never start its helper
+   agents or ask its questions; Orc's steps here come first.
 3. **Its picture and self-check.** In one shell command, serve the run folder
    from a throwaway local server, take the picture, and stop the server:
 
@@ -135,15 +139,24 @@ and never paste flat 2D SVGs onto 3D renders.
    height for a CSS-built region). Open `<run-dir>/shots/after/<label>.png` and
    run the five-point self-check in `../_shared/ui-craft.md` before stopping.
    A screenshot name is used once, so a redone mockup takes `<label>-2.png`.
+   In a repository with an `.impeccable/` folder, also scan each mockup
+   against the repository's design notes:
+   `orc-design-check --repo <repo> --report <run-dir>/planning/mockups/<label>.html`.
+   Fix what it lists that the sketch only got wrong, and take the picture
+   again after a fix. Exit 3 means impeccable is not installed here.
 4. **In the plan.** Under `## Mockup`, one line saying what the pair shows,
    then the pair on two adjacent lines so the page sets them side by side,
-   then a link that opens the mockup:
+   then a link that opens the mockup. When step 3 scanned the mockups, one
+   line after the pairs names each design problem the scan still lists, says
+   it found none, or says impeccable is not installed:
 
    ```markdown
    ![The composer today](../shots/before/composer.jpg)
    ![Mockup of the composer with Start without a plan](../shots/after/composer.png)
 
    [Open in browser](mockups/composer.html)
+
+   Impeccable's design scan found no problems in this mockup.
    ```
 
 Show at most three pairs: the screens that change most.

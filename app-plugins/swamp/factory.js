@@ -2296,6 +2296,87 @@ function weather(kit) {
   };
 }
 
+// The advisor: an owl on a stump, reading at a lectern on its own islet
+// beside the hall. Pages from the hall land on its book; while it reads it
+// tilts its head over them, blinks and turns a leaf now and then.
+function advisor(kit) {
+  const m = mats(kit);
+  const dark = kit.mode === 'dark';
+  const feather = kit.mat(dark ? '#5b5fa3' : '#6c70b6', { rough: 0.7 });
+  const down = kit.mat(dark ? '#c7c0dc' : '#d9d2ea', { rough: 0.8 });
+  const bark = kit.mat(dark ? '#4d3a2c' : '#6b513c', { rough: 0.95, flat: true });
+  const root = new Group();
+  islet(kit, root, 0.62, 0.56, 41);
+  // The stump it perches on, and the lectern before it.
+  put(root, kit, 'taper', bark, 0, 0.42, -0.12, 0.2, 0.5, 0.2);
+  put(root, kit, 'disc', m.wood, 0, 0.68, -0.12, 0.22, 0.03, 0.22);
+  put(root, kit, 'rod', bark, 0.02, 0.55, 0.36, 0.05, 0.72, 0.05);
+  const desk = pivot(root, 0.02, 0.92, 0.38);
+  desk.rotation.x = 0.5;
+  put(desk, kit, 'block', m.wood, 0, 0, 0, 0.5, 0.04, 0.34);
+  put(desk, kit, 'block', m.leather, 0, 0.03, 0, 0.44, 0.02, 0.3);
+  put(desk, kit, 'block', m.paper, -0.11, 0.045, 0, 0.2, 0.012, 0.27);
+  put(desk, kit, 'block', m.paper, 0.11, 0.045, 0, 0.2, 0.012, 0.27);
+  const leaf = pivot(desk, 0, 0.05, 0);
+  put(leaf, kit, 'block', m.paper, 0.1, 0, 0, 0.19, 0.01, 0.26);
+  // A candle in a jar keeps the page lit.
+  put(root, kit, 'rod', m.glass, 0.36, 1.02, 0.42, 0.05, 0.12, 0.05);
+  const flame = put(root, kit, 'bead', m.lantern, 0.36, 1.03, 0.42, 0.03, 0.05, 0.03);
+  // The owl.
+  const owl = pivot(root, 0, 0.7, -0.12);
+  const body = pivot(owl, 0, 0, 0);
+  put(body, kit, 'ball', feather, 0, 0.3, 0, 0.27, 0.33, 0.24);
+  put(body, kit, 'ball', down, 0, 0.26, 0.1, 0.19, 0.25, 0.16);
+  for (const [x, y] of [[-0.06, 0.32], [0.06, 0.24], [-0.05, 0.16], [0.07, 0.38]]) {
+    put(body, kit, 'cone', feather, x, y, 0.255, 0.025, 0.04, 0.012).rotation.x = Math.PI;
+  }
+  const wings = [];
+  for (const side of [-1, 1]) {
+    const wing = pivot(body, side * 0.22, 0.42, -0.02);
+    put(wing, kit, 'ball', feather, side * 0.03, -0.14, 0, 0.08, 0.2, 0.16);
+    wings.push(wing);
+    put(owl, kit, 'rod', m.gold, side * 0.08, 0.02, 0.08, 0.018, 0.06, 0.018);
+  }
+  const head = pivot(body, 0, 0.66, 0.02);
+  put(head, kit, 'ball', feather, 0, 0, 0, 0.25, 0.22, 0.22);
+  put(head, kit, 'ball', down, 0, -0.02, 0.1, 0.2, 0.16, 0.14);
+  const lids = [];
+  for (const side of [-1, 1]) {
+    put(head, kit, 'cone', feather, side * 0.16, 0.2, -0.02, 0.06, 0.14, 0.05).rotation.z = -side * 0.35;
+    put(head, kit, 'ball', m.gold, side * 0.085, 0.02, 0.19, 0.07);
+    put(head, kit, 'bead', m.pupil, side * 0.085, 0.02, 0.255, 0.033, 0.033, 0.015);
+    // Spectacles: a reading owl wears them.
+    put(head, kit, 'ring', m.copper, side * 0.085, 0.02, 0.27, 0.078, 0.078, 0.06);
+    const lid = put(head, kit, 'ball', feather, side * 0.085, 0.05, 0.205, 0.072, 0.04, 0.05);
+    lid.scale.y = 0.001;
+    lids.push(lid);
+  }
+  put(head, kit, 'block', m.copper, 0, 0.025, 0.27, 0.035, 0.008, 0.01);
+  put(head, kit, 'cone', m.bone, 0, -0.07, 0.23, 0.03, 0.08, 0.03).rotation.x = Math.PI * 0.9;
+  shade(kit, root);
+  root.scale.setScalar(1.35);
+  root.userData = {
+    labelY: 2.6,
+    page: new Vector3(0.03, 1.35, 0.54),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      head.rotation.x = 0.32 * reading + Math.sin(time * 0.7) * 0.03;
+      head.rotation.y = Math.sin(time * 0.55) * 0.22 * reading;
+      head.rotation.z = Math.sin(time * 0.4) * 0.08;
+      body.rotation.z = Math.sin(time * 0.9) * 0.025;
+      const blink = (time % 4.3) < 0.16 ? 1 : 0;
+      for (const lid of lids) lid.scale.y = Math.max(0.001, blink * 0.04 + (1 - reading) * 0.02);
+      // Every few seconds the owl turns a leaf with its wing.
+      const turn = clamp01(((time * 0.33) % 1 - 0.7) / 0.3) * reading;
+      leaf.rotation.z = -Math.PI * ease(turn);
+      wings[1].rotation.x = -Math.sin(turn * Math.PI) * 0.5;
+      wings[0].rotation.z = Math.sin(time * 1.3) * 0.04;
+      flame.scale.set(0.03, 0.05 + Math.sin(time * 11) * 0.008, 0.03);
+    },
+  };
+  return root;
+}
+
 export default {
   palette: PALETTE,
   backdrop: BACKDROP,
@@ -2311,4 +2392,5 @@ export default {
   carrier,
   decor,
   weather,
+  advisor,
 };

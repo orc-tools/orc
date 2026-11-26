@@ -248,7 +248,15 @@ def answer_follow_up_context(meta, text, *, run_dir=None, config_dir=None):
         "diagram shows. Write the whole Markdown with at least one ```mermaid "
         "block, publish it in place with `orc-publish-diagram --run-dir %s "
         "--file -`, then print http://127.0.0.1:4173/#%s/diagram.md. No child run."
-        % (target_dir, rid)
+        "\n- SKETCH: the message asks for a screenshot, mockup or other picture "
+        "of this answer's subject. It stays this question: make the files as "
+        "%s says, add a section showing "
+        "them to the answer, and publish both with `orc-publish-question "
+        "--run-dir %s --update --answer-file <file> --expected-sha256 "
+        "<current answer.md digest> --media <file> ...`, then print "
+        "http://127.0.0.1:4173/#%s/answer.md. No child run. Never publish a "
+        "sketch outside Orc, such as a claude.ai Artifact."
+        % (target_dir, rid, skill_commands.SKILLS / "_shared/question-media.md", target_dir, rid)
     )
     checkout = (target_meta or {}).get("mainRepoPath") or (target_meta or {}).get("repoPath")
     in_chat = "" if question else (

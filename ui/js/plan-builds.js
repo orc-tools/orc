@@ -32,7 +32,7 @@ export function planBuildChoices(state, permissionMode) {
 }
 
 const ROW_HTML = `
-  <h3 class="plan-builds-label" id="{id}">{label}</h3>
+  <h3 class="plan-builds-label{labelClass}" id="{id}">{label}</h3>
   <div class="plan-builds-row" role="group" aria-labelledby="{id}">
     <orc-model-picker class="plan-builds-model" floating presets></orc-model-picker>
     <orc-select class="plan-builds-effort" aria-label="Effort"></orc-select>
@@ -45,8 +45,10 @@ const ROW_HTML = `
   <p class="plan-builds-note" role="status" hidden></p>`;
 
 // Draws the row into `host`. `choices()` is what Start sends, or {} until the
-// row has loaded, which starts from the settings `meta` recorded.
-export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with' }) {
+// row has loaded, which starts from the settings `meta` recorded. With
+// `labelHidden` the label names the row for a screen reader only, where the
+// row's place already says what it is for.
+export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with', labelHidden = false }) {
   let alive = true;
   let selection = null;
   let skipPermissions = null;
@@ -56,7 +58,8 @@ export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with' }) 
     return launchTakesPermissions(agent) ? launchPermissionMode(agent, permissionDefaultSkips()) : null;
   };
   let efforts = '';
-  host.innerHTML = ROW_HTML.replaceAll('{id}', labelId).replace('{label}', label);
+  host.innerHTML = ROW_HTML.replaceAll('{id}', labelId).replace('{label}', label)
+    .replace('{labelClass}', labelHidden ? ' sr-only' : '');
   host.hidden = true;
   const picker = host.querySelector('orc-model-picker');
   const effort = host.querySelector('.plan-builds-effort');

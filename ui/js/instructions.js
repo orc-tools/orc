@@ -174,8 +174,13 @@ function compareHtml(target) {
 // line of fixed height, a finished sync stands where its button stood, and the
 // rows it wrote say so themselves.
 
+const INTRO_HTML = `<div class="ins-intro">
+    <p>Standing instructions for every agent, in every project: how you like to work, the tone you want, what to ask before doing. Write them once in the main copy, then Sync puts that text in the file each account reads at the start of a session.</p>
+    <p>A project’s own <code>AGENTS.md</code> or <code>CLAUDE.md</code> still applies as well, and Sync never changes it.</p>
+  </div>`;
+
 export function instructionsPanelHtml() {
-  return '<p class="ins-quiet">Reading your accounts…</p>';
+  return `${INTRO_HTML}<p class="ins-quiet">Reading your accounts…</p>`;
 }
 
 // A warning or a failure may wrap to a second line; the summary never does.
@@ -428,13 +433,13 @@ function renderBody({ editor = false } = {}) {
   if (!snapshot) {
     panel.setAttribute('aria-busy', String(!loadError));
     panel.innerHTML = loadError
-      ? `<orc-callout variant="red" heading="Could not read your accounts" live>${esc(loadError)}</orc-callout>`
+      ? `${INTRO_HTML}<orc-callout variant="red" heading="Could not read your accounts" live>${esc(loadError)}</orc-callout>`
       : instructionsPanelHtml();
     return;
   }
   panel.removeAttribute('aria-busy');
   if (editor || !$('ins-editor')) {
-    panel.innerHTML = `${mainHtml()}<div class="settings-card" data-settings-anchor="accounts"><fieldset class="settings-fieldset ins-accounts" id="ins-accounts-slot" aria-labelledby="ins-accounts-title">${accountsHtml()}</fieldset></div>`;
+    panel.innerHTML = `${INTRO_HTML}${mainHtml()}<div class="settings-card" data-settings-anchor="accounts"><fieldset class="settings-fieldset ins-accounts" id="ins-accounts-slot" aria-labelledby="ins-accounts-title">${accountsHtml()}</fieldset></div>`;
     return;
   }
   renderMainChrome();

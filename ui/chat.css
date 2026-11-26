@@ -68,18 +68,20 @@
 /* ---------- messages ---------- */
 .chat-row-user { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 :is(.chat-row-merge, .chat-row-badge) { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+/* Run resumed, above the person's own words from the same prompt. */
+.chat-row-badge.is-joined { margin-bottom: 6px; }
 /* Inside a turn's log a badge stands off the lines around it, as a reply does. */
 :is(.chat-row-work, .chat-row-notice) + .chat-row-badge { margin-top: 8px; }
-/* A button (Orc's own step, in purple) opens what it names; a plain badge is a
-   record, such as Auto merge turned on or off. */
+/* Button badges open the event they name. Plain badges record what happened. */
 .chat-system-badge {
-  --badge-color: var(--purple-text);
+  --badge-color: var(--blue-text);
   display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px;
   border: 1px solid color-mix(in srgb, var(--badge-color) 28%, var(--border));
   border-radius: 6px; background: color-mix(in srgb, var(--badge-color) 9%, var(--panel));
   color: var(--badge-color); font-size: 11px; font-weight: 500; line-height: 16px;
   white-space: nowrap; font-family: inherit;
 }
+.chat-merge-prompt { --badge-color: var(--purple-text); }
 .chat-system-badge.is-on { --badge-color: var(--green-text); }
 .chat-system-badge.is-off { --badge-color: var(--red-text); }
 button.chat-system-badge { cursor: var(--orc-cursor-pointer, pointer); }
@@ -306,7 +308,6 @@ button.chat-work-line:hover { color: var(--text); background: color-mix(in srgb,
 .chat-work-subject { color: var(--text); }
 .chat-work-status { flex: none; color: var(--muted-strong); font-size: 12px; }
 .chat-work-status::before { content: "·"; margin-right: 6px; color: var(--muted); }
-.chat-work-line.is-error .chat-work-status, .chat-work-line:has(> .chat-work-icon.is-error) .chat-work-status { color: var(--red-text); }
 .chat-work-line.is-muted .chat-work-subject { text-decoration: line-through; text-decoration-color: var(--muted); }
 .chat-chevron { flex: none; width: 14px; height: 14px; color: var(--muted); }
 .chat-toggle[aria-expanded="true"] .chat-chevron { transform: rotate(90deg); }
@@ -326,7 +327,6 @@ button.chat-work-line:hover { color: var(--text); background: color-mix(in srgb,
 .chat-diff-del { color: var(--red-text); }
 .chat-diff-hunk { color: var(--accent-text); }
 .chat-detail-note { margin: 0; font-size: 12px; color: var(--muted-strong); }
-.chat-detail-note.is-error { color: var(--red-text); }
 .chat-thinking-text { font-size: 13px; line-height: 1.55; color: var(--muted-strong); white-space: pre-wrap; }
 .chat-todos { margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--text); }
 .chat-todos li { display: flex; gap: 8px; padding: 2px 0; }
@@ -360,7 +360,8 @@ button.chat-work-line:hover { color: var(--text); background: color-mix(in srgb,
 }
 /* The agent's current step is live state, not log, so it takes the accent
    status chip in one slot at the turn's foot. Keep it 26px tall, like the
-   "Thinking" line it alternates with, so the slot never changes height. */
+   "Thinking" line it alternates with, so the slot never changes height. Only
+   the slot's line is .chat-live, so the turn never shows two chips. */
 .chat-work-line:has(> .chat-work-label > .chat-live) {
   width: fit-content; max-width: 100%; padding: 0 12px 0 10px; gap: 4px;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 13px;
@@ -571,6 +572,20 @@ a.chat-pr-update:hover { background: color-mix(in srgb, var(--accent) 14%, trans
 .chat-row-divider.is-start-work { color: var(--green-text, var(--green)); }
 .chat-row-earlier { margin: 0 0 14px; }
 .chat-row-launch { margin: 4px 0 14px; }
+/* A run held still (paused, queued, stopped, waiting to branch): one calm
+   line on the panel with the button that lets it go. Not an alert, so no
+   coloured fill or heading. */
+.chat-row-held {
+  display: flex; align-items: center; gap: 12px; margin: 14px 0; padding: 8px 10px 8px 14px;
+  border: 1px solid var(--border); border-radius: var(--orc-radius-md, 8px); background: var(--panel);
+  font-size: 13px; color: var(--muted-strong);
+}
+.chat-row-held p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.chat-row-held strong { color: var(--heading); font-weight: 600; }
+.chat-row-held .chat-action { flex: none; border-color: var(--border); }
+.chat-held-icon { flex: none; display: flex; color: var(--muted-strong); }
+.chat-held-icon svg { width: 14px; height: 14px; }
+.chat-row-held-error { margin: 4px 0 14px; }
 .chat-row-background {
   display: flex; align-items: center; gap: 10px; margin: 4px 0 14px; padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--accent-text) 40%, var(--border));

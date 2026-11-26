@@ -1,28 +1,24 @@
 /* Run Control: the gear page of one run. It is a synthetic tab, not an
    artifact, and is drawn as the same console as Settings. The tokens, the
-   header, the rail's keys and the module come from ui/settings.css, which is
-   linked before this file; only what differs for a run is stated here.
+   menu's keys and the module come from ui/settings.css, which is linked
+   before this file; only what differs for a run is stated here.
 
-   The beacon and the header's signal line take the run's own state colour,
-   the one its row in the sidebar shows. A module's lamp is lit only while the
-   thing it names is on. */
+   The beacon takes the run's own state colour, the one its row in the
+   sidebar shows. A module's lamp is lit only while the thing it names is on. */
 .control-center {
   /* The run's state colour arrives inline as --cp-state. Positioned, so a
      control's out-of-flow parts stay inside the page: left to the shell
-     around it, they made that scroll as well and took the rail off screen.
+     around it, they made that scroll as well and took the menu off screen.
      One step up, as Settings is, so a theme's drifting decorations show in
-     the gaps between modules and never across a module's words. */
-  position: relative; z-index: 1; container: control / inline-size;
-  width: min(1320px, 100%); margin: 0 auto; padding: 0 0 48px;
+     the gaps between modules and never across a module's words. The room the
+     page has, not the window's, decides where the menu goes: a side panel
+     open beside a wide window folds it as a narrow window does. */
+  position: relative; z-index: 1; container: control-room / inline-size;
+  width: min(1500px, 100%); margin: 0 auto; padding: 0 0 48px;
 }
-.control-head { max-width: none; margin-bottom: 8px; }
-/* The header and the notice under it sit over the rail's cover (below). */
-.control-head, .control-readonly { position: relative; z-index: calc(var(--z-sticky) + 1); }
+/* The sections' own width is what their columns are laid out by. */
+.cc-page { min-width: 0; container: control / inline-size; }
 @media (prefers-reduced-motion: no-preference) {
-  .control-center[data-run-state="working"] .control-head::after {
-    background: linear-gradient(90deg, transparent, var(--cp-state), transparent) 0 0 / 40% 100% no-repeat;
-    animation: cp-sweep 1.1s linear infinite;
-  }
   .control-center[data-run-state="working"] .cp-beacon { animation: cp-pulse .7s ease-in-out infinite alternate; }
   /* The lamps come on in turn when the page opens, and stay as they are when
      a poll redraws it. */
@@ -37,22 +33,93 @@
   #control-group-provenance { --cp-order: 6; }
   #control-group-decisions { --cp-order: 7; }
 }
-/* The state is said in the colour its sidebar tag has (.state-<key>). */
-.control-readout-value { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
-.control-readout-value:not(.control-readout-state) { color: var(--heading); }
 .control-readonly {
   margin: 0 0 8px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--yellow) 55%, var(--cp-edge));
   border-radius: var(--orc-radius-sm, 8px); background: var(--cp-well); color: var(--yellow-text); font-size: 13px; text-wrap: pretty;
 }
-/* The rail stays at the top of the page while its sections scroll under it.
-   The strip is the page's colour, so nothing shows through beside the keys.
-   It sticks below the page's own top padding, so a cover the same colour
-   reaches up over that gap. */
-.control-index {
-  position: sticky; top: 0; z-index: var(--z-sticky); margin: 0 0 8px; padding: 8px 0; background: var(--bg);
+
+/* The menu: the run's beacon, state and agent over the list of sections. With
+   room it is a column down the right that stays in view while the page
+   scrolls. Without, it folds into one slim line over the page (below). */
+.cc-frame { --cc-jump-height: 30px; }
+.cc-menu-left { min-width: 0; }
+.cc-menu-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.cc-menu-title { margin: 0; color: var(--heading); font-size: 14px; font-weight: 600; line-height: 1.3; }
+.cc-menu-facts { margin: 0; color: var(--muted-strong); }
+/* The state is said in the colour its sidebar tag has (.state-<key>). */
+.cc-menu-state { font-weight: 600; }
+.cc-menu-agent { min-width: 0; }
+.cc-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.cc-list .cp-key { --cp-key-radius: var(--tab-radius, 8px); display: flex; padding: 6px 10px; touch-action: manipulation; }
+.cc-list .cp-key::after { content: none; }
+.cc-list .cp-key span { overflow: hidden; text-overflow: ellipsis; }
+.control-center .cc-jump-button {
+  display: none; align-items: center; gap: 7px; min-height: var(--cc-jump-height); padding: 4px 9px 4px 10px;
+  border-color: transparent; border-radius: var(--tab-radius, 8px); background: none;
+  color: var(--heading); font-size: 13px; font-weight: 500; white-space: nowrap;
 }
-.control-index::before { content: ""; position: absolute; inset: -20px 0 100%; background: var(--bg); }
-.control-index .cp-key { touch-action: manipulation; }
+.control-center .cc-jump-button:not(:disabled):hover { border-color: var(--cp-edge); background: var(--cp-plate); }
+.cc-jump-current { display: contents; }
+.cc-jump-button svg { flex: none; width: 15px; height: 15px; }
+.cc-jump-current svg { color: var(--cp-signal); }
+.cc-jump-caret { color: var(--muted-strong); }
+@container control-room (min-width: 900px) {
+  .cc-frame { display: grid; grid-template-columns: minmax(0, 1fr) 156px; gap: 0 20px; align-items: start; }
+  .cc-menu { grid-area: 1 / 2; position: sticky; top: 0; padding-top: 8px; }
+  .cc-page { grid-area: 1 / 1; }
+  .cc-menu-head { padding: 0 10px; }
+  .cc-menu-facts { display: grid; gap: 1px; margin: 4px 0 14px; padding: 0 10px 0 29px; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+  .cc-menu-agent { display: grid; }
+  .cc-menu-dot { display: none; }
+}
+/* Folded, the menu is one line that stays over the page: the run's state on
+   the left, and on the right a drop-down naming the section on screen. The
+   line is the page's colour, so nothing shows through beside it. It sticks
+   below the page's own top padding, so a cover the same colour reaches up
+   over that gap. */
+@container control-room (max-width: 899.98px) {
+  .cc-menu {
+    position: sticky; top: 0; z-index: var(--z-sticky); display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin: 0 0 14px; padding: 6px 0; background: var(--bg);
+  }
+  .cc-menu::before { content: ""; position: absolute; inset: -20px 0 100%; background: var(--bg); }
+  .cc-menu-left { display: flex; align-items: center; gap: 14px; }
+  .cc-menu-head { flex: none; }
+  .cc-menu-facts { display: flex; gap: 10px; min-width: 0; font-size: 12.5px; white-space: nowrap; }
+  .cc-menu-agent { overflow: hidden; text-overflow: ellipsis; }
+  .cc-jump { position: relative; flex: none; }
+  .control-center .cc-jump-button { display: inline-flex; }
+  .cc-jump[data-open] .cc-jump-button { border-color: var(--cp-edge); background: var(--cp-plate); }
+  .cc-jump .cc-list {
+    position: absolute; z-index: 1; top: calc(100% + 6px); right: 0; width: 184px; padding: 5px;
+    border: 1px solid var(--cp-edge); border-radius: var(--cp-radius, 10px); background: var(--cp-plate);
+  }
+  /* The shadow is drawn on its own layer: a blurred box-shadow on a rounded
+     box can turn square in WebKit. */
+  .cc-jump .cc-list::before {
+    content: ""; position: absolute; z-index: -1; inset: -1px; border-radius: inherit;
+    box-shadow: 0 8px 24px rgb(0 0 0 / .35); pointer-events: none;
+  }
+  .cc-jump .cc-list .cp-key[aria-current] { border-color: transparent; background: color-mix(in srgb, var(--heading) 7%, transparent); }
+  .cc-jump:not([data-open]) .cc-list { display: none; }
+  /* A section a jump lands on stops below the line. */
+  .cc-page .control-group { scroll-margin-top: calc(var(--cc-jump-height) + 46px); }
+}
+/* A phone's line keeps the state and the drop-down. The title stays for a
+   screen reader, which the page is named by. */
+@container control-room (max-width: 559.98px) {
+  .cc-frame { --cc-jump-height: 44px; }
+  .cc-menu-title { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .cc-menu-agent { display: none; }
+  .cc-menu-head { gap: 8px; }
+  .cc-menu-left { gap: 8px; }
+}
+@media (pointer: coarse) { .cc-frame { --cc-jump-height: 44px; } }
+/* A window too short to spare the line, such as a phone on its side, lets
+   the menu scroll away with the page. */
+@media (max-height: 500px) {
+  .cc-menu { position: relative; }
+}
 /* The groups are packed into columns so a short one leaves no hole beside a
    tall one: what you operate, what the run is, and what it handed on and
    recorded. The columns are fixed, not balanced by CSS columns as Settings'
@@ -62,15 +129,14 @@
    Run Details so the first two columns end near the same height. */
 .control-groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 16px; align-items: start; min-width: 0; }
 .control-column { min-width: 0; }
-/* One column stacks the groups in the rail's order: Lifecycle comes back up
+/* One column stacks the groups in the menu's order: Lifecycle comes back up
    between Runtime and Danger Zone. */
 @container control (max-width: 699.98px) {
   .control-column { display: contents; }
   #control-group-runtime, #control-group-lifecycle { order: -1; }
 }
-/* The top margin a jump leaves is the page's padding plus the rail's height,
-   so a section's heading stops below the rail and not under it. */
-.control-group { margin: 0; padding: 0 0 20px; scroll-margin-top: 92px; }
+/* A jump leaves a section's heading where the page's own padding would. */
+.control-group { margin: 0; padding: 0 0 20px; scroll-margin-top: 20px; }
 .control-group > h4 { margin: 0 0 6px; color: var(--heading); font-size: 15px; text-wrap: balance; }
 .control-modules { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 /* Two columns have no room for the third, so its two groups share a row
@@ -81,7 +147,7 @@
   .control-column-pair, .control-span { grid-column: 1 / -1; }
   .control-column-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; align-items: start; }
 }
-@container control (min-width: 1040px) {
+@container control (min-width: 960px) {
   .control-groups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .control-column-pair { grid-column: auto; display: block; }
 }
@@ -128,8 +194,8 @@ a.control-task-title:hover { text-decoration: underline; }
 .control-task-result { margin: 0; overflow-wrap: anywhere; color: var(--muted-strong); }
 .control-task-result a { color: var(--heading); }
 .control-task button { margin-top: 5px; }
-/* A rail key keeps the inset ring it has in Settings: an outer one would
-   reach its neighbour and the rail's clipped edge. */
+/* A menu key keeps the inset ring it has in Settings: an outer one would
+   reach its neighbour. */
 .control-center button:focus-visible, .control-center a:not(.cp-key):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .control-center button, .control-action-link {
   position: relative; min-height: 30px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 8px;
@@ -215,8 +281,6 @@ a.control-task-title:hover { text-decoration: underline; }
 .control-section > a { width: fit-content; color: var(--accent-text); font-size: 13px; }
 @media (max-width: 700px) {
   .control-center { padding-bottom: 56px; }
-  /* The strip runs to the screen's edges, so the keys scroll out under them. */
-  .control-index { margin: 0 -16px 8px; padding: 7px 16px; border-bottom: 1px solid var(--border); }
   .control-center .wf { padding-inline: 12px; }
   .control-model-list li { grid-template-columns: 1fr; gap: 2px; }
 }

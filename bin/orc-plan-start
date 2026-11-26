@@ -13,7 +13,7 @@ build is the same run the button would launch: the plan run's own model,
 effort, Fast, permissions, account and Orchestrate, with notes still in the
 plan's tray, unless an option here names another. Without `--step` the run
 builds the whole plan; `--step N` starts step N of its `## Work` list, and
-`--each` opens one run per step at once, as the plan page's Start each step
+`--each` opens one run per step at once, as the plan page's Split
 does. It prints the new run's id and its link, and with `--each` every run
 that opened.
 """
@@ -75,7 +75,7 @@ def main(argv=None):
     starts = parser.add_mutually_exclusive_group()
     starts.add_argument("--step", type=int, help="the step of the plan's Work list to start")
     starts.add_argument("--each", action="store_true",
-                        help="open one run per step, as Start each step does")
+                        help="open one run per step, as Split on the plan page does")
     parser.add_argument("--agent", help="the agent that builds, such as codex or claude")
     parser.add_argument("--model")
     parser.add_argument("--effort")

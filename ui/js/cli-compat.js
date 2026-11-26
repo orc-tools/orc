@@ -1,11 +1,11 @@
 // orc-ui: whether each agent CLI still works with Orc (/api/harness-compat,
 // written by the server's scheduled check in ui/harness_compat.py). A release
 // that breaks Orc, and one Orc has not managed to check for days, join the
-// sidebar's top-left warning. Settings → Account says it in each agent's
-// heading (account-logins.js), and the composer says so when the chosen
-// agent's installed CLI fails.
+// sidebar's top-left warning, which can check every CLI again. Settings →
+// Account says it in each agent's heading (account-logins.js), and the
+// composer says so when the chosen agent's installed CLI fails.
 
-import { esc } from './core.js';
+import { $, announce, esc } from './core.js';
 
 const CLI_COMPAT_POLL_MS = 5 * 60 * 1000;
 const CLI_COMPAT_RUNNING_POLL_MS = 3000;
@@ -36,10 +36,19 @@ export function cliCompatWarningRows(status) {
   });
 }
 
-export function cliCompatRowHtml(row) {
+// The check covers every CLI, so only the last warning carries the button. The
+// time is filled in by paintCliCompatChecked: in the HTML it would repaint the
+// panel every minute.
+export function cliCompatRowsHtml(rows, { canCheck = false, running = false, error = '' } = {}) {
+  return rows.map((row, index) => cliCompatRowHtml(row, index === rows.length - 1 && canCheck ? `
+      ${error ? `<p class="orc-machine-note" role="alert">${esc(error)}</p>` : ''}
+      <div class="orc-machine-foot"><button type="button" class="settings-btn-inline" data-cli-compat-check data-track="Check again"${running ? ' aria-disabled="true"' : ''}>${running ? 'Checking…' : 'Check again'}</button><span data-cli-compat-checked></span></div>` : ''));
+}
+
+function cliCompatRowHtml(row, foot = '') {
   return `<li class="orc-machine is-${row.tone}" data-cli-compat-row="${esc(row.key)}">
       <div class="orc-machine-head"><span class="orc-machine-name" translate="no">${esc(row.name)}</span><span class="orc-machine-badge">${esc(row.badge)}</span></div>
-      <p class="orc-machine-todo">${cliCompatTextHtml(row.todo)}</p>
+      <p class="orc-machine-todo">${cliCompatTextHtml(row.todo)}</p>${foot}
     </li>`;
 }
 
@@ -103,24 +112,52 @@ export function cliCompatLaunchNotice(status, cli) {
 let current = null;
 let rows = [];
 let timer = null;
+let starting = false;
+let checkError = '';
+let announceResult = false;
+let checksAsked = 0;
 
 export const cliCompatStatuses = () => rows;
 export const cliCompatStatus = () => current;
+// Why the last check someone asked for did not start.
+export const cliCompatCheckError = () => checkError;
+
+export function paintCliCompatChecked() {
+  for (const element of document.querySelectorAll('[data-cli-compat-checked]')) {
+    const text = cliCompatCheckedText(starting ? { ...current, running: true } : current);
+    if (element.textContent !== text) element.textContent = text;
+  }
+}
 
 function apply(status) {
+  if (checkError && (status?.running || status?.checkedAt !== current?.checkedAt)) checkError = '';
   current = status;
-  const next = cliCompatWarningRows(status).map(row => ({ ...row, html: cliCompatRowHtml(row) }));
+  const models = cliCompatWarningRows(status);
+  const html = cliCompatRowsHtml(models, { canCheck: status?.canCheck, running: starting || status?.running, error: checkError });
+  const next = models.map((row, index) => ({ ...row, html: html[index] }));
   const changed = JSON.stringify(next) !== JSON.stringify(rows);
   rows = next;
   if (changed) window.dispatchEvent(new Event('orc-cli-compat'));
+  paintCliCompatChecked();
+  if (announceResult && !starting && !status?.running) {
+    announceResult = false;
+    // A check that did not start says so in the row's own alert.
+    if (!checkError) {
+      announce(status?.error ? cliCompatCheckedText(status)
+        : rows.map(row => row.summary).join(' ') || 'The agent CLI check found nothing that needs you.');
+    }
+  }
   window.dispatchEvent(new Event('orc-cli-compat-status'));
 }
 
 export async function refreshCliCompat() {
   clearTimeout(timer);
+  const asked = checksAsked;
   try {
     const response = await fetch('/api/harness-compat', { cache: 'no-store' });
-    if (response.ok) apply(await response.json());
+    const status = response.ok ? await response.json() : null;
+    // An answer from before a check started would show it as not running.
+    if (status && asked === checksAsked) apply(status);
   } catch {
     // Keep the last known state through a server restart.
   } finally {
@@ -132,15 +169,34 @@ export async function refreshCliCompat() {
 // Starts the check now instead of waiting for the next six-hourly one. It
 // takes about a minute, so the status is polled until it stops running.
 export async function checkCliCompatNow() {
-  const response = await fetch('/api/harness-compat/check', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Orc could not start the agent CLI check.');
-  apply(data);
+  if (starting) return;
+  starting = true;
+  checkError = '';
+  apply(current);
+  let next = current;
+  try {
+    const response = await fetch('/api/harness-compat/check', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) next = data;
+    else checkError = data.error || 'Orc could not start the agent CLI check.';
+  } catch {
+    checkError = 'Orc could not reach its server to start the agent CLI check.';
+  }
+  starting = false;
+  checksAsked += 1;
+  apply(next);
   clearTimeout(timer);
-  timer = setTimeout(refreshCliCompat, CLI_COMPAT_RUNNING_POLL_MS);
+  timer = setTimeout(refreshCliCompat, current?.running ? CLI_COMPAT_RUNNING_POLL_MS : CLI_COMPAT_POLL_MS);
 }
 
+$('orc-versions')?.addEventListener('click', event => {
+  const button = event.target.closest('[data-cli-compat-check]');
+  if (!button || button.getAttribute('aria-disabled') === 'true') return;
+  announceResult = true;
+  announce('Checking the agent CLIs. This takes about a minute.');
+  checkCliCompatNow();
+});
 window.addEventListener('focus', refreshCliCompat);
 refreshCliCompat();

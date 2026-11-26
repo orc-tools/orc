@@ -6,9 +6,12 @@
 - `standard`: runs work in parallel, except that a project with
   `runsAtOnce` in its settings lets only that many of its runs work at once;
   its other runs wait in the project's queue.
-- `low`: priority mode. One run works at a time in priority order, child turns
-  receive `ORC_LOW_POWER=1`, and test/build runners cap their worker pools to
-  keep the Mac cool and responsive.
+- `low`: Queue mode. Builds go one at a time in priority order, and each keeps
+  its place until it reaches Ship. Child turns receive `ORC_LOW_POWER=1`, and
+  test/build runners cap their worker pools to keep the Mac cool and responsive.
+  Runs that build nothing (plans, questions, reviews) never queue unless
+  `ui.queueBuildsOnly` is false. It is on when absent, saved only when off, and
+  stays on this computer like `ui.powerMode`.
 
 Legacy configs migrate without rewriting disk on read: `"focused"` reads as
 `"low"`, while `"high"` and `ui.highPower: true` read as `"standard"`.
@@ -22,11 +25,19 @@ import tempfile
 
 import run_relationships
 
+NON_BUILD_ROUTES = run_relationships.NON_BUILD_ROUTES
 MODES = ("standard", "low")
 QUEUE_SCOPES = ("all", "new-only")
 ENV_KEY = "ORC_LOW_POWER"
 FOCUS_FILE = "focus.json"
 PRIORITY_FILE = "priority.json"
+# Why a run keeps working in the queue, saved in the run itself so that losing
+# or rewriting focus.json (an older checkout, a restart, an update) never
+# forgets it. Strongest first: `hand` the user started or resumed it, which
+# lasts until the run finishes; `kept` Queue mode started for only new runs
+# and kept it going, until it ships; `turn` it holds the queue's place.
+PLACE_FILE = ".queue-place.json"
+PLACES = ("hand", "kept", "turn")
 
 
 def _orc_dir(config_dir=None):
@@ -71,6 +82,48 @@ def mode(config):
     if saved == "focused":
         return "low"
     return "standard"
+
+
+def builds_only(config):
+    """Whether Queue mode queues only builds, so plans and questions start
+    straight away."""
+    ui = config.get("ui") if isinstance(config, dict) else None
+    return not (isinstance(ui, dict) and ui.get("queueBuildsOnly") is False)
+
+
+def builds(meta):
+    """Whether a run builds. A change run an agent has not classified yet
+    counts, since nothing tells a question asked of it from a build."""
+    return meta.get("route") not in NON_BUILD_ROUTES
+
+
+def queues_in_low(meta, config):
+    return builds(meta) or not builds_only(config)
+
+
+def has_place(run_id, state):
+    """Whether the last scheduling pass let the run work."""
+    return run_id in (state.get("active") or []) or run_id in (state.get("beside") or [])
+
+
+def read_place(run_dir):
+    """Why the run keeps working in the queue: one of `PLACES`, or None."""
+    data = _read_json_dict(os.path.join(run_dir, PLACE_FILE))
+    return data.get("by") if data and data.get("by") in PLACES else None
+
+
+def write_place(run_dir, place):
+    """Save `place` (None forgets it). Returns whether it is on disk."""
+    path = os.path.join(run_dir, PLACE_FILE)
+    if place is None:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+        return True
+    return os.path.isdir(run_dir) and _write_json_atomic(path, {"by": place})
 
 
 def read_config(config_dir=None):
@@ -156,9 +209,6 @@ def read_priority(config_dir=None):
     return sanitize_priority(read_focus(base).get("order"))
 
 
-NON_BUILD_ROUTES = run_relationships.NON_BUILD_ROUTES
-
-
 def write_priority(runs, config_dir=None):
     clean = sanitize_priority(runs)
     path = os.path.join(_orc_dir(config_dir), PRIORITY_FILE)
@@ -201,20 +251,24 @@ def hook_context(run_id=None, meta=None, config_dir=None):
 
 def plan(members, previous=None, priority=None, prioritise=None, start=None,
          limit=1, lane_limits=None, exempt=None):
-    """Order `members` (`{id, started, waiting, lane?}`) and pick the active runs.
+    """Order `members` and pick the active runs. A member is `{id, started,
+    waiting, lane?, keeps?, shipped?}`.
 
     Explicitly prioritised runs lead in exact priority order and preempt
-    lower-ranked runs immediately. An unprioritised working run stays active
-    until it stops for the user, and remaining unprioritised runs follow
-    oldest-started first (`started`, then `id`). At most `limit` runs are
+    lower-ranked runs immediately. An active run stays active until it stops
+    for the user, or, when it `keeps` its place, until it gives that up. A
+    run that `shipped` and has changes to make comes next: it takes the next
+    free place, and preempts only when the user prioritises it again. The rest
+    follow oldest-started first (`started`, then `id`). At most `limit` runs are
     active (None: no overall limit; Low power uses 1), and at most
     `lane_limits[lane]` from one lane, a project with a run queue. Runs in
     `exempt` (existing runs kept going when Queue mode starts for only new
-    runs) are never auto-paused by `limit`, and non-exempt runs wait behind
+    runs) are never auto-paused by `limit` until they ship, and non-exempt runs wait behind
     active exempt runs rather than running alongside them. `start` marks a
     member the user started or resumed by hand: it stays in `beside` while
     it is a member, so Orc never pauses it again, and it works beside the
-    active runs whenever it is not one of them.
+    active runs whenever it is not one of them. Starting one while the active
+    runs all wait for the user moves the place on to it.
     """
     previous = previous if isinstance(previous, dict) else {}
     by_id = {member["id"]: member for member in members}
@@ -225,27 +279,36 @@ def plan(members, previous=None, priority=None, prioritise=None, start=None,
     prio_set = set(prio_ids)
 
     raw_exempt = previous.get("exempt") if exempt is None else exempt
-    exempt_ids = [run_id for run_id in sanitize_priority(raw_exempt) if run_id in by_id]
+    exempt_ids = [run_id for run_id in sanitize_priority(raw_exempt)
+                  if run_id in by_id and not by_id[run_id].get("shipped")]
     exempt_set = set(exempt_ids)
 
     prev_active = previous.get("active")
     if not isinstance(prev_active, list):
         prev_active = [previous["focused"]] if previous.get("focused") else []
-    unprio_sticky = [
-        run_id for run_id in prev_active
-        if run_id in by_id and not by_id[run_id]["waiting"] and run_id not in prio_set
-    ]
-    sticky_set = set(unprio_sticky)
-    unprio_rest = [
-        member["id"] for member in sorted(members, key=lambda m: (m.get("started") or "", m["id"]))
-        if member["id"] not in prio_set and member["id"] not in sticky_set
+    kept = [run_id for run_id in prev_active if run_id in by_id
+            and (not by_id[run_id]["waiting"] or by_id[run_id].get("keeps"))]
+    if (start in by_id and not by_id[start]["waiting"] and start not in kept
+            and all(by_id[run_id]["waiting"] for run_id in kept)):
+        kept = [start] if kept else []
+    kept_set = set(kept)
+    leading = [run_id for run_id in prio_ids
+               if run_id in kept_set or run_id == prioritise or not by_id[run_id].get("shipped")]
+    sticky = [run_id for run_id in kept if run_id not in prio_set]
+    returning = [run_id for run_id in prio_ids if run_id not in leading]
+    rest = [
+        member["id"] for member in sorted(
+            members, key=lambda m: (not m.get("shipped"), m.get("started") or "", m["id"]))
+        if member["id"] not in prio_set and member["id"] not in kept_set
     ]
 
-    ordered = prio_ids + unprio_sticky + unprio_rest
+    ordered = leading + sticky + returning + rest
     working = [run_id for run_id in ordered if not by_id[run_id]["waiting"]]
+    candidates = [run_id for run_id in ordered
+                  if not by_id[run_id]["waiting"] or run_id in kept_set]
     lane_limits = lane_limits or {}
     active, per_lane = [], {}
-    for run_id in working:
+    for run_id in candidates:
         if run_id not in exempt_set:
             continue
         lane = by_id[run_id].get("lane")
@@ -254,7 +317,7 @@ def plan(members, previous=None, priority=None, prioritise=None, start=None,
         per_lane[lane] = per_lane.get(lane, 0) + 1
         active.append(run_id)
     active_set = set(active)
-    for run_id in working:
+    for run_id in candidates:
         if run_id in active_set:
             continue
         if limit is not None and len(active) >= limit:

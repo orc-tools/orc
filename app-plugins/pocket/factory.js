@@ -326,4 +326,140 @@ function decor(kit) {
   return kit.shadows(group);
 }
 
-export default { palette: PALETTE, backdrop, layout, view, pad: false, ghost, floor, hall, station, crate, carrier, dock, decor };
+// The advisor's LED face: a dot matrix on a dark window, its eyes lit and
+// looking down at the page, or shut in a line as it blinks.
+function ledFace(kit, shut) {
+  return shared(kit, `pocket-led-${shut ? 'shut' : 'open'}`, () => kit.painted((ctx, w, h) => {
+    const cols = 16;
+    const rows = 10;
+    const cell = w / cols;
+    ctx.fillStyle = '#0b0716';
+    ctx.fillRect(0, 0, w, h);
+    const on = new Set();
+    const light = (x, y) => on.add(`${x},${y}`);
+    for (const left of [3, 10]) {
+      if (shut) for (let x = 0; x < 3; x += 1) light(left + x, 5);
+      else for (let x = 0; x < 3; x += 1) for (let y = 4; y < 7; y += 1) if (y === 5 || x === 1) light(left + x, y);
+    }
+    for (const x of [6, 7, 8, 9]) light(x, 8);
+    light(5, 7); light(10, 7);
+    const lit = kit.mode === 'dark' ? '#6ee79a' : '#3fd27a';
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
+        const glow = on.has(`${x},${y}`);
+        ctx.fillStyle = glow ? lit : '#1f3a2c';
+        ctx.beginPath();
+        ctx.arc((x + 0.5) * cell, (y + 0.5) * cell, cell * (glow ? 0.4 : 0.26), 0, TAU);
+        ctx.fill();
+      }
+    }
+  }, { width: 256, height: 160, nearest: false, emissive: true, glow: kit.mode === 'dark' ? 1.1 : 0.6, rough: 0.3 }));
+}
+
+// The manual's open spread: the cartridge's instructions, a diagram of the
+// handheld on one page and lines of print on the other.
+function manualPages(kit) {
+  return shared(kit, 'pocket-manual', () => kit.painted((ctx, w, h) => {
+    ctx.fillStyle = '#f5f2fc';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#d9d0f0';
+    ctx.fillRect(w / 2 - 2, 0, 4, h);
+    ctx.strokeStyle = '#6a3fc0';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(w * 0.12, h * 0.18, w * 0.26, h * 0.62);
+    ctx.fillStyle = '#9be6b4';
+    ctx.fillRect(w * 0.16, h * 0.24, w * 0.18, h * 0.2);
+    ctx.fillStyle = '#6a3fc0';
+    ctx.beginPath(); ctx.arc(w * 0.31, h * 0.62, 7, 0, TAU); ctx.fill();
+    ctx.fillRect(w * 0.15, h * 0.6, 18, 6); ctx.fillRect(w * 0.18, h * 0.55, 6, 18);
+    ctx.fillStyle = '#2a1f4a';
+    ctx.font = '700 20px Menlo, monospace';
+    ctx.fillText('MANUAL', w * 0.58, h * 0.2);
+    for (let line = 0; line < 6; line += 1) ctx.fillRect(w * 0.58, h * (0.3 + line * 0.1), w * (line % 3 === 2 ? 0.22 : 0.32), 5);
+  }, { width: 256, height: 160, rough: 0.85, metal: 0 }));
+}
+
+// The advisor is the co-processor: a chip stood on end on its gold
+// footprint, its pins bent down as legs and two bent out as arms that hold
+// up the cartridge's manual. Its face is an LED matrix that reads down the
+// page and blinks, the activity light on its top flickers while it thinks,
+// and every few seconds it turns a leaf of the manual.
+function advisor(kit) {
+  const root = new Group();
+  const body = pack(kit);
+  const trim = silver(kit);
+  const pin = gold(kit);
+  root.add(kit.box(1.3, 0.03, 1.2, pin, [0, 0.015, 0]));
+  root.add(kit.box(1.1, 0.012, 1.0, kit.mat('mask', { rough: 0.5 }), [0, 0.034, 0]));
+  // Its feet: four bent pins on each side down to the pads.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 2; i += 1) {
+      const x = side * (0.18 + i * 0.16);
+      root.add(kit.box(0.06, 0.5, 0.06, pin, [x, 0.27, -0.2]));
+      root.add(kit.box(0.1, 0.03, 0.16, pin, [x, 0.045, -0.15]));
+    }
+  }
+  const chip = new Group();
+  chip.position.set(0, 0.5, -0.2);
+  root.add(chip);
+  chip.add(kit.box(0.92, 0.86, 0.3, body, [0, 0.43, 0]));
+  chip.add(kit.box(0.96, 0.05, 0.34, trim, [0, 0.87, 0]));
+  // The notch that says which way up it goes.
+  chip.add(kit.cylinder(0.07, 0.07, 0.06, kit.mat('door', { rough: 1 }), [0, 0.86, 0.12], 12));
+  // Side pins, five a side.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 5; i += 1) chip.add(kit.box(0.08, 0.05, 0.08, pin, [side * 0.5, 0.18 + i * 0.13, 0]));
+  }
+  const open = ledFace(kit, false);
+  const shut = ledFace(kit, true);
+  const face = new Mesh(new PlaneGeometry(0.74, 0.46), open);
+  face.position.set(0, 0.5, 0.158);
+  chip.add(face, kit.box(0.8, 0.52, 0.02, trim, [0, 0.5, 0.142]));
+  chip.add(kit.box(0.5, 0.05, 0.02, kit.mat('silk', { rough: 0.6 }), [0, 0.14, 0.152]));
+  // The activity light on its lid.
+  const led = kit.sphere(0.06, lit(kit, 'busy', 1.6), [0.32, 0.92, 0], 10);
+  chip.add(led);
+  // The arms and the manual they hold up to its face.
+  const arms = [];
+  for (const side of [-1, 1]) {
+    const arm = new Group();
+    arm.position.set(side * 0.5, 0.16, 0.04);
+    arm.add(kit.box(0.06, 0.06, 0.5, pin, [0, 0, 0.25]));
+    arm.add(kit.box(0.06, 0.06, 0.06, pin, [-side * 0.03, 0.02, 0.5]));
+    chip.add(arm);
+    arms.push(arm);
+  }
+  const book = new Group();
+  book.position.set(0, 0.69, 0.4);
+  book.rotation.x = 0.4;
+  root.add(book);
+  book.add(kit.box(1.04, 0.04, 0.6, kit.mat('accent', { rough: 0.5 }), [0, -0.025, 0]));
+  const spread = new Mesh(new PlaneGeometry(0.96, 0.54), manualPages(kit));
+  spread.rotation.x = -Math.PI / 2;
+  spread.position.y = 0.004;
+  book.add(spread);
+  const leaf = new Group();
+  leaf.position.y = 0.012;
+  leaf.add(kit.box(0.46, 0.008, 0.52, kit.mat('silk', { rough: 0.9 }), [0.24, 0, 0]));
+  book.add(leaf);
+  const shadowed = kit.shadows(root);
+  root.add(kit.shadow(1.6, 1.4, 0.3));
+  root.scale.setScalar(1.4);
+  shadowed.userData = {
+    labelY: 2.35,
+    page: new Vector3(0, 0.71 * 1.4, 0.4 * 1.4),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      chip.rotation.x = 0.22 * reading + Math.sin(time * 0.8) * 0.02;
+      chip.rotation.z = Math.sin(time * 0.6) * 0.05 * reading;
+      face.material = (time % 3.7) < 0.14 ? shut : open;
+      led.visible = reading < 0.5 || Math.sin(time * 23) + Math.sin(time * 7.3) > -0.4;
+      const turn = Math.min(1, Math.max(0, ((time * 0.3) % 1 - 0.72) / 0.28)) * reading;
+      leaf.rotation.z = -Math.PI * (turn * turn * (3 - 2 * turn));
+      for (const [i, arm] of arms.entries()) arm.rotation.x = Math.sin(time * 1.1 + i) * 0.04 * reading;
+    },
+  };
+  return shadowed;
+}
+
+export default { palette: PALETTE, backdrop, layout, view, pad: false, ghost, floor, hall, station, crate, carrier, dock, decor, advisor };

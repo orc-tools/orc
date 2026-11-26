@@ -16,6 +16,8 @@ import subprocess
 import tempfile
 from datetime import datetime, timezone
 
+import question_media
+
 
 SCHEMA_VERSION = 1
 RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\Z")
@@ -256,6 +258,51 @@ def upsert_child(config_dir, record):
         return dict(row)
 
 
+# A launch writes its row as launching, then launched or failed when it
+# returns, all within seconds. A row left launching longer than this was cut
+# short, most often by Orc restarting for an update mid-launch. The run list
+# stops showing such a row as Starting after the same five minutes.
+STALE_LAUNCH_SECONDS = 300
+INTERRUPTED_LAUNCH_ERROR = "Orc restarted while this run was launching, so it never started."
+
+
+def _parse_utc(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def finish_interrupted_launches(config_dir, run_exists, now=None):
+    """Settle launch rows a cut-short launch left at launching. A row whose run
+    was reserved becomes launched, so its plan settles and pairs with it like
+    any other; a row with no run becomes failed. Returns the rows it changed."""
+    now = now or datetime.now(timezone.utc)
+
+    def stale(row):
+        if not isinstance(row, dict) or row.get("state") != "launching":
+            return False
+        at = _parse_utc(row.get("updatedAt") or row.get("requestedAt"))
+        return at is not None and (now - at).total_seconds() > STALE_LAUNCH_SECONDS
+
+    # Most ticks find nothing, so only a stale row takes the lock and a write.
+    if not any(stale(row) for row in read_store(config_dir)["children"]):
+        return []
+    changed = []
+    with locked_store(config_dir) as store:
+        for row in store["children"]:
+            if not stale(row):
+                continue
+            child = row.get("childRunId")
+            if valid_run_id(child) and run_exists(child):
+                row.update(state="launched", error=None)
+            else:
+                row.update(state="failed", error=INTERRUPTED_LAUNCH_ERROR)
+            row["updatedAt"] = utc_now()
+            changed.append(dict(row))
+    return changed
+
+
 def child_by_token(config_dir, token):
     return next((dict(row) for row in read_store(config_dir)["children"]
                  if isinstance(row, dict) and row.get("launchToken") == token), None)
@@ -428,7 +475,8 @@ def _terminal_question_meta(meta, run_dir):
     return kept
 
 
-def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, title=None):
+def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, title=None,
+                     media=None):
     """Publish a question answer while moving project ownership externally.
 
     ``repair`` re-runs the terminal write for a run that was published by hand
@@ -436,6 +484,9 @@ def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, ti
     run fails is_question_run and strands itself read-only in the UI. It reuses
     the answer already on disk and never rewrites it.
     """
+    if media and repair:
+        raise ValueError("repair cannot add media")
+    staged = question_media.stage(media)
     clean_title = None
     if title is not None:
         if not isinstance(title, str) or not title.strip() or len(title.strip()) > 80:
@@ -485,6 +536,9 @@ def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, ti
     elif terminal:
         if not existing:
             raise ValueError("terminal question answer is empty")
+        # A rerun after an interruption finishes the media it was given.
+        question_media.check_references(run_dir, existing, staged)
+        question_media.write(run_dir, staged)
         if clean_title is not None and meta.get("title") != clean_title:
             terminal_meta = _terminal_question_meta(meta, run_dir)
             terminal_meta.update({"outcome": "question", "phase": "done",
@@ -513,7 +567,10 @@ def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, ti
             raise ValueError("repair cannot replace an answer view")
         from structured_answer import prepare_view
         view = prepare_view(ui_spec, existing or answer)
+    if not repair:
+        question_media.check_references(run_dir, existing or answer, staged)
     project = _configured_project(config_dir, meta)
+    question_media.write(run_dir, staged)
     if view is not None:
         _atomic_bytes(os.path.join(run_dir, "answer.ui.json"), view)
     if not existing:
@@ -558,18 +615,35 @@ def _completed_question(run_dir, action, config_dir=None):
     return run_dir, meta
 
 
-def update_question(config_dir, run_dir, answer, expected_sha256):
+def update_question(config_dir, run_dir, answer, expected_sha256, media=None):
+    """Replace a completed answer, adding or replacing the media it shows."""
     run_dir, meta = _completed_question(run_dir, "updated", config_dir)
     answer_path = os.path.join(run_dir, "answer.md")
     if not isinstance(answer, bytes) or not answer.strip():
         raise ValueError("question answer is empty")
     answer.decode("utf-8")
+    staged = question_media.stage(media)
     with open(answer_path, "rb") as handle:
         current = handle.read()
     if hashlib.sha256(current).hexdigest() != expected_sha256:
         raise ValueError("question answer changed; read it again before updating")
+    question_media.check_references(run_dir, answer, staged)
+    written = question_media.write(run_dir, staged)
     _atomic_bytes(answer_path, answer)
-    return {"runId": meta["runId"], "answer": answer_path, "updated": True}
+    result = {"runId": meta["runId"], "answer": answer_path, "updated": True}
+    if written:
+        result["media"] = written
+    return result
+
+
+def add_question_media(config_dir, run_dir, media):
+    """Add or replace a completed answer's pictures and mockups, leaving the
+    answer and its metadata as they are."""
+    if not media:
+        raise ValueError("name at least one media file")
+    run_dir, meta = _completed_question(run_dir, "given media", config_dir)
+    written = question_media.write(run_dir, question_media.stage(media))
+    return {"runId": meta["runId"], "media": written}
 
 
 FOLLOW_UP_BRIEF = "inputs/follow-up-brief.md"

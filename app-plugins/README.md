@@ -350,6 +350,19 @@ default parts, to build on. A colour is a palette key, a CSS colour or a number.
   its carrier. The engine moves it along the carrier's route at 0.1 above the
   floor (or lobs it over the floor where the carrier flies), turned to face its
   way, and frees its geometry on arrival, so build it from the kit's materials.
+- `advisor(kit)` returns an Object3D for the advisor the main agent asks: a
+  character drawn for the theme's world, facing +z within about 2.1 by 2.1.
+  It stands beside the hall only while it reads (the stock one is a robed
+  reader at a lectern in the theme's colours). The engine raises it in, sends
+  pages from the hall to it every second or so, and when it answers sends a
+  light back to the hall before it leaves. Its `userData` may name `labelY`,
+  `page` (a Vector3 where pages land, such as the book it reads), and
+  `frame(time, dt, advisor)` and `react(event, advisor)`, where
+  `advisor.activity` eases from 0 to 1 while it reads and `event` is
+  `arrive`, `answer` (before the light leaves) or `leave` (an ask that came to
+  nothing). The hall's `react` hears `advice` as the light lands. It stands at
+  world `{x: -4.4, z: -5.6, yaw: 0.6}`; `layout.advisor` moves it, which a
+  painted floor or a wide hall needs. `pageColor` sets the pages' colour.
 - `weather(kit)` returns `{object, frame(time, dt), dispose()}` for ambient
   motion, and `frame(time, dt, kit)` runs every frame. `kit.traffic` says what
   is really on its way: `down` and `up` count the hand-offs in flight, `flow`
@@ -421,12 +434,14 @@ Other supported contributions:
   which answers `{ reason, until }` or null, at the moment it would do so,
   since a hidden page's timers run late. It redraws on the `orc:quiet` event,
   which `document` receives when the times change and as each starts and ends.
-  `extendPlanTools(id, render)` from `/js/plan-page.js` adds controls beside
-  **Copy plan** on a plan page. `render({runId, meta, layout, own, tools, work})`
-  runs after every paint of a plan, with its `.plan-tools` row and its
-  `.plan-work` card; the package marks what it adds with
-  `data-plan-extension="<id>"`, which a repaint drops. The returned function
-  unregisters and removes that package's nodes (see Tailscale's Share plan).
+  `extendPlanTools(id, render)` from `/js/plan-page.js` adds controls to a
+  plan page. `render({runId, meta, layout, own, actions, tools, work})` runs
+  after every paint of a plan, with its `.plan-actions` row at the top right
+  beside the plan's title, its `.plan-tools` row of links at the foot of the
+  steps (`null` when it has none) and its `.plan-work` card; the package
+  marks what it adds with `data-plan-extension="<id>"`, which a repaint
+  drops. The returned function unregisters and removes that package's nodes
+  (see Tailscale's Share).
   `"pairedSwitch": false` in a manifest keeps a paired browser from turning
   the package on or off (Tailscale's switch opens this Mac to the network).
   `accounts(mount)` adds a card to Settings → Accounts, after GitHub: core
@@ -493,8 +508,11 @@ Other supported contributions:
 - `externalService`: passive cleanup evidence, not a launch or uninstall hook.
   `files` lists home-relative presence markers; `pidFiles` lists home-relative
   JSON files containing a positive integer `pid`; `stopCommand` is an argument
-  array beginning with a package-relative executable. The host only probes
-  presence/liveness and displays that command. It never executes it. Retained
+  array beginning with a package-relative executable; optional `startCommand`
+  has the same shape. The host probes presence/liveness and displays the stop
+  command. It runs the two commands only when an Orc upgrade replaces a pinned
+  package with the copy its release ships: stop, wait for the markers to clear,
+  install, then start the new copy if it had been running. Retained
   records keep recovery instructions after removal/restart without importing
   disabled code. Missing markers or an exited PID clear the pending display;
   malformed/unreadable evidence remains pending. A new revision is refused while
@@ -662,7 +680,7 @@ those copies, with a strict CSP, on `127.0.0.1:4190`. `backend.py` answers
 `/api/tailscale/*` to Orc on this Mac alone (`handler._host_owner()`) and
 gives core `phone_url`, `private_phone_url` and `close` through
 `APP_PLUGIN_RUNTIME.invoke`. Its settings page is the setup checklist and
-the **Use it for** switches; **Share plan** joins the plan page through
+the **Use it for** switches; **Share** joins the plan page's top right through
 `extendPlanTools`. See [Use Orc on your phone](../docs/tailscale.md).
 
 ### Skills

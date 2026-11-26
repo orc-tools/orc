@@ -109,6 +109,20 @@
 .factory-chart-node:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .factory-chart-name { display: block; font-size: 13.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .factory-chart-node[data-agent-id="main"] .factory-chart-name { font-size: 15px; }
+/* The advisor stands to the main agent's left on a dashed wire, so the
+   branches still hang from the middle. */
+.factory-chart-top {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center;
+}
+.factory-chart-top > [data-agent-id="main"] { grid-column: 2; grid-row: 1; }
+.factory-chart-top > [data-agent-id="advisor"] {
+  grid-column: 1; grid-row: 1; justify-self: end; width: min(220px, calc(100% - 28px)); margin-inline-end: 28px;
+  border-style: dashed;
+}
+.factory-chart-top > [data-agent-id="advisor"]::after {
+  content: ''; position: absolute; left: calc(100% + 1px); top: 50%; width: 27px; pointer-events: none;
+  border-top: 1.5px dashed var(--wire);
+}
 .factory-chart-meta {
   display: flex; align-items: baseline; gap: 12px; margin-top: 6px;
   font-size: 11.5px; line-height: 1.4; color: var(--muted-strong);
@@ -158,6 +172,10 @@
 }
 @container factory-chart (max-width: 550px) {
   .factory-chart-node[data-agent-id="main"] { width: 100%; }
+  .factory-chart-top { grid-template-columns: minmax(0, 1fr); row-gap: 10px; }
+  .factory-chart-top > [data-agent-id="main"] { grid-column: 1; }
+  .factory-chart-top > [data-agent-id="advisor"] { grid-column: 1; grid-row: 2; justify-self: stretch; width: auto; margin: 0 0 0 30px; }
+  .factory-chart-top > [data-agent-id="advisor"]::after { display: none; }
   .factory-chart-branches { --reach: 19px; --fork: 0px; display: block; padding: 0 0 0 30px; }
   .factory-chart-branches::before, .factory-chart-branches::after { display: none; }
   .factory-chart-branches > .factory-chart-branch {
@@ -179,7 +197,7 @@
   --factory-cloud: color-mix(in srgb, var(--cyan) 82%, #38bdf8);
   --factory-cloud-ink: color-mix(in srgb, var(--factory-cloud) 74%, var(--heading));
 }
-:is(.factory-label, .factory-main, .factory-agent, .factory-stat, .factory-ticket):is([data-state="running"], [data-state="working"]) { --factory-dot: var(--yellow); }
+:is(.factory-label, .factory-main, .factory-agent, .factory-stat, .factory-ticket):is([data-state="running"], [data-state="working"], [data-state="reading"]) { --factory-dot: var(--yellow); }
 :is(.factory-label, .factory-main, .factory-agent, .factory-stat, .factory-ticket):is([data-state="done"], [data-state="ready"]) { --factory-dot: var(--green); }
 :is(.factory-label, .factory-main, .factory-agent, .factory-stat, .factory-ticket)[data-state="failed"] { --factory-dot: var(--red); }
 :is(.factory-label, .factory-main, .factory-agent, .factory-stat, .factory-ticket)[data-state="waiting"] { --factory-dot: var(--orange); }
@@ -259,7 +277,7 @@
   max-width: 232px;
   border-color: color-mix(in srgb, var(--factory-cloud) 66%, var(--border));
 }
-.factory-labels.is-crowded .factory-label:not(.is-main, .is-hot) .factory-label-meta { display: none; }
+.factory-labels.is-crowded .factory-label:not(.is-main, .is-advisor, .is-hot) .factory-label-meta { display: none; }
 /* A decommissioned station keeps its label, quieter and with its lamp out,
    until it is pointed at or picked. */
 .factory-label[data-retired]:not(.is-hot, .is-selected) { opacity: .74; }
@@ -331,6 +349,11 @@
   overflow-wrap: anywhere;
 }
 .factory-ticket-facts code { font-size: 11.5px; }
+/* The advisor's earlier asks: what came of each, and what the agent said next. */
+.factory-ask dd { font-variant-numeric: normal; }
+.factory-ask[data-status="failed"] dd, .factory-ask[data-status="dropped"] dd { color: var(--muted-strong); }
+.factory-ask-then { display: block; margin-top: 2px; color: var(--text); }
+.factory-advisor { margin-top: 2px; }
 .factory-ticket-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; }
 .factory-ticket-open {
   display: inline-flex; align-items: center; gap: 4px; margin-top: 12px;
@@ -436,7 +459,7 @@
 :is(.factory-main, .factory-agent):is([data-state="idle"], [data-state="stopped"], [data-state="unknown"]) .factory-presence {
   background: var(--factory-row-bg, var(--panel)); border: 1.5px solid var(--muted-strong);
 }
-:is(.factory-main, .factory-agent):is([data-state="running"], [data-state="working"]) .factory-presence {
+:is(.factory-main, .factory-agent):is([data-state="running"], [data-state="working"], [data-state="reading"]) .factory-presence {
   animation: factory-pulse 2s ease-in-out infinite;
 }
 @keyframes factory-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .42; } }
@@ -521,7 +544,7 @@ button.factory-agent-name {
 .factory-state {
   flex: none; color: var(--muted-strong); font-size: 11.5px; font-weight: 400; line-height: 1.35;
 }
-.factory-state:is(.is-running, .is-working) { color: var(--yellow-text); font-weight: 500; }
+.factory-state:is(.is-running, .is-working, .is-reading) { color: var(--yellow-text); font-weight: 500; }
 .factory-state.is-failed { color: var(--red-text); font-weight: 500; }
 .factory-state.is-ready { color: var(--green-text, var(--green)); font-weight: 500; }
 .factory-state.is-waiting { color: var(--orange-text, var(--orc-orange-text)); font-weight: 500; }

@@ -4,29 +4,34 @@
    under the destination in one column. */
 
 #content:has(> .plan-page) { padding-bottom: 20px; }
-/* The chat box's strip is the page's foot, so nothing scrolls under it. */
-#content:has(> .plan-page > .plan-chat:not([hidden])) { padding-bottom: 0; }
+/* The chat box's foot is the page's foot, so nothing scrolls under it. */
+#content:has(> .plan-page > .plan-layout > .plan-chat:not([hidden])) { padding-bottom: 0; }
 
-/* The plan's columns, shared by the layout and the chat box at its foot. */
-.plan-page {
-  container: plan-page / inline-size; color: var(--text);
-  --plan-columns: minmax(0, 46rem) minmax(17rem, 21rem);
-  --plan-column-gap: clamp(28px, 4cqi, 56px);
-}
+.plan-page { container: plan-page / inline-size; color: var(--text); }
 .plan-layout {
   display: grid; align-items: start; justify-content: center;
-  grid-template-columns: var(--plan-columns);
-  grid-template-rows: auto 1fr;
-  grid-template-areas: "head work" "doc work";
-  column-gap: var(--plan-column-gap);
-  padding: 14px 0 44px;
+  grid-template-columns: minmax(0, 46rem) minmax(17rem, 21rem);
+  grid-template-rows: auto auto 1fr;
+  /* The title row runs across both columns, so a plugin's Share sits at the
+     page's top right and the steps start level with the lede. */
+  grid-template-areas: "head head" "lede work" "doc work";
+  column-gap: clamp(28px, 4cqi, 56px);
+  padding-top: 14px;
 }
-.plan-head { grid-area: head; min-width: 0; }
+.plan-head {
+  grid-area: head; min-width: 0;
+  display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px;
+}
+.plan-lede { grid-area: lede; }
+.plan-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: none; margin-left: auto; }
+.plan-actions:empty { display: none; }
 .plan-doc { grid-area: doc; min-width: 0; }
 .plan-work {
   grid-area: work; min-width: 0;
   position: sticky; top: 20px;
-  max-height: calc(var(--plan-view-h, 100vh) - 40px); overflow-y: auto;
+  /* Sticky measures from inside the scroller's padding, so that comes off too,
+     or a tall panel would run to the window's very edge. */
+  max-height: calc(var(--plan-view-h, 100vh) - var(--plan-edge-top) - 40px); overflow-y: auto;
 }
 
 /* The shell frames a markdown tab as a bordered page; here the page is the
@@ -34,9 +39,11 @@
 .plan-page .md {
   width: auto; min-height: 0; padding: 0; border: 0; border-radius: 0; background: none;
 }
+/* The plan ends clear of the chat box that floats over its column. */
+.plan-page .plan-doc { padding-bottom: calc(44px + var(--plan-chat-h, 0px)); }
 
 .plan-title {
-  margin: 0 0 12px; color: var(--heading);
+  flex: 0 1 46rem; min-width: 0; margin: 0; color: var(--heading);
   font-size: 24px; font-weight: 700; line-height: 1.3; text-wrap: balance;
 }
 .plan-lede { max-width: 68ch; color: var(--heading); font-size: 16px; line-height: 1.6; }
@@ -58,10 +65,6 @@
 .plan-page .md h3 { margin: 22px 0 8px; }
 .plan-page .md h2 + h3 { margin-top: 0; }
 .plan-page .md a { text-underline-offset: 2px; }
-.plan-page .md .plan-mockup-link {
-  display: inline-flex; align-items: center; gap: 4px; font-weight: 500; text-decoration: none;
-}
-.plan-page .md .plan-mockup-link:hover { text-decoration: underline; }
 
 .plan-page .plan-doc-steps {
   display: grid; gap: 16px; margin: 0 0 14px; padding: 0;
@@ -109,8 +112,27 @@
 /* Focus lands here when a Start gives way to Starting…; the heading needs no ring. */
 .plan-work-title:focus { outline: none; }
 .plan-start-all { justify-self: start; }
-/* Start work leads; Start each step sits beside it, quiet. */
+/* One PR or Split, before the steps it draws its PRs on, in the page's own type. */
+.plan-start-choice { justify-self: start; font-family: inherit; --orc-text: var(--heading); }
+.plan-start-choice::part(option) {
+  padding: calc(2 * var(--orc-font-sans-nudge, 0px)) 12px 0; font-size: 12.5px; font-weight: 600;
+  line-height: calc(24px - 2 * var(--orc-font-sans-nudge, 0px));
+}
+/* Start, below the steps and Builds with. In Split, Start step 1 only sits
+   beside it at the same size. */
+.plan-work-go { display: grid; gap: 10px; min-width: 0; }
+.plan-work-go:empty { display: none; }
 .plan-start-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-self: start; }
+/* A step's PR in Split, at the end of its name's line; a step that waits
+   names the PR it stacks on. */
+.plan-step-pr {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+  margin-top: -2px; color: var(--text); font-size: 11.5px; line-height: 1; white-space: nowrap;
+}
+.plan-step-pr svg { flex: none; color: var(--green-text); }
+.plan-step-pr b { color: var(--heading); font-weight: 600; }
+.plan-step-pr small { color: var(--muted-strong); font-size: 11px; }
 
 .plan-steps { display: grid; margin: 0; padding: 0; list-style: none; }
 .plan-step {
@@ -139,6 +161,8 @@
   border-color: color-mix(in srgb, var(--green) 40%, transparent);
   background: color-mix(in srgb, var(--green) 13%, transparent); color: var(--green-text);
 }
+/* A plan of one step with nothing to list yet (its Start sits below) draws no list. */
+.plan-steps[data-count="1"]:not(:has(.plan-step-body > *)) { display: none; }
 /* A plan that one run builds has no sequence to draw. */
 .plan-steps[data-count="1"] .plan-step { grid-template-columns: minmax(0, 1fr); }
 .plan-steps[data-count="1"] .plan-step-mark { display: none; }
@@ -221,8 +245,10 @@ orc-button.plan-chat-call[data-tone="ask"] { --orc-green: var(--orange); }
   justify-self: stretch; margin: 4px 0 0; padding-top: 10px; border-top: 1px solid var(--border);
   color: var(--muted); font-size: 12px; line-height: 1.5;
 }
-/* What Start work builds on: the composer's launch choices in one row. */
+/* What Start builds on: the composer's launch choices in one row, ruled off
+   from the steps above it. */
 .plan-builds { display: grid; gap: 6px; min-width: 0; }
+.plan-work > .plan-builds { padding-top: 12px; border-top: 1px solid var(--border); }
 .plan-builds[hidden] { display: none; }
 .plan-builds-label { margin: 0; color: var(--muted-strong); font-size: 12px; font-weight: 500; }
 .plan-builds-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
@@ -235,35 +261,44 @@ orc-button.plan-chat-call[data-tone="ask"] { --orc-green: var(--orange); }
 /* ---- notes on the plan (ui/js/plan-notes.js) ----
    A chat box along the foot of the plan, as the run chat has, with the notes
    waiting to go, Orc's answers and the revising card in a tray on top of it.
-   It takes the plan layout's columns so the box lines up under the plan text,
-   never under the side column. It stays in view while the plan scrolls, on a
-   solid strip so neither the plan nor a theme's scenery shows through. */
+   It floats over the plan's own column, every row of it, so it stays in view
+   while the plan scrolls and never covers or moves the side column. It is
+   solid only where it stands: the box, the tray, and the gap under the box. */
 .plan-chat {
-  position: sticky; bottom: 0; z-index: 3; padding: 14px 0 16px;
-  display: grid; justify-content: center;
-  grid-template-columns: var(--plan-columns);
-  column-gap: var(--plan-column-gap);
-  background: linear-gradient(to bottom, transparent, var(--bg) 14px);
-  /* The scroller's fractional top can leave a pixel row of the plan below
-     the strip; a solid shadow covers it. */
-  box-shadow: 0 8px 0 var(--bg);
+  grid-column: 1; grid-row: 1 / -1; align-self: end; min-width: 0;
+  position: sticky; bottom: 0; z-index: 3;
 }
 .plan-chat[hidden], .plan-chat .newconv-prompt[hidden] { display: none; }
-.plan-chat-lane { display: grid; grid-column: 1; min-width: 0; }
+/* The foot runs up behind the box's bottom corners. */
+.plan-chat-lane {
+  --plan-chat-foot: 16px;
+  position: relative; display: grid; min-width: 0; padding-bottom: var(--plan-chat-foot);
+  background: linear-gradient(var(--bg) 0 0) bottom / 100% calc(var(--plan-chat-foot) + var(--composer-radius, 9px)) no-repeat;
+}
+/* The scroller's fractional top can leave a pixel row of the plan below the
+   foot. A solid shadow covers it. Its box ends inside the foot, so the shadow
+   starts there too and overlaps the foot's edge, with no seam between them. */
+.plan-chat-lane::after {
+  content: ""; position: absolute; inset: auto 0 8px; height: 16px; pointer-events: none;
+  box-shadow: 0 16px 0 var(--bg);
+}
 .plan-chat-model {
   display: inline-flex; align-items: center; min-width: 0; max-width: 100%; padding: 3px 7px;
   color: var(--muted); font-size: 12px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .plan-chat-model[hidden] { display: none; }
 .plan-notes {
-  display: grid; gap: 8px; min-width: 0; max-height: min(40vh, 340px); overflow-y: auto; padding: 10px 12px;
+  display: grid; gap: 8px; min-width: 0; max-height: calc(min(40vh, 340px) + var(--plan-notes-tuck)); overflow-y: auto;
+  padding: 10px 12px calc(10px + var(--plan-notes-tuck)); --plan-notes-tuck: 0px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
   font-size: 13px; line-height: 1.45;
 }
-/* Above the box, the tray sits on its top edge, inset a little, so the two
-   read as one. Without the box (a plan whose build has begun) it stands alone. */
+/* Above the box, the tray is as wide as it and tucks in behind its top
+   corners, so the two read as one and no plan shows between them. Without the
+   box (a plan whose build has begun) it stands alone. */
 .plan-chat-lane:has(> .newconv-prompt:not([hidden])) > .plan-notes {
-  margin: 0 12px; border-bottom: 0; border-radius: 10px 10px 0 0;
+  --plan-notes-tuck: var(--composer-radius, 9px);
+  margin-bottom: calc(-1 * var(--plan-notes-tuck)); border-bottom: 0; border-radius: 10px 10px 0 0;
 }
 .plan-notes[hidden] { display: none; }
 .plan-notes-subtitle { margin: 0; color: var(--muted-strong); font-size: 12px; font-weight: 600; }
@@ -291,6 +326,18 @@ orc-button.plan-chat-call[data-tone="ask"] { --orc-green: var(--orange); }
 }
 .plan-notes-chat:hover { text-decoration: underline; }
 .plan-notes-fold:focus-visible, .plan-notes-chat:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+/* Earlier revisions head the box, ruled off from the current one. Each
+   revision sits under it and opens to its notes and answers, a step further in. */
+.plan-notes-earlier { display: grid; gap: 8px; min-width: 0; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.plan-notes-revisions { display: grid; gap: 8px; min-width: 0; margin: 0 0 0 28px; padding: 0; list-style: none; }
+.plan-notes-revisions > li { display: grid; gap: 8px; min-width: 0; }
+.plan-notes-revisions .plan-notes-answers { margin-left: 28px; }
+/* A revision keeps its name whole; its count and outcomes give way first. */
+.plan-notes-revision-head .plan-notes-subtitle { flex: none; }
+@media (max-width: 700px) {
+  .plan-notes-revisions { margin-left: 12px; }
+  .plan-notes-revisions .plan-notes-answers { margin-left: 14px; }
+}
 .plan-notes-hint, .plan-notes-status { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
 .plan-notes-status.is-error { color: var(--red-text, var(--red)); overflow-wrap: anywhere; }
 .plan-notes-list, .plan-notes-answers { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -361,6 +408,7 @@ button.plan-notes-quote:hover { color: var(--accent-text); }
 }
 .plan-note-form {
   display: grid; gap: 8px; margin: 10px 0 14px; padding: 10px; cursor: auto;
+  scroll-margin-bottom: calc(var(--plan-chat-h, 0px) + 12px);
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 10px; background: var(--panel);
 }
 .plan-note-form textarea {
@@ -467,10 +515,10 @@ button.plan-notes-quote:hover { color: var(--accent-text); }
 
 /* ---- one column ---- */
 @container plan-page (max-width: 899px) {
-  .plan-layout, .plan-chat { --plan-columns: minmax(0, 46rem); }
   .plan-layout {
+    grid-template-columns: minmax(0, 46rem);
     grid-template-rows: auto;
-    grid-template-areas: "head" "work" "doc";
+    grid-template-areas: "head" "lede" "work" "doc";
     padding-top: 6px;
   }
   .plan-work { position: static; max-height: none; margin-top: 20px; overflow: visible; }

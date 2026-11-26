@@ -163,16 +163,23 @@ Opening the printed link before the reveal plays it too. The reveal plays once
 per plan. Sessions without `planReveal` show the tab with no reveal.
 
 The plan page shows the document beside the steps of `## Work`. When the
-steps name their repositories, **Start work** opens one run per step at once,
+steps name their repositories, its one Start button (**Start N runs · N PRs**,
+or **Queue N runs · N PRs** in Queue mode) opens one run per step at once,
 each in its repository with its own PR, and holds a step that waits on
 another until that run reaches Ship. Those runs list together under the plan
 in the sidebar when they span repositories, and can send each other notes.
 Otherwise, until any
-step has a run, **Start work** builds the whole plan in one run and is the
-page's main button: every step shows that run, and no step offers Start
-while it stands. Beside it, a quiet **Start each step** opens one run per
-step at once in the plan's project, and holds a step that waits on another
-until that run reaches Ship. That waiting step then **stacks**: its run
+step has a run, a plan of several steps asks **One PR** or **Split**, with
+One PR picked on every plan it opens, and draws each as the PRs you will
+get. **One PR** draws nothing extra: **Start run** (**Queue run** in Queue
+mode) builds the whole plan in one run, every step shows that run, and no
+step offers Start while it stands. **Split** draws a PR on each step, a step
+that waits naming the PR it stacks on: **Start N runs · N PRs** opens one run
+per step at once in the plan's project, and holds a step that waits on
+another until that run reaches Ship, while **Start step 1 only** beside it
+starts just the first PR of the stack. A plan of one step offers **Start run**
+alone. Each button says what it opens, with no line under it. That waiting
+step then **stacks**: its run
 starts from the branch of the step it waits on (from the later step's
 branch, with the other's merged in, when it waits on two), brings that
 step's new commits in whenever it stops in Build, and brings main in once
@@ -180,8 +187,10 @@ that step merges. Its PR targets that step's branch and moves to main by
 itself once that step merges. Cancelling a step stops the step stacked on
 it, which then offers Start again, from main. Each step's run at Ship
 shows **Merge** on the plan page, held for a stacked step until the step
-below it merges. Once a step has a run of its own, a step with no run
-offers:
+below it merges. In Queue mode the button reads **Queue run**; under One PR,
+and on a plan of one step, a secondary **Start now** beside it starts the
+same build at once, beside the queue. Split's runs still queue. Once a step
+has a run of its own, a step with no run offers:
 
 - **Start step N** when the plan has several steps — Orc UI forks a child change run through the existing context-fork route
   with `planning/planning.mdx` captured as context. Its prompt names the
@@ -194,15 +203,15 @@ offers:
   side panel, with the same steps and document, where the next step can
   start. Child planning sessions stay nested and take no step.
 
-Notes the reader left on the plan and never sent go with Start work: the
+Notes the reader left on the plan and never sent go with Start: the
 run's prompt lists each one under the plan it builds, after the plan's own
 direction, and a note that changes something the plan settled wins. Every
 step's run gets the same notes. Sending them first instead has the plan run
 revise the plan before anything starts.
 
-The **Builds with** row under the steps chooses what the run Start launches
-builds on: model, effort, Fast, permissions, account and Orchestrate. It opens
-on the plan run's own settings.
+The **Builds with** row, between the steps and Start with no label of its
+own, chooses what every run Start launches builds on: model, effort, Fast,
+permissions, account and Orchestrate. It opens on the plan run's own settings.
 
 Until a step has a run, the plan page takes notes: the user clicks a
 paragraph, or a spot on a picture, and sends the notes together. They reach
@@ -215,7 +224,7 @@ started`, and the plan stays listed when the runs it started are settled.
 
 The plan page has no Done button. Historical closed sessions carry
 `outcome: "planning"`, `phase: "done"`,
-  `status: "complete"` and remain read-only. They still offer Start work for
+  `status: "complete"` and remain read-only. They still offer Start for
 a step that has no run.
 
 No next step runs automatically. Silence, notes, and answers are never a
@@ -226,7 +235,7 @@ next-step choice; an explicit ask to build is (**Build when asked**).
 The user can start the build in words instead of with the buttons. A chat
 message or note batch that plainly asks to build ("build it", "start the
 build", "go ahead and build", "a run for each", "start step 2") is the
-Start work or Start each step choice made in chat.
+One PR or Split choice made in chat.
 "Looks good", thanks, answers and silence never are.
 
 1. **Only a finished plan builds.** `planning.state` is `"complete"`: a
@@ -242,8 +251,8 @@ Start work or Start each step choice made in chat.
 3. **Pick the start.** Run `orc-plan-start --run-dir <run-dir>`. "Build it",
    "start the build" and "go ahead and build" build the whole plan in one
    run. "A run for each", "separate runs", "spin up runs for all of these"
-   and any other plain ask for one run per step add `--each`, as Start each
-   step does. "start step N" adds `--step N`, as the plan page's Start step
+   and any other plain ask for one run per step add `--each`, as Split
+   does. "start step N" adds `--step N`, as the plan page's Start step
    N does. On a plan of several steps that names no repositories, a message
    that asks to build but says neither, such as "go", gets one line asking
    whether to build it in one run or one run per step, and nothing starts
@@ -259,10 +268,10 @@ Start work or Start each step choice made in chat.
    printed, then stop. With `--each`, name each step in `waitingSteps` as
    waiting on the step it waits on, and each line in `errors` as a step
    that did not start. Chat follows the build from there, as after Start
-   work.
+   on the plan page.
 5. **A refusal stops at the gate.** When the helper refuses, run the gate
    command again so the plan waits at its gate, say why in one line, say
-   Start work on the plan page still offers the build, and stop.
+   Start on the plan page still offers the build, and stop.
 
 ## Boundaries
 

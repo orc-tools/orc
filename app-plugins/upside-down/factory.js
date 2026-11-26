@@ -60,7 +60,7 @@ const BACKDROP = {
 };
 
 // A small town is not laid out on a grid, and its fronts half face the road.
-const layout = { jitter: 0.16, turn: 0.56 };
+const layout = { jitter: 0.16, turn: 0.56, advisor: { x: -5.5, z: -6.7, yaw: 0.6 } };
 const view = { elevation: 0.5 };
 
 // The engine's rows (ui/yeet/factory-layout.js): the first at z -0.6 and one
@@ -1506,7 +1506,101 @@ function frame(time, dt, kit) {
   }
 }
 
+// The advisor: a kid running the game at a card table on a rag rug, the
+// rulebook open behind a folded cardboard screen, dice and a walkie-talkie
+// beside it, a lamp clamped over it and the campaign map pinned up behind.
+// Pages from the house land on the rulebook; while the kid reads, they lean
+// over it, turn its pages and roll the dice now and then.
+function advisor(kit) {
+  const clamp01 = t => Math.max(0, Math.min(1, t));
+  const root = new Group();
+  const wood = kit.mat('wood', { rough: 0.9 });
+  const steel = kit.mat('steel', { rough: 0.5, metal: 0.5 });
+  const felt = kit.mat('tarp', { rough: 0.95 });
+  const paper = kit.mat('paper', { rough: 0.9 });
+  const cover = kit.mat('worker', { rough: 0.7 });
+  root.add(kit.shadow(1.7, 1.5, 0.24));
+  part(root, kit, 'drum', kit.mat('canvas', { rough: 1 }), [0, 0.01, 0], [0.8, 0.02, 0.66]);
+  part(root, kit, 'ring', kit.mat('shirtA', { rough: 1 }), [0, 0.02, 0], [0.74, 0.6, 0.6], [Math.PI / 2, 0, 0]);
+  // The card table.
+  part(root, kit, 'box', felt, [0, 0.5, 0.12], [0.92, 0.035, 0.6]);
+  part(root, kit, 'box', kit.mat('door', { rough: 0.8 }), [0, 0.475, 0.12], [0.95, 0.03, 0.63]);
+  for (const x of [-0.42, 0.42]) for (const z of [-0.14, 0.38]) part(root, kit, 'rod', steel, [x, 0.25, z], [0.015, 0.5, 0.015]);
+  // The folding chair, and the kid on it.
+  part(root, kit, 'box', steel, [0, 0.3, -0.4], [0.32, 0.03, 0.28]);
+  part(root, kit, 'box', steel, [0, 0.52, -0.55], [0.32, 0.3, 0.03], [-0.1, 0, 0]);
+  for (const x of [-0.14, 0.14]) rod(root, kit, steel, [x, 0, -0.26], [x, 0.66, -0.56], 0.012);
+  const seat = new Group();
+  seat.position.set(0, 0.11, -0.4);
+  seat.scale.setScalar(1.75);
+  root.add(seat);
+  const gm = kid(kit, seat, [0, 0, 0], 2, { sit: true });
+  for (const arm of gm.arms) arm.rotation.x = -1.15;
+  // The rulebook, open, and the leaf it turns.
+  const book = new Group();
+  book.position.set(0, 0.525, 0.04);
+  book.rotation.x = 0.12;
+  root.add(book);
+  part(book, kit, 'box', cover, [0, 0, 0], [0.4, 0.02, 0.26]);
+  part(book, kit, 'box', paper, [-0.095, 0.018, 0], [0.18, 0.02, 0.24]);
+  part(book, kit, 'box', paper, [0.095, 0.018, 0], [0.18, 0.02, 0.24]);
+  for (const z of [-0.06, 0, 0.06]) part(book, kit, 'box', kit.mat('line', { rough: 0.9 }), [-0.095, 0.03, z], [0.13, 0.003, 0.012]);
+  const leaf = new Group();
+  leaf.position.set(0, 0.03, 0);
+  part(leaf, kit, 'box', paper, [0.09, 0, 0], [0.17, 0.006, 0.23]);
+  book.add(leaf);
+  // The screen it hides behind, folded in three.
+  [-1, 0, 1].forEach(i => part(root, kit, 'box', kit.mat(i ? 'accent' : 'shirtD', { rough: 0.85 }), [i * 0.2, 0.6, 0.36 - Math.abs(i) * 0.04], [0.2, 0.17, 0.012], [0, -i * 0.35, 0]));
+  // Dice that roll, and a walkie-talkie.
+  const dice = [['rock', 'paper', 0.035], ['box', 'shirtC', 0.05], ['rock', 'shirtA', 0.03]].map(([name, tone, size], i) => {
+    const die = part(root, kit, name, kit.mat(tone, { rough: 0.5 }), [0.3 + i * 0.05, 0.54, 0.2 - i * 0.07], size);
+    return { die, rest: die.position.clone(), phase: i * 0.37 };
+  });
+  part(root, kit, 'box', kit.mat('tyre', { rough: 0.6 }), [-0.33, 0.58, 0.1], [0.07, 0.13, 0.045], [0, 0.4, 0]);
+  part(root, kit, 'rod', kit.mat('tyre', { rough: 0.6 }), [-0.35, 0.72, 0.1], [0.008, 0.16, 0.008]);
+  const tell = part(root, kit, 'bead', kit.mat('ember', { emissive: 'ember', glow: 1.4 }), [-0.31, 0.62, 0.125], 0.012);
+  // The lamp clamped to the table's corner.
+  rod(root, kit, steel, [-0.44, 0.52, -0.12], [-0.44, 1.1, -0.12], 0.014);
+  rod(root, kit, steel, [-0.44, 1.1, -0.12], [-0.3, 1.0, 0.2], 0.012);
+  part(root, kit, 'cone', kit.mat('shirtB', { rough: 0.6 }), [-0.28, 0.96, 0.22], [0.1, 0.12, 0.1]);
+  const bulb = part(root, kit, 'bead', kit.mat('window', { emissive: 'window', glow: 1.3 }), [-0.28, 0.9, 0.22], 0.045);
+  // The campaign map pinned to a board behind, red string between the pins.
+  for (const x of [0.3, 0.78]) rod(root, kit, wood, [x, 0, -0.68], [x, 1.62, -0.62], 0.022);
+  part(root, kit, 'box', kit.mat('dirt', { rough: 1 }), [0.54, 1.25, -0.63], [0.6, 0.46, 0.03], [-0.04, 0, 0]);
+  part(root, kit, 'box', paper, [0.54, 1.25, -0.61], [0.5, 0.36, 0.01], [-0.04, 0, 0.03]);
+  const pins = [[0.38, 1.36], [0.6, 1.16], [0.7, 1.34], [0.46, 1.14]];
+  const pinMat = kit.mat('tape', { rough: 0.5 });
+  pins.forEach(([x, y]) => part(root, kit, 'bead', pinMat, [x, y, -0.6], 0.018));
+  for (let i = 0; i < pins.length - 1; i += 1) rod(root, kit, pinMat, [pins[i][0], pins[i][1], -0.598], [pins[i + 1][0], pins[i + 1][1], -0.598], 0.004);
+  kit.shadows(root);
+  root.scale.setScalar(1.3);
+  root.userData = {
+    labelY: 2.35,
+    page: new Vector3(0, 0.74, 0.05),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      gm.head.rotation.x = 0.42 * reading + Math.sin(time * 0.8) * 0.03;
+      gm.head.rotation.y = Math.sin(time * 0.5) * 0.2 * reading;
+      gm.group.rotation.x = 0.12 * reading;
+      const turn = clamp01(((time * 0.3) % 1 - 0.72) / 0.28) * reading;
+      leaf.rotation.z = Math.PI * smooth(turn);
+      gm.arms[1].rotation.x = -1.15 - Math.sin(turn * Math.PI) * 0.35;
+      // Now and then a roll of the dice, which the kid glances at.
+      const roll = clamp01(((time * 0.22) % 1) / 0.12) * reading;
+      const hop = Math.sin(roll * Math.PI);
+      for (const { die, rest, phase } of dice) {
+        die.position.set(rest.x - hop * 0.05, rest.y + hop * (0.1 + phase * 0.1), rest.z + hop * 0.03);
+        die.rotation.set(roll * 9 + phase, roll * 7, roll * 5);
+      }
+      gm.arms[0].rotation.x = -1.15 - hop * 0.4;
+      bulb.scale.setScalar(0.045 * (kit.mode === 'dark' && Math.sin(time * 13) * Math.sin(time * 3.1) > 0.85 ? 0.7 : 1));
+      tell.visible = reading > 0.5 && Math.floor(time * 2) % 4 === 0;
+    },
+  };
+  return root;
+}
+
 export default {
   palette: PALETTE, backdrop: BACKDROP, layout, view,
-  floor, hall, dock, station, pad, ghost, crate, carrier, packet, decor, weather, frame,
+  floor, hall, dock, station, pad, ghost, crate, carrier, packet, decor, weather, frame, advisor,
 };

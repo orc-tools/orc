@@ -155,11 +155,17 @@ export const conflictResolutionWaitingText = meta => {
 };
 // A v4 run that built a branch and went idle short of Ship has no delivery
 // path: the Yeet and Merge buttons render only at phase=ship,status=awaiting-gate.
-// Background work that resumes the run by itself is not that stop.
+// Background work that resumes the run by itself is not that stop, and nor is
+// a run Orc or the person is holding: paused, queued or waiting to branch.
 export const shipGateMissing = (meta, working) => !!meta && !working
   && meta.lifecycleVersion === 4 && !!meta.branch && meta.status === 'running'
-  && meta.phase !== 'ship' && !meta.pendingQuestion && !tasksRunning(meta);
+  && meta.phase !== 'ship' && !meta.pendingQuestion && !tasksRunning(meta)
+  && !meta.runPause && !meta.focusQueue?.paused && meta.startAfter?.waiting !== true;
 
+// Routes that build nothing, as ui/run_relationships.py names them
+// (tests/test-run-presentation.js compares the two).
+const NON_BUILD_ROUTES = ['planning-session', 'local-review', 'evals', 'meeting-prep', 'qa'];
+export const isBuildRun = meta => !!meta && !NON_BUILD_ROUTES.includes(meta.route);
 // Planning sessions (skills/_shared/planning-session.md) are keyed on their
 // route stamp, never on lifecycleVersion: they have no Plan, Build or Ship.
 export const isPlanningRun = meta => !!meta && meta.route === 'planning-session';
@@ -206,11 +212,14 @@ export function pairedPlanOf(run, list) {
   return list.find(candidate => candidate.id === meta.planRunId) || null;
 }
 // The plan a run came from, while Orc still lists it: the build Start work
-// launched, a step started from the plan, and their follow-ups and forks,
-// which inherit `planRunId` (ui/serve.py). Each shows it in a Plan tab.
+// launched, a step started from the plan, and runs nested under them such as
+// split children, which inherit `planRunId` (inherit_plan_source in
+// ui/serve.py). Each shows it in a Plan tab. A planning run has its own plan,
+// so it never reads another one there.
 export function planOf(run, list) {
   const id = run?.meta?.planRunId;
-  return id && id !== run.id ? list.find(candidate => candidate.id === id) || null : null;
+  if (!id || id === run.id || isPlanningRun(run.meta)) return null;
+  return list.find(candidate => candidate.id === id) || null;
 }
 export function pairedBuildOf(run, list) {
   const id = run?.meta?.planBuildRunId;
@@ -668,17 +677,19 @@ export function runState(meta, files = [], now = Date.now(), options = {}) {
 }
 function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {}) {
   meta = meta || {};
-  if (pending) return busy(meta, 'Starting');
   if (isProjectRedirect(meta)) return state('superseded', meta.cancelReason.trim());
   if (meta.status === 'cancelled') return state('cancelled', String(meta.cancelReason || '').trim());
   if (!isMergeQueued(meta)) {
     if (meta.runPause && ['running', 'awaiting-gate', 'escalated'].includes(meta.status)) {
       return state('paused', runPauseDetail(meta.runPause));
     }
-    if (meta.status === 'running' && meta.focusQueue?.paused) {
-      return state('queued', 'Orc resumes this run when its turn comes.');
+    // At a gate only a message waiting for the run's turn puts it in the queue.
+    if (['running', 'awaiting-gate', 'escalated'].includes(meta.status) && meta.focusQueue?.paused) {
+      return state('queued', meta.status === 'running' ? 'Orc resumes this run when its turn comes.'
+        : 'Orc sends your message when this run’s turn comes.');
     }
   }
+  if (pending) return busy(meta, 'Starting');
   if (isLocalReviewRun(meta)) {
     // ui/serve.py sets reviewApproved once you approve the PR on GitHub, which
     // settles the review whatever its verdict said.

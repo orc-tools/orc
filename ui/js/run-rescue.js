@@ -55,7 +55,7 @@ export function rescueSectionHtml(run) {
       : operation?.state === 'started' ? 'The previous session is superseded. Messages go to the replacement.' : '';
   const history = (meta.sessionHistory || []).filter(row => row.state === 'superseded');
   return `<fieldset class="settings-fieldset control-section"${failed || operation?.state === 'failed' ? ' data-lamp="error"' : ''}>
-    <legend class="settings-label"><h5 id="control-rescue-title" tabindex="-1">Continue with another model or account</h5></legend>
+    <legend class="settings-label"><h5 id="control-rescue-title" tabindex="-1">Switch model or account</h5></legend>
     <p class="control-help">${unstarted
       ? 'This run never started. Start it on another agent or account with the same brief and parent run.'
       : 'Out of usage or stuck? Stop the old session and carry this run into a fresh one. Your branch, unfinished edits and decisions stay with the run.'}</p>

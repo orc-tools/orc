@@ -47,7 +47,9 @@ function backdrop(mode) {
 
 // The outer modules swing back towards the hub, like arms of a station, and
 // the camera sits high so the floor reads as a plan.
-const layout = { bend: -0.25, turn: 0.2 };
+// The navigator who advises stands past the tips of the hub's port wings,
+// which fill the stock spot.
+const layout = { bend: -0.25, turn: 0.2, advisor: { x: -6.1, z: -5.2, yaw: 0.75 } };
 const view = { elevation: 0.72, azimuth: 0.1 };
 
 const TAU = Math.PI * 2;
@@ -949,4 +951,142 @@ function weather(kit) {
   };
 }
 
-export default { palette: PALETTE, backdrop, layout, view, pad: false, ghost, floor, hall, station, crate, carrier, dock, decor, weather };
+// The navigator's chart: a plot of the run's sky ruled in the line colour,
+// with dotted orbits, a constellation and the signal it is reading traced
+// along the bottom in the glow colour.
+function starChart(kit) {
+  return shared(kit, 'orbit-chart', () => kit.painted((ctx, w, h) => {
+    const line = '#' + kit.palette.line.getHexString();
+    ctx.fillStyle = '#' + (kit.mode === 'dark' ? '0c1630' : 'fffaf0');
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(4, 4, w - 8, h - 8);
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = 1.5;
+    for (let x = 32; x < w; x += 32) { ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, h - 4); ctx.stroke(); }
+    for (let y = 32; y < h; y += 32) { ctx.beginPath(); ctx.moveTo(4, y); ctx.lineTo(w - 4, y); ctx.stroke(); }
+    ctx.globalAlpha = 0.8;
+    ctx.setLineDash([4, 6]);
+    for (const r of [34, 58]) { ctx.beginPath(); ctx.ellipse(w * 0.3, h * 0.38, r * 1.3, r * 0.7, -0.3, 0, TAU); ctx.stroke(); }
+    ctx.setLineDash([]);
+    ctx.fillStyle = line;
+    ctx.beginPath(); ctx.arc(w * 0.3, h * 0.38, 9, 0, TAU); ctx.fill();
+    const stars = [[0.62, 0.18], [0.7, 0.3], [0.8, 0.24], [0.88, 0.4], [0.74, 0.46]];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    stars.forEach(([x, y], i) => (i ? ctx.lineTo(x * w, y * h) : ctx.moveTo(x * w, y * h)));
+    ctx.stroke();
+    for (const [x, y] of stars) { ctx.beginPath(); ctx.arc(x * w, y * h, 5, 0, TAU); ctx.fill(); }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#' + kit.palette.glow.getHexString();
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    for (let x = 12; x < w - 12; x += 4) {
+      const y = h * 0.78 - Math.sin(x * 0.09) * 10 * Math.sin(x * 0.013) - (seeded(x) - 0.5) * 8;
+      if (x === 12) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }, { width: 256, height: 192, rough: 0.8, metal: 0, emissive: kit.mode === 'dark', glow: 0.55 }));
+}
+
+// The advisor is the station's navigator: a crew member in the round suit,
+// standing on a lit pad at a chart table, reading the star chart as it
+// unrolls, with a listening dish on a mast that sweeps for the signal. The
+// navigator leans in and turns along the chart, the table lamp brightens
+// while it reads and the chart's roll turns as more comes in.
+function advisor(kit) {
+  const root = new Group();
+  const body = hull(kit);
+  const trim = kit.mat('trim', { rough: 0.8 });
+  const still = new Group();
+  root.add(still);
+  still.add(inked(kit, kit.cylinder(0.8, 0.8, 0.05, kit.mat('aisle', { rough: 0.9 }), [0, 0.03, 0], 6)));
+  for (let i = 0; i < 3; i += 1) {
+    const a = (i / 3) * TAU + TAU / 12;
+    still.add(kit.sphere(0.045, lit(kit, 'accent', 1.2), [Math.sin(a) * 0.8, 0.08, Math.cos(a) * 0.8], 8));
+  }
+  // The chart table: a pedestal and a slanted top with the chart on it.
+  still.add(inked(kit, kit.cylinder(0.08, 0.12, 0.62, trim, [0, 0.36, 0.38], 8)));
+  still.add(inked(kit, kit.box(0.4, 0.05, 0.3, trim, [0, 0.07, 0.38])));
+  // The mast and its listening dish, off the table's corner.
+  still.add(inked(kit, kit.cylinder(0.025, 0.025, 1.3, trim, [0.62, 0.7, -0.22], 6)));
+  root.add(weld(still));
+  const desk = new Group();
+  desk.position.set(0, 0.72, 0.42);
+  desk.rotation.x = 0.55;
+  desk.add(inked(kit, kit.box(0.84, 0.05, 0.5, body)));
+  const chart = new Mesh(new PlaneGeometry(0.72, 0.42), starChart(kit));
+  chart.rotation.x = -Math.PI / 2;
+  chart.position.y = 0.028;
+  desk.add(chart);
+  // The roll the chart comes off, along the table's far edge.
+  const roll = inked(kit, kit.cylinder(0.05, 0.05, 0.8, kit.mat('crate', { rough: 0.8 }), [0, 0.05, -0.25], 10));
+  roll.rotation.z = Math.PI / 2;
+  desk.add(roll);
+  root.add(desk);
+  // The table lamp, on a crooked arm.
+  const lamp = kit.sphere(0.06, lit(kit, 'window', 1.6), [-0.38, 1.12, 0.3], 8);
+  root.add(kit.cylinder(0.012, 0.012, 0.36, trim, [-0.38, 0.92, 0.4], 5), lamp);
+  const dish = new Group();
+  dish.position.set(0.62, 1.38, -0.22);
+  const bowl = new Mesh(new ConeGeometry(0.24, 0.14, 16, 1, true), kit.mat('crate', { rough: 0.8, doubleSide: true }));
+  bowl.rotation.x = -0.9;
+  dish.add(bowl);
+  dish.add(kit.cylinder(0.012, 0.012, 0.2, trim, [0, 0.05, 0.08], 5));
+  root.add(dish);
+  // The navigator.
+  const suit = kit.mat(kit.mode === 'dark' ? '#eef2fb' : '#fffaf0', { rough: 0.7 });
+  const visor = kit.mat('roof', { rough: 0.25, metal: 0.4, emissive: 'roof', glow: kit.mode === 'dark' ? 0.5 : 0.1 });
+  const crew = new Group();
+  crew.position.set(0, 0.06, -0.16);
+  root.add(crew);
+  for (const side of [-1, 1]) crew.add(inked(kit, kit.cylinder(0.08, 0.07, 0.44, suit, [side * 0.11, 0.22, 0], 8)));
+  const torso = new Group();
+  torso.position.y = 0.44;
+  crew.add(torso);
+  torso.add(inked(kit, kit.cylinder(0.2, 0.18, 0.42, suit, [0, 0.21, 0], 10)));
+  torso.add(kit.cylinder(0.205, 0.205, 0.06, kit.mat('worker', { rough: 0.6 }), [0, 0.06, 0], 10));
+  torso.add(inked(kit, kit.box(0.32, 0.36, 0.14, trim, [0, 0.24, -0.2])));
+  // A chest panel of switches and its badge.
+  torso.add(kit.box(0.16, 0.1, 0.03, kit.windows, [0, 0.28, 0.19]));
+  const arms = [];
+  for (const side of [-1, 1]) {
+    const arm = new Group();
+    arm.position.set(side * 0.22, 0.36, 0);
+    arm.add(kit.cylinder(0.055, 0.055, 0.34, suit, [0, -0.15, 0.04], 6));
+    arm.add(kit.sphere(0.065, kit.mat('trim', { rough: 0.8 }), [0, -0.32, 0.08], 8));
+    arm.rotation.x = -0.9;
+    torso.add(arm);
+    arms.push(arm);
+  }
+  const head = new Group();
+  head.position.y = 0.58;
+  torso.add(head);
+  head.add(inked(kit, kit.sphere(0.2, suit, [0, 0.08, 0], 14), 'line', 40));
+  const glass = kit.sphere(0.135, visor, [0, 0.08, 0.14], 12);
+  glass.scale.set(1.1, 0.8, 0.85);
+  head.add(glass);
+  head.add(kit.cylinder(0.01, 0.01, 0.16, trim, [0.13, 0.3, -0.04], 4));
+  head.add(kit.sphere(0.025, lit(kit, 'accent', 1.4), [0.13, 0.38, -0.04], 6));
+  const scale = 1.3;
+  root.scale.setScalar(scale);
+  root.userData = {
+    labelY: 1.72 * scale,
+    page: new Vector3(0, 0.78 * scale, 0.46 * scale),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      torso.rotation.x = 0.22 * reading + Math.sin(time * 0.7) * 0.02;
+      head.rotation.x = 0.35 * reading;
+      head.rotation.y = Math.sin(time * 0.45) * 0.3 * reading;
+      for (const [i, arm] of arms.entries()) arm.rotation.x = -0.9 - 0.2 * reading + Math.sin(time * 0.9 + i * 2) * 0.05 * reading;
+      dish.rotation.y = Math.sin(time * 0.4) * 0.9;
+      roll.rotation.x = time * 0.6 * reading;
+      lamp.scale.setScalar(0.8 + 0.4 * reading + Math.sin(time * 3) * 0.05);
+      crew.position.y = 0.06 + Math.sin(time * 1.1) * 0.012;
+    },
+  };
+  return kit.shadows(root);
+}
+
+export default { palette: PALETTE, backdrop, layout, view, pad: false, ghost, floor, hall, station, crate, carrier, dock, decor, weather, advisor };

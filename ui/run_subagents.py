@@ -9,6 +9,7 @@ import sqlite3
 
 import codex_questions
 import model_prices
+import run_advisor
 import token_usage
 
 
@@ -85,6 +86,8 @@ class Summary:
         self.workflows = {}
         self.turn_active = None
         self.last_result_at = None
+        # The advisor's asks, for Chat and the Factory (run_advisor.py).
+        self.advisor = run_advisor.AdvisorLog()
 
     def calls_billed(self):
         """[(key, ledger entry)] for this transcript's own model calls."""
@@ -101,6 +104,7 @@ class Summary:
             self._gemini(record, at)
         else:
             self._claude(record, at)
+            self.advisor.feed(record, at)
 
     def _codex(self, record, at):
         payload = record.get("payload")

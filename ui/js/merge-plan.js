@@ -6,7 +6,7 @@ import { bindContextMenu, placeContextMenu } from './context-menu.js';
 import { $, announce, esc, isReadOnlyRun, runs, toast } from './core.js';
 import { openRunRename } from './run-rename.js';
 import { runPauseActions } from './run-presentation.js';
-import { changeRunPause, openQueueDialog } from './dialogs.js';
+import { changeRunPause, deleteRun, openQueueDialog } from './dialogs.js';
 import { clearPriorityRoot, clearRunWarning, focusControl, movePriorityRoot, priorityPosition, renderList, setRunWarning } from './filters.js';
 
 export const ICON_UP = '<svg viewBox="0 0 256 256" aria-hidden="true" focusable="false"><path fill="currentColor" d="M204.24,116.24a6,6,0,0,1-8.48,0L134,54.49V216a6,6,0,0,1-12,0V54.49L60.24,116.24a6,6,0,0,1-8.48-8.48l72-72a6,6,0,0,1,8.48,0l72,72A6,6,0,0,1,204.24,116.24Z"/></svg>';
@@ -86,13 +86,14 @@ let runMenuTarget = null;
 function renderRunMenu() {
   const id = runMenuTarget;
   const count = mergeSelectedIds.size;
+  const meta = runs.find(run => run.id === id)?.meta || {};
+  const readOnly = isReadOnlyRun(meta);
   const items = [
-    { key: 'rename', label: 'Rename…', disabled: isReadOnlyRun(runs.find(run => run.id === id)?.meta || {}) },
+    { key: 'rename', label: 'Rename…', disabled: readOnly },
     { key: 'select', label: 'Select', role: 'menuitemcheckbox', checked: mergeSelectedIds.has(id) },
   ];
   if (count > 1) items.push({ key: 'merge-all', label: `Merge all (${count})…`, sub: 'Choose the order first' });
   if (count) items.push({ key: 'clear', label: 'Clear selection' });
-  const meta = runs.find(run => run.id === id)?.meta || {};
   const pauseActions = runPauseActions(meta);
   const focus = meta.focusQueue;
   if (focus) {
@@ -112,8 +113,10 @@ function renderRunMenu() {
   const branch = meta.branch;
   items.push({ separator: true },
     { key: 'copy-id', label: 'Copy run id' },
-    { key: 'copy-branch', label: 'Copy branch', sub: branch ? '' : 'no branch yet', disabled: !branch });
-  runMenu.innerHTML = items.map(item => item.separator ? '<div role="separator"></div>' : `<button type="button" role="${item.role || 'menuitem'}" data-key="${item.key}" tabindex="-1"${
+    { key: 'copy-branch', label: 'Copy branch', sub: branch ? '' : 'no branch yet', disabled: !branch },
+    { separator: true },
+    { key: 'delete', label: 'Delete run…', sub: readOnly ? 'read-only run' : '', disabled: readOnly, danger: true });
+  runMenu.innerHTML = items.map(item => item.separator ? '<div role="separator"></div>' : `<button type="button" role="${item.role || 'menuitem'}" data-key="${item.key}" tabindex="-1"${item.danger ? ' class="is-danger"' : ''}${
     item.role ? ` aria-checked="${item.checked}"` : ''}${item.disabled ? ' aria-disabled="true"' : ''}>
       <span class="run-menu-label">${esc(item.label)}</span>${item.sub ? `<span class="run-menu-sub">${esc(item.sub)}</span>` : ''}
     </button>`).join('');
@@ -164,6 +167,7 @@ runMenu.addEventListener('click', event => {
   if (copied) copied.then(() => toast(`Copied ${copy[0]}`, { tone: 'success', description: copy[1] }),
     () => toast('Copy failed', { tone: 'error' }));
   else if (item.dataset.key === 'rename') openRunRename(id);
+  else if (item.dataset.key === 'delete') deleteRun(id);
   else if (item.dataset.key === 'select') toggleMergeSelected(id);
   else if (item.dataset.key === 'merge-all') openMergePlanner([...mergeSelectedIds]);
   else if (item.dataset.key === 'clear') { clearMergeSelection(); announce('Selection cleared'); }

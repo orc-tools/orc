@@ -9,7 +9,7 @@ import { $, esc, focusTemporarily } from './core.js';
 import { harnessMark } from './agent-marks.js';
 import { harnessFor } from './harnesses.js';
 import { accountFactsHtml, accountFolderHtml, accountParts, accountStateHtml, addClaudeButtonHtml, agentAccounts, cancelAccountRename, mountAgentAccounts, removedAccountsHtml } from './agent-accounts.js';
-import { checkCliCompatNow, cliCompatCheckedText, cliCompatHeadingHtml, cliCompatLines, cliCompatStatus, cliCompatTextHtml, refreshCliCompat } from './cli-compat.js';
+import { checkCliCompatNow, cliCompatCheckError, cliCompatCheckedText, cliCompatHeadingHtml, cliCompatLines, cliCompatStatus, cliCompatTextHtml, refreshCliCompat } from './cli-compat.js';
 import { allowanceHtml, isPluginUsage, mountUsageSettings, refreshProviderUsage, showSidebarUsage, usageExhausted, usageLoginKey, usageMeterHtml, usageName, usageSnapshot, usageStripHtml, usageWindowsHtml } from './provider-usage.js';
 import { settingsAnchorFromHash } from './settings.js';
 
@@ -43,7 +43,6 @@ let root = null;
 const openLogins = new Set();
 let showRemoved = false;
 let anchored = null;
-let compatError = '';
 const painted = new WeakMap();
 
 const remote = () => !!window.ORC_INSTANCE?.remote;
@@ -270,8 +269,9 @@ function checkedText(usageState, accounts) {
 
 function paintCompatStatus(status) {
   const note = root.querySelector('[data-cli-compat-status]');
-  const text = compatError || (status?.error ? cliCompatCheckedText(status) : status?.running ? 'Checking the agent CLIs. This takes about a minute.' : '');
-  note.className = `settings-note${compatError ? ' error' : status?.error ? ' warn' : ''}`;
+  const error = cliCompatCheckError();
+  const text = error || (status?.error ? cliCompatCheckedText(status) : status?.running ? 'Checking the agent CLIs. This takes about a minute.' : '');
+  note.className = `settings-note${error ? ' error' : status?.error ? ' warn' : ''}`;
   note.textContent = text;
 }
 
@@ -401,11 +401,7 @@ function onClick(event) {
   if (event.target.closest('[data-accounts-refresh]')) {
     refreshProviderUsage(true);
     if (remote()) return;
-    compatError = '';
-    checkCliCompatNow().catch(error => {
-      compatError = error.message;
-      render();
-    });
+    checkCliCompatNow();
   }
 }
 

@@ -1,4 +1,4 @@
-import { $, esc, externalizeLinks, fileUrl, flashcardMeeting, flashcardWhen, resolveRelativeUrls } from './core.js';
+import { $, esc, externalizeLinks, fileUrl, flashcardMeeting, flashcardWhen, markMockupLinks, mediaSignature, resolveRelativeUrls } from './core.js';
 import { artifactHtml } from './diff.js';
 
 let answerPanelKey = null;
@@ -20,7 +20,9 @@ export async function showAnswerPanel(run) {
   const view = run.files.find(file => file.path === 'answer.ui.json');
   const meeting = flashcardMeeting(run);
   const updating = !!meeting && (run.activity === 'running' || run.meta?.status === 'running');
-  const key = `${run.id}:${answer?.size}:${view?.size}:${run.mtime}:${updating}`;
+  // A follow-up may replace a picture under the same name and leave the answer be.
+  const media = mediaSignature({ files: run.files.filter(file => file.path.startsWith('media/')) });
+  const key = `${run.id}:${answer?.size}:${view?.size}:${run.mtime}:${updating}:${media}`;
   if (key === answerPanelKey) return;
   answerPanelKey = key;
   const sequence = ++answerPanelSequence;
@@ -42,6 +44,8 @@ export async function showAnswerPanel(run) {
   body.innerHTML = meeting
     ? `${flashcardHeadHtml(meeting, updating)}<article class="md flashcard-card" tabindex="0" aria-label="Flashcard">${rendered}</article>`
     : `<article class="md" tabindex="0" aria-label="Published answer">${rendered}</article>`;
+  // Pictures and mockups the answer shows live in its media/ folder.
+  markMockupLinks(body.querySelectorAll('a[href]'), 'media');
   resolveRelativeUrls(body, run.id, 'answer.md');
   externalizeLinks(body);
   window.orcUpgradeCallouts?.(body);

@@ -169,7 +169,7 @@ function solid(group) {
 
 // A street grid: straight rows, with each front turned well towards the camera.
 const TURN = 0.5;
-const layout = { bend: 0, turn: TURN };
+const layout = { bend: 0, turn: TURN, advisor: { x: -4.9, z: -6.7, yaw: 0.5 } };
 const view = { elevation: 0.47, azimuth: 0 };
 
 // Every slot's place, turn and outlet, from the layout the engine draws with.
@@ -1907,4 +1907,124 @@ function weather(kit) {
   };
 }
 
-export default { palette: PALETTE, backdrop, layout, view, pad: false, dock, ghost, ruin, floor, hall, station, crate, carrier, decor, weather, frame };
+// The advisor: a chrome oracle robot under a double neon arch, reading the
+// ticker tape its terminal prints. Pages from the station land on the tape;
+// while it reads, the tape runs, a light sweeps its visor and the arch's
+// tubes light in turn.
+function advisor(kit) {
+  const dark = kit.mode === 'dark';
+  const root = new Group();
+  const chrome = chromeOf(kit);
+  const trim = kit.mat('trim', { rough: 0.4, metal: 0.4 });
+  const paper = kit.mat(dark ? '#efe6ff' : '#fffaf2', { rough: 0.85 });
+  const printed = kit.mat(dark ? '#3a1d6e' : '#3a1260', { rough: 0.9 });
+  root.add(kit.shadow(1.6, 1.4, 0.26));
+  // Its lot: a disc of paving ringed in neon.
+  root.add(kit.cylinder(0.78, 0.8, 0.05, kit.mat('pave', { rough: 0.6 }), [0, 0.025, 0], 24));
+  const ring = new Mesh(new TorusGeometry(0.78, 0.022, 5, 32), neon(kit, 'line', 1.6));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.055;
+  root.add(ring);
+  // The arch it reads under, on two chrome posts.
+  for (const side of [-1, 1]) root.add(kit.cylinder(0.035, 0.045, 1.02, chrome, [side * 0.72, 0.53, -0.38], 8));
+  const tubes = [['roof', 0.72], ['accent', 0.62]].map(([tone, radius]) => {
+    const arc = new Mesh(new TorusGeometry(radius, 0.03, 6, 22, Math.PI), neon(kit, tone, 1.9));
+    arc.position.set(0, 1.02, -0.38);
+    root.add(arc);
+    return arc;
+  });
+  root.add(kit.sphere(0.07, neon(kit, 'window', 1.8), [0, 1.76, -0.38], 8));
+  // The robot.
+  const bot = new Group();
+  bot.position.set(0, 0.05, -0.12);
+  root.add(bot);
+  for (const side of [-1, 1]) {
+    bot.add(kit.box(0.09, 0.42, 0.1, chrome, [side * 0.1, 0.22, 0]));
+    bot.add(kit.box(0.12, 0.05, 0.16, trim, [side * 0.1, 0.02, 0.03]));
+  }
+  bot.add(kit.cylinder(0.2, 0.15, 0.48, chrome, [0, 0.7, 0], 10));
+  bot.add(kit.box(0.24, 0.05, 0.03, neon(kit, 'worker', 1.6), [0, 0.78, 0.18]));
+  bot.add(kit.box(0.16, 0.04, 0.03, neon(kit, 'roof', 1.5), [0, 0.68, 0.17]));
+  bot.add(kit.cylinder(0.06, 0.08, 0.1, chrome, [0, 0.98, 0], 8));
+  const head = new Group();
+  head.position.set(0, 1.12, 0.02);
+  bot.add(head);
+  const dome = kit.sphere(0.18, chrome, [0, 0, 0], 14);
+  dome.scale.set(1, 0.9, 0.95);
+  head.add(dome);
+  head.add(kit.box(0.3, 0.08, 0.06, kit.mat('#0a0420', { rough: 0.25 }), [0, 0, 0.14]));
+  const scan = kit.box(0.06, 0.05, 0.02, neon(kit, 'accent', 2.2), [0, 0, 0.175]);
+  head.add(scan);
+  for (const side of [-1, 1]) {
+    head.add(kit.cylinder(0.008, 0.008, 0.18, chrome, [side * 0.09, 0.22, -0.02], 4));
+    head.add(kit.sphere(0.03, neon(kit, side < 0 ? 'roof' : 'window', 1.8), [side * 0.09, 0.32, -0.02], 6));
+  }
+  const arms = [-1, 1].map(side => {
+    const pivot = new Group();
+    pivot.position.set(side * 0.24, 0.88, 0.02);
+    pivot.rotation.set(-0.95, 0, side * 0.12);
+    pivot.add(kit.sphere(0.06, chrome, [0, 0, 0], 8));
+    pivot.add(kit.box(0.06, 0.32, 0.06, chrome, [0, -0.17, 0]));
+    pivot.add(kit.sphere(0.045, neon(kit, 'worker', 1.3), [0, -0.34, 0], 6));
+    bot.add(pivot);
+    return pivot;
+  });
+  // The terminal before it, printing its tape onto a slanted desk.
+  root.add(kit.box(0.3, 0.74, 0.22, trim, [0, 0.42, 0.46]));
+  root.add(kit.box(0.32, 0.04, 0.24, neon(kit, 'roof', 1.3), [0, 0.1, 0.46]));
+  const desk = new Group();
+  desk.position.set(0, 0.84, 0.48);
+  desk.rotation.x = 0.45;
+  root.add(desk);
+  desk.add(kit.box(0.52, 0.05, 0.36, trim, [0, 0, 0]));
+  desk.add(kit.box(0.54, 0.02, 0.03, neon(kit, 'accent', 1.6), [0, 0.02, 0.18]));
+  desk.add(kit.box(0.4, 0.12, 0.1, chrome, [0, 0.08, -0.14]));
+  const light = kit.box(0.05, 0.03, 0.02, neon(kit, 'ok', 1.8), [0.13, 0.11, -0.085]);
+  desk.add(light);
+  desk.add(kit.box(0.18, 0.008, 0.28, paper, [0, 0.03, 0.03]));
+  const marks = [];
+  for (let i = 0; i < 6; i += 1) {
+    const mark = kit.box(0.12 - (i % 3) * 0.03, 0.004, 0.014, printed, [0, 0.036, 0]);
+    desk.add(mark);
+    marks.push(mark);
+  }
+  // The tape spills off the desk and curls on the paving.
+  const spill = kit.box(0.18, 0.006, 0.42, paper, [0, 0.62, 0.72]);
+  spill.rotation.x = 1.35;
+  root.add(spill);
+  for (const [x, z, r] of [[0.02, 0.8, 0.12], [0.16, 0.74, 0.09]]) {
+    const curl = new Mesh(new TorusGeometry(r, 0.012, 4, 14), paper);
+    curl.position.set(x, r + 0.05, z);
+    curl.rotation.y = 0.4;
+    root.add(curl);
+  }
+  kit.shadows(root);
+  root.scale.setScalar(1.2);
+  let run = 0;
+  root.userData = {
+    labelY: 2.4,
+    page: new Vector3(0, 1.08, 0.6),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      head.rotation.x = 0.34 * reading + Math.sin(time * 0.8) * 0.03;
+      head.rotation.y = Math.sin(time * 0.6) * 0.18 * reading;
+      bot.position.y = 0.05 + Math.sin(time * 2.1) * 0.012;
+      scan.position.x = Math.sin(time * 3.4) * 0.1 * reading;
+      arms[0].rotation.x = -0.95 + Math.sin(time * 1.2) * 0.05;
+      arms[1].rotation.x = -0.95 - Math.max(0, Math.sin(time * 2.6)) * 0.22 * reading;
+      // The tape runs out of the printer as it reads.
+      run += Math.min(dt, 0.1) * 0.2 * reading;
+      marks.forEach((mark, i) => {
+        const u = (i / marks.length + run) % 1;
+        mark.position.z = -0.09 + u * 0.24;
+        mark.scale.x = Math.max(0.001, Math.sin(u * Math.PI));
+      });
+      light.visible = kit.reducedMotion || reading < 0.5 || Math.floor(time * 3) % 2 === 0;
+      const on = Math.floor(time * 3) % 3;
+      tubes.forEach((tube, i) => { tube.visible = kit.reducedMotion || reading < 0.05 || i !== on; });
+    },
+  };
+  return root;
+}
+
+export default { palette: PALETTE, backdrop, layout, view, pad: false, dock, ghost, ruin, floor, hall, station, crate, carrier, decor, weather, frame, advisor };

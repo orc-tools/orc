@@ -808,7 +808,10 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     const ready = run.meta?.lifecycleVersion === 4 && run.meta.phase === 'ship'
       && run.meta.status === 'awaiting-gate' && paths.length > 0;
     if (!paths.length && !resolvePrUrls(run.meta).urls.length) {
-      body.innerHTML = '<div class="run-diff-note" role="status"><p>No pull request yet. The draft will appear here when it is ready, followed by pull request details once published.</p></div>';
+      const note = ['complete', ...PR_BODY_LOCKED_STATUSES].includes(run.meta?.status)
+        ? 'No pull request. This run finished without one.'
+        : 'No pull request yet. The draft will appear here when it is ready, followed by pull request details once published.';
+      body.innerHTML = `<div class="run-diff-note" role="status"><p>${note}</p></div>`;
       return;
     }
     const actions = ready && !chatTabAvailable(run)

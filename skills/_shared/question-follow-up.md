@@ -72,7 +72,16 @@ costly mistake:
   a Question reply updates status shown in its existing diagram. Rewrite in
   place with `orc-publish-diagram --run-dir <run-dir> --file <markdown-file>`
   (`-` for stdin), link `[Open diagram](http://127.0.0.1:4173/#<run-id>/diagram.md)`,
-  and start no child. Anything beyond `diagram.md` makes it Work.
+  and start no child. Anything beyond `diagram.md` or the answer's media
+  (Sketch, below) makes it Work.
+- **Sketch.** The message asks for a screenshot, mockup or other picture of
+  an answered question's subject. It stays a question: make the files per
+  [question-media.md](question-media.md), add a section showing them to the
+  answer, and publish both with `orc-publish-question --run-dir <run-dir>
+  --update --answer-file <file> --expected-sha256 <digest> --media <file> ...`
+  (`--media` alone replaces a picture). Link
+  `[Open the answer](http://127.0.0.1:4173/#<run-id>/answer.md)`. Never
+  publish a sketch outside Orc, such as a claude.ai Artifact.
 
 Run Control's Delegate Work section still forks by hand. Only the Work
 continuation above removes `outcome` from a published answer; never edit
@@ -84,5 +93,6 @@ When a change run is explicitly asked to correct a completed question's saved
 answer, run `orc-publish-question --run-dir <question-run-dir> --update
 --answer-file <file> --expected-sha256 <current-answer-digest>` after reading
 the conversation to confirm the replacement. It atomically replaces only
-`answer.md`, preserves terminal metadata, and rejects invalid question shapes,
-empty answers, or stale digests. A read-only follow-up never runs `--update`.
+`answer.md` (and the `media/` files named with `--media`), preserves terminal
+metadata, and rejects invalid question shapes, empty answers, or stale
+digests. A read-only follow-up never runs `--update`; a Sketch follow-up does.

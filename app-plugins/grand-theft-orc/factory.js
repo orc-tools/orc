@@ -5,6 +5,7 @@
 // (factory-waterfront.js), by dusk in dark mode and on a clear morning in light.
 import { Group } from 'three';
 import { HALL } from '../../ui/yeet/factory-layout.js';
+import { advisor, advisorSpot } from './advisor.js';
 import { carrier, crate, packet } from './factory-courier.js';
 import { floor, hall, layout, pileSpot, station, view } from './factory-waterfront.js';
 
@@ -30,7 +31,9 @@ const palette = {
 };
 
 export default {
-  palette, layout, view, floor, carrier, crate, packet, pileSpot, station,
+  palette, view, floor, carrier, crate, packet, pileSpot, station, advisor,
+  // The old regular reads on the promenade left of the motel (advisor.js).
+  layout: { ...layout, advisor: advisorSpot },
   hall: kit => hall(kit, HALL),
   ghost: (kit, kind, spot) => station(kit, kind, spot, true),
   decor: () => new Group(),

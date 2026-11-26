@@ -1964,14 +1964,21 @@ function baPane(label, alt, src) {
 // pane is never rescanned, and skips fenced/inline code for the same
 // reason mdImages does.
 function pairBeforeAfter(s) {
+  const answerMedia = /^(?:\.\/)?media\/[^/]+\.(?:png|jpe?g|gif|webp)$/i;
+  const mockupPicture = /-mockup\.(?:png|jpe?g|gif|webp)$/i;
   return s.split(/(```[\s\S]*?```|`[^`\n]*`)/).map((part, i) => {
     if (i % 2) return part;
     return part.replace(
       /^([ \t]*)!\[([^\]]*)\]\(([^)\s]+)\)[ \t]*\r?\n\1!\[([^\]]*)\]\(([^)\s]+)\)[ \t]*$/gm,
-      (m, indent, alt1, src1, alt2, src2) =>
-        /(^|\/)shots\/before\//.test(src1) && /(^|\/)shots\/after\//.test(src2)
-          ? `${indent}<div class="before-after">${baPane('Before', alt1, src1)}${baPane('After', alt2, src2)}</div>`
-          : m
+      (m, indent, alt1, src1, alt2, src2) => {
+        if (/(^|\/)shots\/before\//.test(src1) && /(^|\/)shots\/after\//.test(src2))
+          return `${indent}<div class="before-after">${baPane('Before', alt1, src1)}${baPane('After', alt2, src2)}</div>`;
+        // A question answer's pair (question_media.py): the screen today, then
+        // the picture of its mockup, <label>-mockup.<ext>, as a plan shows them.
+        if (answerMedia.test(src1) && answerMedia.test(src2) && mockupPicture.test(src2))
+          return `${indent}<div class="before-after">${baPane('Today', alt1, src1)}${baPane('Mockup', alt2, src2)}</div>`;
+        return m;
+      }
     );
   }).join('');
 }

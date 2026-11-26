@@ -2,7 +2,7 @@
 
 import { prefillNewConversation, refresh } from './activity.js';
 import { openRun, readScroll, worktreeAppHealth } from './artifact.js';
-import { $, ADR_RE, DECISION_FILES, IMG, LABELS, LINK_TYPE_INVERSE_LABELS, LINK_TYPE_LABELS, ORDER, VID, adrLabel, announce, applyStatusPatch, esc, externalAppHref, externalizeLinks, fileUrl, isDone, isLocalReviewClosed, isMergedToParent, isQuestionRun, isReadOnlyRun, revealRailKey, runState, runs, statusSetLocked, strandedQuestionKeys } from './core.js';
+import { $, ADR_RE, DECISION_FILES, IMG, LABELS, LINK_TYPE_INVERSE_LABELS, LINK_TYPE_LABELS, ORDER, VID, adrLabel, announce, applyStatusPatch, esc, externalAppHref, externalizeLinks, fileUrl, isDone, isLocalReviewClosed, isMergedToParent, isQuestionRun, isReadOnlyRun, runState, runs, statusSetLocked, strandedQuestionKeys } from './core.js';
 import { changeRunPause, deleteRun, openCancel, openWorktreeCleanup, patchRun, postLinkAction, postProjectScript, postWorktreeAction, resumeId } from './dialogs.js';
 import { focusControl, renderList } from './filters.js';
 import { markdownHtml } from './diff.js';
@@ -20,8 +20,11 @@ const controlSessionWarnings = new Map();
 const controlDecisionsCache = new Map();
 const controlCostCache = new Map();
 let controlScrollWatch = null;
-// The section a rail key was clicked for, kept across the page's redraws.
+// The section a menu key was clicked for, kept across the page's redraws.
 let controlJump = null;
+// The run whose folded menu has its drop-down open. A poll redraws the page,
+// and the list stays open through it.
+let controlMenuOpen = null;
 let controlJumpSettle = 0;
 
 // TESTABLE: control-center state helpers
@@ -84,7 +87,7 @@ export function controlPathParts(value) {
 }
 // END TESTABLE: control-center state helpers
 
-// The rail's keys, in the order their sections sit on the page. The waterfall
+// The menu's keys, in the order their sections sit on the page. The waterfall
 // leads; its group is drawn by waterfall.js.
 const CONTROL_ICON_ATTRS = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
 const CONTROL_SECTIONS = [
@@ -97,7 +100,9 @@ const CONTROL_SECTIONS = [
   ['provenance', 'Provenance', '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>'],
   ['decisions', 'Decisions', '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>'],
 ];
-const controlReadout = (name, value) => `<div class="cp-readout"><span class="cp-readout-name">${name}</span>${value}</div>`;
+// A key's icon and name: a link in the menu's list, and the drop-down's button
+// naming the section on screen when the menu is folded into one line.
+const controlSectionKey = ([, label, icon]) => `<svg ${CONTROL_ICON_ATTRS}>${icon}</svg><span>${label}</span>`;
 
 function controlCopyRow(label, value) {
   const present = value !== undefined && value !== null && String(value).trim();
@@ -278,20 +283,22 @@ export function renderControlCenter(run, scrollTop = readScroll(run.id + '/' + C
   const worktreeApp = worktreeAppState(wt, worktreeHealth);
   const sessionFailed = !!(sessionWarning || sessionOperation?.error);
   const link = `#${encodeURIComponent(run.id)}/${CONTROL_KEY}`;
+  const menuOpen = controlMenuOpen === run.id;
   c.innerHTML = `<article class="control-center" aria-labelledby="control-title" data-run-state="${esc(state.key)}" style="--cp-state: ${esc(state.color)}"${waterfallShown ? '' : ' data-fresh'}>
-    <header class="settings-head control-head"><span class="cp-beacon" aria-hidden="true"></span>
-      <div class="settings-head-main"><h3 id="control-title" tabindex="-1">Run Control</h3></div>
-      <div class="cp-readouts">
-        ${controlReadout('State', `<span class="control-readout-value control-readout-state state-${esc(state.key)}"${state.detail ? ` title="${esc(state.detail)}"` : ''}>${esc(state.label)}${state.detail ? `<span class="sr-only">: ${esc(state.detail)}</span>` : ''}</span>`)}
-        ${controlReadout('Agent', `<span class="control-readout-value">${esc(agentLabel(parent))}${model ? ` · ${esc(model)}` : ''}</span>`)}
-        ${meta.branch ? controlReadout('Branch', `<span class="settings-path" translate="no">${esc(meta.branch)}</span>`) : ''}
+    <div class="cc-frame">
+    <nav class="cc-menu" aria-label="Run Control sections">
+      <div class="cc-menu-left">
+        <div class="cc-menu-head"><span class="cp-beacon" aria-hidden="true"></span><h3 id="control-title" class="cc-menu-title" tabindex="-1">Run Control</h3></div>
+        <p class="cc-menu-facts"><span class="cc-menu-state state-${esc(state.key)}"${state.detail ? ` title="${esc(state.detail)}"` : ''}>${esc(state.label)}${state.detail ? `<span class="sr-only">: ${esc(state.detail)}</span>` : ''}</span><span class="cc-menu-agent"><span>${esc(agentLabel(parent))}</span>${model ? `<span class="cc-menu-dot" aria-hidden="true"> · </span><span>${esc(model)}</span>` : ''}</span></p>
       </div>
-    </header>
-    ${readOnlyReason ? `<p class="control-readonly" role="status">${esc(readOnlyReason)}</p>` : ''}
-    <nav class="control-index" aria-label="Run Control sections">
-      <div class="cp-rail">${CONTROL_SECTIONS.map(([section, label, icon], index) =>
-        `<a class="cp-key" href="${link}" data-control-section-link="${section}"${index ? '' : ' aria-current="location"'}><svg ${CONTROL_ICON_ATTRS}>${icon}</svg><span>${label}</span></a>`).join('')}</div>
+      <div class="cc-jump"${menuOpen ? ' data-open' : ''}>
+        <button type="button" class="cc-jump-button" aria-expanded="${menuOpen}" aria-controls="control-section-list"><span class="cc-jump-current">${controlSectionKey(CONTROL_SECTIONS[0])}</span><svg class="cc-jump-caret" ${CONTROL_ICON_ATTRS}><path d="m6 9 6 6 6-6"/></svg></button>
+        <ul class="cc-list" id="control-section-list">${CONTROL_SECTIONS.map((entry, index) =>
+          `<li><a class="cp-key" href="${link}" data-control-section-link="${entry[0]}"${index ? '' : ' aria-current="location"'}>${controlSectionKey(entry)}</a></li>`).join('')}</ul>
+      </div>
     </nav>
+    <div class="cc-page">
+    ${readOnlyReason ? `<p class="control-readonly" role="status">${esc(readOnlyReason)}</p>` : ''}
     ${waterfallSectionHtml(run)}
     <div class="control-groups">
     <div class="control-column">
@@ -415,6 +422,8 @@ export function renderControlCenter(run, scrollTop = readScroll(run.id + '/' + C
       <div id="control-decisions-result">${decisionsHtml}</div>
     </fieldset>
     </section>
+    </div>
+    </div>
     </div>
   </article>`;
   // Restore the pre-render scroll position before binding: bindControlCenter
@@ -596,10 +605,24 @@ function bindControlCenter(run) {
   bindControlTasks(run, c.querySelector('[data-control-tasks]'), isReadOnlyRun(meta) || isDone(meta) || ['cancelled', 'merging'].includes(meta.status) || meta.route === 'local-review');
   const sectionLinks = [...c.querySelectorAll('[data-control-section-link]')];
   const groups = sectionLinks.map(link => $(`control-group-${link.dataset.controlSectionLink}`)).filter(Boolean);
+  // Folded into one line, the menu is a drop-down whose button names the
+  // section on screen. A pick, Escape or a click anywhere else closes it.
+  const jump = c.querySelector('.cc-jump'), jumpButton = jump?.querySelector('.cc-jump-button');
+  const jumpCurrent = jump?.querySelector('.cc-jump-current');
+  const setMenuOpen = open => {
+    if (!jump) return;
+    controlMenuOpen = open ? id : null;
+    jump.toggleAttribute('data-open', open);
+    jumpButton.setAttribute('aria-expanded', String(open));
+  };
   const setCurrentSection = section => sectionLinks.forEach(link => {
     if (link.dataset.controlSectionLink !== section) return link.removeAttribute('aria-current');
     link.setAttribute('aria-current', 'location');
-    revealRailKey(link);
+    const entry = CONTROL_SECTIONS.find(([key]) => key === section);
+    if (jumpCurrent && entry && jumpCurrent.dataset.section !== section) {
+      jumpCurrent.dataset.section = section;
+      jumpCurrent.innerHTML = controlSectionKey(entry);
+    }
   });
   // The lit key is read from where the page is, against the line a jump lands
   // a section's top on. Groups sit side by side in columns, so several can be
@@ -634,7 +657,12 @@ function bindControlCenter(run) {
   };
   const syncCurrentSection = () => setCurrentSection(controlJump?.run === id
     ? controlJump.section : sectionAtScroll()?.id.replace('control-group-', ''));
-  if (c.querySelector('.control-center').hasAttribute('data-fresh')) controlJump = null;
+  // A page opened afresh starts at its top with the drop-down closed; only a
+  // poll's redraw keeps the jump and the open list it had.
+  if (c.querySelector('.control-center').hasAttribute('data-fresh')) {
+    controlJump = null;
+    if (controlMenuOpen === id) setMenuOpen(false);
+  }
   sectionLinks.forEach(link => link.addEventListener('click', event => {
     event.preventDefault();
     const section = link.dataset.controlSectionLink;
@@ -642,6 +670,7 @@ function bindControlCenter(run) {
     if (!target) return;
     controlJump = { run: id, section, moving: true };
     settleJump();
+    setMenuOpen(false);
     setCurrentSection(section);
     target.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
     target.querySelector('[tabindex="-1"]')?.focus({ preventScroll: true });
@@ -656,6 +685,19 @@ function bindControlCenter(run) {
     if (controlJump && !onLine($(`control-group-${controlJump.section}`), jumpLine())) controlJump = null;
     syncCurrentSection();
   }, { passive: true, signal: controlScrollWatch.signal });
+  jumpButton?.addEventListener('click', () => setMenuOpen(!jump.hasAttribute('data-open')));
+  document.addEventListener('keydown', event => {
+    // Only while the list shows: beside a wide page the menu has no drop-down.
+    if (event.key !== 'Escape' || !jump?.isConnected || !jump.hasAttribute('data-open') || !jumpButton.offsetWidth) return;
+    // Escape closes only the list, not the panel or page around it.
+    event.preventDefault();
+    event.stopPropagation();
+    setMenuOpen(false);
+    jumpButton.focus();
+  }, { capture: true, signal: controlScrollWatch.signal });
+  document.addEventListener('pointerdown', event => {
+    if (jump?.isConnected && jump.hasAttribute('data-open') && !jump.contains(event.target)) setMenuOpen(false);
+  }, { signal: controlScrollWatch.signal });
   if (groups.length) syncCurrentSection();
   // the copy cells are <orc-copy-button>: clipboard write, outcome label and
   // announcement all belong to the element now.

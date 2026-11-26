@@ -36,7 +36,7 @@ import { renderEmptyStateSlot } from './theme-components.js';
 import { factoryShowing, unmountFactory } from './secondary-screens.js';
 import { themeAllowsCharacterMotion } from './character-motion.js';
 import { CONTROL_KEY, parentAgent } from './control.js';
-import { $, CHAT_KEY, POWER_MODES, RUN_MODE_LABEL, announce, esc, focusRunDestination, gateNoun, isOrcApp, isQuestionRun, mergeWrappingUpUntil, powerModeOf, runningLabel, reviewsForRun, runs, sessionActivity, setFocusRunDestination, setPowerMode, setRuns, setSidebarProjectOrder, setSidebarStatusOrder, showsMergedTerminalLabel, carrySoundState, soundKindForStates, soundStateOf, statusActivity, statusOrderFromConfigPayload, toast } from './core.js';
+import { $, CHAT_KEY, POWER_MODES, RUN_MODE_LABEL, announce, esc, focusRunDestination, gateNoun, isOrcApp, isQuestionRun, mergeWrappingUpUntil, powerModeOf, queueBuildsOnlyOf, runningLabel, reviewsForRun, runs, sessionActivity, setFocusRunDestination, setPowerMode, setQueueBuildsOnly, setRuns, setSidebarProjectOrder, setSidebarStatusOrder, showsMergedTerminalLabel, carrySoundState, soundKindForStates, soundStateOf, statusActivity, statusOrderFromConfigPayload, toast } from './core.js';
 import { activateSidebarRun, focusControl, projectIconHtml, releaseOpenRunRow, renderList, syncPriorityRuns, syncSettledRuns } from './filters.js';
 import { QA_CHAT_DEFAULT, QA_CHAT_EFFORTS, ncAgents, ncEnabledTransportOptions, ncEnabledTransports, ncLaunchBackend, ncLaunchUnavailableReason, ncSavedTransport, offersPermissionSwitch, permissionPreference, qaChatChoice, rememberLaunchTransport } from './launch-options.js';
 import { hideGallery, showGallery } from './scenes.js';
@@ -60,7 +60,7 @@ import { enabledHarnesses } from './harnesses.js';
 import { factoryVisualsEnabled, onFactoryVisualsChange, reducedMotion } from './motion.js';
 import { sceneLeft } from './page-scene.js';
 import { canChangeScreen, changeScreen, screenSwapped } from './screen-change.js';
-import { SETTINGS_TABS_SAVING_THEMSELVES, SETTINGS_TABS_WITHOUT_CONFIG, settingsTabViewPanelsHtml, syncSettingsTabView, setSettingsDeferredData, settingsDeferredData, settingsPanelHtml, settingsTabFromHash, settingsTabsHtml, wireSettingsTabs, projBoolFields, RETIRED_PROJECT_KEYS, SHIP_ACTIONS, defaultShipAction, devServerSetupUnused, projectShipOverride, ringDevServerSetup, shipActionLabel, shipDefaultCardHtml, SHIP_ACTION_SETTINGS_HASH, writeDefaultShipAction, writeOfferOtherShipActions, writePrPushAction, prPushActionOf, writeProjectShipAction, RUNS_AT_ONCE_OPTIONS, projectRunsAtOnce, writeProjectRunsAtOnce, projectGeneratedFiles, writeProjectGeneratedFiles, generatedFileRuleRowHtml, projectDeployCommand, writeProjectDeployCommand, closeSettingsToOrigin, flushSettingsSave, focusSettingsHeading, hideChangelog, hideSettings, keepDevServerSetupInView, mergedRepoEntry, normPath, projectDeleteBlockersHtml, projectDeleteCountsHtml, projectFieldChecked, projectIndexRowHtml, busiestProjectRuns, sortSettingsProjects, projectKeyFromSettingsHash, projectName, projectOrderFromConfigPayload, projectSearchMatches, revealSettingsAnchor, scheduleSettingsSave, setSettingsData, setSettingsDirty, setSettingsPendingConfig, setSettingsRenderedHash, setSettingsReturnAnnouncement, setSettingsReturnFocusProject, setSettingsSaveQueued, setSettingsSaveTimer, setSettingsSaving, settingsControlNeedsDebounce, settingsData, settingsDirty, settingsPendingConfig, settingsRenderedHash, settingsReturnAnnouncement, settingsReturnFocusProject, settingsRevision, settingsSaveQueued, settingsSaveTimer, settingsSaving, settingsSkeletonHtml, settingsStatusBarHtml, paintSettingsStatus, paintSettingsSaved, settingsViewActive, showChangelog, showSettings, wireProjectDeleteRunLinks, writeProjectBoolean } from './settings.js';
+import { SETTINGS_TABS_SAVING_THEMSELVES, SETTINGS_TABS_WITHOUT_CONFIG, settingsTabViewPanelsHtml, syncSettingsTabView, setSettingsDeferredData, settingsDeferredData, settingsPanelHtml, settingsTabFromHash, settingsTabsHtml, wireSettingsTabs, projBoolFields, RETIRED_PROJECT_KEYS, SHIP_ACTIONS, defaultShipAction, devServerSetupUnused, projectShipOverride, ringDevServerSetup, shipActionLabel, shipDefaultCardHtml, SHIP_ACTION_SETTINGS_HASH, branchExample, writeDefaultShipAction, writeOfferOtherShipActions, writePrPushAction, prPushActionOf, writeProjectShipAction, RUNS_AT_ONCE_OPTIONS, projectRunsAtOnce, writeProjectRunsAtOnce, projectGeneratedFiles, writeProjectGeneratedFiles, generatedFileRuleRowHtml, projectDeployCommand, writeProjectDeployCommand, closeSettingsToOrigin, flushSettingsSave, focusSettingsHeading, hideChangelog, hideSettings, keepDevServerSetupInView, mergedRepoEntry, normPath, projectDeleteBlockersHtml, projectDeleteCountsHtml, projectFieldChecked, projectIndexRowHtml, busiestProjectRuns, sortSettingsProjects, projectKeyFromSettingsHash, projectName, projectOrderFromConfigPayload, projectSearchMatches, revealSettingsAnchor, scheduleSettingsSave, setSettingsData, setSettingsDirty, setSettingsPendingConfig, setSettingsRenderedHash, setSettingsReturnAnnouncement, setSettingsReturnFocusProject, setSettingsSaveQueued, setSettingsSaveTimer, setSettingsSaving, settingsControlNeedsDebounce, settingsData, settingsDirty, settingsPendingConfig, settingsRenderedHash, settingsReturnAnnouncement, settingsReturnFocusProject, settingsRevision, settingsSaveQueued, settingsSaveTimer, settingsSaving, settingsSkeletonHtml, settingsStatusBarHtml, paintSettingsStatus, paintSettingsSaved, settingsViewActive, showChangelog, showSettings, wireProjectDeleteRunLinks, writeProjectBoolean } from './settings.js';
 import { deactivateInstructions, instructionsPanelHtml, mountInstructionsSettings } from './instructions.js';
 import { activateOrchestrate, deactivateOrchestrate, orchestratePanelHtml } from './orchestrate.js';
 function showStats() {
@@ -1080,9 +1080,12 @@ export async function loadSettings({ useCache = false } = {}) {
 function projectDetailControlsHtml(p, repos, defaultAction, defaultInstructions = '') {
   // Historical missing keys remain on for existing projects. A newly added
   // project gets the same explicit profile as automatic first-run setup.
-  const entry = p.added
-    ? Object.assign({ worktree: true, attribution: false }, mergedRepoEntry(repos, p.key || p.path))
-    : mergedRepoEntry(repos, p.key || p.path);
+  const entry = mergedRepoEntry(repos, p.key || p.path);
+  if (p.added) {
+    entry.worktree ??= true;
+    entry.attribution ??= false;
+    if (p.initialShipAction) entry.shipAction ??= p.initialShipAction;
+  }
   const wtVal = entry.worktree === true ? 'on' : entry.worktree === false ? 'off' : 'inherit';
   const toggle = f => `<orc-switch class="settings-check" id="proj-${f.key}" name="proj-${f.key}" data-proj-field="${f.key}" label="${esc(f.label)}" ${projectFieldChecked(entry, f) ? 'checked' : ''}></orc-switch>`;
   const controls = group => projBoolFields().filter(f => f.group === group).map(toggle).join('');
@@ -1358,6 +1361,7 @@ export function applyUiConfig(cfg) {
   globalThis.ORC_PERMISSION_DEFAULT = permissionPreference(ui.permissionDefault);
   globalThis.ORC_STARTED_RUN_BACKGROUND = ui.startedRun === 'background';
   globalThis.ORC_PR_PUSH_ACTION = prPushActionOf(cfg);
+  setQueueBuildsOnly(queueBuildsOnlyOf(ui));
 }
 // What every sound asks before it plays, Settings' Play buttons aside: a
 // meeting on your calendar silences Orc as ui.sounds off does (quiet.js).
@@ -1680,6 +1684,10 @@ export function renderSettingsForm({ focusPlugin = null } = {}) {
         <orc-segmented id="set-power-mode" label="${RUN_MODE_LABEL}" aria-describedby="hint-power-mode" value="${powerModeOf(ui)}">${POWER_MODES.map(mode => `<button type="button" value="${mode.value}">${mode.label}</button>`).join('')}</orc-segmented>
       </div>
       <ul class="settings-hint settings-power-hints" id="hint-power-mode">${POWER_MODES.map(mode => `<li><strong>${mode.label}:</strong> ${mode.hint}</li>`).join('')}</ul>
+      <div class="settings-queue-builds" id="queue-builds" ${powerModeOf(ui) === 'low' ? '' : 'hidden'}>
+        <orc-switch class="settings-check" id="set-queue-builds" name="set-queue-builds" label="Only queue build runs" aria-describedby="hint-queue-builds" ${queueBuildsOnlyOf(ui) ? 'checked' : ''}></orc-switch>
+        <p class="settings-hint" id="hint-queue-builds">Plans, questions, reviews and flashcards start straight away. Builds go one at a time, and each keeps its place until Ship.</p>
+      </div>
       <p class="settings-hint">Every mode runs only the tests a change touches. A change reaches each run from its next message. Saved on this computer only: your other computers keep their own mode.</p>
       <div class="settings-subblock" data-settings-anchor="storage">
         <div class="settings-field">
@@ -1769,7 +1777,7 @@ export function renderSettingsForm({ focusPlugin = null } = {}) {
   const branchPrefix = $('set-branch-prefix');
   if (branchPrefix) {
     branchPrefix.value = prefix;
-    const paintBranchExample = () => { $('branch-example').textContent = `${branchPrefix.value.trim() || 'orc'}/noticket/build-bulk-markdown`; };
+    const paintBranchExample = () => { $('branch-example').textContent = branchExample(branchPrefix.value); };
     branchPrefix.addEventListener('input', paintBranchExample);
     paintBranchExample();
   }
@@ -1816,6 +1824,14 @@ function wireSettingsEvents() {
     if (el.matches('orc-switch:not([name])')) return;
     el.addEventListener(settingsControlNeedsDebounce(el) ? 'input' : 'change', markDirty);
   });
+  $('set-pr-push-action')?.addEventListener('change', markDirty);
+  body.querySelector('[data-ship-overrides-more]')?.addEventListener('click', event => {
+    const button = event.currentTarget;
+    const folded = [...button.closest('#ship-overrides').querySelectorAll('.ship-override[hidden]')];
+    folded.forEach(chip => { chip.hidden = false; });
+    button.remove();
+    folded[0]?.focus();
+  });
   const powerModeControl = $('set-power-mode');
   powerModeControl?.addEventListener('change', event => {
     if (powerModeControl.value === 'low' && powerModeOf(settingsData?.config?.ui) !== 'low') {
@@ -1827,6 +1843,7 @@ function wireSettingsEvents() {
       });
       return;
     }
+    showQueueBuildsSwitch(powerModeControl.value);
     markDirty(event);
   });
   $('claude-fast-reset')?.addEventListener('click', showClaudeFastAgain);
@@ -1857,7 +1874,10 @@ function wireSettingsEvents() {
         addStatus.textContent = 'Already listed';
         return;
       }
-      const proj = { path: body.key, key: body.key, runCount: 0, lastRun: null, lastEdited: body.lastEdited ?? null, added: true };
+      const proj = {
+        path: body.key, key: body.key, runCount: 0, lastRun: null,
+        lastEdited: body.lastEdited ?? null, added: true, initialShipAction: body.initialShipAction,
+      };
       settingsData.projects.push(proj);
       const ordered = sortSettingsProjects(settingsData.projects);
       const insertAt = ordered.indexOf(proj);
@@ -2384,7 +2404,7 @@ export function buildConfigFromForm() {
   delete cfg.ui.notifications;
   // Only the answer that differs from the default is persisted — same rule as
   // writeProjectBoolean() applies to the project booleans.
-  for (const [id, key, fallback] of [['set-sounds', 'sounds', true], ['set-offer-fast', 'offerFastMode', true], ['set-offer-permissions', 'offerPermissionSwitch', false], ['set-show-usage', 'showUsage', true]]) {
+  for (const [id, key, fallback] of [['set-sounds', 'sounds', true], ['set-offer-fast', 'offerFastMode', true], ['set-offer-permissions', 'offerPermissionSwitch', false], ['set-show-usage', 'showUsage', true], ['set-queue-builds', 'queueBuildsOnly', true]]) {
     const control = $(id);
     if (!control) continue;
     if (control.checked === fallback) delete cfg.ui[key];
@@ -2442,7 +2462,8 @@ export function buildConfigFromForm() {
     }
   }
 
-  if ($('set-ship-action')) writeDefaultShipAction(cfg, $('set-ship-action').value);
+  const defaultShip = $('set-ship-action');
+  if (defaultShip) writeDefaultShipAction(cfg, 'shipAction', defaultShip.value);
   if ($('set-offer-other-ship-actions')) writeOfferOtherShipActions(cfg, $('set-offer-other-ship-actions').checked);
   if ($('set-pr-push-action')) writePrPushAction(cfg, $('set-pr-push-action').value);
 
@@ -2473,6 +2494,9 @@ export function buildConfigFromForm() {
     // Index rows must not overwrite detail-only settings.
     const shipActionField = row?.querySelector?.('[data-proj-ship-action]');
     if (shipActionField) writeProjectShipAction(base, shipActionField.value);
+    else if (p.added && !aliases.length && p.initialShipAction) {
+      writeProjectShipAction(base, p.initialShipAction);
+    }
     const instructionsField = row?.querySelector?.('#proj-pr-body-instructions');
     if (instructionsField) {
       const text = instructionsField.value.trim();
@@ -2509,10 +2533,17 @@ export function buildConfigFromForm() {
   return cfg;
 }
 
+// Only Queue mode has builds to queue, and only once the dialog turns it on.
+function showQueueBuildsSwitch(mode) {
+  const row = $('queue-builds');
+  if (row) row.hidden = mode !== 'low';
+}
+
 export function syncSettingsPowerMode(body) {
   const mode = powerModeOf({ powerMode: body?.mode });
   const control = $('set-power-mode');
   if (control) control.value = mode;
+  showQueueBuildsSwitch(mode);
   if (settingsData?.config) {
     settingsData.config.ui = settingsData.config.ui || {};
     delete settingsData.config.ui.highPower;
@@ -2964,6 +2995,7 @@ export async function refresh({ force = false, openingHash } = {}) {
       $('ui-stale').hidden = false;
     }
     setPowerMode(response.headers.get('X-Orc-Power-Mode'));
+    setQueueBuildsOnly(response.headers.get('X-Orc-Queue-Builds-Only') !== 'false');
     const priorityChanged = syncPriorityRuns(response.headers.get('X-Orc-Priority-Runs'));
     if ((await syncSettledRuns()) || priorityChanged) renderList();
     if (response.status === 304 || queueRevision !== mergeQueueRevision) return;

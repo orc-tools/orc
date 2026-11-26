@@ -199,8 +199,8 @@ def merge_settings(extra, addition):
 
 
 def claude_hook_settings(run_dir, extra):
-    """``extra`` with per-turn PreToolUse guards (worktree check and optional
-    AWS allowlist) plus the PostToolUse hook that hands the turn Chat messages
+    """``extra`` with per-turn PreToolUse guards (worktree check, settings
+    file check and optional AWS allowlist) plus the PostToolUse hook that hands the turn Chat messages
     sent while it works. Merges into any existing JSON ``--settings`` value."""
     steer_command = "[ ! -e %s ] || exec %s %s" % (
         shlex.quote(os.path.join(run_dir, "follow-ups.json")),
@@ -209,6 +209,9 @@ def claude_hook_settings(run_dir, extra):
     pre_hooks = [{
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [{"type": "command", "command": "%s worktree --harness claude" % shlex.quote(HOOK_POLICY)}],
+    }, {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [{"type": "command", "command": "%s settings --harness claude" % shlex.quote(HOOK_POLICY)}],
     }]
     if _include_aws_hook():
         pre_hooks.append({
@@ -309,9 +312,15 @@ def harness_transcript(run_dir, agent):
     return _path(run_dir, "%s-transcript.jsonl" % agent)
 
 
+def _ensure_dir(run_dir):
+    """Make the run's headless folder, never a run folder the user deleted."""
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(_dir(run_dir), mode=0o700)
+
+
 @contextlib.contextmanager
 def control_lock(run_dir):
-    os.makedirs(_dir(run_dir), mode=0o700, exist_ok=True)
+    _ensure_dir(run_dir)
     with open(_path(run_dir, ".control.lock"), "a+") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
@@ -322,7 +331,7 @@ def control_lock(run_dir):
 
 @contextlib.contextmanager
 def _locked(run_dir, name=".lock"):
-    os.makedirs(_dir(run_dir), mode=0o700, exist_ok=True)
+    _ensure_dir(run_dir)
     with open(_path(run_dir, name), "a+") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         yield
@@ -838,7 +847,9 @@ def start_turn(run_dir, *, agent, argv, prompt, cwd, env, popen=subprocess.Popen
                 run_diff.commit_turn_base(run_dir, turn_base)
 
     def reap():
-        _record_exit(run_dir, turn, process.pid, process.wait())
+        code = process.wait()
+        with contextlib.suppress(FileNotFoundError):  # the run was deleted
+            _record_exit(run_dir, turn, process.pid, code)
 
     threading.Thread(target=reap, name="headless-reap-%d" % process.pid, daemon=True).start()
     return state

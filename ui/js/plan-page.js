@@ -10,7 +10,7 @@
 import { refresh } from './activity.js';
 import { harnessMark } from './agent-marks.js';
 import { PLANNING_PAGE } from './answer-mode.js';
-import { CHAT_KEY, announce, dotHtml, esc, externalizeLinks, fileUrl, mediaSignature, resolveRelativeUrls, runs } from './core.js';
+import { CHAT_KEY, announce, dotHtml, esc, externalizeLinks, fileUrl, markMockupLinks, mediaSignature, queueMode, resolveRelativeUrls, runs, startWorkLabel } from './core.js';
 import { markdownHtml, stripFrontMatter } from './diff.js';
 import { mountPlanBuilds } from './plan-builds.js';
 import { mountPlanNotes } from './plan-notes.js';
@@ -22,11 +22,13 @@ import { groupWaitLabel, isPlanningClosed, isPlanningComplete, pairedBuildOf, pl
 
 export const PLAN_SOURCE = 'planning/planning.mdx';
 
-// Plugins add their own controls beside Copy plan (the Tailscale plugin's
-// Share plan). A renderer runs after every paint with the plan run, the
-// layout, the `.plan-tools` row and the `.plan-work` card; it owns what it
-// adds, marking each node `data-plan-extension="<id>"` with the id it
-// registered under, so unregistering removes its nodes and nobody else's.
+// Plugins add their own controls to the page (the Tailscale plugin's Share).
+// A renderer runs after every paint with the plan run, the layout, the
+// `.plan-actions` row at the top right beside the plan's title, the
+// `.plan-tools` row of links at the foot of the steps (null when it has none)
+// and the `.plan-work` card; it owns what it adds, marking each node
+// `data-plan-extension="<id>"` with the id it registered under, so
+// unregistering removes its nodes and nobody else's.
 const planToolRenderers = new Set();
 const planViews = new Set();
 export function extendPlanTools(id, render) {
@@ -39,12 +41,13 @@ export function extendPlanTools(id, render) {
 }
 
 function planRunExtensions(view, planRun) {
+  const actions = view.root.querySelector('.plan-actions');
   const tools = view.root.querySelector('.plan-tools');
   const work = view.root.querySelector('.plan-work');
-  if (!tools || !work) return;
+  if (!actions || !work) return;
   for (const render of planToolRenderers) {
     try {
-      render({ runId: planRun.id, meta: planRun.meta || {}, layout: view.layout, own: view.viewerId === planRun.id, tools, work });
+      render({ runId: planRun.id, meta: planRun.meta || {}, layout: view.layout, own: view.viewerId === planRun.id, actions, tools, work });
     } catch (error) {
       console.error('plan tools extension', error);
     }
@@ -357,32 +360,40 @@ function planNoteHtml(note) {
   return `<p class="plan-step-talk">${verb} ${esc(note.peerLabel)}: <q>${esc(note.text || '')}</q>${status ? ` · <span class="plan-step-talk-state">${esc(status)}</span>` : ''}</p>`;
 }
 
-function planStepHtml(step, view, count, whole, wholeStarting, steps) {
+// The PR a step gets when the plan is split, and the PR a step that waits
+// stacks on: Split draws the PRs you will get on the steps themselves.
+const PLAN_PR_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.6"/><circle cx="4" cy="12.5" r="1.6"/><circle cx="12" cy="12.5" r="1.6"/><path d="M4 5.1v5.8M12 10.9V7a3 3 0 0 0-3-3H7"/></svg>';
+export function planStepPrHtml(step) {
+  const on = (step.waitsOn || []).length ? ` <small>on PR ${step.waitsOn.join(', ')}</small>` : '';
+  return `<span class="plan-step-pr">${PLAN_PR_ICON}<b>PR ${step.number}</b>${on}</span>`;
+}
+
+function planStepHtml(step, view, { count, whole, wholeStarting, steps, split }) {
   const single = count === 1;
   const name = step.title || 'this plan';
   // While Orc revises the plan its Starts stay in place, greyed out.
   const busy = view.posting !== null || view.revising;
   // While the whole plan is what starts, its one button is the only Start.
   const startable = (view.canStart || view.revising) && !whole && (step.state === 'todo' || step.state === 'failed');
-  const label = single ? 'Start work' : `Start step ${step.number}`;
+  const label = single ? startWorkLabel() : `Start step ${step.number}`;
   // Once a step has started on its own, the next step carries the page's one
   // primary button, under its name, and a later step keeps a small Start for
   // work that can run alongside. That button names itself from its own text, so the step
   // rides along for a reader who cannot see which row it sits in.
-  const primary = startable && step.next
+  const primary = startable && step.next && !single
     ? `<orc-button variant="primary" data-plan-start="${step.number}"${busy ? ' disabled' : ''}>${label}</orc-button>` : '';
   const aside = startable && !step.next
     ? `<orc-button variant="ghost" size="compact" data-plan-start="${step.number}"${busy ? ' disabled' : ''}>Start<span class="sr-only"> step ${step.number}: ${esc(name)}</span></orc-button>` : '';
   const head = step.implied ? ''
-    : `<div class="plan-step-head"><button type="button" class="plan-step-name" data-plan-jump="${view.prefix}-step-${step.number}">${esc(name)}</button>${step.repo ? `<span class="plan-step-repo">${projectMonogramHtml(step.repo)}<span class="sr-only">in </span>${esc(step.repo)}</span>` : ''}${aside}</div>`;
+    : `<div class="plan-step-head"><button type="button" class="plan-step-name" data-plan-jump="${view.prefix}-step-${step.number}">${esc(name)}</button>${step.repo ? `<span class="plan-step-repo">${projectMonogramHtml(step.repo)}<span class="sr-only">in </span>${esc(step.repo)}</span>` : ''}${split ? planStepPrHtml(step) : ''}${aside}</div>`;
   // A step that waits starts by itself once the run it waits on reaches Ship.
   const waiting = step.state === 'waiting'
     ? `<p class="plan-step-run plan-step-waiting"><span class="dot" data-state="waiting" aria-hidden="true"></span><span class="plan-step-run-state">${esc(groupWaitLabel(step, { steps: true }))}</span><span class="plan-step-run-title">starts by itself</span></p>` : '';
   const talk = step.runs.map(entry => planNoteHtml(entry.run?.meta?.runNote)).join('');
-  const wait = step.state === 'starting' && !wholeStarting
-    ? planStartingButton(single ? 'variant="primary"' : 'variant="ghost" size="compact"') : '';
-  const failure = step.state === 'failed' || view.failures.has(step.number)
-    ? `<p class="plan-step-error" role="alert">Could not start a run${esc(planFailure(view.failures.get(step.number) || step.error))}</p>` : '';
+  // A plan of one step starts below Builds with instead (planOneStepGo).
+  const wait = step.state === 'starting' && !wholeStarting && !single
+    ? planStartingButton('variant="ghost" size="compact"') : '';
+  const failure = !single ? planStepFailure(step, view) : '';
   const state = step.state === 'todo' && step.next ? 'next' : step.state;
   return `<li class="plan-step" data-state="${state}" data-plan-step="${step.number}">
     <span class="plan-step-mark" aria-hidden="true">${step.state === 'done' ? PLAN_CHECK_ICON : step.number}</span>
@@ -392,6 +403,25 @@ function planStepHtml(step, view, count, whole, wholeStarting, steps) {
     </div>
   </li>`;
 }
+
+const planStepFailure = (step, view) => (step.state === 'failed' || view.failures.has(step.number)
+  ? `<p class="plan-step-error" role="alert">Could not start a run${esc(planFailure(view.failures.get(step.number) || step.error))}</p>` : '');
+
+// A plan of one step has no choice to make: its one Start run, or Starting…
+// while it launches, sits below Builds with, as a longer plan's Start does.
+function planOneStepGo(step, view) {
+  const busy = view.posting !== null || view.revising;
+  const startable = (view.canStart || view.revising) && (step.state === 'todo' || step.state === 'failed');
+  const start = step.state === 'starting' ? planStartingButton()
+    : startable ? `<div class="plan-start-row"><orc-button class="plan-start-all" variant="primary" data-plan-start="${step.number}"${busy ? ' disabled' : ''}>${startWorkLabel()}</orc-button>${planStartNowHtml(step.number, busy ? ' disabled' : '')}</div>` : '';
+  return `${start}${planStepFailure(step, view)}`;
+}
+
+// In Queue mode Start now sits beside the button that queues: the same
+// build, started at once beside whatever already works instead of waiting
+// its turn. Split's runs still queue.
+const planStartNowHtml = (number, held) => (queueMode()
+  ? `<orc-button class="plan-start-now" variant="ghost" data-plan-start="${number}" data-plan-start-now${held}>Start now</orc-button>` : '');
 
 // Where Start was pressed, until the run it launched is listed.
 const planStartingButton = (attrs = 'variant="primary"') =>
@@ -439,27 +469,41 @@ function planWorkHtml(view, planRun) {
   const perRepo = steps.length > 1 && steps.some(step => step.repo);
   const opened = perRepo && steps.some(step => step.state !== 'todo' && step.state !== 'failed');
   const note = offered && !chosen && !opened
-    ? (perRepo ? `<p class="plan-start-note">Start work opens one run per repository on ${esc(agent)}, each with its own PR. A step that waits starts by itself.</p>`
-      : `<p class="plan-start-note">Start opens a change run${project ? ` in ${esc(project)}` : ''} on ${esc(agent)}, with this plan as its settled brief.${whole ? ' Start each step opens one per step, and a step that waits builds on the branch of the step it waits on.' : ''}</p>`)
+    ? (perRepo ? `<p class="plan-start-note">Start opens one run per repository on ${esc(agent)}, each with its own PR. A step that waits starts by itself.</p>`
+      : `<p class="plan-start-note">Start opens a change run${project ? ` in ${esc(project)}` : ''} on ${esc(agent)}, with this plan as its settled brief.</p>`)
     : meta.status === 'cancelled' ? '<p class="plan-start-note">This plan was cancelled, so it starts no more work.</p>'
-    : opened ? '<p class="plan-start-note">Start work opened one run per repository. Each opens its own PR.</p>' : '';
-  // Start work builds the whole plan in one run. Beside it, a quiet Start
-  // each step opens one run per step, as a plan across repositories does.
+    : opened ? '<p class="plan-start-note">The plan opened one run per repository. Each opens its own PR.</p>' : '';
+  // Until a step has a run, a plan in one repository asks how it is built:
+  // One PR, one run for every step, or Split, one run and PR per step, drawn
+  // as a PR on each step. The one button below says what it opens. A plan
+  // across repositories can only split, so it keeps its one button.
   const held = view.posting !== null || view.revising ? ' disabled' : '';
-  const each = !perRepo
-    ? `<orc-button class="plan-start-each" variant="ghost" size="compact" data-plan-start-each${held}>Start each step</orc-button>` : '';
+  const offerWhole = whole && (view.canStart || view.revising) && !wholeStarting;
+  const choice = offerWhole && !perRepo;
+  const split = choice && view.split;
+  const toggle = choice
+    ? `<orc-segmented class="plan-start-choice" label="How the plan is built" value="${split ? 'split' : 'one'}"><button type="button" value="one">One PR</button><button type="button" value="split">Split · ${steps.length} PRs</button></orc-segmented>` : '';
   const start = wholeStarting ? planStartingButton('class="plan-start-all" variant="primary"')
-    : whole && (view.canStart || view.revising)
-      ? `<div class="plan-start-row"><orc-button class="plan-start-all" variant="primary" data-plan-start="0"${held}>Start work</orc-button>${each}</div>` : '';
+    : split
+      // Start step 1 only starts the first PR of the stack, as Start step N
+      // does once the plan has begun.
+      ? `<div class="plan-start-row"><orc-button class="plan-start-all" variant="primary" data-plan-start-each${held}>${startWorkLabel(steps.length)}</orc-button><orc-button class="plan-start-first" variant="ghost" data-plan-start="1"${held}>Start step 1 only</orc-button></div>`
+      : offerWhole
+        ? `<div class="plan-start-row"><orc-button class="plan-start-all" variant="primary" data-plan-start="0"${held}>${startWorkLabel(perRepo ? steps.length : 1)}</orc-button>${planStartNowHtml(0, held)}</div>` : '';
   const failure = whole && (view.failures.has(0) || wholeError)
     ? `<p class="plan-step-error" role="alert">Could not start a run${esc(planFailure((view.failures.get(0) || wholeError).trim()))}</p>` : '';
   const others = loose.length
     ? `<div class="plan-loose"><h3>Also started from this plan</h3>${loose.map(entry => planRunLine(entry, entry.id === view.viewerId)).join('')}</div>` : '';
   const building = build ? planBuildingHtml(build, planRun) : '';
-  if (buildOnly) return building;
-  return `${building}<h2 class="plan-work-title" tabindex="-1">${esc(planProgress(steps))}</h2>${start}${failure}
-    <ol class="plan-steps" data-count="${steps.length}" aria-label="Steps">${steps.map(step => planStepHtml(step, view, steps.length, whole, wholeStarting, steps)).join('')}</ol>
-    ${note}${others}`;
+  if (buildOnly) return { steps: building, go: '' };
+  const drawn = { count: steps.length, whole, wholeStarting, steps, split };
+  // The steps come first and Start last, with the Builds with row between
+  // them (planFinish), so the model is picked just before Start is pressed.
+  return {
+    steps: `${building}<h2 class="plan-work-title" tabindex="-1">${esc(planProgress(steps))}</h2>${toggle}
+    <ol class="plan-steps" data-count="${steps.length}" aria-label="Steps">${steps.map(step => planStepHtml(step, view, drawn)).join('')}</ol>`,
+    go: `${steps.length === 1 ? planOneStepGo(steps[0], view) : `${start}${failure}`}${note}${others}`,
+  };
 }
 
 function planSectionHtml(entry, index, view) {
@@ -490,19 +534,23 @@ function planHtml(view, planRun) {
   // paired with it, whose Plan tab is that page.
   const page = view.viewerId !== planRun.id && pairedBuildOf(planRun, runs)?.id !== view.viewerId
     ? `<a class="plan-tool-link" href="#${encodeURIComponent(planRun.id)}/${PLANNING_PAGE}">Open the plan</a>` : '';
+  const work = planWorkHtml(view, planRun);
   // Kept as written, so the next repaint can tell whether anything changed.
-  view.workHtml = planWorkHtml(view, planRun);
+  view.workHtml = planWorkKey(work);
+  // Plugins put their page-wide actions at the top right, beside the title.
   return `<div class="plan-layout">
-    <header class="plan-head"><h1 class="plan-title">${esc(title)}</h1>${lede ? `<div class="plan-lede md">${lede}</div>` : ''}</header>
+    <header class="plan-head"><h1 class="plan-title">${esc(title)}</h1><div class="plan-actions"></div></header>
+    ${lede ? `<div class="plan-lede md">${lede}</div>` : ''}
     <div class="plan-work" role="complementary" aria-label="Work on this plan">
-      <div class="plan-work-steps">${view.workHtml}</div>
+      <div class="plan-work-steps">${work.steps}</div>
       <div data-plan-builds-slot></div>
+      <div class="plan-work-go">${work.go}</div>
       ${nav ? `<nav class="plan-nav" aria-label="Plan sections"><ul>${nav}</ul></nav>` : ''}
-      <div class="plan-tools"><orc-copy-button variant="ghost" size="compact" value="${esc(view.source)}" aria-label="Copy the plan as Markdown">Copy plan</orc-copy-button>${page}${notion}</div>
+      ${page || notion ? `<div class="plan-tools">${page}${notion}</div>` : ''}
     </div>
     <article class="plan-doc md" aria-label="Plan">${model.sections.map((entry, index) => planSectionHtml(entry, index, view)).join('')}</article>
-  </div>
-  <div data-plan-notes-slot></div>`;
+    <div data-plan-notes-slot></div>
+  </div>`;
 }
 
 // "Q12: …" at the head of a decision becomes a reference set beside it, so a
@@ -530,13 +578,7 @@ function planFinish(view, planRun) {
   const notesSlot = root.querySelector('[data-plan-notes-slot]');
   if (view.notesHost) notesSlot?.replaceWith(view.notesHost);
   else notesSlot?.remove();
-  root.querySelectorAll('[data-plan-section="mockup"] a[href]').forEach(link => {
-    if (!/^(?:\.\/)?mockups\/[^?#]+\.html(?:[?#]|$)/i.test(link.getAttribute('href'))) return;
-    link.classList.add('plan-mockup-link');
-    link.innerHTML = 'Open in browser<svg aria-hidden="true" width="13" height="13" viewBox="0 0 16 16" '
-      + 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
-      + '<path d="M4 12l8-8M5 4h7v7"/></svg>';
-  });
+  markMockupLinks(root.querySelectorAll('[data-plan-section="mockup"] a[href]'), 'mockups');
   root.querySelectorAll('.plan-doc, .plan-lede').forEach(node => resolveRelativeUrls(node, planRun.id, PLAN_SOURCE));
   externalizeLinks(root);
   window.orcUpgradeCallouts?.(root);
@@ -599,18 +641,34 @@ const PLAN_FOCUS = { start: '[data-plan-start]:not([disabled])', merge: '[data-p
 // A Start that gave way to Starting… hands focus to the panel's heading.
 const PLAN_FOCUS_TITLE = '.plan-work-title';
 
+const planWorkKey = work => `${work.steps}\n<!-- go -->\n${work.go}`;
+
 function planRepaintWork(view, planRun) {
   const host = view.root.querySelector('.plan-work-steps');
-  if (!host) return;
-  const html = planWorkHtml(view, planRun);
-  if (view.workHtml === html) return;
-  const held = host.contains(document.activeElement) ? document.activeElement : null;
+  const go = view.root.querySelector('.plan-work-go');
+  if (!host || !go) return;
+  const work = planWorkHtml(view, planRun);
+  const key = planWorkKey(work);
+  if (view.workHtml === key) return;
+  const active = document.activeElement;
+  const held = host.contains(active) || go.contains(active) ? active : null;
   const wasStart = !!held?.matches('[data-plan-start], [data-plan-start-each]');
+  const wasChoice = !!held?.matches('.plan-start-choice');
   const step = held?.closest('.plan-step')?.dataset.planStep;
   const kind = held && Object.keys(PLAN_FOCUS).find(key => held.matches(PLAN_FOCUS[key].replace(':not([disabled])', '')));
-  view.workHtml = html;
-  host.innerHTML = html;
-  if (wasStart && !step) return void (host.querySelector(PLAN_FOCUS.start) || host.querySelector(PLAN_FOCUS_TITLE))?.focus({ preventScroll: true });
+  view.workHtml = key;
+  host.innerHTML = work.steps;
+  go.innerHTML = work.go;
+  // <orc-segmented> keeps its radios in a shadow root: focus goes back to the
+  // option now picked.
+  if (wasChoice) {
+    return void host.querySelector('.plan-start-choice')?.shadowRoot
+      ?.querySelector('[role="radio"][aria-checked="true"]')?.focus({ preventScroll: true });
+  }
+  if (wasStart && !step) {
+    return void (go.querySelector(PLAN_FOCUS.start) || go.querySelector('[data-plan-start-each]:not([disabled])')
+      || host.querySelector(PLAN_FOCUS.start) || host.querySelector(PLAN_FOCUS_TITLE))?.focus({ preventScroll: true });
+  }
   if (!step || !kind) return;
   // Start gives way to the step's run, so focus follows the step: to the
   // same control when it is still there, else to what replaced it.
@@ -621,7 +679,7 @@ function planRepaintWork(view, planRun) {
     ?.focus({ preventScroll: true });
 }
 
-async function planStart(view, number, each = false) {
+async function planStart(view, number, each = false, now = false) {
   if (view.posting !== null || !view.canStart) return;
   // Step 0 is the whole plan, built in one run, or with `each` one run per step.
   const step = view.model.steps[number - 1];
@@ -644,7 +702,8 @@ async function planStart(view, number, each = false) {
   try {
     const response = await fetch(`/runs/${encodeURIComponent(view.planId)}/planning-start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...(sent ? { step: sent } : each ? { each: true } : {}), ...view.builds?.choices() }),
+      body: JSON.stringify({ ...(sent ? { step: sent } : each ? { each: true } : {}), ...(now ? { now: true } : {}),
+        ...view.builds?.choices() }),
     });
     reply = await response.json().catch(() => null);
     if (!response.ok) failure = reply?.error || `the server answered ${response.status}`;
@@ -722,6 +781,8 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
     root, scroller, layout, prefix: `plan-${layout}`, planId: planRun.id, viewerId: viewer.id,
     source: '', sourceKey: '', mediaSig: '', model: null, workHtml: '', alive: true, loading: 0,
     posting: null, failures: new Map(), merging: new Map(), canStart: false, planRun, jumped: '',
+    // One PR or Split: every plan opens on One PR.
+    split: false,
     repaint: () => planRepaintWork(view, view.planRun),
     // Repaint from the listed plan, which carries a held Start (plan-starts.js).
     sync: () => {
@@ -731,7 +792,7 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
   };
   view.buildsHost = document.createElement('div');
   view.buildsHost.className = 'plan-builds';
-  view.builds = mountPlanBuilds(view.buildsHost, { meta: planRun.meta || {}, labelId: `${view.prefix}-builds` });
+  view.builds = mountPlanBuilds(view.buildsHost, { meta: planRun.meta || {}, labelId: `${view.prefix}-builds`, labelHidden: true });
   view.buildsHost.addEventListener('plan-builds-ready', () => { if (view.alive && view.model) view.repaint(); });
   // Notes are left on the plan's own page, while nothing has started from it.
   if (layout === 'page' && viewer.id === planRun.id) {
@@ -741,9 +802,15 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
       source: () => view.source, changed: () => { if (view.alive) update(view.planRun, { id: view.viewerId }); },
     });
   }
-  const sizeToScroller = () => root.style.setProperty('--plan-view-h', `${scroller.clientHeight}px`);
-  const sizes = new ResizeObserver(sizeToScroller);
+  // The stylesheet needs the room in view, and the height of the chat box that
+  // floats over the foot of the plan.
+  const setSizes = () => {
+    root.style.setProperty('--plan-view-h', `${scroller.clientHeight}px`);
+    root.style.setProperty('--plan-chat-h', `${view.notesHost?.getBoundingClientRect().height || 0}px`);
+  };
+  const sizes = new ResizeObserver(setSizes);
   sizes.observe(scroller);
+  if (view.notesHost) sizes.observe(view.notesHost);
   let spyFrame = 0;
   const onScroll = () => {
     if (spyFrame) return;
@@ -759,6 +826,8 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
     if (view.alive && listed && listed !== view.planRun) update(listed, { id: view.viewerId });
   };
   document.addEventListener('orc:runs', onRuns);
+  const onPowerMode = () => { if (view.alive) update(view.planRun, { id: view.viewerId }); };
+  document.addEventListener('orc:power-mode', onPowerMode);
   const markPlanRead = () => {
     if (view.alive && view.viewerId === view.planId && view.planRun?.meta?.unread === true) {
       reportSeen(view.planId, 'read');
@@ -769,7 +838,9 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
   for (const type of ['wheel', 'touchmove', 'keydown']) scroller.addEventListener(type, onReaderScroll, { passive: true });
   root.addEventListener('click', event => {
     const start = event.target.closest?.('[data-plan-start]');
-    if (start && !start.hasAttribute('disabled')) return void planStart(view, Number(start.dataset.planStart));
+    if (start && !start.hasAttribute('disabled')) {
+      return void planStart(view, Number(start.dataset.planStart), false, start.hasAttribute('data-plan-start-now'));
+    }
     const each = event.target.closest?.('[data-plan-start-each]');
     if (each && !each.hasAttribute('disabled')) return void planStart(view, 0, true);
     const merge = event.target.closest?.('[data-plan-merge]');
@@ -782,6 +853,11 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
     const jump = event.target.closest?.('[data-plan-jump]');
     if (jump) return void planJump(view, jump.dataset.planJump);
     if (event.target.closest?.('[data-plan-retry]')) { emptyRetries = 0; load(view.planRun, true); }
+  });
+  root.addEventListener('change', event => {
+    if (!event.target.matches?.('.plan-start-choice')) return;
+    view.split = event.detail?.value === 'split';
+    view.repaint();
   });
 
   const MAX_EMPTY_RETRIES = 6;
@@ -824,7 +900,7 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
     view.mediaSig = nextMedia;
     view.model = planModel(stripFrontMatter(text));
     root.innerHTML = planHtml(view, view.planRun);
-    sizeToScroller();
+    setSizes();
     planFinish(view, view.planRun);
     onPainted?.();
   }
@@ -839,7 +915,7 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
     view.canStart = open && !view.revising;
     view.notes?.update({
       enabled: open && !isPlanningClosed(meta) && !planHasWork(run),
-      key: `${planSourceKey(run)}:${meta.status}`,
+      key: `${planSourceKey(run)}:${meta.status}:${startWorkLabel()}`,
     });
     load(run);
     if (view.model) planRepaintWork(view, run);
@@ -860,6 +936,7 @@ export function planMount(root, { planRun, viewer, layout, scroller, onPainted }
       sizes.disconnect();
       scroller.removeEventListener('scroll', onScroll);
       document.removeEventListener('orc:runs', onRuns);
+      document.removeEventListener('orc:power-mode', onPowerMode);
       window.removeEventListener('focus', markPlanRead);
       document.removeEventListener('visibilitychange', markPlanRead);
       for (const type of ['wheel', 'touchmove', 'keydown']) scroller.removeEventListener(type, onReaderScroll);

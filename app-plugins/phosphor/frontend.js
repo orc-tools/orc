@@ -92,6 +92,183 @@ function phosphorBoot(piece) {
   crt.append(boot);
 }
 
+// Pictures show through the glass. The glass stays one full-window layer, and
+// a mask cuts a clear hole in it over each image and video on screen, in the
+// shell and in its same-origin artifact frames, so screenshots keep their own
+// pixels while scanlines, the rolling band and glitches stay on everything
+// else. Icons, avatars and emoji are smaller than CLEAR_GLASS_MIN and keep the
+// glass. The holes follow scrolling, resizing and panels opening: any of those
+// starts a short run of frames that ends once the holes stop moving.
+const CLEAR_GLASS_MEDIA = 'img, video';
+const CLEAR_GLASS_MIN = 48;
+const CLEAR_GLASS_CAP = 30;
+const CLEAR_GLASS_SETTLE = 12;
+const CLEAR_GLASS_OWN = '#phosphor-scene, #phosphor-crt, [id^="typing-fx"]';
+const CLEAR_GLASS_SHEET = 'linear-gradient(#000 0 0)';
+const CLEAR_GLASS_EVENTS = ['scroll', 'load', 'transitionend'];
+let clearGlass = null;
+
+function intersectBox(a, b) {
+  const box = {
+    left: Math.max(a.left, b.left), top: Math.max(a.top, b.top),
+    right: Math.min(a.right, b.right), bottom: Math.min(a.bottom, b.bottom),
+  };
+  return box.right > box.left && box.bottom > box.top ? box : null;
+}
+
+function shiftBox(box, dx, dy) {
+  return { left: box.left + dx, top: box.top + dy, right: box.right + dx, bottom: box.bottom + dy };
+}
+
+// The part of el that no scroll container or frame edge cuts off, in its own
+// document's coordinates.
+function clearGlassOnScreen(el, view, frameBox, cuts) {
+  if (el.checkVisibility && !el.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return null;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < CLEAR_GLASS_MIN || rect.height < CLEAR_GLASS_MIN) return null;
+  let box = intersectBox(rect, frameBox);
+  for (let up = el.parentElement; box && up && up !== el.ownerDocument.documentElement; up = up.parentElement) {
+    let cutsHere = cuts.get(up);
+    if (cutsHere === undefined) {
+      const style = view.getComputedStyle(up);
+      cutsHere = style.overflowX !== 'visible' || style.overflowY !== 'visible';
+      cuts.set(up, cutsHere);
+    }
+    if (cutsHere) box = intersectBox(box, up.getBoundingClientRect());
+  }
+  return box;
+}
+
+function clearGlassCollect(doc, dx, dy, frameBox, boxes) {
+  const view = doc.defaultView;
+  if (!view) return;
+  hookClearGlassDocument(doc);
+  const cuts = new Map();
+  for (const el of doc.querySelectorAll(CLEAR_GLASS_MEDIA)) {
+    if (el.closest(CLEAR_GLASS_OWN)) continue;
+    const box = clearGlassOnScreen(el, view, frameBox, cuts);
+    if (box) boxes.push(shiftBox(box, dx, dy));
+  }
+  for (const frame of doc.querySelectorAll('iframe')) {
+    let inner = null;
+    try { inner = frame.contentDocument; } catch {}
+    if (!inner?.documentElement) continue;
+    const outer = clearGlassOnScreen(frame, view, frameBox, cuts);
+    if (!outer) continue;
+    const rect = frame.getBoundingClientRect();
+    const left = rect.left + frame.clientLeft;
+    const top = rect.top + frame.clientTop;
+    const content = intersectBox(outer, { left, top, right: left + frame.clientWidth, bottom: top + frame.clientHeight });
+    if (content) clearGlassCollect(inner, dx + left, dy + top, shiftBox(content, -left, -top), boxes);
+  }
+}
+
+function clearGlassMask(crt, holes) {
+  const style = crt.style;
+  const prefix = clearGlass.prefixed ? '-webkit-' : '';
+  if (!holes.length) {
+    for (const prop of ['image', 'position', 'size', 'repeat', 'composite']) style.removeProperty(prefix + 'mask-' + prop);
+    return;
+  }
+  const each = value => holes.map(() => value);
+  // The whole sheet is the top layer, and the holes, added together beneath
+  // it, are subtracted from it.
+  style.setProperty(prefix + 'mask-image', [CLEAR_GLASS_SHEET, ...each(CLEAR_GLASS_SHEET)].join(', '));
+  style.setProperty(prefix + 'mask-position', ['0 0', ...holes.map(b => b.left + 'px ' + b.top + 'px')].join(', '));
+  style.setProperty(prefix + 'mask-size', ['100% 100%', ...holes.map(b => (b.right - b.left) + 'px ' + (b.bottom - b.top) + 'px')].join(', '));
+  style.setProperty(prefix + 'mask-repeat', 'no-repeat');
+  style.setProperty(prefix + 'mask-composite', clearGlass.prefixed
+    ? ['source-out', ...each('source-over')].join(', ')
+    : ['subtract', ...each('add')].join(', '));
+}
+
+function paintClearGlass() {
+  const crt = document.getElementById('phosphor-crt');
+  if (!crt) return '';
+  for (const doc of clearGlass.documents.keys()) {
+    if (!doc.defaultView) unhookClearGlassDocument(doc);
+  }
+  const boxes = [];
+  // By day the glass paints nothing, so it needs no holes.
+  if (getComputedStyle(crt).backgroundImage !== 'none') {
+    clearGlassCollect(document, 0, 0, { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }, boxes);
+  }
+  const area = b => (b.right - b.left) * (b.bottom - b.top);
+  const holes = boxes
+    .map(b => ({ left: Math.floor(b.left), top: Math.floor(b.top), right: Math.ceil(b.right), bottom: Math.ceil(b.bottom) }))
+    .sort((a, b) => area(b) - area(a))
+    .slice(0, CLEAR_GLASS_CAP);
+  const key = holes.map(b => [b.left, b.top, b.right, b.bottom].join(',')).join(';');
+  if (key !== clearGlass.key) {
+    clearGlass.key = key;
+    clearGlassMask(crt, holes);
+  }
+  return key;
+}
+
+function clearGlassFrame() {
+  if (!clearGlass) return;
+  clearGlass.frame = 0;
+  const before = clearGlass.key;
+  if (paintClearGlass() === before) clearGlass.still++;
+  else clearGlass.still = 0;
+  if (clearGlass?.still < CLEAR_GLASS_SETTLE) clearGlass.frame = requestAnimationFrame(clearGlassFrame);
+}
+
+function scheduleClearGlass() {
+  if (!clearGlass) return;
+  clearGlass.still = 0;
+  if (!clearGlass.frame) clearGlass.frame = requestAnimationFrame(clearGlassFrame);
+}
+
+// The glass's own layers and the typing effects change all the time and
+// never move a picture, so their changes are ignored.
+function clearGlassMutated(records) {
+  for (const record of records) {
+    const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+    if (!target?.closest(CLEAR_GLASS_OWN)) {
+      scheduleClearGlass();
+      return;
+    }
+  }
+}
+
+function hookClearGlassDocument(doc) {
+  if (clearGlass.documents.has(doc)) return;
+  for (const type of CLEAR_GLASS_EVENTS) doc.addEventListener(type, scheduleClearGlass, { capture: true, passive: true });
+  const Observer = doc.defaultView?.MutationObserver;
+  const observer = Observer ? new Observer(clearGlassMutated) : null;
+  observer?.observe(doc.documentElement, { subtree: true, childList: true, attributes: true });
+  clearGlass.documents.set(doc, observer);
+}
+
+function unhookClearGlassDocument(doc) {
+  for (const type of CLEAR_GLASS_EVENTS) doc.removeEventListener(type, scheduleClearGlass, { capture: true });
+  clearGlass.documents.get(doc)?.disconnect();
+  clearGlass.documents.delete(doc);
+}
+
+const darkScheme = () => window.matchMedia?.('(prefers-color-scheme: dark)');
+
+function startClearGlass() {
+  if (clearGlass || typeof getComputedStyle !== 'function') return;
+  const prefixed = !globalThis.CSS?.supports?.('mask-composite', 'subtract');
+  clearGlass = { frame: 0, still: 0, key: '', prefixed, documents: new Map() };
+  window.addEventListener('resize', scheduleClearGlass);
+  darkScheme()?.addEventListener?.('change', scheduleClearGlass);
+  hookClearGlassDocument(document);
+  scheduleClearGlass();
+}
+
+function stopClearGlass() {
+  if (!clearGlass) return;
+  cancelAnimationFrame(clearGlass.frame);
+  window.removeEventListener('resize', scheduleClearGlass);
+  darkScheme()?.removeEventListener?.('change', scheduleClearGlass);
+  for (const doc of [...clearGlass.documents.keys()]) unhookClearGlassDocument(doc);
+  clearGlass = null;
+}
+
 function phosphorGlass(active, boot, { piece }) {
   const crt = document.getElementById('phosphor-crt');
   if (active && !crt) {
@@ -99,6 +276,8 @@ function phosphorGlass(active, boot, { piece }) {
     if (boot) phosphorBoot(piece);
   }
   if (!active && crt) crt.remove();
+  if (active) startClearGlass();
+  else stopClearGlass();
 }
 
 function phosphorBurst(x, y, { zap, layerWithRoom }) {

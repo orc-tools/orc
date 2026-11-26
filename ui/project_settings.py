@@ -17,9 +17,11 @@ SETTLE_SHIP_ACTIONS = ("yeet",)
 # What a fresh install's Ship gate leads with: a pull request asks nothing of
 # a project's history that its maintainers have not reviewed.
 DEFAULT_SHIP_ACTION = "pr"
-# The install that predates the global default merged and pushed every project
-# without a saved Ship action, so the first boot of this version pins that.
+# Installs that predate Open PR as everyone's default were pinned to Merge and
+# push. The first start of this version moves them to Open PR once, and the
+# config's `SHIP_ACTION_SWITCHED` key keeps a later choice from moving again.
 LEGACY_SHIP_ACTION = "merge-and-push"
+SHIP_ACTION_SWITCHED = "shipActionSwitchedToPr"
 # What a PR review round's push button does when the round has replies to
 # post: push the fixes and post the replies in one click, or push only the
 # fixes and leave the replies for their own Push comments click.
@@ -175,15 +177,17 @@ def project_ship_action(main_repo, config_dir=None):
 
 
 def pin_default_ship_action(config):
-    """Give a config with no global Ship action one, and say whether it changed.
+    """Settle the config's global Ship action once, and say whether it changed.
 
-    Run before a project is first added and when Orc starts: a config that
-    already lists projects belongs to an install that merged and pushed them
-    by default, so it keeps doing that; an empty one is a fresh install and
-    gets Open PR. Once written, the key is the user's choice and stays."""
-    if not isinstance(config, dict) or "shipAction" in config:
+    Run when Orc starts and before a project is first added. A config with no
+    `shipAction`, or the Merge and push an older Orc pinned for existing
+    installs, gets Open PR. Yeet it and Merge to main stay. Either way the
+    config is marked, so a Ship action picked after this one stays. The old
+    `newProjectShipAction` goes too: new projects use the global one."""
+    if not isinstance(config, dict) or config.get(SHIP_ACTION_SWITCHED) is True:
         return False
-    repos = config.get("repos")
-    config["shipAction"] = (LEGACY_SHIP_ACTION if isinstance(repos, dict) and repos
-                            else DEFAULT_SHIP_ACTION)
+    action = known_ship_action(config.get("shipAction"))
+    config["shipAction"] = DEFAULT_SHIP_ACTION if action in (None, LEGACY_SHIP_ACTION) else action
+    config.pop("newProjectShipAction", None)
+    config[SHIP_ACTION_SWITCHED] = True
     return True

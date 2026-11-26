@@ -107,9 +107,10 @@ class Bill:
 
 def _turn_label(item):
     answers = item.get("gateAnswers")
-    if isinstance(answers, dict) and answers.get("gate"):
-        return "Answered the %s questions" % answers["gate"]
-    return _clip((item.get("text") or "").split("\n", 1)[0]) or "Prompt"
+    if isinstance(answers, dict) and answers.get("label"):
+        return "Answered the %s questions" % answers["label"]
+    return (_clip((item.get("text") or "").split("\n", 1)[0])
+            or ("Run resumed" if item.get("resumed") else "Prompt"))
 
 
 def _split_turns(items):

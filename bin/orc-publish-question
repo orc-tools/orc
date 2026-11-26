@@ -27,13 +27,22 @@ def main():
     parser.add_argument("--update", action="store_true",
                         help="replace a completed question answer, preserving metadata")
     parser.add_argument("--expected-sha256", help="current answer digest required by --update")
+    parser.add_argument("--media", action="append", default=[], metavar="FILE",
+                        help="a picture (PNG, JPEG, GIF, WebP) or HTML mockup the answer "
+                             "shows, copied to media/<name>; repeat for each. Alone on an "
+                             "answered question it adds or replaces them")
     args = parser.parse_args()
     if args.update and (args.repair or not args.answer_file or not args.expected_sha256):
         parser.error("--update requires --answer-file and --expected-sha256, without --repair")
     if args.expected_sha256 and not args.update:
         parser.error("--expected-sha256 requires --update")
-    if bool(args.answer_file) == bool(args.repair):
+    media_only = bool(args.media) and not args.answer_file and not args.repair
+    if bool(args.answer_file) == bool(args.repair) and not media_only:
         parser.error("pass either --answer-file or --repair")
+    if args.media and args.repair:
+        parser.error("--media cannot be combined with --repair")
+    if media_only and (args.ui_file or args.title is not None):
+        parser.error("--media alone adds media to an answered question; it takes no --ui-file or --title")
     if args.ui_file and (args.repair or args.update):
         parser.error("--ui-file is only supported for initial publication")
     if args.title is not None and args.update:
@@ -54,13 +63,16 @@ def main():
             if answer_path.is_symlink() or not answer_path.is_file():
                 raise ValueError("answer input must be a regular non-symlink file")
             answer = answer_path.read_bytes()
-        if args.update:
+        config_dir = str(run_dir.parent.parent)
+        if media_only:
+            result = run_relationships.add_question_media(config_dir, str(run_dir), args.media)
+        elif args.update:
             result = run_relationships.update_question(
-                str(run_dir.parent.parent), str(run_dir), answer, args.expected_sha256)
+                config_dir, str(run_dir), answer, args.expected_sha256, media=args.media)
         else:
             result = run_relationships.publish_question(
-                str(run_dir.parent.parent), str(run_dir), answer,
-                repair=args.repair, ui_spec=ui_spec, title=args.title)
+                config_dir, str(run_dir), answer,
+                repair=args.repair, ui_spec=ui_spec, title=args.title, media=args.media)
     except (OSError, ValueError, TypeError,
             run_relationships.RelationshipStoreError) as exc:
         print("ERROR %s" % exc, file=sys.stderr)

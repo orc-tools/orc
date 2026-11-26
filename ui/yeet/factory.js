@@ -868,7 +868,64 @@ function stockRuin(kit, kind, spot = { slot: 0 }) {
   return group;
 }
 
-export const stock = { floor: stockFloor, hall: stockHall, station: stockStation, crate: stockCrate, carrier: stockCarrier, decor: stockDecor, ruin: stockRuin };
+// The advisor the main agent asks: a robed reader at a lectern in the
+// theme's colours, for a skin without one of its own. It faces +z with the
+// lectern before it; `page` is where the hall's pages land, `labelY` where
+// its label hangs, and `frame` turns its head and its book's pages while
+// `advisor.activity` (0 to 1) says it is reading.
+function stockAdvisor(kit) {
+  const group = new Group();
+  const robe = kit.mat('worker', { rough: 0.78 });
+  const trim = kit.mat('trim', { rough: 0.5, metal: 0.3 });
+  const wood = kit.mat('body', { rough: 0.85 });
+  const paper = kit.mat('#f3eee0', { rough: 0.9 });
+  group.add(kit.shadow(1.3, 1.1, 0.24));
+  const body = new Mesh(new ConeGeometry(0.42, 1.25, 8), robe);
+  body.position.set(0, 0.63, -0.18);
+  group.add(body);
+  const head = new Group();
+  head.position.set(0, 1.42, -0.16);
+  head.add(kit.sphere(0.24, kit.mat('trim', { rough: 0.6 }), [0, 0, 0], 12));
+  const hood = new Mesh(new ConeGeometry(0.3, 0.42, 8, 1, true), robe);
+  hood.position.y = 0.1;
+  head.add(hood);
+  const glass = kit.mat('glow', { emissive: 'glow', glow: 0.6, rough: 0.2 });
+  head.add(kit.box(0.09, 0.07, 0.03, glass, [-0.08, 0.0, 0.22]), kit.box(0.09, 0.07, 0.03, glass, [0.08, 0.0, 0.22]));
+  group.add(head);
+  // The lectern, and the book open on it.
+  group.add(kit.cylinder(0.07, 0.1, 0.9, wood, [0, 0.45, 0.38], 8));
+  group.add(kit.box(0.42, 0.06, 0.3, trim, [0, 0.03, 0.38]));
+  const desk = kit.box(0.62, 0.05, 0.42, wood, [0, 0.94, 0.42]);
+  desk.rotation.x = 0.42;
+  group.add(desk);
+  const leaf = new Group();
+  leaf.position.set(0, 0.99, 0.42);
+  leaf.rotation.x = 0.42;
+  leaf.add(kit.box(0.26, 0.012, 0.32, paper, [-0.14, 0, 0]), kit.box(0.26, 0.012, 0.32, paper, [0.14, 0, 0]));
+  const turning = new Group();
+  turning.add(kit.box(0.25, 0.01, 0.31, paper, [0.13, 0.008, 0]));
+  leaf.add(turning);
+  group.add(leaf);
+  const candle = kit.sphere(0.06, kit.basic('window', { additive: true }), [0.36, 1.12, 0.48], 8);
+  group.add(kit.cylinder(0.03, 0.03, 0.16, paper, [0.36, 1.02, 0.48], 6), candle);
+  group.userData = {
+    labelY: 2.15,
+    page: new Vector3(0, 1.08, 0.42),
+    frame(time, dt, advisor) {
+      const reading = advisor.activity;
+      head.rotation.x = 0.28 * reading;
+      head.rotation.y = Math.sin(time * 0.9) * 0.18 * reading;
+      turning.rotation.z = -Math.PI * smooth((time * 0.45) % 1) * reading;
+      candle.scale.setScalar(0.85 + Math.sin(time * 9) * 0.12);
+    },
+  };
+  return kit.shadows(group);
+}
+
+export const stock = {
+  floor: stockFloor, hall: stockHall, station: stockStation, crate: stockCrate, carrier: stockCarrier, decor: stockDecor,
+  ruin: stockRuin, advisor: stockAdvisor,
+};
 
 // ---------- the engine ----------
 
@@ -920,6 +977,18 @@ const ZOOM_NEAR = 0.4;
 const ZOOM_FAR = 1.5;
 const CLOUD_LIFT = 0.88;
 const CLOUD_HALL_LIFT = 1.05;
+// Where the advisor stands, beside the hall on its left and turned towards
+// it; a skin moves it with `layout.advisor`. It rises in over ADVISOR_ARRIVE
+// seconds, a page leaves the hall every PAGE_EVERY or so while it reads and
+// flies for PAGE_FLIGHT, its answer's light takes ADVISOR_LIGHT to reach the
+// hall, and it is gone ADVISOR_LEAVE after that.
+const ADVISOR_SPOT = { x: -4.4, z: -5.6, yaw: 0.6 };
+const ADVISOR_ARRIVE = 0.9;
+const ADVISOR_LIGHT = 1.2;
+const ADVISOR_LEAVE = 0.8;
+const PAGE_EVERY = 0.85;
+const PAGE_FLIGHT = 1.9;
+const PAGES_MAX = 10;
 // Pile spots beside the hall door: three across, two deep, then stacked.
 const pileSpot = index => {
   const layer = Math.floor(index / 6);
@@ -1243,6 +1312,10 @@ export function createFactory(container, skin = {}, options = {}) {
   let disposed = false;
   let carrierWay = null;
   let built = { worker: 0, subagent: 0 };
+  // The advisor while it stands on the floor, and the pages on their way to it.
+  const advisorSpot = { ...ADVISOR_SPOT, ...(skin.layout?.advisor || {}) };
+  let advisor = null;
+  const pages = [];
   const raycaster = new Raycaster();
   const pointerPoint = new Vector2();
 
@@ -1583,6 +1656,146 @@ export function createFactory(container, skin = {}, options = {}) {
     else if (agent.state === 'stopped') record.closedAt = at;
   }
 
+  // The advisor rises in beside the hall when the main agent asks it.
+  function summonAdvisor(initial) {
+    if (advisor) {
+      // Asked again before it had gone: it stays and reads on, and the
+      // answer's light still on its way goes out.
+      advisor.leaveAt = null;
+      advisor.left = false;
+      advisor.reading = true;
+      dropLight();
+      return;
+    }
+    const model = build('advisor')(kit);
+    const root = new Group();
+    root.position.set(advisorSpot.x, 0, advisorSpot.z);
+    root.rotation.y = advisorSpot.yaw ?? 0;
+    root.userData.agentId = 'advisor';
+    root.add(model);
+    crew.add(root);
+    const still = initial || reducedMotion;
+    advisor = {
+      root, model, reading: true, activity: still ? 1 : 0, arrivedAt: still ? -Infinity : now,
+      leaveAt: null, light: null, nextPage: now + 0.35,
+    };
+    if (still) return;
+    model.userData.react?.('arrive', advisor);
+    for (let index = 0; index < 5; index += 1) {
+      puff(root.position.clone().setY(0.3), { color: 'glow', size: 0.26, life: 1.1, rise: 0.6, spread: 0.9, opacity: 0.45 });
+    }
+  }
+
+  // Its answer goes back to the hall as a light, and then it leaves. An ask
+  // that came to nothing just ends.
+  function dismissAdvisor(initial, answered) {
+    if (!advisor || !advisor.reading) return;
+    advisor.reading = false;
+    if (initial || reducedMotion) {
+      removeAdvisor();
+      return;
+    }
+    advisor.model.userData.react?.(answered ? 'answer' : 'leave', advisor);
+    if (answered) {
+      const mesh = kit.sphere(0.17, kit.basic('glow', { additive: true }), [0, -10, 0], 12);
+      crew.add(mesh);
+      advisor.light = { start: now, mesh };
+    }
+    advisor.leaveAt = now + (answered ? ADVISOR_LIGHT : 0) + 0.25;
+  }
+
+  function dropLight() {
+    if (!advisor?.light) return;
+    crew.remove(advisor.light.mesh);
+    release(advisor.light.mesh);
+    advisor.light = null;
+  }
+
+  function removeAdvisor() {
+    if (!advisor) return;
+    dropLight();
+    crew.remove(advisor.root);
+    release(advisor.root);
+    advisor = null;
+  }
+
+  // Where the hall's pages leave from and the advisor's light comes home to.
+  const hallSide = () => new Vector3(HALL.x + advisorSpot.x * 0.34, 2.3 + (main.cloud ? CLOUD_HALL_LIFT : 0), HALL.z + 0.9);
+  const advisorDesk = () => advisor.root.localToWorld((advisor.model.userData.page || new Vector3(0, 1.1, 0.4)).clone());
+
+  function sendPage() {
+    let page = pages.find(entry => !entry.mesh.visible);
+    if (!page) {
+      if (pages.length >= PAGES_MAX) return;
+      const material = new MeshBasicMaterial({ color: kit.color(skin.pageColor || '#f6f1e4'), transparent: true, side: DoubleSide, depthWrite: false });
+      page = { mesh: new Mesh(new PlaneGeometry(0.2, 0.26), material) };
+      crew.add(page.mesh);
+      pages.push(page);
+    }
+    Object.assign(page, {
+      start: now, from: hallSide().add(new Vector3((Math.random() - 0.5) * 0.5, Math.random() * 0.3, 0)),
+      lift: 0.7 + Math.random() * 0.6, spin: new Vector3(4 + Math.random() * 4, 2 + Math.random() * 3, 3 + Math.random() * 4),
+    });
+    page.mesh.visible = true;
+  }
+
+  function animateAdvisor(dt) {
+    for (const page of pages) {
+      if (!page.mesh.visible) continue;
+      const t = (now - page.start) / PAGE_FLIGHT;
+      if (t >= 1 || t < 0 || !advisor) {
+        page.mesh.visible = false;
+        continue;
+      }
+      const u = smooth(t);
+      const to = advisorDesk();
+      page.mesh.position.lerpVectors(page.from, to, u);
+      page.mesh.position.y += Math.sin(u * Math.PI) * page.lift + Math.sin(now * 5 + page.spin.x) * 0.05 * (1 - u);
+      page.mesh.rotation.set(page.spin.x * t + 1.2, page.spin.y * t, Math.sin(now * page.spin.z) * 0.7);
+      page.mesh.scale.setScalar(1 - range(t, 0.82, 1) * 0.7);
+      page.mesh.material.opacity = Math.min(1, t * 8) * (1 - range(t, 0.86, 1));
+    }
+    if (!advisor) return;
+    const { root, model } = advisor;
+    advisor.activity += ((advisor.reading ? 1 : 0) - advisor.activity) * (1 - Math.exp(-dt * 3));
+    const arrive = advisor.arrivedAt === -Infinity ? 1 : range(now - advisor.arrivedAt, 0, ADVISOR_ARRIVE);
+    const leave = advisor.leaveAt === null ? 0 : range(now - advisor.leaveAt, 0, ADVISOR_LEAVE);
+    if (leave >= 1) {
+      removeAdvisor();
+      return;
+    }
+    root.scale.setScalar(Math.max(0.001, back(arrive, 1.2) * (1 - smooth(leave))));
+    if (!painter) root.position.y = (smooth(leave) - (1 - smooth(arrive))) * 0.5;
+    if (leave > 0 && !advisor.left) {
+      advisor.left = true;
+      for (let index = 0; index < 4; index += 1) {
+        puff(root.position.clone().setY(0.6), { size: 0.24, life: 1, rise: 0.8, spread: 0.7, opacity: 0.4 });
+      }
+    }
+    // With reduced motion it is posed once and then stands still.
+    if (!reducedMotion || !advisor.posed) model.userData.frame?.(now, dt, advisor);
+    advisor.posed = true;
+    if (advisor.reading && !reducedMotion && arrive >= 1 && now >= advisor.nextPage) {
+      sendPage();
+      advisor.nextPage = now + PAGE_EVERY * (0.7 + Math.random() * 0.6);
+    }
+    const light = advisor.light;
+    if (light) {
+      const t = range(now - light.start, 0, ADVISOR_LIGHT);
+      const from = advisorDesk();
+      const to = hallSide();
+      light.mesh.position.lerpVectors(from, to, smooth(t));
+      light.mesh.position.y += Math.sin(t * Math.PI) * 1.4;
+      light.mesh.scale.setScalar(1 + Math.sin(now * 14) * 0.12);
+      if (t >= 1) {
+        dropLight();
+        hallPulse = now;
+        hall.userData.react?.('advice', advisor);
+        puff(to, { color: 'glow', size: 0.2, life: 0.7, rise: 0.4, spread: 0.4, opacity: 0.6 });
+      }
+    }
+  }
+
   function setMain(agent) {
     main = agent || { state: 'idle' };
     if (!trip && main.state !== 'done' && restoreLights) {
@@ -1598,6 +1811,8 @@ export function createFactory(container, skin = {}, options = {}) {
 
   function apply(snapshot, initial) {
     setMain(snapshot.main);
+    if (snapshot.advisor?.state === 'reading') summonAdvisor(initial);
+    else dismissAdvisor(initial, snapshot.advisor?.asks?.at(-1)?.status === 'answered');
     const agents = Array.isArray(snapshot.agents) ? snapshot.agents : [];
     const byId = new Map(agents.map(agent => [agent.id, agent]));
     // An agent that is working again gets its station back.
@@ -1665,7 +1880,7 @@ export function createFactory(container, skin = {}, options = {}) {
   }
 
   const rootOf = id => {
-    const root = id === 'main' ? hall : stations.get(id)?.root;
+    const root = id === 'main' ? hall : id === 'advisor' ? advisor?.root : stations.get(id)?.root;
     return root?.visible ? root : null;
   };
 
@@ -1678,7 +1893,7 @@ export function createFactory(container, skin = {}, options = {}) {
     return true;
   }
 
-  const pickTargets = () => [hall, ...[...stations.values()].map(record => record.root)];
+  const pickTargets = () => [hall, ...(advisor ? [advisor.root] : []), ...[...stations.values()].map(record => record.root)];
 
   // Where the ray under a pointer crosses the level `height` above the ground.
   function levelAt(clientX, clientY, height, out) {
@@ -1881,7 +2096,9 @@ export function createFactory(container, skin = {}, options = {}) {
       return;
     }
     const floorBounds = framing(floor);
-    const { reach, front } = floorBounds;
+    const { front } = floorBounds;
+    // The advisor beside the hall stays in frame on a small floor.
+    const reach = Math.max(floorBounds.reach, advisor ? Math.abs(advisorSpot.x) - 1.2 : 0);
     const aspect = camera.aspect || 1.5;
     const slope = Math.tan((camera.fov * Math.PI) / 360);
     const backZ = HALL.z - 1.9;
@@ -2333,13 +2550,14 @@ export function createFactory(container, skin = {}, options = {}) {
       if (shownFinished) restoreLights = switchOffLights([hall, ground, decor, dock, weather?.object]);
     }
     animateEffects();
+    animateAdvisor(dt);
     const lit = rootOf(highlighted) || rootOf(focused);
     ring.visible = !!lit;
     if (lit) {
       ring.position.x = lit.position.x;
       ring.position.z = lit.position.z;
       ring.rotation.y = reducedMotion ? 0 : now * 0.6;
-      ring.scale.setScalar((lit === hall ? 2.85 : 1.02) * (1 + (reducedMotion ? 0 : Math.sin(now * 4) * 0.035)));
+      ring.scale.setScalar((lit === hall ? 2.85 : lit === advisor?.root ? 0.82 : 1.02) * (1 + (reducedMotion ? 0 : Math.sin(now * 4) * 0.035)));
     }
     if (!trip) {
       renderer.render(scene, camera);
@@ -2403,6 +2621,12 @@ export function createFactory(container, skin = {}, options = {}) {
     // shimmering with the cloud's per-frame hover bob.
     const result = [place('main', hall, (hall.userData.labelY ?? 3.9) + (main.cloud ? CLOUD_HALL_LIFT : 0),
       hall.userData.labelZ ?? 0.35, hall.userData.labelX ?? 0)];
+    if (advisor) {
+      const anchor = place('advisor', advisor.root, (advisor.model.userData.labelY ?? 2.2) * advisor.root.scale.y);
+      // Its label goes as it leaves.
+      anchor.hidden ||= !advisor.reading;
+      result.push(anchor);
+    }
     for (const [id, record] of stations) {
       const baseY = record.state === 'queued' ? record.model.userData.queuedLabelY ?? 1.45 : record.model.userData.labelY ?? 2;
       result.push(place(id, record.root, baseY + (record.cloud ? CLOUD_LIFT : 0)));
@@ -2431,7 +2655,9 @@ export function createFactory(container, skin = {}, options = {}) {
     // with a result its parent has not taken), done, failed, stopped or
     // unknown. `sent` counts the instructions handed to the agent so far,
     // `returned` sizes its result, and `endedAt` is when it closed, in
-    // milliseconds since the epoch.
+    // milliseconds since the epoch. `advisor` ({ state: 'reading' or 'idle',
+    // asks: [{ status }] }) brings the advisor in while it reads; when it
+    // stops, an `answered` last ask sends its light back to the hall.
     update(snapshot) {
       apply(snapshot || {}, !primed);
       primed = true;
@@ -2508,14 +2734,15 @@ export function createFactory(container, skin = {}, options = {}) {
       const left = crew;
       const leftMain = main;
       const own = [...stations.values(), ...leaving].map(record => record.lamp?.material)
-        .concat([...puffs, ...bits].map(entry => entry.mesh.material)).filter(Boolean);
+        .concat([...puffs, ...bits, ...pages].map(entry => entry.mesh.material)).filter(Boolean);
       crew = new Group();
       scene.add(crew);
       stations.clear();
       leaving.clear();
       retired.clear();
       gone.clear();
-      packets.length = deliveries.length = pile.length = puffs.length = bits.length = 0;
+      packets.length = deliveries.length = pile.length = puffs.length = bits.length = pages.length = 0;
+      advisor = null;
       floor = new Map();
       built = { worker: 0, subagent: 0 };
       waiting = pileCount = 0;

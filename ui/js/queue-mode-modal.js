@@ -1,13 +1,18 @@
 // orc-ui: "Turn on Queue mode" modal opened from Settings or Cmd+K so the user
 // can leave existing runs going or queue everything immediately.
 
-import { $, RUN_MODE_LABEL, announce, isQuestionRun, isReadOnlyRun, runs, runState, setPowerMode } from './core.js';
+import { $, RUN_MODE_LABEL, announce, isBuildRun, isQuestionRun, isReadOnlyRun, queueBuildsOnly, runs, runState, setPowerMode } from './core.js';
 import { refresh, syncSettingsPowerMode } from './activity.js';
 
 const SCOPES = ['new-only', 'all'];
 const ACTIVE_STATUSES = new Set(['running', 'awaiting-gate', 'escalated']);
 
-export function workingRunCount(runList = runs) {
+const SHIPPED_PHASES = ['ship', 'recap', 'present'];
+
+// The working runs Queue mode would take in: builds that have not reached
+// Ship, which it leaves to finish delivering, and with `buildsOnly` off the
+// rest too.
+export function workingRunCount(runList = runs, buildsOnly = queueBuildsOnly) {
   let count = 0;
   for (const run of Array.isArray(runList) ? runList : []) {
     const meta = run?.meta || {};
@@ -16,30 +21,32 @@ export function workingRunCount(runList = runs) {
         || isReadOnlyRun(meta) || isQuestionRun(meta, run.files || [])) {
       continue;
     }
+    if (isBuildRun(meta) ? SHIPPED_PHASES.includes(meta.phase) : buildsOnly) continue;
     const state = runState(meta, run.files || []);
     if (state.key === 'working' && !state.merging) count++;
   }
   return count;
 }
 
-export function queueModeScopeHints(workingCount) {
+export function queueModeScopeHints(workingCount, buildsOnly = queueBuildsOnly) {
+  const one = buildsOnly ? 'build' : 'run', many = `${one}s`;
   const n = Math.max(0, Number.isFinite(workingCount) ? Math.floor(workingCount) : 0);
   if (n >= 2) {
     const extra = n - 1;
     return {
-      newOnly: `Keep ${n} runs currently going. New runs wait in the queue behind them; you can still pause existing runs from their menu.`,
-      all: `Pause ${extra} extra working ${extra === 1 ? 'run' : 'runs'} now so only your top-priority run continues, and queue new runs behind it.`,
+      newOnly: `Keep ${n} ${many} currently going. New ${many} wait in the queue behind them; you can still pause existing ${many} from their menu.`,
+      all: `Pause ${extra} extra working ${extra === 1 ? one : many} now so only your top-priority ${one} continues, and queue new ${many} behind it.`,
     };
   }
   if (n === 1) {
     return {
-      newOnly: 'Keep 1 run currently going. New runs wait in the queue behind it; you can still pause existing runs from their menu.',
-      all: 'Keep your 1 working run going and queue other existing and new runs behind it in priority order.',
+      newOnly: `Keep 1 ${one} currently going. New ${many} wait in the queue behind it; you can still pause existing ${many} from their menu.`,
+      all: `Keep your 1 working ${one} going and queue other existing and new ${many} behind it in priority order.`,
     };
   }
   return {
-    newOnly: 'No runs are currently working. Existing runs stay exempt from Queue mode; new runs queue one at a time in priority order.',
-    all: 'No runs are currently working. Existing and new runs queue one at a time in priority order.',
+    newOnly: `No ${many} are currently working. Existing ${many} stay exempt from Queue mode; new ${many} queue one at a time in priority order.`,
+    all: `No ${many} are currently working. Existing and new ${many} queue one at a time in priority order.`,
   };
 }
 

@@ -212,10 +212,26 @@ export function powerModeOf(ui) {
 // ui.powerMode as the last /api/runs reply named it.
 export let powerMode = 'standard';
 export function setPowerMode(value) {
+  const before = powerMode;
   powerMode = powerModeOf({ powerMode: value });
+  // A 304 run list brings no `orc:runs`, yet its header can name a new mode.
+  if (powerMode !== before) globalThis.document?.dispatchEvent(new CustomEvent('orc:power-mode'));
   const indicator = $('focus-indicator');
   if (indicator) indicator.hidden = powerMode !== 'low';
 }
+// ui.queueBuildsOnly: whether Queue mode queues only builds. On unless saved off.
+export const queueBuildsOnlyOf = ui => ui?.queueBuildsOnly !== false;
+export let queueBuildsOnly = true;
+export function setQueueBuildsOnly(value) { queueBuildsOnly = value; }
+// Whether Queue mode is on, so a build waits for its turn.
+export const queueMode = () => powerMode === 'low';
+// What the button that builds a plan says: what it opens, one run or one per
+// step, each with its PR. In Queue mode the runs join the queue rather than
+// starting at once.
+export const startWorkLabel = (count = 1) => {
+  const verb = queueMode() ? 'Queue' : 'Start';
+  return count > 1 ? `${verb} ${count} runs · ${count} PRs` : `${verb} run`;
+};
 // Requested and rendered ownership deliberately differ while an async artifact
 // is loading. Shell scroll events always belong to rendered content; the load
 // identity prevents superseded work from painting or saving against a new route.
@@ -630,6 +646,20 @@ function versionedRunUrl(url) {
   } catch { return url; }
 }
 
+// A plan's mockups/<label>.html or an answer's media/<label>.html link reads
+// "Open in browser" with an arrow, whatever its text; run it before
+// resolveRelativeUrls, which rewrites the href.
+export function markMockupLinks(links, folder) {
+  const mockup = new RegExp(`^(?:\\./)?${folder}/[^?#/]+\\.html(?:[?#]|$)`, 'i');
+  links.forEach(link => {
+    if (!mockup.test(link.getAttribute('href'))) return;
+    link.classList.add('mockup-link');
+    link.innerHTML = 'Open in browser<svg aria-hidden="true" width="13" height="13" viewBox="0 0 16 16" '
+      + 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+      + '<path d="M4 12l8-8M5 4h7v7"/></svg>';
+  });
+}
+
 export function resolveRelativeUrls(container, id, key) {
   container.querySelectorAll('img[src], video[src], source[src], a[href]').forEach(el => {
     const attr = el.hasAttribute('src') ? 'src' : 'href';
@@ -866,8 +896,8 @@ export function runTimesHtml(run, now = new Date()) {
     .map(([label, date], index, all) => `<span class="run-time">${label} <time datetime="${date.toISOString()}" title="${absoluteStamp(date)}">${esc(relativeStamp(date, now).replace(/^(Just now|Yesterday)/, word => word.toLowerCase()))}</time>${index < all.length - 1 ? '<span class="run-time-sep" aria-hidden="true">·</span>' : ''}</span>`)
     .join('');
 }
-import { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun } from './run-presentation.js';
-export { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun };
+import { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isBuildRun, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun } from './run-presentation.js';
+export { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isBuildRun, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun };
 
 // pushed and live happen in that order, so a run shows only the furthest one
 // it has reached; merged is the Done state's job, and live waits until the run

@@ -400,17 +400,23 @@ def manifest(root):
         package_file(root, str(relative_path(target) / 'SKILL.md'))
     external = contributions.get('externalService')
     if external is not None:
-        if not isinstance(external, dict) or external.keys() != {'files', 'pidFiles', 'stopCommand'}:
-            raise PluginError('External service requires files, pidFiles and stopCommand')
+        required = {'files', 'pidFiles', 'stopCommand'}
+        if not isinstance(external, dict) or not required <= external.keys() <= required | {'startCommand'}:
+            raise PluginError('External service requires files, pidFiles and stopCommand, and may add startCommand')
         for key in ('files', 'pidFiles'):
             if not isinstance(external[key], list):
                 raise PluginError('External service markers must be lists')
             for path in external[key]:
                 relative_path(path)
-        command = external['stopCommand']
-        if not isinstance(command, list) or not command or not all(isinstance(arg, str) and arg for arg in command):
-            raise PluginError('External service requires an explicit stop command')
-        package_file(root, command[0])
+        # startCommand is optional: an upgrade that stopped the service runs it to start the new copy.
+        for key in ('stopCommand', 'startCommand'):
+            if key not in external:
+                continue
+            command = external[key]
+            if not isinstance(command, list) or not command or not all(isinstance(arg, str) and arg for arg in command):
+                raise PluginError('External service requires an explicit ' + ('stop' if key == 'stopCommand' else 'start')
+                                  + ' command')
+            package_file(root, command[0])
     if 'qaBrowser' in contributions:
         _validate_qa_browser(root, contributions['qaBrowser'])
     if 'qaSetupFixes' in contributions:
@@ -1622,6 +1628,60 @@ class Registry:
             if path.is_symlink() and PurePosixPath(os.readlink(path)).parts[-2:] == ('bin', name):
                 found[path] = Path(os.readlink(path))
         return found
+
+    SERVICE_STOP_SECONDS = 30
+
+    def refresh_from_release(self, run=subprocess.run, sleep=time.sleep):
+        """Updates each pinned package the catalog policy says follows this
+        release to the release's own copy, so upgrading Orc carries its fixes.
+        A running external service is stopped with the old copy's stopCommand
+        and started again with the new copy's startCommand. Git and linked
+        installs keep their source. Returns one line per package it touched."""
+        sources = self._policy.release_sources(self) if self._policy and hasattr(self._policy, 'release_sources') else {}
+        lines = []
+        for identifier, source in sorted(sources.items()):
+            try:
+                line = self._refresh_package(identifier, Path(source), run, sleep)
+            except (PluginError, OSError, subprocess.SubprocessError) as error:
+                line = '%s did not update: %s' % (identifier, error)
+            if line:
+                lines.append(line)
+        return lines
+
+    def _refresh_package(self, identifier, source, run, sleep):
+        record = self._state()['installed'].get(identifier)
+        if not record or record.get('linked') or record.get('sourceRevision') or digest(source) == record['digest']:
+            return None
+        name = manifest(source).get('name') or identifier
+        running = self.external_service_pending(record)
+        if running and not record['enabled']:
+            return None  # Mid-disable: Settings is waiting on the user to stop it.
+        if running:
+            self._service_command(record, 'stopCommand', run)
+            deadline = time.monotonic() + self.SERVICE_STOP_SECONDS
+            while self.external_service_pending(record):
+                if time.monotonic() >= deadline:
+                    raise PluginError('its service did not stop. ' + self.recovery_message(record))
+                sleep(0.25)
+        self.install(source, enable=record['enabled'], replace_running=True)
+        if not running:
+            return name + ' updated to this release'
+        if self._service_command(self._state()['installed'][identifier], 'startCommand', run):
+            return name + ' updated to this release; its service restarted'
+        return name + ' updated to this release; its service is stopped, so start it again'
+
+    def _service_command(self, record, key, run):
+        """Runs the record's externalService ``key`` command from its pinned copy;
+        False when the package declares none."""
+        command = record['manifest'].get('contributes', {}).get('externalService', {}).get(key)
+        if not command:
+            return False
+        root = self._root(record, pinned=True)
+        done = run([str(root / command[0]), *command[1:]], cwd=root, capture_output=True, text=True, timeout=120)
+        if done.returncode:
+            last = [line for line in (done.stderr or done.stdout or '').splitlines() if line.strip()][-1:]
+            raise PluginError('%s exited %d%s' % (shlex.join(command), done.returncode, ': ' + last[0] if last else ''))
+        return True
 
     def install_git(self, source, subdir, ref='HEAD', **kwargs):
         parsed = urlsplit(source)

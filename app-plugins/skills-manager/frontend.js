@@ -83,6 +83,9 @@ function resetDetailState() {
   }
 }
 
+// Posts that can change which skills the chat's `/` menu offers.
+const SKILL_WRITE = /^\/api\/skills-manager\/(?:install|create|skills\/.+)$/;
+
 async function api(url, body) {
   let response = null;
   try {
@@ -96,6 +99,7 @@ async function api(url, body) {
         });
   } catch {}
   const data = response ? await response.json().catch(() => ({})) : {};
+  if (response?.ok && body !== undefined && SKILL_WRITE.test(url)) window.dispatchEvent(new Event('orc-skills-changed'));
   return {
     ok: Boolean(response?.ok),
     status: response?.status || 0,
@@ -105,6 +109,17 @@ async function api(url, body) {
 
 function setStatus(section, text, tone = '') {
   state.sectionStatus[section] = { text, tone };
+}
+
+// The pressed button shows that work is running, so the step itself is only
+// spoken; the last result goes so it cannot read as this one's.
+function startBusy(key, section, working) {
+  state.busyKey = key;
+  if (working) {
+    setStatus(section, '');
+    announce(working);
+  }
+  render();
 }
 
 function setDialogStatus(id, text, tone = '') {
@@ -399,9 +414,7 @@ async function submitQuickInstall(sourceOverride, selectedSubdirs) {
     return;
   }
   const { scope, projects } = parseQuickScopeValue(state.quickScope);
-  state.busyKey = 'install';
-  setStatus('install', 'Fetching and syncing skill…');
-  render();
+  startBusy('install', 'install', 'Fetching and syncing skill…');
 
   const res = await api('/api/skills-manager/install', {
     source: raw,
@@ -492,9 +505,7 @@ async function submitNewSkill(form) {
 
 async function runListAction({ busy, url, body = {}, working, failed, done }) {
   if (state.busyKey) return;
-  state.busyKey = busy;
-  if (working) setStatus('list', working);
-  render();
+  startBusy(busy, 'list', working);
   const res = await api(url, body);
   state.busyKey = '';
   if (!res.ok) {
@@ -561,9 +572,7 @@ function runEntryUpdate(slug) {
 async function runCheckUpdates(slug = undefined) {
   if (state.busyKey) return;
   const section = slug ? 'source' : 'list';
-  state.busyKey = slug ? 'detail-update' : 'check-updates';
-  setStatus(section, 'Checking upstream sources for updates…');
-  render();
+  startBusy('check-updates', section, 'Checking upstream sources for updates…');
   const res = await api('/api/skills-manager/check-updates', slug ? { slug } : {});
   state.busyKey = '';
   if (!res.ok) {
@@ -582,9 +591,7 @@ async function runCheckUpdates(slug = undefined) {
 async function runDetailPreferSync(preferredSource) {
   if (state.busyKey || !state.detailSlug) return;
   const slug = state.detailSlug;
-  state.busyKey = 'resolve';
-  setStatus('detail', 'Syncing across harnesses…');
-  render();
+  startBusy('resolve', 'detail', 'Syncing across harnesses…');
   const res = await api(`/api/skills-manager/skills/${encodeURIComponent(slug)}/sync`, { preferredSource });
   state.busyKey = '';
   if (!res.ok) {
@@ -600,9 +607,7 @@ async function runDetailPreferSync(preferredSource) {
 async function runDetailUpdate() {
   if (state.busyKey || !state.detailSlug) return;
   const slug = state.detailSlug;
-  state.busyKey = 'detail-update';
-  setStatus('detail', 'Updating from upstream…');
-  render();
+  startBusy('detail-update', 'detail', 'Updating from upstream…');
   const res = await api(`/api/skills-manager/skills/${encodeURIComponent(slug)}/update`, {});
   state.busyKey = '';
   if (!res.ok) {
@@ -618,9 +623,7 @@ async function runDetailUpdate() {
 async function saveDetail({ busy, path, body, section, working, failed, done }) {
   if (state.busyKey || !state.detailSlug) return false;
   const slug = state.detailSlug;
-  state.busyKey = busy;
-  if (working) setStatus(section, working);
-  render();
+  startBusy(busy, section, working);
   const res = await api(`/api/skills-manager/skills/${encodeURIComponent(slug)}/${path}`, body);
   state.busyKey = '';
   if (slug !== state.detailSlug) return false;

@@ -123,13 +123,15 @@ def catalog(meta):
     if harness == "codex":
         if not cwd:
             return {"skills": [], "error": "The chat's project is unavailable."}
+        # A running Codex keeps its first list until it is told to read the disk again.
+        params = {"cwds": [cwd], "forceReload": True}
         try:
             try:
                 with codex_rpc.Client() as client:
-                    result = client.call("skills/list", {"cwds": [cwd]})
+                    result = client.call("skills/list", params)
             except (FileNotFoundError, ConnectionRefusedError):
                 with codex_rpc.StdioClient(cwd) as client:
-                    result = client.call("skills/list", {"cwds": [cwd]})
+                    result = client.call("skills/list", params)
             found = {}
             for group in result.get("data", []):
                 if group.get("cwd") != cwd:

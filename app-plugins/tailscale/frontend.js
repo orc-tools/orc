@@ -1,5 +1,5 @@
 // The Tailscale plugin: its setup page in Settings, phone access with phone
-// pairing, and Share plan on the plan page. Everything here talks to the
+// pairing, and Share at the top right of the plan page. Everything here talks to the
 // plugin's backend under /api/tailscale, which answers only Orc on this Mac.
 import { esc } from '/js/core.js';
 import { extendPlanTools } from '/js/plan-page.js';
@@ -272,8 +272,8 @@ function forgetShares() {
   document.querySelectorAll('[data-ts-share-card]').forEach(node => node.remove());
 }
 
-// The card under the buttons. Messages are one plain line; only a live share,
-// with its link and Stop sharing, gets a box.
+// The card at the foot of the steps panel. Messages are one plain line; only
+// a live share, with its link and Stop sharing, gets a box.
 function shareCard(runId, entry) {
   if (entry.error) {
     return { plain: true, html: `<p class="ts-share-error" role="alert">${esc(entry.error)}</p>` };
@@ -294,8 +294,9 @@ function shareCard(runId, entry) {
       <button type="button" class="ts-share-stop" data-ts-share-stop="${esc(runId)}">Stop sharing</button></p>` };
 }
 
-function paintShare(runId, tools, work) {
-  tools.querySelectorAll('[data-ts-share-button]').forEach(node => node.remove());
+// Share sits at the top right of the plan page, beside the plan's title.
+function paintShare(runId, actions, work) {
+  actions.querySelectorAll('[data-ts-share-button]').forEach(node => node.remove());
   work.querySelectorAll('[data-ts-share-card]').forEach(node => node.remove());
   const entry = shares.get(runId) || {};
   // Only Orc on this Mac can share; anywhere else the backend says no.
@@ -310,8 +311,8 @@ function paintShare(runId, tools, work) {
   if (shared) button.dataset.shared = '';
   if (entry.busy) button.setAttribute('disabled', '');
   button.setAttribute('aria-label', shared ? 'Share this plan again, updating the copy at the same link' : 'Share a read-only copy of this plan by link');
-  button.innerHTML = `${SHARE_SVG}<span>${entry.busy ? 'Sharing…' : shared ? 'Share again' : 'Share plan'}</span>`;
-  tools.append(button);
+  button.innerHTML = `${SHARE_SVG}<span>${entry.busy ? 'Sharing…' : shared ? 'Share again' : 'Share'}</span>`;
+  actions.append(button);
   const shown = shareCard(runId, entry);
   if (!shown) return;
   const card = document.createElement('div');
@@ -322,9 +323,9 @@ function paintShare(runId, tools, work) {
   work.append(card);
 }
 
-function renderShare({ runId, layout, tools, work }) {
+function renderShare({ runId, layout, actions, work }) {
   if (layout !== 'page' || window.ORC_INSTANCE?.remote) return;
-  paintShare(runId, tools, work);
+  paintShare(runId, actions, work);
   const entry = shares.get(runId);
   if (entry?.busy || (entry?.at && Date.now() - entry.at < SHARE_TTL_MS)) return;
   shares.set(runId, { ...entry, at: Date.now() });
@@ -337,13 +338,14 @@ function renderShare({ runId, layout, tools, work }) {
       if (response.ok) shares.set(runId, { ...shares.get(runId), state: await response.json(), error: null, at: Date.now() });
     })
     .catch(() => {})
-    .finally(() => { if (tools.isConnected) paintShare(runId, tools, work); });
+    .finally(() => { if (actions.isConnected) paintShare(runId, actions, work); });
 }
 
 async function shareAction(runId, action, holder) {
-  const tools = holder.closest('.plan-work')?.querySelector('.plan-tools');
-  const work = holder.closest('.plan-work');
-  const repaint = () => { if (tools?.isConnected) paintShare(runId, tools, work); };
+  const layout = holder.closest('.plan-layout');
+  const actions = layout?.querySelector('.plan-actions');
+  const work = layout?.querySelector('.plan-work');
+  const repaint = () => { if (actions?.isConnected && work) paintShare(runId, actions, work); };
   shares.set(runId, { ...shares.get(runId), busy: true, error: null, offered: true });
   repaint();
   try {
@@ -361,14 +363,14 @@ async function shareAction(runId, action, holder) {
     shares.set(runId, { state, offered: true, busy: false, error: off ? null : error.message, at: off ? Date.now() : 0 });
   }
   repaint();
-  work?.querySelector('[data-ts-share-card] .ts-share-url, [data-ts-share-button]')?.focus?.();
+  (work?.querySelector('[data-ts-share-card] .ts-share-url') || actions?.querySelector('[data-ts-share-button]'))?.focus?.();
 }
 
 function onPlanClick(event) {
   const share = event.target.closest?.('[data-ts-share-button]');
   if (share && !share.hasAttribute('disabled')) {
     const again = share.hasAttribute('data-shared');
-    trackUsage('tailscale.share', again ? 'Plan › Share again' : 'Plan › Share plan');
+    trackUsage('tailscale.share', again ? 'Plan › Share again' : 'Plan › Share');
     shareAction(share.dataset.tsShareButton, 'share', share);
     return;
   }

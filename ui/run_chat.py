@@ -107,6 +107,8 @@ GATE_ANSWER_LINE = re.compile(r"(\d+)\. (.*?)\?: (.*)\Z", re.S)
 CLARIFICATION_ANSWERS = re.compile(
     r"Clarification review \(([A-Za-z0-9][A-Za-z0-9._-]{0,120})\):\nIntent: answer clarification\n"
     r"(.*?)(?:\nAnswer manifest: \S+)?\Z", re.S)
+# What the agent is sent when a paused run takes its next turn.
+RESUME_NOTE = "[Orc] This run has resumed. Continue where you left off."
 CHAT_SUBMISSION = re.compile(r"\nChat submission: ([0-9a-f]{32})"
                             r"(?=\nAnswer manifest: clarification-review/manifests/(clarification-[\w.-]+)\.json\Z)")
 EXIT_CODE = re.compile(r"\AExit code (\d+)")
@@ -278,6 +280,14 @@ def prompt_file_body(text):
     return "".join(lines[closing + 1:]).strip() or None
 
 
+def split_resume_note(text):
+    """The message without the note Orc resumes a run with, and the item field
+    that says Orc sent it. Queued messages follow the note in the same prompt."""
+    if text != RESUME_NOTE and not text.startswith(RESUME_NOTE + "\n\n"):
+        return text, {}
+    return text[len(RESUME_NOTE):].strip(), {"resumed": RESUME_NOTE}
+
+
 def chat_submission(text):
     if text.startswith("Clarification review (") and (match := CHAT_SUBMISSION.search(text)):
         return text[:match.start()] + text[match.end():], {
@@ -298,9 +308,11 @@ def queued_view(items):
         match = isinstance(text, str) and re.fullmatch(
             r"\s*[/$]orc(?::run)?\s+(--answer-follow-up\s.+)", text, re.S)
         text = unwrap_launch(match.group(1)) if match else text
-        text, source = unwrap_forwarded(text or "")
+        text, resumed = split_resume_note(text or "")
+        text, source = unwrap_forwarded(text)
         text, submission = chat_submission(text)
-        view.append(dict(item, text=text, **submission, **({"forwardedFrom": source} if source else {})))
+        view.append(dict(item, text=text, **submission, **resumed,
+                         **({"forwardedFrom": source} if source else {})))
     return view
 
 
@@ -425,6 +437,15 @@ def sent_note(command):
     return {"kind": kind, "to": to, "text": " ".join(loose)}
 
 
+ADVISOR_STATUS = {"reading": "running", "answered": "done", "failed": "error", "dropped": "unanswered"}
+
+
+def advisor_step(ask):
+    """A Chat step's fields for one advisor ask (run_advisor.AdvisorLog.entry)."""
+    return {"status": ADVISOR_STATUS.get(ask["status"], "running"), "endedAt": ask["endedAt"],
+            "advisor": {key: ask[key] for key in ("model", "durationMs", "errorText") if ask.get(key) is not None}}
+
+
 def describe_claude_tool(name, data, cwd):
     """(category, title, detail, extra) for one Claude tool call."""
     data = data if isinstance(data, dict) else {}
@@ -484,6 +505,8 @@ def describe_claude_tool(name, data, cwd):
         title = questions[0] if questions else "Asked a question"
         detail = "\n".join(questions[1:]) or None
         return "question", clip(title, 400), clip(detail, DETAIL_LIMIT) if detail else None, extra
+    if name == "advisor":
+        return "advisor", "the advisor", None, extra
     if name == "ExitPlanMode":
         return "plan", "Proposed a plan", clip(data.get("plan") or "", PLAN_LIMIT) or None, extra
     if name == "Skill":
@@ -636,6 +659,7 @@ class Reader:
                                 self._codex_record(record)
                             else:
                                 self._claude_record(record)
+                                self._claude_advisor()
                         except Exception:  # noqa: BLE001 - a record shaped in a way the reader does not know
                             self._unreadable(record)
                 # Only a spent budget means more is waiting. A half-written last
@@ -721,6 +745,9 @@ class Reader:
                 self._add(item)
             elif block_type in ("tool_use", "server_tool_use") and block.get("id"):
                 name = block.get("name") or "tool"
+                if name == "advisor" and self.summary.advisor.canonical(block["id"]) != block["id"]:
+                    # Claude Code dropped an ask and made it again: one step.
+                    continue
                 category, title, detail, extra = describe_claude_tool(
                     name, block.get("input"), self.cwd)
                 item = {"id": "tool:" + block["id"], "kind": "tool", "at": at,
@@ -731,6 +758,16 @@ class Reader:
                 item.update(extra)
                 self._add(item)
                 self._remember_mcp_call(block["id"], name, block.get("input"), at)
+
+    def _claude_advisor(self):
+        """Settle each advisor step the last record changed. Its answer
+        comes back inside the assistant's own message, not as a tool result."""
+        log = self.summary.advisor
+        for ask_id in sorted(log.changed):
+            item = self.index.get("tool:" + ask_id)
+            if item is not None:
+                self._touch(item, **advisor_step(log.entry(ask_id)))
+        log.changed.clear()
 
     def _remember_mcp_call(self, tool_id, name, arguments, at):
         if not name.startswith("mcp__") or not isinstance(arguments, dict):
@@ -853,10 +890,14 @@ class Reader:
             self._add({"id": uid, "kind": "notice", "tone": "info", "at": at,
                        "text": "Message from another agent" + (" (%s)" % sender if sender else ""),
                        "detail": clip(text, DETAIL_LIMIT)})
-        elif self._note_item(uid, at, text):
-            self._add(self._note_item(uid, at, text, steer=True))
         else:
+            text, resumed = split_resume_note(text)
+            note = self._note_item(uid, at, text, steer=True, **resumed)
+            if note:
+                self._add(note)
+                return
             item = user_message(uid, at, text, steer=True)
+            item.update(resumed)
             if origin.get("kind") not in (None, "human"):
                 item["source"] = origin["kind"]
             self._add(item)
@@ -892,7 +933,8 @@ class Reader:
                          for key in ("id", "kind", "from", "label", "question")}, **extra}
 
     def _user_prompt(self, uid, at, text, command, images, origin):
-        note = self._note_item(uid, at, text)
+        text, resumed = split_resume_note(text or "")
+        note = self._note_item(uid, at, text, **resumed)
         if note:
             self.last_turn_start = self._add(note)
             return
@@ -905,6 +947,7 @@ class Reader:
             command = None
         text, forwarded = unwrap_forwarded(text)
         item = user_message(uid, at, text, command=command)
+        item.update(resumed)
         if forwarded:
             item["forwardedFrom"] = forwarded
         if images:
@@ -1694,11 +1737,15 @@ def effective_effort(meta):
     return _launch_effort(meta)
 
 
+def _active(meta):
+    """Whether a run's agent may still be at work: a settled run's is gone."""
+    return meta.get("status") not in ("complete", "cancelled", "merged", "merged-to-parent")
+
+
 def _subagents(meta, harness, path, reader):
     """The subagents ``reader``'s transcript started. A settled run's agent is
     gone, so none of them still counts as running."""
-    return run_subagents.snapshot(harness, path, reader.summary, summary_reader, locate,
-        active=meta.get("status") not in ("complete", "cancelled", "merged", "merged-to-parent"))
+    return run_subagents.snapshot(harness, path, reader.summary, summary_reader, locate, active=_active(meta))
 
 
 def crew(meta):
@@ -1707,12 +1754,15 @@ def crew(meta):
     chat items."""
     harness, path = session_transcript(meta)
     if path is None:
-        return {"harness": harness, "model": None, "effort": _effort(meta), "subagents": [], "more": False}
+        return {"harness": harness, "model": None, "effort": _effort(meta), "subagents": [],
+                "advisor": None, "more": False}
     reader = summary_reader(harness, path)
     with reader.lock:
         reader.poll()
+        advisor = reader.summary.advisor
         return {"harness": harness, "model": reader.summary.model, "effort": _effort(meta, reader),
-                "subagents": _subagents(meta, harness, path, reader), "more": reader.behind}
+                "subagents": _subagents(meta, harness, path, reader),
+                "advisor": advisor.snapshot(active=_active(meta)) if advisor else None, "more": reader.behind}
 
 
 def waterfall(meta, build, live=False, now=None, workers=()):

@@ -6,7 +6,7 @@
 
 import { $, announce, esc, labelMenuTrigger, showToast } from './core.js';
 import { pluginStatuses } from './app-plugins.js';
-import { cliCompatStatuses } from './cli-compat.js';
+import { cliCompatStatuses, paintCliCompatChecked } from './cli-compat.js';
 import { desktopUpdateStatuses } from './desktop-update.js';
 import { leaveForLaptop, resetLaptopSwitch } from './laptop-switch.js';
 
@@ -358,12 +358,15 @@ function linkLaptopsHtml(cards) {
   }).join('');
 }
 
-// Re-rendering on every poll would drop focus from a button mid-click.
+// Re-rendering on every poll would drop focus from a button mid-click, and a
+// repaint puts it back on the same control.
 function linkPaint(element, html) {
-  if (element && element.dataset.html !== html) {
-    element.innerHTML = html;
-    element.dataset.html = html;
-  }
+  if (!element || element.dataset.html === html) return;
+  const focused = element.contains(document.activeElement) ? document.activeElement : null;
+  const key = focused && [...focused.attributes].find(attribute => attribute.name.startsWith('data-'));
+  element.innerHTML = html;
+  element.dataset.html = html;
+  if (key) element.querySelector(`[${key.name}="${CSS.escape(key.value)}"]`)?.focus();
 }
 
 function linkRenderVersionWarning() {
@@ -381,6 +384,7 @@ function linkRenderVersionWarning() {
   warning.setAttribute('aria-label', shown.label);
   $('orc-versions-title').textContent = shown.title;
   linkPaint($('orc-versions-body'), linkMachinesHtml(shown.machines, shown.contributions));
+  paintCliCompatChecked();
 }
 
 function linkVersionsOpen(open) {

@@ -227,6 +227,36 @@
   padding-top: 12px; margin-top: 2px;
   border-top: 1px solid color-mix(in srgb, var(--cp-edge) 65%, transparent);
 }
+/* Git & delivery defaults: Ship action, Push to a PR and Branch prefix, each
+   a group of its own split by a hairline. */
+.ship-settings { gap: 14px; }
+.ship-settings-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ship-settings-group + .ship-settings-group {
+  padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--cp-edge) 65%, transparent);
+}
+.ship-settings-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--heading); line-height: 1.4; }
+.ship-settings-group > .settings-field { max-width: none; }
+.ship-overrides { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-strong); }
+.ship-override, .ship-overrides-more {
+  display: inline-flex; gap: 6px; max-width: 100%; padding: 2px 10px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--chip);
+  color: var(--heading); font: inherit; text-decoration: none; cursor: var(--orc-cursor-pointer, pointer);
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.ship-override span { color: var(--muted-strong); white-space: nowrap; }
+.ship-override[hidden] { display: none; }
+.ship-overrides-more { background: transparent; color: var(--muted-strong); }
+.ship-override:hover, .ship-overrides-more:hover { border-color: var(--accent); background: var(--orc-button-hover-chip); }
+.ship-override:focus-visible, .ship-overrides-more:focus-visible { outline: var(--orc-focus-ring); outline-offset: var(--orc-focus-offset); }
+@media (pointer: coarse) { .ship-override, .ship-overrides-more { min-height: 32px; align-items: center; } }
+.ship-branch-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); align-items: center; gap: 12px;
+}
+.ship-branch-row > code {
+  justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 5px; border-radius: 4px; background: var(--code);
+  font-size: 11.5px; color: var(--muted-strong);
+}
 /* Live dev server (project Runs & workspace): fields nest under the switch. */
 .proj-dev-server[hidden], .proj-dev-server-fields[hidden], .proj-suggest[hidden] { display: none; }
 .proj-dev-server-fields {
@@ -680,6 +710,8 @@
 .proj-verify .settings-field textarea[aria-invalid="true"] { border-color: var(--red); }
 .proj-verify-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .proj-verify :is(.proj-verify-steps, .proj-verify-change, #proj-verify-offer, .settings-hint, .settings-note, .proj-verify-more)[hidden] { display: none; }
+.settings-queue-builds { display: flex; flex-direction: column; gap: 10px; }
+.settings-queue-builds[hidden] { display: none; }
 .settings-power-hints { padding-left: 18px; display: grid; gap: 2px; }
 .settings-power-hints strong { color: var(--text); font-weight: 600; }
 .settings-hint code {
@@ -2193,21 +2225,24 @@
   }
 }
 
-/* Instructions: Main copy editor beside the Accounts list as two stretched
-   Settings modules. Nothing a result says pushes the page around: each module
+/* Instructions: what the page is for, then the Main copy editor beside the
+   Accounts list as two stretched Settings modules. Nothing a result says pushes the page around: each module
    has one status line of fixed height, a finished sync stands where its button
    stood, and the rows it wrote say so themselves. */
 .settings-instructions {
   --ins-mono: var(--orc-font-mono, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
   flex: 1 0 auto; display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
-  gap: 16px; align-items: stretch; max-width: 1400px; width: 100%;
+  grid-template-rows: auto 1fr; gap: 16px; align-items: stretch; max-width: 1400px; width: 100%;
 }
 .settings-instructions[hidden] { display: none; }
 .settings-instructions > .settings-card { display: flex; flex-direction: column; min-width: 0; }
 .settings-instructions .settings-fieldset { flex: 1 0 auto; min-width: 0; padding: 12px 16px 16px; gap: 8px; }
 .settings-instructions legend.settings-label:focus { outline: none; }
-.settings-instructions > .ins-quiet,
-.settings-instructions > orc-callout { grid-column: 1 / -1; }
+.settings-instructions > :is(.ins-intro, .ins-quiet, orc-callout) { grid-column: 1 / -1; align-self: start; }
+.ins-intro { max-width: 99ch; padding: 0 2px 6px; color: var(--muted-strong); font-size: 13px; line-height: 1.55; }
+.ins-intro p { margin: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+.ins-intro p + p { margin-top: 4px; }
+.ins-intro code { font-family: var(--ins-mono); font-size: 12px; background: none; padding: 0; white-space: nowrap; }
 .ins-quiet { margin: 0; color: var(--muted-strong); font-size: 13px; line-height: 1.5; }
 .settings-instructions > .ins-quiet { padding: 16px 0; }
 .ins-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -2239,7 +2274,7 @@
 .ins-ask { color: var(--heading); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 /* The main copy editor */
 .ins-editor {
-  flex: 1 1 auto; box-sizing: border-box; width: 100%; min-height: 380px; margin: 0; padding: 14px 16px;
+  flex: 1 1 auto; box-sizing: border-box; width: 100%; min-height: 320px; margin: 0; padding: 14px 16px;
   resize: none; color: var(--text); background: var(--code, var(--panel));
   border: 1px solid var(--border); border-radius: 8px;
   font-family: var(--ins-mono); font-size: 12.5px; line-height: 1.6; tab-size: 2;
@@ -2290,7 +2325,7 @@
 .ins-diff .ins-add .ins-mark { color: var(--green-text); }
 .ins-diff .ins-fold { display: block; padding: 2px 12px; color: var(--muted-strong); font-family: inherit; font-style: italic; }
 @container settings (max-width: 780px) {
-  .settings-instructions { grid-template-columns: minmax(0, 1fr); flex: none; }
+  .settings-instructions { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; flex: none; }
   .settings-instructions .settings-fieldset { flex: none; }
   .ins-editor { flex: none; height: min(55vh, 520px); min-height: 300px; }
 }

@@ -14,10 +14,12 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ui'))
 from project_trust import ProjectTrustError as InitError, atomic_write_json, read_config, trust_project
+import config_guard
 import project_settings
+import project_setup
 
 
-SETUP_VERSION = 1
+SETUP_VERSION = project_setup.SETUP_VERSION
 IGNORE_FILE = ".DS_Store\n.env\n.env.*\n!.env.example\n!.env.sample\n*.log\n"
 # Shared agent context (AGENTS.md and CLAUDE.md) stays committed; only
 # per-developer, generated, and secret-bearing agent files are ignored.
@@ -399,12 +401,15 @@ def save_configuration(
     elif interactive and not use_defaults:
         entry = updated_settings(target, entry, current_answers(config, target, entry))
         reconfigured = True
-    # Before the first project lands, so a fresh install leads with Open PR.
+    # Before the first project lands, so it uses Open PR unless the user chose another.
     project_settings.pin_default_ship_action(config)
     repos = config.setdefault("repos", {})
     for alias in aliases:
         repos.pop(alias, None)
     repos[key] = entry
+    refusal = config_guard.test_refusal(path)
+    if refusal:
+        raise InitError(refusal)
     atomic_write_json(path, config)
     verified = read_config(path).get("repos", {}).get(key)
     if verified != entry:

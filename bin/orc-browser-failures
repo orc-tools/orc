@@ -615,6 +615,8 @@ def cmd_check_report(args: argparse.Namespace, root: Path, common: Path | None) 
     if args.json:
         print(json.dumps(summary, indent=2))
     elif not args.quiet:
+        for item in summary["flakyTests"]:
+            print(f"FLAKY {item['spec']} › {item['title']} (failed, then passed on retry)")
         for item in known_failures:
             print(f"KNOWN MAIN FAILURE {item['spec']} › {item['title']} ({item['kind']}: {item['reason']})")
         for item in unlisted_failures:

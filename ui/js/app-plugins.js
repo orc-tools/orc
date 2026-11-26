@@ -171,6 +171,10 @@ function syncAccountSlots() {
 }
 let applying = Promise.resolve();
 
+const pluginSkills = state => (state?.plugins || [])
+  .filter(plugin => plugin.enabled && plugin.contributes?.skills?.length)
+  .map(plugin => `${plugin.id} ${plugin.digest}`).sort().join('\n');
+
 // Each package after the packages it requires; a cycle keeps list order.
 function startOrder(wanted) {
   const order = [];
@@ -191,6 +195,7 @@ export function applyAppPlugins(state) {
     const paintedAtStart = document.documentElement.dataset.funMode;
     const before = paintedFunMode();
     const saved = savedFunMode();
+    const skillsBefore = pluginSkills(window.ORC_APP_PLUGINS);
     window.ORC_APP_PLUGINS = state;
     const wanted = new Map(state.plugins.filter(plugin => plugin.enabled && plugin.state === 'enabled' && !plugin.error).map(plugin => [plugin.id, plugin]));
     // A package stops with anything it requires, and starts again after it.
@@ -317,6 +322,7 @@ export function applyAppPlugins(state) {
     mountPluginSettingsCards(document.getElementById('settings-body'));
     window.dispatchEvent(new Event('orc-plugin-status'));
     window.dispatchEvent(new Event('orc-plugins-changed'));
+    if (pluginSkills(state) !== skillsBefore) window.dispatchEvent(new Event('orc-skills-changed'));
   });
   return applying;
 }

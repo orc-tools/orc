@@ -1602,7 +1602,7 @@ export function renderList() {
       <div class="name" data-part="run-title">${selected ? '<span class="sr-only">Selected: </span>' : ''}${forkPrefix}${candidate ? `<span class="evals-candidate-tag">${highlightSearchMatch(candidate, q)}</span>` : highlightSearchMatch(title, q)}</div>
       </a>
       <div class="sub" data-part="run-meta"><span class="sub-tags">
-        ${sessionStatusHtml(reviewing ? latestReview.meta : meta)}
+        ${['queued', 'paused'].includes(state.key) ? '' : sessionStatusHtml(reviewing ? latestReview.meta : meta)}
         ${prBadgeHtml(meta)}
         ${unread ? '<span class="unread-tag"><span class="dot" aria-hidden="true"></span>Unread</span>' : ''}
         ${settledInList ? SETTLED_TAG : runStateTagHtml(reviewTag ? { ...state, key: 'reviewing' } : state)}

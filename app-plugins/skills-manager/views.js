@@ -490,7 +490,7 @@ function sourceRegion(state) {
   if (!skill || skill.kind === 'orc-plugin') return { html: '' };
   const manage = canManage(state);
   const saving = state.busyKey === 'source';
-  const checking = state.busyKey === 'detail-update';
+  const checking = state.busyKey === 'check-updates';
   const src = skill.source || {};
   const panel = value => `<section class="skills-panel" aria-labelledby="skills-source-title">
     <div class="skills-panel-head">

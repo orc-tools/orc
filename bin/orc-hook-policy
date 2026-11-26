@@ -23,7 +23,7 @@ RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 # Keep retired UserPromptSubmit/Stop actions (`run-init`, `idle`, `gate`) as
 # exit-0 no-ops so sessions started before upgrade or turns inside the
 # post-switch retirement window never fail with exit 2 and drop user prompts.
-ACTIONS = ("normalize", "worktree", "run-init", "idle", "gate")
+ACTIONS = ("normalize", "worktree", "settings", "run-init", "idle", "gate")
 
 
 def emit(code: int = 0, message: str = "", payload: dict[str, Any] | None = None) -> None:
@@ -264,6 +264,60 @@ def worktree(event: dict[str, Any]) -> None:
                 f"orc worktree guard — worktree=true but setup has not run for {label} "
                 f"(run: {rid}); run orc-worktree setup --run-dir {meta_path.parent} --repo-id {label}",
             )
+    emit()
+
+
+SETTINGS_PATH = r"(?:~|\$\{?HOME\}?|/Users/[^/\s\"']+|/home/[^/\s\"']+)/\.orc/config\.json"
+SETTINGS_WRITES = [re.compile(pattern) for pattern in (
+    r">\|?\s*[\"']?" + SETTINGS_PATH,
+    r"\b(?:tee|truncate|rm|unlink|shred)\b[^;|&\n]*" + SETTINGS_PATH,
+    r"\bsed\b[^;|&\n]*\s-i[^;|&\n]*" + SETTINGS_PATH,
+    r"\b(?:cp|mv|ln|install|rsync)\b[^;|&\n]*\s[\"']?" + SETTINGS_PATH + r"[\"']?\s*(?:$|[;|&\n])",
+    r"\bmv\b[^;|&\n]*" + SETTINGS_PATH,
+    r"\brm\b[^;|&\n]*\s-\w*r\w*[^;|&\n]*(?:~|\$\{?HOME\}?|/Users/[^/\s\"']+)/\.orc/?[\"']?\s*(?:$|[;|&\n])",
+)]
+TEST_RUN = re.compile(
+    r"^\s*(?P<env>(?:(?:env|command|exec|time)\s+|-u\s+\S+\s+|[A-Za-z_]\w*=\S*\s+)*)"
+    r"(?:\S*python[\d.]*\s+(?:-\w+\s+)*?(?:-m\s*(?:unittest|pytest)\b|\S*tests/test_\w+\.py)|\S*pytest\b)")
+CHANGE_DIRECTORY = re.compile(r"^\s*cd\s+([\"']?)([^\"'\s]+)\1\s*$")
+
+
+def orc_checkout(path: str) -> bool:
+    directory = pathlib.Path(real(path))
+    return any((parent / "ui" / "serve.py").is_file() and (parent / "bin" / "test").is_file()
+               for parent in (directory, *directory.parents))
+
+
+def settings(event: dict[str, Any]) -> None:
+    """Keep an agent's commands off ~/.orc/config.json, the user's settings:
+    no direct write, and no Orc test run that still has the real HOME."""
+    tool_input = event["toolInput"]
+    file_path = tool_input.get("file_path")
+    if isinstance(file_path, str) and file_path:
+        target = os.path.join(event["cwd"], os.path.expanduser(file_path))
+        if real(target) == real("~/.orc/config.json"):
+            emit(2, "orc settings guard - config.json holds all the user's settings, and agents do not "
+                    "edit it; use `orc-setting` when the user asks for a change")
+        emit()
+    command = tool_input.get("command")
+    if not isinstance(command, str):
+        emit()
+    if any(pattern.search(command) for pattern in SETTINGS_WRITES):
+        emit(2, "orc settings guard - this command writes ~/.orc/config.json, which holds all the user's "
+                "settings; use `orc-setting` when the user asks for a change")
+    directory, sandboxed = event["cwd"], False
+    for part in re.split(r"&&|\|\||[;|&\n]", command):
+        moved = CHANGE_DIRECTORY.match(part)
+        if moved:
+            directory = os.path.join(directory, os.path.expanduser(moved.group(2)))
+        sandboxed = sandboxed or re.match(r"\s*export\s+(?:\S+\s+)*HOME=", part) is not None
+        run = TEST_RUN.match(part)
+        if not run or sandboxed or re.search(r"(?:^|\s)HOME=", run.group("env")):
+            continue
+        if orc_checkout(directory):
+            emit(2, "orc settings guard - Orc's tests share the user's real ~/.orc when Python runs them "
+                    "directly, and one wiped their settings. Run `bin/test <test-file>`, or for a single "
+                    'test `HOME="$(mktemp -d)" python3 -m unittest <test>`')
     emit()
 
 

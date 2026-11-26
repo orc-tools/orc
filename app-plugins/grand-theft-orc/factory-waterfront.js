@@ -13,13 +13,13 @@ import { DOOR, paintedCamera } from '../../ui/yeet/factory-layout.js';
 
 // Where Astra stood: 26 units back from the court and 0.7 radians above it,
 // with a 29° lens, and with the motel's front step on the hall's door.
-const ELEVATION = 0.7;
+export const ELEVATION = 0.7;
 const FRAME = [1334, 1179];
 const camera = {
   size: FRAME, fov: 29, elevation: ELEVATION, eyeHeight: 0.85 + Math.sin(ELEVATION) * 26,
   anchor: { at: [745, 422], on: DOOR },
 };
-const painter = paintedCamera(camera);
+export const painter = paintedCamera(camera);
 
 // What the plates cover, in frame pixels: the mockup's frame with the
 // waterfront carried on beside it, the sky above and more lots in front. A

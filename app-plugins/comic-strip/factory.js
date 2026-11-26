@@ -1461,9 +1461,120 @@ function frame(_time, _dt, kit) {
   }
 }
 
+// The advisor: the paper's senior editor, a big orc in an eyeshade and
+// half-moon glasses with a blue pencil behind one ear, marking up a page of
+// proofs on a slanted drafting desk under a gooseneck lamp. A thought
+// balloon rises over it while it reads, its three dots filling in turn.
+// Pages from the print house land on the proof.
+function advisor(kit) {
+  const root = new Group();
+  const ink = kit.mat('ink', { rough: 0.6 });
+  const timber = kit.mat('timber', { rough: 0.8 });
+  const paper = kit.mat('crate', { rough: 0.85 });
+  const accent = kit.mat('accent', { rough: 0.55 });
+  const pencil = kit.mat('bluePencil', { rough: 0.5 });
+  root.add(kit.shadow(1.5, 1.3, 0.24));
+  // An inked panel underfoot, like the crews' pads.
+  root.add(box(kit, 1.5, 0.06, 1.3, kit.mat('body', { rough: 0.8 }), [0, 0.03, 0], true));
+  root.add(kit.box(1.56, 0.04, 1.36, ink, [0, 0.015, 0]));
+  // The editor.
+  const editor = orcCrew(kit, 'visor', 1.75);
+  editor.root.position.set(0, 0.06, -0.3);
+  root.add(editor.root);
+  const { head, body, arms } = editor;
+  for (const side of [-1, 1]) head.add(box(kit, 0.08, 0.04, 0.012, kit.mat('glow', { rough: 0.2, opacity: 0.55 }), [side * 0.058, 0.0, 0.135]));
+  head.add(kit.box(0.2, 0.01, 0.012, ink, [0, 0.022, 0.138]));
+  const behindEar = kit.cylinder(0.012, 0.012, 0.2, pencil, [0.15, 0.06, 0.02], 6);
+  behindEar.rotation.set(Math.PI / 2, 0, 0.3);
+  head.add(behindEar);
+  // Sleeve garters on rolled shirtsleeves.
+  for (const arm of arms) arm.add(kit.box(0.09, 0.03, 0.1, accent, [0, -0.04, 0]));
+  arms[0].rotation.x = -1.1;
+  arms[1].rotation.x = -1.2;
+  const held = kit.cylinder(0.011, 0.011, 0.14, pencil, [0, -0.23, 0.05], 6);
+  held.rotation.x = 1.2;
+  arms[1].add(held);
+  // The drafting desk and the proof pinned to it.
+  for (const x of [-0.32, 0.32]) {
+    root.add(box(kit, 0.05, 0.72, 0.05, ink, [x, 0.42, 0.36], true));
+    root.add(box(kit, 0.05, 0.05, 0.42, ink, [x, 0.09, 0.42], true));
+  }
+  const desk = new Group();
+  desk.position.set(0, 0.84, 0.42);
+  desk.rotation.x = 0.55;
+  root.add(desk);
+  desk.add(box(kit, 0.78, 0.04, 0.52, timber, [0, 0, 0], true));
+  desk.add(kit.box(0.6, 0.012, 0.42, paper, [0, 0.026, 0]));
+  // Its panels, inked, and the editor's red marks.
+  for (const x of [-0.29, 0, 0.29]) desk.add(kit.box(0.012, 0.006, 0.4, ink, [x, 0.035, 0]));
+  for (const z of [-0.2, 0, 0.2]) desk.add(kit.box(0.6, 0.006, 0.012, ink, [0, 0.035, z]));
+  const marks = [[-0.14, -0.1], [0.16, -0.08], [-0.1, 0.1], [0.12, 0.12]].map(([x, z]) => {
+    const mark = kit.box(0.12, 0.006, 0.02, accent, [x, 0.04, z]);
+    mark.rotation.y = 0.4;
+    desk.add(mark);
+    return mark;
+  });
+  desk.add(kit.box(0.78, 0.03, 0.04, timber, [0, 0.03, 0.27]));
+  // The gooseneck lamp clamped to the desk.
+  root.add(kit.cylinder(0.015, 0.015, 0.62, ink, [0.42, 1.0, 0.2], 6));
+  const neck = kit.cylinder(0.012, 0.012, 0.3, ink, [0.32, 1.32, 0.3], 6);
+  neck.rotation.set(0.6, 0, 0.9);
+  root.add(neck);
+  root.add(cyl(kit, 0.04, 0.12, 0.12, accent, [0.2, 1.36, 0.38], 10, true));
+  const bulb = kit.sphere(0.05, kit.mat('window', { emissive: 'window', glow: 1.4 }), [0.2, 1.3, 0.38], 8);
+  root.add(bulb);
+  // A spike of read proofs on the desk's corner.
+  root.add(kit.cylinder(0.008, 0.008, 0.22, ink, [-0.44, 0.62, 0.62], 4));
+  root.add(kit.box(0.14, 0.06, 0.14, paper, [-0.44, 0.54, 0.62]));
+  // The thought balloon and its trail of bubbles.
+  const balloon = new Group();
+  balloon.position.set(0.38, 1.92, -0.3);
+  root.add(balloon);
+  const disc = cyl(kit, 0.3, 0.3, 0.05, paper, [0, 0, 0], 20, true);
+  disc.rotation.x = Math.PI / 2;
+  disc.scale.z = 0.72;
+  balloon.add(disc);
+  for (const [x, y, r] of [[-0.24, -0.3, 0.07], [-0.33, -0.43, 0.045]]) {
+    const puff = cyl(kit, r, r, 0.04, paper, [x, y, 0], 12, true);
+    puff.rotation.x = Math.PI / 2;
+    balloon.add(puff);
+  }
+  const dots = [-0.12, 0, 0.12].map(x => {
+    const dot = kit.box(0.06, 0.06, 0.02, ink, [x, 0, 0.035]);
+    balloon.add(dot);
+    return dot;
+  });
+  kit.shadows(root);
+  for (const node of [balloon, bulb]) node.traverse(child => { child.castShadow = false; });
+  root.scale.setScalar(1.2);
+  root.userData = {
+    labelY: 2.85,
+    page: new Vector3(0, 1.08, 0.5),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      head.rotation.x = 0.36 * reading + Math.sin(time * 0.7) * 0.03;
+      head.rotation.y = Math.sin(time * 0.5) * 0.2 * reading;
+      body.rotation.x = 0.12 * reading;
+      // The blue pencil marks the proof in short strokes.
+      arms[1].rotation.x = -1.2 + Math.sin(time * 7) * 0.08 * reading;
+      arms[1].rotation.z = Math.sin(time * 1.3) * 0.15 * reading;
+      const shown = Math.floor(time * 0.5) % (marks.length + 1);
+      marks.forEach((mark, i) => { mark.visible = kit.reducedMotion || reading < 0.05 || i < shown; });
+      balloon.scale.setScalar(Math.max(0.001, reading));
+      balloon.position.y = 1.92 + Math.sin(time * 1.4) * 0.03;
+      const lit = Math.floor(time * 2.2) % 4;
+      dots.forEach((dot, i) => { dot.visible = kit.reducedMotion || i < lit; });
+      bulb.scale.setScalar(1 + Math.sin(time * 6) * 0.05);
+    },
+  };
+  return root;
+}
+
 export default {
   palette: PALETTE,
   backdrop: BACKDROP,
+  // The advisor stands clear of the newsprint rolls by the print house.
+  layout: { advisor: { x: -5.8, z: -4.6, yaw: 0.5 } },
   view,
   floor,
   hall,
@@ -1478,4 +1589,5 @@ export default {
   decor,
   weather,
   frame,
+  advisor,
 };

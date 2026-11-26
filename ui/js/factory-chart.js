@@ -24,7 +24,9 @@ export function createFactoryChart(stage, nodeHtml, onViewChange) {
     const workers = crew.agents.filter(agent => agent.kind === 'worker');
     const helpers = crew.agents.filter(agent => agent.kind !== 'worker');
     const branches = chartBranch('Orchestrate workers', workers) + chartBranch('Subagents', helpers);
-    const next = chartButton('main') + (branches ? `<div class="factory-chart-branches">${branches}</div>` : '');
+    // The advisor sits beside the main agent it advises, not under it.
+    const top = crew.advisor ? `<div class="factory-chart-top">${chartButton('main')}${chartButton('advisor')}</div>` : chartButton('main');
+    const next = top + (branches ? `<div class="factory-chart-branches">${branches}</div>` : '');
     let focused;
     if (structure !== next) {
       focused = chart.contains(document.activeElement) && document.activeElement.dataset.agentId;
@@ -35,7 +37,7 @@ export function createFactoryChart(stage, nodeHtml, onViewChange) {
     for (const button of chart.querySelectorAll('[data-agent-id]')) {
       const id = button.dataset.agentId;
       const main = id === 'main';
-      const agent = main ? crew.main : agents.get(id);
+      const agent = main ? crew.main : id === 'advisor' ? crew.advisor : agents.get(id);
       const html = nodeHtml(agent, main);
       if (button._nodeHtml !== html) {
         button.innerHTML = html;

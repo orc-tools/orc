@@ -21,6 +21,9 @@ Original notes and timbres rendered offline. Each MP3 is mono, 44.1 kHz and
 | `sonar-ping.mp3` | Sonar ping | A high rounded ping with two fading echoes |
 | `pocket-drum.mp3` | Pocket drum | Two quick rim taps and a lower drum hit |
 | `silver-string.mp3` | Silver string | A brushed open fifth with a bright final pluck |
+| `clockwork.mp3` | Clockwork | Three short metallic ticks with a pause before the last |
+| `steam-whistle.mp3` | Steam whistle | Two high whistle notes swelling together |
+| `bass-bloom.mp3` | Bass bloom | Two rounded bass notes rising a fifth |
 
 ## Generated sound effects
 

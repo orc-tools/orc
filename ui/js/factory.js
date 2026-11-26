@@ -70,6 +70,11 @@ const FACTORY_SUMMARY_STATES = [
 ];
 const FACTORY_OPEN_ARROW = '<svg class="factory-agent-arrow" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5h5.5V8M9.2 2.8 2.8 9.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const FACTORY_CLOSE_ICON = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+// The advisor a run's agent asks stands beside the hall while it reads.
+const FACTORY_ADVISOR_LABELS = { reading: 'Reading', idle: 'Idle' };
+// How many of the advisor's asks its ticket lists.
+const FACTORY_ADVISOR_ASKS_SHOWN = 4;
+const FACTORY_ADVISOR_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5c2-.9 3.8-.7 5.5.6 1.7-1.3 3.5-1.5 5.5-.6v9c-2-.9-3.8-.7-5.5.6-1.7-1.3-3.5-1.5-5.5-.6Z"/><path d="M8 4.1v9"/></svg>';
 const FACTORY_KIND_LABELS = {
   worker: 'Orchestrate worker',
   orchestrator: 'CLI orchestrator',
@@ -156,6 +161,27 @@ function factoryCloudTagHtml(entry) {
   return `<span class="factory-cloud-tag" title="${esc(`${info.cloudLabel} cloud agent`)}"><span class="factory-cloud-tag-icon" aria-hidden="true">${mark}</span>${esc(info.cloudLabel)}</span>`;
 }
 
+// The advisor the run's agent has asked, from the feed's record of its asks
+// (oldest first), or null when it never has. It is reading while the newest
+// ask is open and the agent is still there to hear the answer.
+export function factoryAdvisor(data, meta = {}) {
+  const asks = (Array.isArray(data?.asks) ? data.asks : []).filter(ask => ask && typeof ask.id === 'string').map(ask => ({
+    id: ask.id, status: ['reading', 'answered', 'failed', 'dropped'].includes(ask.status) ? ask.status : 'dropped',
+    model: factoryText(ask.model), startedAt: factoryTime(ask.startedAt), endedAt: factoryTime(ask.endedAt),
+    durationMs: factoryCount(ask.durationMs), readTokens: factoryCount(ask.readTokens), wroteTokens: factoryCount(ask.wroteTokens),
+    before: factoryText(ask.before), after: factoryText(ask.after), errorText: factoryText(ask.errorText),
+  }));
+  if (!asks.length) return null;
+  const latest = asks.at(-1);
+  if (latest.status === 'reading' && meta.sessionAlive === false) latest.status = 'dropped';
+  const reading = latest.status === 'reading';
+  return {
+    id: 'advisor', kind: 'advisor', name: 'Advisor', state: reading ? 'reading' : 'idle',
+    model: latest.model || [...asks].reverse().find(ask => ask.model)?.model || '',
+    total: Math.max(asks.length, factoryCount(data.total) || 0), asks, current: reading ? latest : null,
+  };
+}
+
 // The run's own agent and everyone it started, oldest first: subagents from
 // its transcript, Orchestrate tasks from the task store, and worker runs the
 // run list nests under it that no task row names.
@@ -234,6 +260,7 @@ export function factoryCrew(run, payload, allRuns = []) {
       agent: mainAgent, harness: mainCloud.harness, cloud: mainCloud.cloud, cloudLabel: mainCloud.cloudLabel,
     },
     agents,
+    advisor: factoryAdvisor(data.advisor, meta),
   };
 }
 
@@ -325,6 +352,7 @@ export function factoryRosterHtml(crew, { parent = null, now = Date.now(), waiti
           ${mainDetails.length ? `<div class="factory-agent-meta">${mainDetails.join(' · ')}</div>` : ''}
         </div>
       </div>
+      ${crew.advisor ? factoryAdvisorRowHtml(crew.advisor) : ''}
       ${factorySummaryHtml(crew.agents, waiting)}
     </div>
     ${group('factory-orchestrator-h', 'CLI orchestrator', orchestrator)}
@@ -336,12 +364,81 @@ export function factoryRosterHtml(crew, { parent = null, now = Date.now(), waiti
     ${crew.agents.length ? '' : `<p class="factory-empty">No subagents or Orchestrate workers yet.${chart ? '' : ' Each one gets a station on the floor when the agent starts it. Its instructions go out from the main agent, its result rides back when it finishes, and once it has closed its station is decommissioned, standing dark on the floor until a newer one needs its place.'}</p>`}`;
 }
 
+const factoryAskCount = count => (count === 1 ? 'asked once' : `asked ${count} times`);
+const factoryAdvisorAvatarHtml = advisor => (advisor.model ? factoryAvatarHtml(advisor)
+  : `<span class="factory-avatar" aria-hidden="true"><span class="mark">${FACTORY_ADVISOR_ICON}</span><span class="factory-presence"></span></span>`);
+
+export function factoryAdvisorRowHtml(advisor) {
+  const details = [factoryModelText(advisor.model), factoryAskCount(advisor.total)].filter(Boolean).map(esc);
+  return `<div class="factory-main factory-advisor" data-agent-id="advisor" data-state="${esc(advisor.state)}">
+        ${factoryAdvisorAvatarHtml(advisor)}
+        <div class="factory-agent-body">
+          <div class="factory-agent-head"><button type="button" class="factory-agent-name" data-factory-select aria-pressed="false">Advisor</button>
+            <span class="factory-state is-${esc(advisor.state)}">${FACTORY_ADVISOR_LABELS[advisor.state]}</span></div>
+          <div class="factory-agent-meta">${details.join(' · ')}</div>
+        </div>
+      </div>`;
+}
+
+const factoryTokensText = count => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(count).toLowerCase();
+const factoryQuote = text => `“${esc(text)}”`;
+
+// One finished ask, as the advisor's ticket lists it: when, what came of it,
+// and what the agent said next.
+function factoryAskHtml(ask, now) {
+  const when = ask.startedAt !== null ? `<span data-factory-since="${ask.startedAt}">${esc(formatElapsed(now - ask.startedAt))}</span> ago` : 'Earlier';
+  const read = [ask.readTokens ? `read ${factoryTokensText(ask.readTokens)}` : '', ask.wroteTokens ? `wrote ${factoryTokensText(ask.wroteTokens)}` : '']
+    .filter(Boolean).join(', ');
+  const outcome = ask.status === 'answered'
+    ? [`Advised${ask.durationMs !== null ? ` in ${formatElapsed(ask.durationMs)}` : ''}`, read].filter(Boolean).join(' · ')
+    : ['No answer', ask.errorText].filter(Boolean).join(' · ');
+  const then = ask.status === 'answered' && ask.after ? `<span class="factory-ask-then">Then: ${factoryQuote(ask.after)}</span>` : '';
+  return `<div class="factory-ask" data-status="${esc(ask.status)}"><dt>${when}</dt><dd>${esc(outcome)}${then}</dd></div>`;
+}
+
+// The advisor's ticket: what the agent said as it asked, how long the
+// advisor has been reading, and its earlier asks, newest first.
+export function factoryAdvisorTicketHtml(crew, { now = Date.now() } = {}) {
+  const advisor = crew.advisor;
+  if (!advisor) return '';
+  const { current } = advisor;
+  const asked = current || advisor.asks.at(-1);
+  const facts = [];
+  const fact = (term, html) => { if (html) facts.push(`<div><dt>${term}</dt><dd>${html}</dd></div>`); };
+  if (current && current.startedAt !== null) {
+    fact('Reading for', `<span data-factory-since="${current.startedAt}">${esc(formatElapsed(now - current.startedAt))}</span>`);
+  }
+  fact('Asked by', esc(['Main agent', factoryModelText(crew.main.model)].filter(Boolean).join(' · ')));
+  if (!current) fact('Asks', esc(String(advisor.total)));
+  const earlier = advisor.asks.filter(ask => ask !== current).reverse().slice(0, FACTORY_ADVISOR_ASKS_SHOWN);
+  const name = factoryModelText(advisor.model) || 'Advisor';
+  return `<header class="factory-ticket-head">
+      ${factoryAdvisorAvatarHtml(advisor)}
+      <div class="factory-ticket-title">
+        <span class="factory-ticket-kind">Advisor</span>
+        <strong class="factory-ticket-name">${esc(name)}</strong>
+      </div>
+      <span class="factory-state is-${esc(advisor.state)}">${FACTORY_ADVISOR_LABELS[advisor.state]}</span>
+      <button type="button" class="factory-ticket-close" data-factory-close aria-label="Close details" title="Close (Esc)">${FACTORY_CLOSE_ICON}</button>
+    </header>
+    ${asked?.before ? `<p class="factory-ticket-brief">Asked after: ${factoryQuote(asked.before)}</p>` : ''}
+    <dl class="factory-ticket-facts">${facts.join('')}${earlier.map(ask => factoryAskHtml(ask, now)).join('')}</dl>`;
+}
+
+export function factoryAdvisorLabelHtml(advisor) {
+  const since = advisor.current?.startedAt;
+  const meta = [factoryModelText(advisor.model), FACTORY_ADVISOR_LABELS[advisor.state]].filter(Boolean).map(esc);
+  if (advisor.current && since !== null) meta.push(`<span data-factory-since="${since}"></span>`);
+  return `${factoryLabelHead('Advisor', '')}<span class="factory-label-meta">${meta.join(' · ')}</span>`;
+}
+
 const factoryPhaseText = phase => (typeof phase === 'string' && phase ? phase.charAt(0).toUpperCase() + phase.slice(1) : '');
 
 // The job ticket for one pick: the hall's (`main`) or a station's. `run` is
 // the run that agent works in, when the run list has it: this run for the
 // hall, a worker's own run for its station. Null when the agent is gone.
 export function factoryTicketHtml(crew, id, { run = null, now = Date.now(), delivered = 0, retired = false } = {}) {
+  if (id === 'advisor') return factoryAdvisorTicketHtml(crew, { now });
   const isMain = id === 'main';
   const agent = isMain ? crew.main : crew.agents.find(entry => entry.id === id);
   if (!agent) return '';
@@ -433,10 +530,13 @@ export function factoryMainLabelHtml(main) {
 }
 
 function factoryChartNodeHtml(agent, main) {
-  const engine = esc(factoryEngineText(agent, ' · '));
+  const advisor = agent.kind === 'advisor';
+  // The chart's advisor node is narrow: the roster beside it counts the asks.
+  const engine = esc(advisor ? factoryModelText(agent.model) : factoryEngineText(agent, ' · '));
+  const status = advisor ? FACTORY_ADVISOR_LABELS[agent.state] : factoryStatusText(agent.state, main);
   return `<span class="factory-chart-name">${esc(main ? 'Main agent' : agent.name)}</span>
     <span class="factory-chart-meta"><span class="factory-chart-engine" title="${engine}">${engine}</span>
-    <span class="factory-stat" data-state="${esc(agent.state)}">${factoryStatusText(agent.state, main)}</span></span>`;
+    <span class="factory-stat" data-state="${esc(agent.state)}">${status}</span></span>`;
 }
 
 export const factoryDeliveredText = count => (count === 1 ? '1 delivery' : `${count} deliveries`);
@@ -736,7 +836,8 @@ function factoryPaint(state) {
 // has left the feed takes its ticket with it.
 function factoryPaintTicket(state) {
   const id = state.selected;
-  const agent = id && id !== 'main' ? state.crew.agents.find(entry => entry.id === id) : null;
+  const agent = id === 'advisor' ? state.crew.advisor
+    : id && id !== 'main' ? state.crew.agents.find(entry => entry.id === id) : null;
   const run = id === 'main' ? state.run : agent?.runId ? runs.find(other => other.id === agent.runId) || null : null;
   const html = id ? factoryTicketHtml(state.crew, id, { run, delivered: state.scene?.delivered || 0, retired: !!state.scene?.retired.has(id) }) : '';
   if (id && !html) {
@@ -754,7 +855,7 @@ function factoryPaintTicket(state) {
       state.ticket.dataset.state = picked.state;
       if (picked.cloud) state.ticket.dataset.cloud = 'true';
       else delete state.ticket.dataset.cloud;
-      state.ticket.setAttribute('aria-label', `Details for ${id === 'main' ? 'the main agent' : agent.name}`);
+      state.ticket.setAttribute('aria-label', `Details for ${id === 'main' ? 'the main agent' : id === 'advisor' ? 'the advisor' : agent.name}`);
       state.syncTicketIcons?.();
       if (control) (state.ticket.querySelector(control) || state.ticket.querySelector('button')).focus({ preventScroll: true });
     }
@@ -784,6 +885,7 @@ function factoryPaintLabels(state) {
   const retired = agent => !!state.scene?.retired.has(agent.id) && FACTORY_CLOSED.has(agent.state);
   const wanted = new Map([['main', factoryMainLabelHtml(crew.main)],
     ...crew.agents.map(agent => [agent.id, factoryLabelHtml(agent, retired(agent))])]);
+  if (crew.advisor) wanted.set('advisor', factoryAdvisorLabelHtml(crew.advisor));
   for (const label of [...state.labels.children]) {
     if (!wanted.has(label.dataset.agentId)) label.remove();
   }
@@ -791,14 +893,14 @@ function factoryPaintLabels(state) {
     let label = state.labels.querySelector(`[data-agent-id="${CSS.escape(id)}"]`);
     if (!label) {
       label = document.createElement('div');
-      label.className = `factory-label${id === 'main' ? ' is-main' : ''}`;
+      label.className = `factory-label${id === 'main' ? ' is-main' : id === 'advisor' ? ' is-advisor' : ''}`;
       label.dataset.agentId = id;
       label.hidden = true;
       state.labels.append(label);
     }
     const agent = byId.get(id);
-    const node = id === 'main' ? crew.main : agent;
-    label.dataset.state = id === 'main' ? crew.main.state : (agent?.state || 'unknown');
+    const node = id === 'main' ? crew.main : id === 'advisor' ? crew.advisor : agent;
+    label.dataset.state = node?.state || 'unknown';
     if (agent) label.dataset.kind = agent.kind;
     label.toggleAttribute('data-retired', !!agent && retired(agent));
     if (node?.cloud) label.dataset.cloud = 'true';

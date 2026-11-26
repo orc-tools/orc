@@ -1786,6 +1786,170 @@ function weather(kit) {
   };
 }
 
+// The advisor: an old frilled, three-horned dinosaur in wire spectacles,
+// sitting up on its haunches at a desk of stacked field crates, reading its
+// field notes beside a fossil, a magnifier and a lamp, a survey staff planted
+// behind it. Pages from the visitor centre land on the notes; while it reads,
+// it bows its frill over them, blinks, turns a leaf and swishes its tail.
+function advisor(kit) {
+  const m = mats(kit);
+  const dark = kit.mode === 'dark';
+  const hide = kit.mat(dark ? '#5f6d56' : '#8c9c74', { rough: 0.75, flat: true });
+  const crest = kit.mat(dark ? '#8a5a3a' : '#c07a48', { rough: 0.7, flat: true });
+  const root = new Group();
+  root.add(kit.shadow(1.6, 1.4, 0.25));
+  // The dig it sits beside: turned earth and a bone or two.
+  const ground = kit.cylinder(0.78, 0.82, 0.04, m.earth, [0, 0.02, 0], 12);
+  ground.scale.z = 0.85;
+  root.add(ground);
+  for (const [x, z, turn] of [[-0.5, 0.3, 0.6], [0.55, -0.35, -0.4], [-0.42, -0.45, 1.2]]) {
+    const bone = kit.cylinder(0.025, 0.025, 0.26, m.bone, [x, 0.06, z], 5);
+    bone.rotation.set(Math.PI / 2, 0, turn);
+    root.add(bone);
+    for (const end of [-1, 1]) root.add(kit.sphere(0.035, m.bone, [x + Math.sin(turn) * end * 0.13, 0.06, z + Math.cos(turn) * end * 0.13], 5));
+  }
+  // The dinosaur, sitting up.
+  const body = new Group();
+  body.position.set(0, 0, -0.2);
+  root.add(body);
+  const trunk = kit.sphere(0.4, hide, [0, 0.56, -0.02], 10);
+  trunk.scale.set(1, 1.18, 0.9);
+  trunk.rotation.x = -0.15;
+  body.add(trunk);
+  const front = kit.sphere(0.32, m.belly, [0, 0.55, 0.17], 10);
+  front.scale.set(0.82, 1.08, 0.5);
+  body.add(front);
+  for (const side of [-1, 1]) {
+    const thigh = kit.sphere(0.2, hide, [side * 0.3, 0.24, 0.08], 8);
+    thigh.scale.set(0.8, 0.9, 1.25);
+    body.add(thigh);
+    body.add(kit.box(0.14, 0.08, 0.2, hide, [side * 0.32, 0.04, 0.3]));
+    for (const toe of [-1, 0, 1]) {
+      const claw = new Mesh(new ConeGeometry(0.025, 0.06, 4), m.claw);
+      claw.rotation.x = Math.PI / 2;
+      claw.position.set(side * 0.32 + toe * 0.045, 0.03, 0.42);
+      body.add(claw);
+    }
+  }
+  const tail = new Group();
+  tail.position.set(0, 0.22, -0.35);
+  body.add(tail);
+  const tip = new Mesh(new ConeGeometry(0.16, 0.6, 7), hide);
+  tip.rotation.x = -Math.PI / 2 - 0.2;
+  tip.position.set(0, -0.06, -0.26);
+  tail.add(tip);
+  // Short forelegs resting on the desk.
+  const arms = [-1, 1].map(side => {
+    const arm = new Group();
+    arm.position.set(side * 0.26, 0.82, 0.16);
+    arm.rotation.set(-1.15, 0, side * 0.1);
+    const leg = kit.cylinder(0.065, 0.055, 0.34, hide, [0, -0.15, 0], 6);
+    arm.add(leg);
+    arm.add(kit.sphere(0.06, hide, [0, -0.32, 0], 6));
+    body.add(arm);
+    return arm;
+  });
+  // The head: a beaked snout, three horns, a frill, and spectacles.
+  const head = new Group();
+  head.position.set(0, 1.08, 0.1);
+  body.add(head);
+  const skull = kit.sphere(0.19, hide, [0, 0, 0.06], 9);
+  skull.scale.set(0.95, 0.9, 1.3);
+  head.add(skull);
+  const beak = new Mesh(new ConeGeometry(0.08, 0.16, 6), m.horn);
+  beak.rotation.x = Math.PI / 2 + 0.35;
+  beak.position.set(0, -0.06, 0.32);
+  head.add(beak);
+  const nose = new Mesh(new ConeGeometry(0.035, 0.12, 5), m.horn);
+  nose.position.set(0, 0.1, 0.24);
+  nose.rotation.x = 0.4;
+  head.add(nose);
+  for (const side of [-1, 1]) {
+    const brow = new Mesh(new ConeGeometry(0.04, 0.3, 6), m.horn);
+    brow.position.set(side * 0.09, 0.2, 0.06);
+    brow.rotation.set(0.75, 0, -side * 0.18);
+    head.add(brow);
+  }
+  const frill = new Mesh(new CylinderGeometry(0.36, 0.36, 0.03, 14), crest);
+  frill.position.set(0, 0.16, -0.12);
+  frill.rotation.x = Math.PI / 2 - 0.45;
+  head.add(frill);
+  for (let i = 0; i < 9; i += 1) {
+    const a = (i / 8) * Math.PI;
+    const knob = kit.sphere(0.04, m.horn, [Math.cos(a) * 0.36, 0.16 + Math.sin(a) * 0.36 * Math.cos(0.45), -0.12 - Math.sin(a) * 0.36 * Math.sin(0.45)], 5);
+    head.add(knob);
+  }
+  const lids = [];
+  for (const side of [-1, 1]) {
+    head.add(kit.sphere(0.04, m.ink, [side * 0.13, 0.05, 0.14], 6));
+    const lid = kit.sphere(0.046, hide, [side * 0.13, 0.065, 0.14], 6);
+    lid.scale.y = 0.001;
+    head.add(lid);
+    lids.push(lid);
+    const rim = new Mesh(new TorusGeometry(0.06, 0.008, 5, 14), m.steel);
+    rim.position.set(side * 0.08, 0.05, 0.26);
+    rim.rotation.y = side * 0.35;
+    head.add(rim);
+  }
+  head.add(kit.box(0.06, 0.01, 0.01, m.steel, [0, 0.06, 0.28]));
+  // The desk of stacked field crates, and the notes open on it.
+  root.add(kit.box(0.6, 0.36, 0.38, m.wood, [0, 0.2, 0.48]));
+  root.add(kit.box(0.54, 0.34, 0.34, m.timber, [0, 0.55, 0.48]));
+  for (const y of [0.2, 0.55]) root.add(kit.box(0.62, 0.04, 0.02, m.khaki, [0, y, 0.67]));
+  const notes = new Group();
+  notes.position.set(0, 0.74, 0.46);
+  notes.rotation.x = 0.28;
+  root.add(notes);
+  notes.add(kit.box(0.4, 0.02, 0.28, m.paint, [0, 0, 0]));
+  notes.add(kit.box(0.18, 0.02, 0.26, m.cream, [-0.095, 0.016, 0]));
+  notes.add(kit.box(0.18, 0.02, 0.26, m.cream, [0.095, 0.016, 0]));
+  for (const z of [-0.07, -0.02, 0.03]) notes.add(kit.box(0.12, 0.003, 0.01, m.ink, [-0.095, 0.028, z]));
+  notes.add(kit.sphere(0.035, m.bone, [0.095, 0.035, 0.04], 6));
+  const leaf = new Group();
+  leaf.position.set(0, 0.028, 0);
+  leaf.add(kit.box(0.17, 0.006, 0.25, m.cream, [0.088, 0, 0]));
+  notes.add(leaf);
+  // A fossil shell, a magnifier and a lamp on the crates.
+  const fossil = new Mesh(new TorusGeometry(0.06, 0.03, 6, 12), m.stone);
+  fossil.position.set(-0.24, 0.76, 0.6);
+  fossil.rotation.x = Math.PI / 2;
+  root.add(fossil);
+  const glass = new Mesh(new TorusGeometry(0.05, 0.01, 5, 14), m.steel);
+  glass.position.set(0.2, 0.74, 0.62);
+  glass.rotation.x = Math.PI / 2;
+  root.add(glass, kit.box(0.02, 0.02, 0.1, m.timber, [0.2, 0.74, 0.72]));
+  root.add(kit.box(0.1, 0.03, 0.1, m.iron, [0.33, 0.74, 0.4]));
+  root.add(kit.cylinder(0.05, 0.05, 0.12, m.glass, [0.33, 0.81, 0.4], 8));
+  const lamp = kit.sphere(0.035, m.bulb, [0.33, 0.81, 0.4], 6);
+  root.add(lamp);
+  // The survey staff, banded, with a flag.
+  for (let i = 0; i < 6; i += 1) root.add(kit.box(0.04, 0.3, 0.04, i % 2 ? m.cream : m.red, [0.62, 0.15 + i * 0.3, -0.42]));
+  const flag = kit.box(0.2, 0.12, 0.01, m.hazard, [0.72, 1.7, -0.42]);
+  root.add(flag);
+  kit.shadows(root);
+  root.scale.setScalar(1.25);
+  root.userData = {
+    labelY: 2.4,
+    page: new Vector3(0, 0.96, 0.6),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      head.rotation.x = 0.42 * reading + Math.sin(time * 0.6) * 0.03;
+      head.rotation.y = Math.sin(time * 0.45) * 0.18 * reading;
+      body.rotation.z = Math.sin(time * 0.7) * 0.02;
+      tail.rotation.y = Math.sin(time * 1.1) * 0.25 * (0.3 + reading * 0.7);
+      const blink = (time % 4.6) < 0.18 ? 1 : 0;
+      for (const lid of lids) lid.scale.y = Math.max(0.001, blink + (1 - reading) * 0.3);
+      const turn = smooth((((time * 0.28) % 1) - 0.72) / 0.28) * reading;
+      leaf.rotation.z = Math.PI * turn;
+      arms[1].rotation.x = -1.15 - Math.sin(turn * Math.PI) * 0.4;
+      arms[0].rotation.x = -1.15 + Math.sin(time * 0.9) * 0.04;
+      flag.rotation.y = Math.sin(time * 2.3) * 0.25;
+      lamp.scale.setScalar(1 + Math.sin(time * 8) * 0.08);
+    },
+  };
+  return root;
+}
+
 export default {
   palette,
   layout,
@@ -1802,4 +1966,5 @@ export default {
   decor,
   weather,
   frame,
+  advisor,
 };

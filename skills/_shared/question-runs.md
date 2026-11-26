@@ -34,10 +34,12 @@ hand-write those fields into `meta.json`; repair a hand-written run with
 `orc-publish-question --run-dir <run-dir> --repair`. Both initial publication
 and repair refuse any run carrying lifecycle artifacts.
 
-Publication is idempotent: keep valid canonical answer bytes when interrupted,
-resume a matching external ownership record, regenerate abandoned temp files,
-and fail closed on terminal metadata without a valid answer. Unconfigured
+Publication is idempotent: an interrupted one resumes. Fail closed on
+terminal metadata without a valid answer. Unconfigured
 launches publish under Other projects.
+
+Pictures and sketches go in the answer per [question-media.md](question-media.md),
+never on claude.ai.
 
 When the question asks whether a run, ticket, or plan is done, shape the answer
 as the asks table in [asks-table.md](asks-table.md).
@@ -58,7 +60,8 @@ evidence limits.
 ## Terminal invariants
 
 Question runs contain `answer.md`, optional `answer.ui.json` (`--ui-file`),
-optional `diagram.md` (`orc-publish-diagram`), and source/title/session/model
+optional `diagram.md` (`orc-publish-diagram`), optional `media/` (`--media`),
+and source/title/session/model
 metadata only — never `lifecycleVersion`, repository/branch/worktree fields,
 Plan/Build/Verify/Ship artifacts, `phaseDispatch`, `decisions.*`, or delivery
 state. A hook-created empty legacy `grilling.mdx` stub may remain; non-empty

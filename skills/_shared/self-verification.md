@@ -80,7 +80,8 @@ orc-check skip --run-dir "$RUN_DIR" --batch '[{"id": "blast-radius", "label": "B
 - **Fix what you broke before Ship:** fix a failure your change caused, then
   report the same id again. Leave one only when it fails at `buildBaseCommit`
   too (swap the changed files back to base, or `orc-browser-failures check`):
-  report it with `orc-check fail <id> --on-main` to show this run did not break it.
+  report it with `orc-check fail <id> --on-main` to show this run did not break
+  it. Name a test that passed on retry (`FLAKY`) in `pr-body.md`; never rerun it.
 
 ## 5. Keep proof lightweight in `pr-body.md`
 

@@ -10,6 +10,9 @@ import subprocess
 import tempfile
 from typing import Any, Callable
 
+import config_guard
+import project_settings
+
 SETUP_VERSION = 1
 
 
@@ -144,10 +147,17 @@ def initial_repo_entry(
         if legacy_wt is not None:
             entry["worktree"] = legacy_wt
         return entry, "grandfathered"
-    return {"setupVersion": SETUP_VERSION, "worktree": True, "a11y": False}, "registered"
+    return {
+        "setupVersion": SETUP_VERSION,
+        "worktree": True,
+        "a11y": False,
+    }, "registered"
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    refusal = config_guard.test_refusal(path)
+    if refusal:
+        raise ValueError(refusal)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_raw = tempfile.mkstemp(prefix=".config.", suffix=".tmp", dir=path.parent)
     tmp = Path(tmp_raw)
@@ -263,6 +273,7 @@ def ensure_projects(
                 summaries.append({"key": key, "mainRepoPath": str(repo), "action": action, "entry": entry})
 
             if dirty:
+                project_settings.pin_default_ship_action(config)
                 config["repos"] = repos
                 _atomic_write_json(cfg_path, config)
         finally:

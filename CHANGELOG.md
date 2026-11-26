@@ -7,6 +7,13 @@ Each release is a `## v<version>` section, newest first, written and reviewed
 by the publisher before it goes out. A release bundles every change since the
 one before.
 
+## v3.104.0 (2026-11-26)
+
+- Improved queue mode UX
+- Made installing private packages easier
+- Show advisors in factories
+- Allow question runs to generate images as part of its answer
+
 ## v3.85.0 (2026-11-25)
 
 - UX Improvements

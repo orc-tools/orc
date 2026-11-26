@@ -8,7 +8,7 @@
 // as artifact feedback on the planning page, so they survive a reload and
 // reach the run's session as one batch.
 import { CARD_FOLD_TIMING } from './chat-card.js';
-import { CHAT_KEY, announce, esc, submitChord } from './core.js';
+import { CHAT_KEY, announce, esc, startWorkLabel, submitChord } from './core.js';
 import { sessionModelBadge, sessionSpeedHtml } from './launch-options.js';
 import { reducedMotion } from './motion.js';
 import { ATTACH_ICON, composerText, promptComposerHtml } from './prompt-composer.js';
@@ -71,21 +71,61 @@ const batchStamp = value => {
 };
 const batchCompletedStamp = batch => batchStamp(batch.state?.completedAt || batch.manifest?.completedAt);
 
+// The revisions Orc finished, oldest first. A batch sent while the one before
+// it was still being worked on belongs to the same revision pass, so its notes
+// and answers show together.
+function revisionGroups(done) {
+  const groups = [];
+  for (const batch of done) {
+    const group = groups.at(-1);
+    const ended = group ? batchCompletedStamp(group.at(-1)) : NaN;
+    const started = batchStamp(batch.createdAt || batch.state?.deliveredAt);
+    if (group && Number.isFinite(ended) && Number.isFinite(started) && started < ended) group.push(batch);
+    else groups.push([batch]);
+  }
+  return groups;
+}
+
+// One finished revision as the notes box shows it: every note in it with
+// Orc's answer, opened in Chat at the turn that took its first batch.
+function revisionModel(group, replies) {
+  const first = group[0];
+  const last = group.at(-1);
+  return {
+    id: last.id,
+    chatBatchId: first.id,
+    stage: 'answered',
+    sentAt: first.state?.deliveredAt || first.createdAt || '',
+    doneAt: last.state?.completedAt || last.manifest?.completedAt || '',
+    overallNote: typeof last.overallNote === 'string' ? last.overallNote.trim() : '',
+    items: group.flatMap(batch => (batch.items || []).filter(onPlan).map(item => mapBatchItem(item, replies))),
+  };
+}
+
 // What the server holds, as the page shows it: the notes not sent yet, every
 // in-flight batch while Orc revises the plan (with follow-ups marked queued
 // until Orc claims them), or the latest revision's answers once all active
-// batches are done.
+// batches are done. `earlier` holds every finished revision before the
+// current one, oldest first and numbered from 1.
 export function planNotesModel(state) {
   const drafts = (state?.drafts || []).filter(onPlan);
   const batches = (state?.batches || []).filter(batch => (batch.items || []).some(onPlan));
-  if (!batches.length) return { drafts, sent: null };
+  if (!batches.length) return { drafts, sent: null, earlier: [] };
   const replies = batchReplies(state);
+  const groups = revisionGroups(batches.filter(isDoneBatch));
+  const numbered = list => list.map((group, index) => ({ ...revisionModel(group, replies), n: index + 1 }));
   const active = batches.filter(batch => !isDoneBatch(batch) && (batch.state?.status || 'created') !== 'created');
   if (active.length) {
+    // A batch done before a follow-up sent during it is part of the revision
+    // still running, so it is not an earlier one yet.
+    const started = batchStamp(active[0].createdAt || active[0].state?.deliveredAt);
+    const ended = groups.length ? batchCompletedStamp(groups.at(-1).at(-1)) : NaN;
+    if (Number.isFinite(started) && Number.isFinite(ended) && started < ended) groups.pop();
     const unsent = batches.filter(batch => !isDoneBatch(batch) && (batch.state?.status || 'created') === 'created');
     const retryBatch = unsent.at(-1) || null;
     return {
       drafts,
+      earlier: numbered(groups),
       sent: {
         id: active.at(-1).id,
         stage: 'revising',
@@ -101,29 +141,9 @@ export function planNotesModel(state) {
     };
   }
   const last = batches.at(-1);
-  if (!isDoneBatch(last)) return { drafts, sent: sentBatch(state, last, onPlan) };
-  // Batches submitted while an earlier batch was still in flight belong to the
-  // same revision pass, so Orc's answers show all of them together.
-  const group = [last];
-  for (let index = batches.length - 2; index >= 0; index -= 1) {
-    const candidate = batches[index];
-    if (!isDoneBatch(candidate)) break;
-    const ended = batchCompletedStamp(candidate);
-    const started = batchStamp(group[0].createdAt || group[0].state?.deliveredAt);
-    if (!Number.isFinite(ended) || !Number.isFinite(started) || started >= ended) break;
-    group.unshift(candidate);
-  }
-  return {
-    drafts,
-    sent: {
-      id: last.id,
-      chatBatchId: group[0].id,
-      stage: 'answered',
-      sentAt: group[0].state?.deliveredAt || group[0].createdAt || '',
-      overallNote: typeof last.overallNote === 'string' ? last.overallNote.trim() : '',
-      items: group.flatMap(batch => (batch.items || []).filter(onPlan).map(item => mapBatchItem(item, replies))),
-    },
-  };
+  if (!isDoneBatch(last)) return { drafts, earlier: numbered(groups), sent: sentBatch(state, last, onPlan) };
+  const current = revisionModel(groups.pop(), replies);
+  return { drafts, earlier: numbered(groups), sent: current };
 }
 
 // One batch of notes as sent, on whichever pages they were left, with Orc's
@@ -207,6 +227,17 @@ export function planNotesElapsed(since, now = Date.now()) {
   return hours ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${Math.floor(total / 60)}:${pad(seconds)}`;
 }
 
+// When a revision ended, in the reader's own clock as Chat writes it
+// (ui/js/chat.js TIME): the time today, else the day and time.
+const CLOCK = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const DAY_CLOCK = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+export function planRevisionTime(at, now = Date.now()) {
+  const stamp = batchStamp(at);
+  if (!Number.isFinite(stamp)) return '';
+  const day = date => new Date(date).toDateString();
+  return (day(stamp) === day(now) ? CLOCK : DAY_CLOCK).format(stamp);
+}
+
 // ---------- the page ----------
 
 const noteLabel = (anchor, whole = 'The whole plan') => (anchor?.spot ? `Picture: ${anchor.exact || anchor.spot.image}` : anchor?.exact || whole);
@@ -232,13 +263,38 @@ const CHAT_ICON = '<svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="
 const chatLink = (runId, sent) =>
   `<a class="plan-notes-chat" href="${esc(planNotesChatHash(runId, sent.chatBatchId || sent.id))}">Open in Chat ${CHAT_ICON}</a>`;
 
+// The count and outcomes a folded set of answers shows on its heading line.
+const outcomesHtml = items => `${planNotesCount(items.length)} · ${
+  planNotesOutcomes(items).map(({ status, label }) => stateHtml(status, label)).join(', ')}`;
+
+// Every revision before the current one, folded to one line under Earlier
+// revisions until the reader opens it. Each opens to its notes and Orc's
+// answers, laid out as the current answers are.
+function earlierHtml(runId, earlier, open, opened) {
+  if (!earlier.length) return '';
+  const rows = open ? `<ol class="plan-notes-revisions" aria-label="Earlier revisions">${earlier.map(revision => {
+    const shown = opened.has(revision.chatBatchId);
+    const time = planRevisionTime(revision.doneAt || revision.sentAt);
+    return `<li>
+      <div class="plan-notes-answers-head plan-notes-revision-head">
+        <button type="button" class="plan-notes-fold" data-plan-notes-revision="${esc(revision.chatBatchId)}" aria-expanded="${shown}"><span class="plan-notes-fold-icon" aria-hidden="true">${FOLD_ICON}</span><span class="plan-notes-subtitle">Revision ${revision.n}</span><span class="plan-notes-fold-meta"> · ${outcomesHtml(revision.items)}${time ? ` · ${esc(time)}` : ''}</span></button>
+        ${chatLink(runId, revision)}
+      </div>${shown ? sentNotesHtml(runId, revision.items) : ''}
+    </li>`;
+  }).join('')}</ol>` : '';
+  return `<section class="plan-notes-earlier">
+      <div class="plan-notes-answers-head plan-notes-earlier-head">
+        <button type="button" class="plan-notes-fold" data-plan-notes-earlier aria-expanded="${open}"><span class="plan-notes-fold-icon" aria-hidden="true">${FOLD_ICON}</span><span class="plan-notes-subtitle">Earlier revisions</span><span class="plan-notes-fold-meta"> · ${earlier.length}</span></button>
+      </div>${rows}
+    </section>`;
+}
+
 // Orc's answers to the last batch. A click anywhere on their heading row folds
 // them to one line, the count and outcomes, so they stop covering the plan;
 // Open in Chat goes to the turn where Orc took the notes.
 function answersHtml(runId, sent, folded) {
-  const summary = folded ? `<span class="plan-notes-fold-meta"> · ${planNotesCount(sent.items.length)} · ${
-    planNotesOutcomes(sent.items).map(({ status, label }) => stateHtml(status, label)).join(', ')}</span>` : '';
-  return `<div class="plan-notes-answers-head">
+  const summary = folded ? `<span class="plan-notes-fold-meta"> · ${outcomesHtml(sent.items)}</span>` : '';
+  return `<div class="plan-notes-answers-head" data-plan-notes-current>
       <button type="button" class="plan-notes-fold" data-plan-notes-fold aria-expanded="${!folded}"><span class="plan-notes-fold-icon" aria-hidden="true">${FOLD_ICON}</span><span class="plan-notes-subtitle">Orc's answers</span>${summary}</button>
       ${chatLink(runId, sent)}
     </div>${folded ? '' : `
@@ -278,12 +334,12 @@ export function openNoteImages(runId, note) {
 // with them. The tray holds data-folding while it moves. Returns what stops the
 // motion at once, leaving the tray as paint() drew it.
 function animateAnswersFold(tray, { from, listFrom, gone }) {
-  const head = tray.querySelector('.plan-notes-answers-head');
+  const head = tray.querySelector('[data-plan-notes-current]');
   const to = tray.getBoundingClientRect().height;
   if (!head || !tray.animate || from === to) return () => {};
   const gap = parseFloat(getComputedStyle(tray).rowGap) || 0;
   const timing = { ...CARD_FOLD_TIMING, fill: 'both' };
-  const list = gone || tray.querySelector('.plan-notes-answers');
+  const list = gone || head.nextElementSibling;
   if (gone) {
     gone.inert = true;
     gone.setAttribute('aria-hidden', 'true');
@@ -315,7 +371,7 @@ function animateAnswersFold(tray, { from, listFrom, gone }) {
 
 function trayHtml(notes) {
   const { model, enabled, busy, error, runId } = notes;
-  const { drafts, sent } = model;
+  const { drafts, sent, earlier = [] } = model;
   const adding = enabled && sent?.stage !== 'revising';
   const quote = (anchor, id) => (anchor?.spot || anchor?.exact
     ? `<button type="button" class="plan-notes-quote" data-plan-note-jump="${esc(id)}">${esc(planNoteQuote(noteLabel(anchor)))}</button>`
@@ -329,8 +385,8 @@ function trayHtml(notes) {
   // Start work hands notes still in the tray to the build (ui/serve.py
   // plan_notes_for_build), so the reader knows they are not dropped.
   const hint = drafts.length && sent?.stage !== 'revising'
-    ? `<p class="plan-notes-hint">${adding ? 'Send them and Orc revises the plan first, or Start work and the build takes them as they are.'
-      : 'Start work hands these notes to the build.'}</p>` : '';
+    ? `<p class="plan-notes-hint">${adding ? `Send them and Orc revises the plan first, or ${startWorkLabel()} and the build takes them as they are.`
+      : `${startWorkLabel()} hands these notes to the build.`}</p>` : '';
   // While Orc revises, the whole box opens Chat at the turn working on the
   // notes: its Open in Chat link stretches over it (ui/plan-page.css).
   // The timer's text is set apart from this markup (tickTimer), so a tick
@@ -360,7 +416,8 @@ function trayHtml(notes) {
   const answers = sent?.stage === 'answered' ? answersHtml(runId, sent, notes.folded) : '';
   const failure = error ? `<p class="plan-notes-status is-error" role="alert">${esc(error)}</p>` : '';
   if (!list && !hint && !status && !answers && !failure) return '';
-  return `${answers}${status}${list}${hint}${failure}`;
+  // Earlier revisions head the box only while something of the current one shows.
+  return `${earlierHtml(runId, earlier, notes.earlierOpen, notes.openedRevisions)}${answers}${status}${list}${hint}${failure}`;
 }
 
 // The box takes images the way the chat box does (ATTACHMENTS_JS in
@@ -463,7 +520,7 @@ function noteImageBox(box, field, picker, sending) {
 // the notes and the chat box. `source()` is the plan as written, and
 // `changed()` tells the page that what can start may have changed.
 export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
-  const notes = { model: { drafts: [], sent: null }, enabled: false, canMutate: false, busy: false, error: '', runId };
+  const notes = { model: { drafts: [], sent: null, earlier: [] }, enabled: false, canMutate: false, busy: false, error: '', runId };
   let alive = true;
   let loadedAt = 0;
   let loading = null;
@@ -473,6 +530,10 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
   // The batch whose answers the reader folded. Answers to a newer batch
   // show open, and leaving the plan forgets it.
   let foldedBatch = null;
+  // Earlier revisions, and which of them, the reader opened. Both start
+  // folded each time the plan opens.
+  let earlierOpen = false;
+  const openedRevisions = new Set();
   // Stops the answers' fold motion, leaving the tray as last drawn.
   let stopFold = () => {};
   const form = document.createElement('form');
@@ -645,10 +706,11 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
   function paint() {
     if (!alive) return;
     const folded = Boolean(foldedBatch) && foldedBatch === notes.model.sent?.id;
-    const html = trayHtml({ ...notes, enabled: notes.enabled && notes.canMutate, folded });
+    const html = trayHtml({ ...notes, enabled: notes.enabled && notes.canMutate, folded, earlierOpen, openedRevisions });
     if (tray.dataset.painted !== html) {
       const held = tray.contains(document.activeElement) ? document.activeElement : null;
       const key = held?.dataset.planNoteJump || held?.dataset.planNoteDelete;
+      const revision = held?.dataset.planNotesRevision;
       stopFold();
       tray.dataset.painted = html;
       tray.innerHTML = html;
@@ -656,6 +718,9 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
       // A deleted note's button is gone; the list's next control takes focus,
       // or the chat box when the list is empty.
       if (held) (key && tray.querySelector(`[data-plan-note-jump="${CSS.escape(key)}"]`)
+        || (revision && tray.querySelector(`[data-plan-notes-revision="${CSS.escape(revision)}"]`))
+        || ('planNotesEarlier' in held.dataset && tray.querySelector('[data-plan-notes-earlier]'))
+        || ('planNotesFold' in held.dataset && tray.querySelector('[data-plan-notes-fold]'))
         || tray.querySelector('button') || message)?.focus?.({ preventScroll: true });
     }
     paintComposer();
@@ -882,14 +947,25 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
   tray.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
-    if (target.closest('.plan-notes-answers-head') && !target.closest('.plan-notes-chat')) {
+    if (target.closest('.plan-notes-chat')) return;
+    const toggle = target.closest('.plan-notes-earlier-head, .plan-notes-revision-head');
+    if (toggle) {
+      const revision = toggle.querySelector('[data-plan-notes-revision]')?.dataset.planNotesRevision;
+      if (!revision) earlierOpen = !earlierOpen;
+      else if (!openedRevisions.delete(revision)) openedRevisions.add(revision);
+      stopFold();
+      paint();
+      return;
+    }
+    if (target.closest('[data-plan-notes-current]')) {
       const id = notes.model.sent?.id || null;
       // Measured before a running fold stops, so a second click turns back from where it is.
       const from = tray.getBoundingClientRect().height;
-      const listFrom = tray.querySelector('.plan-notes-answers')?.getBoundingClientRect().height || 0;
+      const current = () => tray.querySelector('[data-plan-notes-current] + .plan-notes-answers');
+      const listFrom = current()?.getBoundingClientRect().height || 0;
       stopFold();
       const folding = foldedBatch !== id;
-      const gone = folding ? tray.querySelector('.plan-notes-answers') : null;
+      const gone = folding ? current() : null;
       foldedBatch = folding ? id : null;
       paint();
       // Animations off in Settings → Visuals, or reduce motion, keeps the snap.
@@ -904,8 +980,8 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
     const shown = target.closest('[data-plan-note-images]');
     if (shown) {
       const id = shown.dataset.planNoteImages;
-      const note = notes.model.drafts.find(draft => draft.id === id)
-        || notes.model.sent?.items.find(item => item.id === id);
+      const note = [...notes.model.drafts, ...(notes.model.sent?.items || []),
+        ...(notes.model.earlier || []).flatMap(revision => revision.items)].find(item => item.id === id);
       openNoteImages(runId, note);
       return;
     }

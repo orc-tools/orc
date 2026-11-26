@@ -1534,9 +1534,151 @@ function frame(time, _dt, kit) {
   });
 }
 
+// ---------- the advisor ----------
+
+// The advisor: an old sea turtle in brass spectacles, sitting up on a sand
+// mound to read a scroll on a driftwood lectern, a pearl in an open clam for
+// its lamp. Pages from the galleon land on the scroll; while it reads, the
+// lines scroll past, it nods along over them, blinks and breathes bubbles.
+function advisor(kit) {
+  const root = new Group();
+  const shell = flat(kit, 'crate', 0.75);
+  const scute = flat(kit, 'hull', 0.8);
+  const skin = kit.mat('kelpLight', { rough: 0.7, flat: true });
+  const plastron = kit.mat('tape', { rough: 0.7, flat: true });
+  const brass = kit.mat('brass', { rough: 0.35, metal: 0.7 });
+  const wood = flat(kit, 'hullDark', 0.9);
+  const paper = kit.mat('sail', { rough: 0.9 });
+  const inkMat = kit.mat('ink', { rough: 0.9 });
+  root.add(kit.shadow(1.4, 1.2, 0.24));
+  root.add(blob(kit, 0.6, flat(kit, 'patch', 0.95), [0, 0, -0.05], [1, 0.18, 0.9], 10));
+  for (const side of [-1, 1]) {
+    const hind = blob(kit, 0.16, skin, [side * 0.26, 0.08, 0.08], [0.7, 0.3, 1.4], 7);
+    hind.rotation.y = side * 0.5;
+    root.add(hind);
+  }
+  // The turtle sits up, leaning back a little against its shell.
+  const body = new Group();
+  body.position.set(0, 0.05, -0.15);
+  body.rotation.x = -0.18;
+  root.add(body);
+  body.add(blob(kit, 0.42, shell, [0, 0.62, -0.1], [0.95, 1.3, 0.6], 10));
+  body.add(blob(kit, 0.36, plastron, [0, 0.6, 0.06], [0.82, 1.2, 0.42], 10));
+  for (const [x, y] of [[0, 0.95], [-0.18, 0.72], [0.18, 0.72], [-0.15, 0.4], [0.15, 0.4], [0, 0.56]]) {
+    const plate = kit.cylinder(0.11, 0.12, 0.05, scute, [x, y, -0.33], 6);
+    plate.rotation.x = Math.PI / 2;
+    body.add(plate);
+  }
+  for (const y of [0.42, 0.6, 0.78]) body.add(kit.box(0.34, 0.015, 0.02, scute, [0, y, 0.21]));
+  body.add(kit.cylinder(0.09, 0.11, 0.26, skin, [0, 1.12, 0.02], 7));
+  // The head, with spectacles and lids that blink.
+  const head = new Group();
+  head.position.set(0, 1.26, 0.04);
+  body.add(head);
+  head.add(blob(kit, 0.17, skin, [0, 0, 0.02], [1, 0.88, 1.2], 9));
+  head.add(blob(kit, 0.06, kit.mat('trim', { rough: 0.6 }), [0, -0.06, 0.2], [1.4, 0.45, 0.8], 6));
+  const white = kit.mat('#f8f6ee', { rough: 0.3 });
+  const pupil = kit.mat('#14161c', { rough: 0.2 });
+  const lids = [];
+  for (const side of [-1, 1]) {
+    head.add(kit.sphere(0.045, white, [side * 0.08, 0.04, 0.15], 8));
+    head.add(kit.sphere(0.025, pupil, [side * 0.08, 0.035, 0.19], 6));
+    const rim = new Mesh(new TorusGeometry(0.055, 0.009, 5, 14), brass);
+    rim.position.set(side * 0.08, 0.035, 0.205);
+    head.add(rim);
+    head.add(kit.box(0.012, 0.012, 0.16, brass, [side * 0.135, 0.04, 0.12]));
+    const lid = blob(kit, 0.05, skin, [side * 0.08, 0.06, 0.155], [1, 0.001, 1], 7);
+    head.add(lid);
+    lids.push(lid);
+  }
+  head.add(kit.box(0.05, 0.01, 0.01, brass, [0, 0.04, 0.205]));
+  // Front flippers reach for the scroll.
+  const flippers = [];
+  for (const side of [-1, 1]) {
+    const pivot = new Group();
+    pivot.position.set(side * 0.32, 0.86, 0.06);
+    pivot.rotation.set(-1.05, 0, side * 0.12);
+    const flipper = blob(kit, 0.2, skin, [0, -0.17, 0], [0.36, 1, 0.16], 7);
+    pivot.add(flipper);
+    body.add(pivot);
+    flippers.push(pivot);
+  }
+  // The driftwood lectern and the scroll unrolled on it.
+  root.add(kit.cylinder(0.06, 0.09, 0.86, wood, [0, 0.43, 0.5], 6));
+  root.add(blob(kit, 0.16, wood, [0, 0.04, 0.5], [1.4, 0.35, 1], 6));
+  const desk = new Group();
+  desk.position.set(0, 0.88, 0.52);
+  desk.rotation.x = 0.5;
+  root.add(desk);
+  desk.add(kit.box(0.5, 0.04, 0.3, wood, [0, 0, 0]));
+  desk.add(kit.box(0.46, 0.012, 0.32, paper, [0, 0.028, 0]));
+  for (const z of [-0.17, 0.17]) {
+    const roll = kit.cylinder(0.035, 0.035, 0.52, paper, [0, 0.05, z], 8);
+    roll.rotation.z = Math.PI / 2;
+    desk.add(roll);
+    for (const side of [-1, 1]) desk.add(kit.sphere(0.03, brass, [side * 0.28, 0.05, z], 6));
+  }
+  const lines = [];
+  for (let i = 0; i < 5; i += 1) {
+    const line = kit.box(0.3 - (i % 2) * 0.08, 0.004, 0.018, inkMat, [0, 0.036, 0]);
+    desk.add(line);
+    lines.push(line);
+  }
+  // A pearl in an open clam on a coral stalk keeps the scroll lit.
+  root.add(kit.cylinder(0.025, 0.04, 0.9, flat(kit, 'coralPink', 0.6), [0.42, 0.45, 0.4], 5));
+  const clamMat = kit.mat('clam', { rough: 0.5 });
+  root.add(blob(kit, 0.11, clamMat, [0.42, 0.92, 0.4], [1, 0.3, 1], 8));
+  const lid = blob(kit, 0.11, clamMat, [0.42, 0.98, 0.34], [1, 0.3, 1], 8);
+  lid.rotation.x = -0.9;
+  root.add(lid);
+  const pearl = kit.sphere(0.05, glowing(kit, 'pearl', 0.9), [0.42, 0.97, 0.41], 8);
+  root.add(pearl);
+  // Bubbles it breathes out as it reads.
+  const bubbleMat = kit.basic('smoke', { opacity: 0.7 });
+  const bubbles = [];
+  for (let i = 0; i < 3; i += 1) {
+    const bubble = kit.sphere(0.035 + i * 0.012, bubbleMat, [0, 0, 0], 7);
+    root.add(bubble);
+    bubbles.push(bubble);
+  }
+  kit.shadows(root);
+  for (const bubble of bubbles) bubble.castShadow = false;
+  root.scale.setScalar(1.3);
+  let scroll = 0;
+  root.userData = {
+    labelY: 2.15,
+    page: new Vector3(0, 1.22, 0.68),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      head.rotation.x = 0.4 * reading + Math.sin(time * 0.7) * 0.03;
+      head.rotation.y = Math.sin(time * 0.5) * 0.2 * reading;
+      body.rotation.z = Math.sin(time * 0.8) * 0.03;
+      const blink = (time % 3.9) < 0.15 ? 1 : 0;
+      for (const eyelid of lids) eyelid.scale.y = Math.max(0.001, blink * 0.9 + (1 - reading) * 0.15);
+      flippers[0].rotation.x = -1.05 + Math.sin(time * 1.1) * 0.06;
+      flippers[1].rotation.x = -1.05 - Math.max(0, Math.sin(time * 2.2)) * 0.25 * reading;
+      // The scroll's lines move up the page as it reads down it.
+      scroll += Math.min(dt, 0.1) * 0.12 * reading;
+      lines.forEach((line, i) => {
+        const u = (i / lines.length + scroll) % 1;
+        line.position.z = 0.13 - u * 0.26;
+        line.scale.x = Math.max(0.001, Math.sin(u * Math.PI));
+      });
+      pearl.scale.setScalar(1 + Math.sin(time * 2.4) * 0.12);
+      bubbles.forEach((bubble, i) => {
+        const u = (time * 0.35 + i / bubbles.length) % 1;
+        bubble.visible = reading > 0.2;
+        bubble.position.set(Math.sin(time * 2 + i * 2) * 0.05, 1.45 + u * 0.75, 0.12 + u * 0.1);
+        bubble.scale.setScalar(Math.max(0.001, Math.sin(u * Math.PI)));
+      });
+    },
+  };
+  return root;
+}
+
 export default {
   palette: PALETTE, backdrop: BACKDROP,
-  layout: { bend: -0.6, stagger: 0.15, jitter: 0.12, turn: 0.35 },
+  layout: { bend: -0.6, stagger: 0.15, jitter: 0.12, turn: 0.35, advisor: { x: -5.3, z: -5.0, yaw: 0.7 } },
   view: { elevation: 0.7, azimuth: -0.1 },
-  pad: false, dock, floor, hall, station, crate, carrier, decor, weather, frame,
+  pad: false, dock, floor, hall, station, crate, carrier, decor, weather, frame, advisor,
 };

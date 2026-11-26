@@ -236,6 +236,7 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
   let active = 0;
   let dismissed = false;
   let loadedUrl;
+  let stale = false;
   let generation = 0;
 
   const position = () => {
@@ -327,7 +328,7 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
       .sort((a, b) => rank(a) - rank(b));
     show('skills', matches.map((skill, index) => `<li id="${idPrefix}-skill-${index}" role="option" aria-selected="false">
       <strong>/${esc(skill.name)}</strong><span title="${esc(skill.description || '')}">${esc(skill.description || 'Choose this skill and describe what you need.')}</span></li>`).join(''),
-    pending ? 'Loading skills…' : error || (matches.length ? '' : 'No matching skills'));
+    pending && !matches.length ? 'Loading skills…' : error || (matches.length ? '' : 'No matching skills'));
   };
   const load = () => {
     const url = getUrl();
@@ -335,29 +336,32 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
       loadedUrl = url;
       generation++;
       catalog = pending = null;
+      stale = false;
       error = '';
     }
     if (!url) {
       error = 'Choose a project to see its skills.';
       return Promise.resolve([]);
     }
-    if (pending || catalog) return pending || Promise.resolve(catalog);
+    if (pending || (catalog && !stale)) return pending || Promise.resolve(catalog);
     const requestGeneration = generation;
     error = '';
+    // A refresh keeps the last list on screen, and through a failure.
+    const known = catalog || [];
     pending = fetch(url, { cache: 'no-store' })
       .then(async response => {
         if (!response.ok) throw new Error('Skills unavailable');
         const data = await response.json();
-        const skills = data.error ? [] : data.skills || [];
+        const skills = data.error ? known : data.skills || [];
         if (requestGeneration === generation) {
           error = data.error || '';
-          if (!error) { catalog = skills; if (!signal.aborted) onCatalog?.(); }
+          if (!error) { catalog = skills; stale = false; if (!signal.aborted) onCatalog?.(); }
         }
         return skills;
       })
       .catch(() => {
         if (requestGeneration === generation) error = 'Could not load skills. Type / again to retry.';
-        return [];
+        return known;
       })
       .finally(() => {
         if (requestGeneration === generation) {
@@ -367,6 +371,14 @@ export function bindChatSkills(area, source, { onCatalog } = {}) {
       });
     return pending;
   };
+  // A list never asked for needs no refresh: the next `/` reads the new one.
+  window.addEventListener('orc-skills-changed', () => {
+    if (!catalog && !pending && !error) return;
+    stale = true;
+    generation++;
+    pending = null;
+    load();
+  }, { signal });
   const update = () => {
     dismissed = false;
     const named = namesCommand(area.value) && (!error || getUrl() !== loadedUrl);

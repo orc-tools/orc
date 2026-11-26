@@ -1405,4 +1405,177 @@ function weather(kit) {
   };
 }
 
-export default { palette: PALETTE, layout, view, pad, ghost, floor, hall, station, crate, carrier, decor, weather, frame };
+// ---------- advisor ----------
+
+// The Help file's open spread: a title bar and a question-mark book on the
+// left page, Help Topics in blue links on the right.
+function helpSpread(kit) {
+  return memo(kit, 'help-spread', () => kit.painted((ctx, w, h) => {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#c0c0c0';
+    ctx.fillRect(w / 2 - 3, 0, 6, h);
+    const grad = ctx.createLinearGradient(0, 0, w / 2, 0);
+    grad.addColorStop(0, '#000080');
+    grad.addColorStop(1, '#1084d0');
+    ctx.fillStyle = grad;
+    ctx.fillRect(8, 8, w / 2 - 16, 20);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold 14px ${FONT}`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Orcsoft Help', 14, 18);
+    // The help book with its question mark.
+    ctx.fillStyle = '#ebc86e';
+    ctx.fillRect(26, 44, 54, 64);
+    ctx.fillStyle = '#000080';
+    ctx.fillRect(26, 44, 10, 64);
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold 44px ${FONT}`;
+    ctx.fillText('?', 44, 78);
+    for (let line = 0; line < 3; line += 1) ctx.fillRect(92, 50 + line * 18, 26 + seeded(line + 3) * 14, 5);
+    ctx.fillStyle = '#000080';
+    ctx.font = `bold 13px ${FONT}`;
+    ctx.fillText('Help Topics', w / 2 + 12, 18);
+    for (let line = 0; line < 6; line += 1) {
+      ctx.fillStyle = line % 3 === 0 ? '#0000ee' : '#000000';
+      ctx.fillRect(w / 2 + 14, 36 + line * 14, 46 + seeded(line + 9) * 50, 5);
+    }
+  }, { width: 256, height: 128, nearest: true, rough: 0.8, emissive: true, glow: kit.mode === 'dark' ? 0.45 : 0.15 }));
+}
+
+function helpLeaf(kit) {
+  return memo(kit, 'help-leaf', () => kit.painted((ctx, w, h) => {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#000000';
+    for (let line = 0; line < 7; line += 1) ctx.fillRect(10, 14 + line * 14, 40 + seeded(line + 20) * 60, 5);
+  }, { width: 128, height: 128, nearest: true, rough: 0.8, emissive: true, glow: kit.mode === 'dark' ? 0.45 : 0.15 }));
+}
+
+// The mousepad: navy cloth with the desktop's teal grid printed on it.
+function mousepadMaterial(kit) {
+  return memo(kit, 'mousepad', () => kit.painted((ctx, w, h) => {
+    ctx.fillStyle = kit.mode === 'dark' ? '#101c3c' : '#14286e';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = kit.mode === 'dark' ? '#1d4a5a' : '#1f7f8a';
+    for (let i = 16; i < w; i += 32) {
+      ctx.fillRect(i, 0, 2, h);
+      ctx.fillRect(0, i, w, 2);
+    }
+    ctx.fillStyle = '#ffd800';
+    for (const [x, y] of [[40, 40], [200, 200], [200, 56]]) ctx.fillRect(x, y, 8, 8);
+  }, { width: 256, height: 256, nearest: true, rough: 0.95 }));
+}
+
+// The advisor is the old ball mouse, the desktop's longest-serving hand: it
+// stands up on its mousepad in square spectacles, its ball showing through
+// its belly and its cable curling behind it, and reads the Help file on a
+// grey lectern. Its eyes run along the lines, it blinks, and every few
+// seconds a leaf of the Help turns.
+function advisor(kit) {
+  const root = new Group();
+  root.add(kit.box(1.5, 0.04, 1.36, mousepadMaterial(kit), [0, 0.02, 0]));
+  root.add(kit.box(1.54, 0.03, 1.4, kit.mat('abyss', { rough: 0.9 }), [0, 0.012, 0]));
+  const beige = kit.mat('beige', { rough: 0.62, metal: 0.04 });
+  const shade = kit.mat('beigeShade', { rough: 0.7 });
+  const ink = kit.mat('abyss', { rough: 0.6 });
+  // The mouse, stood on its tail end.
+  const mouse = new Group();
+  mouse.position.set(0, 0.04, -0.34);
+  mouse.scale.setScalar(1.3);
+  root.add(mouse);
+  const shell = new Group();
+  mouse.add(shell);
+  shell.add(kit.box(0.6, 0.8, 0.42, beige, [0, 0.42, 0]));
+  const dome = kit.sphere(0.3, beige, [0, 0.82, 0], 14);
+  dome.scale.set(1, 0.62, 0.7);
+  shell.add(dome);
+  shell.add(kit.box(0.62, 0.06, 0.44, shade, [0, 0.06, 0]));
+  // Its two buttons, split down the middle, over its brow.
+  for (const side of [-1, 1]) {
+    const button = kit.box(0.27, 0.22, 0.05, shade, [side * 0.145, 0.86, 0.2]);
+    button.rotation.x = -0.35;
+    shell.add(button);
+  }
+  shell.add(kit.box(0.02, 0.22, 0.06, ink, [0, 0.86, 0.2]).rotateX(-0.35));
+  // The ball, seen through the round port in its belly.
+  shell.add(kit.cylinder(0.15, 0.15, 0.02, ink, [0, 0.3, 0.21], 14).rotateX(Math.PI / 2));
+  shell.add(kit.sphere(0.12, kit.mat('trim', { rough: 0.35, metal: 0.2 }), [0, 0.3, 0.2], 12));
+  // Eyes and square spectacles.
+  const eyes = [];
+  const pupils = [];
+  const white = kit.mat('#ffffff', { rough: 0.3 });
+  for (const side of [-1, 1]) {
+    const eye = kit.sphere(0.075, white, [side * 0.12, 0.6, 0.2], 10);
+    shell.add(eye);
+    eyes.push(eye);
+    const pupil = kit.sphere(0.035, ink, [side * 0.12, 0.58, 0.27], 8);
+    shell.add(pupil);
+    pupils.push(pupil);
+    for (const [w, h, x, y] of [[0.2, 0.025, 0, 0.08], [0.2, 0.025, 0, -0.08], [0.025, 0.18, -0.09, 0], [0.025, 0.18, 0.09, 0]]) {
+      shell.add(kit.box(w, h, 0.02, ink, [side * 0.12 + x, 0.6 + y, 0.29]));
+    }
+  }
+  shell.add(kit.box(0.06, 0.02, 0.02, ink, [0, 0.62, 0.29]));
+  // A small smile.
+  shell.add(kit.box(0.12, 0.025, 0.02, ink, [0, 0.45, 0.215]));
+  // The cable, curling up from its back and down behind it like a tail.
+  const cable = kit.mat('trim', { rough: 0.6 });
+  const tail = new Group();
+  tail.position.set(0, 0.5, -0.21);
+  shell.add(tail);
+  for (let i = 0; i < 14; i += 1) {
+    const a = i / 13 * Math.PI * 1.25;
+    tail.add(kit.box(0.04, 0.04, 0.1, cable, [0, Math.sin(a) * 0.2, -0.05 - (1 - Math.cos(a)) * 0.16]).rotateX(-a));
+  }
+  // The lectern: a grey stand in bevelled window chrome, and the Help open
+  // on its slope.
+  const stand = new Group();
+  root.add(stand);
+  bevelBox(kit, stand, 0.22, 0.36, 0.18, [0, 0.22, 0.46]);
+  stand.add(kit.box(0.6, 0.05, 0.36, kit.mat('body', { rough: 0.78 }), [0, 0.04, 0.46]));
+  const desk = new Group();
+  desk.position.set(0, 0.44, 0.5);
+  desk.rotation.x = 0.55;
+  stand.add(desk);
+  desk.add(kit.box(0.84, 0.05, 0.46, kit.mat('body', { rough: 0.78 }), [0, 0, 0]));
+  desk.add(kit.box(0.84, 0.06, 0.03, kit.mat('darkEdge', { rough: 0.8 }), [0, 0.03, 0.23]));
+  const spread = plane(0.8, 0.4, helpSpread(kit), [0, 0.03, 0]);
+  spread.rotation.x = -Math.PI / 2;
+  desk.add(spread);
+  const leaf = new Group();
+  leaf.position.y = 0.035;
+  const page = plane(0.39, 0.4, helpLeaf(kit), [0.2, 0, 0]);
+  page.rotation.x = -Math.PI / 2;
+  page.material.side = DoubleSide;
+  leaf.add(page);
+  desk.add(leaf);
+  const shadowed = kit.shadows(root);
+  root.add(kit.shadow(1.9, 1.7, 0.3));
+  const scale = 1.3;
+  root.scale.setScalar(scale);
+  root.userData = {
+    labelY: 1.62 * scale,
+    page: new Vector3(0, 0.5 * scale, 0.5 * scale),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      mouse.rotation.x = 0.16 * reading + Math.sin(time * 0.7) * 0.02;
+      mouse.rotation.z = Math.sin(time * 0.5) * 0.05;
+      // Its eyes run along a line and back for the next.
+      const line = (time * 0.6) % 1;
+      for (const [i, pupil] of pupils.entries()) {
+        pupil.position.x = (i ? 0.12 : -0.12) + (line - 0.5) * 0.06 * reading;
+        pupil.position.y = 0.58 - 0.02 * reading;
+      }
+      const blink = (time % 3.9) < 0.14 ? 0.12 : 1;
+      for (const eye of eyes) eye.scale.y = blink;
+      for (const pupil of pupils) pupil.visible = blink === 1;
+      tail.rotation.x = Math.sin(time * 1.4) * 0.08;
+      const turn = Math.min(1, Math.max(0, ((time * 0.3) % 1 - 0.72) / 0.28)) * reading;
+      leaf.rotation.z = -Math.PI * (turn * turn * (3 - 2 * turn));
+    },
+  };
+  return shadowed;
+}
+
+export default { palette: PALETTE, layout, view, pad, ghost, floor, hall, station, crate, carrier, decor, weather, frame, advisor };

@@ -2,16 +2,26 @@
 
 import { ncSwitchProject, refresh, route } from './activity.js';
 import { controlRefresh, setControlStatus } from './control.js';
-import { $, announce, esc, nativeInput, runs, setRuns, showToast, toast } from './core.js';
+import { $, announce, esc, nativeInput, presentRun, runs, setRuns, showToast, toast } from './core.js';
 import { focusControl, renderList } from './filters.js';
 import { evalsPickOffer, evalsPickOfferHtml } from './evals-panel.js';
 import { playingScene } from './page-scene.js';
 import { attachPathComplete } from './path-complete.js';
+import { agentWorking } from './run-presentation.js';
 const deleteDialog = $('delete-dialog');
 let deleteTarget = null;
+// What deleting this run cuts short, or '' when it is idle or finished.
+function deleteWarning(run) {
+  const { state, unfinished } = presentRun(run);
+  if (agentWorking(run.meta || {})) return 'This run’s agent is still working. Deleting the run stops it.';
+  return unfinished && state.key !== 'idle' ? `This run isn’t idle (${state.label}).` : '';
+}
 export function deleteRun(id) {
   deleteTarget = id;
   const run = runs.find(r => r.id === id);
+  const warning = run ? deleteWarning(run) : '';
+  $('delete-warning-text').textContent = warning;
+  $('delete-warning').hidden = !warning;
   $('delete-run-name').textContent = (run && run.meta && run.meta.title) || id;
   $('delete-run-id').textContent = id;
   $('delete-scope').innerHTML = 'Removes the whole run folder from <code>~/.orc/runs</code> — plan, reports, recap, screenshots, decisions, and version history.';
@@ -22,10 +32,10 @@ $('delete-confirm').onclick = async () => {
   const id = deleteTarget;
   deleteDialog.close();
   if (!id) return;
-  const res = await fetch('/api/runs/' + encodeURIComponent(id), { method: 'DELETE' });
-  if (!res.ok) {
-    const detail = await res.json().then(b => b && b.error, () => null);
-    return alert(detail ? `Failed to delete run: ${detail}` : 'Failed to delete run.');
+  const res = await fetch('/api/runs/' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => null);
+  if (!res?.ok) {
+    const detail = await res?.json().then(b => b && b.error, () => null);
+    return toast('Could not delete run', { tone: 'error', description: detail || '' });
   }
   setRuns(runs.filter(r => r.id !== id));
   renderList();

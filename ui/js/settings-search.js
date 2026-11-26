@@ -3,7 +3,7 @@
 
 import { $, announce, esc, powerModeOf, POWER_MODES, RUN_MODE_LABEL, themeMode } from './core.js';
 import { canOpenPluginSettings, listedPlugin } from './app-plugins.js';
-import { modelLabel, prPushActionLabel } from './run-presentation.js';
+import { PR_PUSH_ACTIONS, modelLabel, prPushActionLabel } from './run-presentation.js';
 import { offersPermissionSwitch, permissionPreference, QA_CHAT_EFFORTS, qaChatChoice } from './launch-options.js';
 import { paintedFunMode, savedFunMode } from './fun-modes.js';
 import { animationsOff, factoryVisualsEnabled } from './motion.js';
@@ -11,6 +11,7 @@ import { sendOffsEnabled } from './send-offs.js';
 import { quietNow } from './quiet.js';
 import {
   SETTINGS_TABS,
+  branchExample,
   defaultShipAction,
   mergedRepoEntry,
   offerOtherShipActions,
@@ -609,8 +610,8 @@ export function buildSettingsIndex(overrides = {}) {
       snippet: 'Run mode (Standard or Queue mode), settled runs’ cleanup, and data export',
       pill: runModeLabel,
       pillTone: runMode === 'low' ? 'accent' : 'green',
-      keywords: ['performance', 'run mode', 'queue mode', 'standard', 'low power', 'parallel', 'battery', 'workers', 'cpu', 'slow', 'bin', 'trash', 'archive', 'cleanup', 'disk', 'storage', 'screenshots', 'settled', 'export', 'backup', 'zip'],
-      controlsText: `${RUN_MODE_LABEL} Standard Queue mode Move settled runs files to the Bin ${archiveLabel} Export data`,
+      keywords: ['performance', 'run mode', 'queue mode', 'only queue build runs', 'standard', 'low power', 'parallel', 'battery', 'workers', 'cpu', 'slow', 'bin', 'trash', 'archive', 'cleanup', 'disk', 'storage', 'screenshots', 'settled', 'export', 'backup', 'zip'],
+      controlsText: `${RUN_MODE_LABEL} Standard Queue mode Only queue build runs Move settled runs files to the Bin ${archiveLabel} Export data`,
       icon: SETTINGS_SEARCH_ICON_MAP.gauge,
       href: '#settings/general/performance',
       anchor: 'performance',
@@ -714,7 +715,7 @@ export function buildSettingsIndex(overrides = {}) {
       pillTone: 'accent',
       keywords: ['ship', 'ship action', 'merge', 'push', 'pr', 'pull request', 'yeet', 'main', 'delivery', 'default', 'other ship actions',
         'push comments', 'push commits', 'review comments', 'replies', 'git'],
-      controlsText: `Default Ship action ${shipDefaultLabel} Open PR Merge and push Yeet it (merge, push and settle) Merge to main Offer the other Ship actions Push to a PR ${prPushLabel} Push comments & commits Push commits`,
+      controlsText: `Ship action ${shipDefaultLabel} Open PR Merge and push Yeet it (merge, push and settle) Merge to main Offer the other Ship actions Have their own Push to a PR ${prPushLabel} Push comments & commits Push commits Branch prefix`,
       icon: SETTINGS_SEARCH_ICON_MAP.projects,
       href: '#settings/projects/ship-action',
       anchor: 'ship-action',
@@ -726,7 +727,8 @@ export function buildSettingsIndex(overrides = {}) {
         legend: 'Git & delivery defaults',
         defaultLabel: shipDefaultLabel,
         offerOther: offerOtherShip,
-        prPushLabel,
+        prPush: prPushActionOf(config),
+        branchPrefix,
         overrides: shipOverrides,
       },
     },
@@ -739,7 +741,7 @@ export function buildSettingsIndex(overrides = {}) {
       pill: `${branchPrefix}/`,
       pillTone: 'accent',
       keywords: ['branch', 'git', 'prefix', 'naming', 'slug', 'ticket', 'checkout'],
-      controlsText: `Branch prefix ${branchPrefix}/noticket/build-bulk-markdown`,
+      controlsText: `Branch prefix ${branchExample(branchPrefix)}`,
       icon: SETTINGS_SEARCH_ICON_MAP.branch,
       href: '#settings/projects/branch',
       anchor: 'branch',
@@ -1507,7 +1509,7 @@ export function renderSettingPreviewHtml(item, query = '') {
     return card(p.legend, `
       <div class="ss-mini-field-label">Branch prefix</div>
       <div class="ss-fake-input">${esc(p.prefix)}</div>
-      <p class="ss-mini-hint">Example: <code>${esc(p.prefix)}/noticket/build-bulk-markdown</code></p>`);
+      <p class="ss-mini-hint">Example: <code>${esc(branchExample(p.prefix))}</code></p>`);
   }
 
   if (p.kind === 'qa-window') {
@@ -1538,18 +1540,22 @@ export function renderSettingPreviewHtml(item, query = '') {
 
   if (p.kind === 'ship-action') {
     const overrideNote = p.overrides.length
-      ? `${p.overrides.length} project${p.overrides.length === 1 ? '' : 's'} override${p.overrides.length === 1 ? 's' : ''} the default.`
-      : 'Every project currently uses this default.';
+      ? `${p.overrides.length} project${p.overrides.length === 1 ? ' has its' : 's have their'} own.`
+      : 'Every project uses this, new ones too.';
     return card(p.legend, `
-      <div class="ss-mini-field-label">Default Ship action</div>
+      <div class="ss-mini-field-label">Ship action</div>
       <span class="ss-fake-select set"><span>${esc(p.defaultLabel)}</span><span aria-hidden="true">▾</span></span>
+      <p class="ss-mini-hint">${esc(overrideNote)}</p>
       <div class="ss-fake-switch${p.offerOther ? ' on' : ''}">
         <span>Offer the other Ship actions</span>
         <span class="ss-switch-track"><span class="ss-switch-thumb"></span></span>
       </div>
       <div class="ss-mini-field-label">Push to a PR</div>
-      <span class="ss-fake-select set"><span>${esc(p.prPushLabel)}</span><span aria-hidden="true">▾</span></span>
-      <p class="ss-mini-hint">${esc(overrideNote)}</p>`);
+      <div class="ss-fake-segmented">${PR_PUSH_ACTIONS.map(action =>
+        `<span class="ss-fake-seg${action.value === p.prPush ? ' active' : ''}">${esc(action.label)}</span>`).join('')}
+      </div>
+      <div class="ss-mini-field-label">Branch prefix</div>
+      <div class="ss-fake-input">${esc(p.branchPrefix)}</div>`);
   }
 
   if (p.kind === 'projects-list') {

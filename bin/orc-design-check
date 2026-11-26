@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""Design check: impeccable's detector on the UI files a branch changed.
+
+`orc-design-check` scans each UI file the checkout changed since its base
+(`--base REV`, default the merge base with main) both as it is now and as it
+was at the base, and fails only on problems the branch added. A file's older
+problems, and impeccable's advisory notes, never fail it. Run it through
+`orc-check run design --label "Design check" -- orc-design-check --base <commit>`
+so it lands in Chat's check list and Ship's build proof.
+
+`orc-design-check --report FILE...` scans the files as they are, judged by
+the checkout's DESIGN.md and impeccable config, and lists the problems found
+with a count of advisory notes, for plan mockups. It exits 0 whatever it finds.
+
+Exit codes: 0 pass, 1 new problems, 2 bad usage or a detector failure,
+3 impeccable is not installed here (record the check as skipped).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+import impeccable_launcher  # noqa: E402
+
+UI_SUFFIXES = {
+    ".html", ".htm", ".css", ".scss", ".sass", ".less", ".js", ".mjs", ".jsx",
+    ".ts", ".tsx", ".vue", ".svelte", ".astro",
+}
+SKIP_PARTS = {"tests", "node_modules", "vendor", "dist", "build", ".impeccable"}
+# What the detector reads besides the scanned file, copied into the base tree
+# so both sides are judged against the same design notes and ignores.
+CONTEXT = ("DESIGN.md", "PRODUCT.md", ".impeccable/config.json", ".impeccable/design.json")
+LISTED = 12
+
+
+def git(repo: Path, *args: str, check: bool = True) -> str:
+    out = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    if check and out.returncode:
+        raise SystemExit("orc-design-check: git %s failed: %s" % (" ".join(args), out.stderr.strip()))
+    return out.stdout if out.returncode == 0 else ""
+
+
+def is_ui(path: str) -> bool:
+    p = Path(path)
+    return (p.suffix.lower() in UI_SUFFIXES and not p.name.endswith(".min.js")
+            and not SKIP_PARTS.intersection(p.parts))
+
+
+def default_base(repo: Path) -> str:
+    for ref in ("origin/main", "main"):
+        base = git(repo, "merge-base", "HEAD", ref, check=False).strip()
+        if base:
+            return base
+    raise SystemExit("orc-design-check: no merge base with main; pass --base")
+
+
+def changed_files(repo: Path, base: str) -> dict[str, str]:
+    """Each UI file changed since `base`, with the path it had there: a
+    renamed file is compared with its old self, not treated as new."""
+    fields = git(repo, "diff", "-z", "--name-status", "-M", "--diff-filter=AMR", base).split("\0")
+    files = {}
+    index = 0
+    while index < len(fields) and fields[index]:
+        status = fields[index]
+        if status.startswith("R"):
+            old, new = fields[index + 1], fields[index + 2]
+            index += 3
+        else:
+            old = new = fields[index + 1]
+            index += 2
+        files[new] = old
+    for rel in git(repo, "ls-files", "-z", "--others", "--exclude-standard").split("\0"):
+        if rel:
+            files.setdefault(rel, rel)
+    return {new: old for new, old in sorted(files.items()) if is_ui(new) and (repo / new).is_file()}
+
+
+def detect(engine: Path, root: Path, files: list[str]) -> list[dict]:
+    if not files:
+        return []
+    out = subprocess.run([str(engine), "detect", "--json", *files], cwd=root,
+                         capture_output=True, text=True)
+    # The detector exits 2 when it finds something and 1 when it could not
+    # scan a file; a partial scan would hide problems, so it fails the check.
+    try:
+        found = json.loads(out.stdout or "[]")
+    except ValueError:
+        found = None
+    if found is None or out.returncode not in (0, 2):
+        tail = (out.stderr or out.stdout).strip().splitlines()[-1:] or ["no output"]
+        print("orc-design-check: the detector failed (exit %d): %s" % (out.returncode, tail[0]), file=sys.stderr)
+        raise SystemExit(2)
+    for item in found:
+        try:
+            item["file"] = Path(item.get("file", "")).resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            pass
+    return found
+
+
+def key(item: dict) -> tuple:
+    # Line numbers move with every edit above a problem; the rule and its
+    # snippet do not.
+    return (item.get("file"), item.get("antipattern"), item.get("snippet"))
+
+
+def base_tree(repo: Path, base: str, files: dict[str, str], tmp: Path) -> list[str]:
+    """The files as they were at `base`, each written at its path now."""
+    existing = []
+    for rel, old in files.items():
+        blob = subprocess.run(["git", "-C", str(repo), "show", "%s:%s" % (base, old)],
+                              capture_output=True)
+        if blob.returncode == 0:
+            (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp / rel).write_bytes(blob.stdout)
+            existing.append(rel)
+    copy_context(repo, tmp)
+    return existing
+
+
+def describe(item: dict) -> str:
+    return "  %s:%s [%s] %s" % (item.get("file"), item.get("line", "?"), item.get("antipattern"),
+                                item.get("snippet") or item.get("name") or "")
+
+
+def plural(n: int, word: str) -> str:
+    return "%d %s%s" % (n, word, "" if n == 1 else "s")
+
+
+def copy_context(repo: Path | None, tmp: Path) -> None:
+    for rel in CONTEXT if repo else ():
+        if (repo / rel).is_file():
+            (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(repo / rel, tmp / rel)
+    subprocess.run(["git", "init", "-q", str(tmp)], capture_output=True)
+
+
+def report(engine: Path, repo: Path | None, files: list[str]) -> int:
+    paths = [Path(f).expanduser().resolve() for f in files]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        raise SystemExit("orc-design-check: no such file: %s" % ", ".join(missing))
+    # A mockup lives in a run folder, away from the project's design notes, so
+    # it is judged from a copy beside them.
+    with tempfile.TemporaryDirectory(prefix="orc-design-check-") as tmp:
+        tmp_path = Path(tmp)
+        copy_context(repo, tmp_path)
+        names = {}
+        for index, path in enumerate(paths):
+            rel = "mockups/%d/%s" % (index, path.name)
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, tmp_path / rel)
+            names[rel] = str(path)
+        found = detect(engine, tmp_path, list(names))
+    seen = set()
+    for item in found:
+        item["file"] = names.get(item.get("file"), item.get("file"))
+    # The detector can report one problem twice (markup and inline style).
+    found = [f for f in found if not (key(f) in seen or seen.add(key(f)))]
+    problems = [f for f in found if not f.get("advisory")]
+    notes = [f for f in found if f.get("advisory")]
+    for item in problems:
+        print(describe(item))
+    print("%s, %s in %s" % (plural(len(problems), "design problem"), plural(len(notes), "advisory note"),
+                            plural(len(paths), "file")))
+    return 0
+
+
+def check(engine: Path, repo: Path, base: str) -> int:
+    files = changed_files(repo, base)
+    if not files:
+        print("No UI files changed since %s" % base[:9])
+        return 0
+    head = detect(engine, repo, list(files))
+    with tempfile.TemporaryDirectory(prefix="orc-design-check-") as tmp:
+        tmp_path = Path(tmp)
+        before = detect(engine, tmp_path, base_tree(repo, base, files, tmp_path))
+    new = Counter(map(key, head)) - Counter(map(key, before))
+    added = []
+    for item in head:
+        if new[key(item)] > 0:
+            new[key(item)] -= 1
+            added.append(item)
+    problems = [f for f in added if not f.get("advisory")]
+    notes = [f for f in added if f.get("advisory")]
+    if problems:
+        print("New design problems:")
+        for item in problems[:LISTED]:
+            print(describe(item))
+        if len(problems) > LISTED:
+            print("  ...and %d more" % (len(problems) - LISTED))
+    if notes:
+        print("%s added (not failing); run `impeccable detect` on the file to see them"
+              % plural(len(notes), "advisory note"))
+    touched = len({f["file"] for f in problems})
+    if problems:
+        print("%s in %s" % (plural(len(problems), "new design problem"), plural(touched, "file")))
+        return 1
+    print("No new design problems in %s" % plural(len(files), "UI file"))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", help="commit to compare with (default: merge base with main)")
+    parser.add_argument("--repo", default=".", help="checkout to scan, or whose design notes judge --report files (default: current folder)")
+    parser.add_argument("--report", nargs="+", metavar="FILE", help="list everything found in these files")
+    args = parser.parse_args()
+    engine = impeccable_launcher.find()
+    if engine is None:
+        print("orc-design-check: impeccable is not installed here, so there was no Design check. "
+              "Record it as skipped.", file=sys.stderr)
+        return 3
+    top = git(Path(args.repo), "rev-parse", "--show-toplevel", check=not args.report).strip()
+    repo = Path(top) if top else None
+    if args.report:
+        return report(engine, repo, args.report)
+    base = git(repo, "rev-parse", "--verify", (args.base or default_base(repo)) + "^{commit}").strip()
+    return check(engine, repo, base)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

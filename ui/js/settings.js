@@ -451,8 +451,9 @@ export function writeProjectShipAction(base, value) {
   delete base.offerMergeToMain;
   if (knownShipAction(value)) base.shipAction = knownShipAction(value);
 }
-export function writeDefaultShipAction(config, value) {
-  if (knownShipAction(value)) config.shipAction = knownShipAction(value);
+export function writeDefaultShipAction(config, key, value) {
+  const action = knownShipAction(value);
+  if (action) config[key] = action;
 }
 // Mirrors offer_other_ship_actions in project_settings.py: on unless saved off.
 export const offerOtherShipActions = config => config?.offerOtherShipActions !== false;
@@ -467,44 +468,54 @@ export function writePrPushAction(config, value) {
   if (knownPrPushAction(value) === DEFAULT_PR_PUSH_ACTION) delete config.prPushAction;
   else config.prPushAction = knownPrPushAction(value);
 }
-// Settings > Projects: the default, and every project that ships its own way.
+// Settings > Projects: the one Ship action every project uses, and the
+// projects that chose their own on their own page.
 // The Ship bar's Configure item opens it through #settings/projects/ship-action.
 export const SHIP_ACTION_SETTINGS_HASH = '#settings/projects/ship-action';
+// Projects listed before the rest fold behind a "more" button.
+export const SHIP_OVERRIDES_SHOWN = 4;
+// What a run branch is named under a prefix: <prefix>/<ticket>/<slug>.
+export const branchExample = prefix => `${String(prefix || '').trim() || 'orc'}/noticket/fix-login-redirect`;
 export function shipDefaultCardHtml(config, projects) {
   const fallback = defaultShipAction(config);
   const repos = config?.repos || {};
   const overrides = projects
     .map(project => ({ project, action: projectShipOverride(mergedRepoEntry(repos, project.key || project.path)) }))
     .filter(({ action }) => action);
+  const chip = ({ project, action }, index) =>
+    `<a class="ship-override" href="${projectSettingsHash(project.key || project.path)}"${index >= SHIP_OVERRIDES_SHOWN ? ' hidden' : ''}>${esc(projectName(project.path))} <span>${esc(shipActionLabel(action))}</span></a>`;
+  const more = overrides.length - SHIP_OVERRIDES_SHOWN;
   const overridesHtml = overrides.length
-    ? `<p class="settings-hint" id="ship-overrides-title">${overrides.length === 1 ? 'One project ships its own way' : `${overrides.length} projects ship their own way`}:</p>
-      <ul class="settings-hint settings-power-hints" id="ship-overrides" aria-labelledby="ship-overrides-title">${overrides.map(({ project, action }) =>
-        `<li><a href="${projectSettingsHash(project.key || project.path)}">${esc(projectName(project.path))}</a>: ${esc(shipActionLabel(action))}${action === fallback ? ' (same as the default)' : ''}</li>`).join('')}</ul>`
-    : '<p class="settings-hint" id="ship-overrides">Every project uses the default. Open a project to give it a Ship action of its own.</p>';
+    ? `<div class="ship-overrides" id="ship-overrides"><span id="ship-overrides-title">Have their own:</span>${overrides.map(chip).join('')}${more > 0
+      ? `<button type="button" class="ship-overrides-more" data-ship-overrides-more>${more} more</button>` : ''}</div>`
+    : '';
   return `<div class="settings-card" data-settings-anchor="ship-action">
-    <fieldset class="settings-fieldset">
+    <fieldset class="settings-fieldset ship-settings">
       <legend class="settings-label">Git &amp; delivery defaults</legend>
-      <div class="settings-field">
-        <orc-select id="set-ship-action" name="set-ship-action" label="Default Ship action" aria-describedby="hint-ship-action">
+      <section class="ship-settings-group" aria-label="Ship action">
+        <orc-select id="set-ship-action" name="set-ship-action" label="Ship action" aria-describedby="hint-ship-action">
           ${SHIP_ACTIONS.map(action => `<option value="${action.value}" ${action.value === fallback ? 'selected' : ''}>${esc(action.label)}</option>`).join('')}
         </orc-select>
-      </div>
-      <p class="settings-hint" id="hint-ship-action">The button a finished run leads with, unless its project has its own. Merge and push also pushes the default branch to origin. Yeet it does the same, then settles the run.</p>
-      <orc-switch class="settings-check" id="set-offer-other-ship-actions" name="set-offer-other-ship-actions" label="Offer the other Ship actions" aria-describedby="hint-offer-other-ship-actions" ${offerOtherShipActions(config) ? 'checked' : ''}></orc-switch>
-      <p class="settings-hint" id="hint-offer-other-ship-actions">Lists the other actions in the menu beside the Ship button, so one run can merge or open a PR another way. Turn it off to always ship with the project's own action.</p>
-      <div class="settings-field">
-        <orc-select id="set-pr-push-action" name="set-pr-push-action" label="Push to a PR" aria-describedby="hint-pr-push-action">
-          ${PR_PUSH_ACTIONS.map(action => `<option value="${action.value}" ${action.value === prPushActionOf(config) ? 'selected' : ''}>${esc(action.label)}</option>`).join('')}
-        </orc-select>
-      </div>
-      <p class="settings-hint" id="hint-pr-push-action">What the push button does after a run answers review comments on its PR. Push comments &amp; commits pushes the fixes and posts your replies in one click. Push commits pushes only the fixes, and the replies wait for their own Push comments button.</p>
-      ${overridesHtml}
-      <div class="settings-subblock" data-settings-anchor="branch">
-        <label class="settings-field"><span>Branch prefix</span>
-          <orc-input type="text" id="set-branch-prefix" name="set-branch-prefix" placeholder="orc" aria-label="Branch prefix" description="Used in run branch names: prefix slash ticket slash slug"></orc-input>
-        </label>
-        <p class="settings-hint" id="hint-branch-prefix">Run branches are named <code>&lt;prefix&gt;/&lt;ticket&gt;/&lt;slug&gt;</code>, for example <code id="branch-example" translate="no">orc/noticket/build-bulk-markdown</code>.</p>
-      </div>
+        <p class="settings-hint" id="hint-ship-action">Every project uses this, new ones too, unless it has its own.</p>
+        ${overridesHtml}
+        <orc-switch class="settings-check" id="set-offer-other-ship-actions" name="set-offer-other-ship-actions" label="Offer the other Ship actions" aria-describedby="hint-offer-other-ship-actions" ${offerOtherShipActions(config) ? 'checked' : ''}></orc-switch>
+        <p class="settings-hint" id="hint-offer-other-ship-actions">Adds a menu beside the Ship button, to ship one run another way.</p>
+      </section>
+      <section class="ship-settings-group" aria-labelledby="title-pr-push-action">
+        <p class="ship-settings-title" id="title-pr-push-action">Push to a PR</p>
+        <div class="settings-field">
+          <orc-segmented id="set-pr-push-action" label="Push to a PR" value="${prPushActionOf(config)}">${PR_PUSH_ACTIONS.map(action =>
+            `<button type="button" value="${action.value}">${esc(action.label)}</button>`).join('')}</orc-segmented>
+        </div>
+        <p class="settings-hint" id="hint-pr-push-action">Push commits sends the fixes, but not your replies to review comments.</p>
+      </section>
+      <section class="ship-settings-group" data-settings-anchor="branch" aria-labelledby="title-branch-prefix">
+        <p class="ship-settings-title" id="title-branch-prefix">Branch prefix</p>
+        <div class="ship-branch-row">
+          <orc-input type="text" id="set-branch-prefix" name="set-branch-prefix" placeholder="orc" aria-label="Branch prefix" description="Run branches are named prefix slash ticket slash slug"></orc-input>
+          <code id="branch-example" translate="no" title="Run branches are named &lt;prefix&gt;/&lt;ticket&gt;/&lt;slug&gt;">${branchExample()}</code>
+        </div>
+      </section>
     </fieldset>
   </div>`;
 }

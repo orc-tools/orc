@@ -50,7 +50,7 @@ function backdrop(mode) {
 // The camera stands as far round to the side as the engine lets it, and the
 // rooms turn a little towards it, so the floor reads as a room seen from its
 // corner.
-const layout = { turn: 0.3 };
+const layout = { turn: 0.3, advisor: { x: 3.8, z: -6.1, yaw: -0.6 } };
 const view = { elevation: 0.6, azimuth: 0.3 };
 
 const TAU = Math.PI * 2;
@@ -1108,4 +1108,83 @@ function decor(kit) {
   return group;
 }
 
-export default { palette: PALETTE, backdrop, layout, view, pad: false, ghost, floor, hall, station, crate, carrier, packet, dock, decor };
+// The advisor: the hotel's manager, grey at the temples in a tailcoat and
+// reading glasses, standing at a brass-railed lectern over the great guest
+// register, a standard lamp and a potted palm beside it on its own rug. It
+// stands to the hotel's right, since the pool takes the spot to its left.
+// Pages from the hotel land in the register; while the manager reads, they
+// bow over it, run a finger down the page and turn a leaf now and then.
+const MANAGER = { hair: '#8e929e', skin: '#e6b994', shirt: '#1d2436', legs: '#1d2436', shoes: '#0c0c12', style: 'quiff' };
+
+function advisor(kit) {
+  const m = mats(kit);
+  const root = new Group();
+  const still = new Group();
+  root.add(kit.shadow(1.6, 1.4, 0.26));
+  block(still, kit, m.aisle, 1.5, 0.03, 1.4, 0, 0.015, 0, 'rug');
+  block(still, kit, m.brass, 1.36, 0.034, 1.26, 0, 0.017, 0, 'rug');
+  block(still, kit, m.aisle, 1.3, 0.036, 1.2, 0, 0.018, 0, 'rug');
+  // The lectern: a plinth, a fluted column banded in brass, a sloped top.
+  block(still, kit, m.wood, 0.5, 0.06, 0.4, 0, 0.05, 0.4);
+  block(still, kit, m.wood, 0.32, 0.74, 0.26, 0, 0.45, 0.4, 'lectern');
+  for (const x of [-0.08, 0, 0.08]) block(still, kit, kit.mat(mix(kit, 'wood', 'ink', 0.3), { rough: 0.8, flat: true }), 0.03, 0.6, 0.01, x, 0.45, 0.535);
+  for (const y of [0.12, 0.8]) block(still, kit, m.brass, 0.36, 0.03, 0.3, 0, y, 0.4);
+  // The standard lamp, and a palm in its pot.
+  post(still, kit, m.brass, 0.1, 0.04, -0.55, 0.04, 0.35);
+  post(still, kit, m.brass, 0.018, 1.5, -0.55, 0.77, 0.35);
+  post(still, kit, m.linen, 0.16, 0.2, -0.55, 1.58, 0.35, 'lamp');
+  palm(still, kit, -0.45, -0.5, 1.25, 11);
+  root.add(bake(still));
+  const glow = new Mesh(memo(kit, 'shape:post', SHAPES.post), m.warm);
+  glow.position.set(-0.55, 1.47, 0.35);
+  glow.scale.set(0.1, 0.03, 0.1);
+  root.add(glow);
+  const desk = pivot(root, 0, 0.84, 0.4);
+  desk.rotation.x = 0.35;
+  block(desk, kit, m.wood, 0.56, 0.05, 0.4, 0, 0, 0);
+  block(desk, kit, m.brass, 0.58, 0.04, 0.03, 0, 0.03, 0.2);
+  // The register, open, with its ribbon, and the leaf that turns.
+  block(desk, kit, m.leather, 0.48, 0.03, 0.32, 0, 0.04, 0, 'register');
+  for (const side of [-1, 1]) block(desk, kit, m.paper, 0.22, 0.025, 0.29, side * 0.115, 0.06, 0, 'register');
+  for (const z of [-0.08, -0.03, 0.02, 0.07]) block(desk, kit, m.ink, 0.16, 0.003, 0.008, -0.115, 0.074, z);
+  block(desk, kit, m.aisle, 0.02, 0.02, 0.16, 0.01, 0.07, 0.1);
+  const leaf = pivot(desk, 0, 0.075, 0);
+  block(leaf, kit, m.paper, 0.21, 0.008, 0.28, 0.105, 0, 0);
+  // The manager, a head taller than the staff.
+  const manager = figure(kit, MANAGER);
+  manager.root.scale.setScalar(1.75);
+  manager.root.position.set(0, 0.03, -0.12);
+  root.add(manager.root);
+  const { body, head, arms } = manager;
+  const coat = kit.mat(MANAGER.shirt, { rough: 0.8, flat: true });
+  block(body, kit, m.linen, 0.1, 0.2, 0.02, 0, 0.13, 0.082);
+  block(body, kit, m.ink, 0.09, 0.03, 0.025, 0, 0.225, 0.09);
+  for (const side of [-1, 1]) block(body, kit, coat, 0.1, 0.18, 0.03, side * 0.07, -0.06, -0.08);
+  block(body, kit, m.brass, 0.03, 0.05, 0.01, -0.1, 0.17, 0.083);
+  for (const side of [-1, 1]) block(head, kit, m.brass, 0.07, 0.05, 0.01, side * 0.062, 0.13, 0.13);
+  block(head, kit, m.brass, 0.06, 0.01, 0.01, 0, 0.14, 0.13);
+  block(head, kit, kit.mat(MANAGER.hair, { rough: 0.85, flat: true }), 0.12, 0.02, 0.012, 0, 0.075, 0.124);
+  kit.shadows(root);
+  root.scale.setScalar(1.2);
+  root.userData = {
+    labelY: 2.45,
+    page: new Vector3(0, 1.13, 0.5),
+    frame(time, dt, state) {
+      const reading = state.activity;
+      body.rotation.x = 0.14 * reading;
+      body.rotation.z = Math.sin(time * 0.9) * 0.02;
+      head.rotation.x = 0.36 * reading + Math.sin(time * 0.6) * 0.03;
+      head.rotation.y = Math.sin(time * 0.5) * 0.16 * reading;
+      // A finger runs down the page, and every few seconds a leaf turns.
+      const turn = clamp01(((time * 0.3) % 1 - 0.74) / 0.26) * reading;
+      leaf.rotation.z = Math.PI * ease(turn);
+      arms[0].rotation.x = -1.0 * reading - 0.1 + Math.sin(time * 1.6) * 0.06 * reading;
+      arms[0].rotation.z = -0.25 * reading;
+      arms[1].rotation.x = -1.05 * reading - Math.sin(turn * Math.PI) * 0.35;
+      arms[1].rotation.z = 0.2 * reading;
+    },
+  };
+  return root;
+}
+
+export default { palette: PALETTE, backdrop, layout, view, pad: false, ghost, floor, hall, station, crate, carrier, packet, dock, decor, advisor };
