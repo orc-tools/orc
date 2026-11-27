@@ -1,4 +1,5 @@
 import { $, announce, isReadOnlyRun, runs } from './core.js';
+import { setRunTitleText } from './artifact.js';
 import { patchRunOrError } from './dialogs.js';
 import { renderList } from './filters.js';
 
@@ -57,10 +58,7 @@ form.addEventListener('submit', async event => {
     const current = runs.find(item => item.id === run.id);
     if (current) current.meta.title = title;
     renderList();
-    if (decodeURIComponent(location.hash.slice(1).split('/')[0]) === run.id) {
-      const heading = $('title')?.firstChild;
-      if (heading?.nodeType === Node.TEXT_NODE) heading.nodeValue = title;
-    }
+    if (decodeURIComponent(location.hash.slice(1).split('/')[0]) === run.id) setRunTitleText(title);
     announce(`Renamed run to ${title}`);
   }
   if (attempt !== generation) return;

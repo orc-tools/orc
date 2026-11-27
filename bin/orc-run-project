@@ -2,11 +2,11 @@
 import argparse
 import fcntl
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ui'))
+import run_lifecycle
 
 
 def correct_project(run_dir, repo):
@@ -27,7 +27,7 @@ def correct_project(run_dir, repo):
     with (run_dir / '.orc-phase-handoff.lock').open('a+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         path = run_dir / 'meta.json'
-        meta = json.loads(path.read_text())
+        meta = run_lifecycle.Snapshot(json.loads(path.read_text()))
         if meta.get('status') not in {'running', 'awaiting-gate', 'escalated'}:
             raise ValueError('only an active run can change projects')
         if meta.get('outcome') or meta.get('route') == 'orchestration-worker':
@@ -50,17 +50,7 @@ def correct_project(run_dir, repo):
         if dispatch.get('phases'):
             raise ValueError('run has phase dispatches; finish or cancel them before changing projects')
         meta.update(mainRepoPath=str(target), repoPath=str(target))
-        fd, temporary = tempfile.mkstemp(prefix='.meta-project-', dir=run_dir)
-        try:
-            with os.fdopen(fd, 'w') as output:
-                json.dump(meta, output, indent=2)
-                output.write('\n')
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        run_lifecycle.write_meta(path, meta, caller='orc-run-project')
     return {'runId': run_dir.name, 'mainRepoPath': str(target), 'changed': True}
 
 

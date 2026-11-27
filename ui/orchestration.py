@@ -27,7 +27,7 @@ READ_ONLY_ROLES = ROLES - WRITE_ROLES
 # to be committed, and is read-only with none, so a proposal can still run
 # before the build branch exists.
 FILES_DECIDE_ROLES = frozenset({'design'})
-TERMINAL = frozenset({'completed', 'failed', 'cancelled', 'interrupted'})
+TERMINAL = run_tasks.TERMINAL
 EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 
 
@@ -87,11 +87,16 @@ def atomic(path, text):
     path = Path(path)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix='.' + path.name)
     try:
-        with os.fdopen(descriptor, 'w') as handle:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -330,11 +335,13 @@ class Service:
         if not created:
             return task
         task_id = task['taskId']
-        run_tasks.update_task(self.h.CONFIG_DIR, run_id, task_id, state='launching', if_active=True)
+        current = run_tasks.prepare_launch(self.h.CONFIG_DIR, run_id, task_id)
+        if current['state'] in TERMINAL:
+            return current
         launch_attempted = False
         try:
             workspace = self.workspace(meta, task, main)
-            current = run_tasks.update_task(self.h.CONFIG_DIR, run_id, task_id, workspace=workspace)
+            current = run_tasks.update_task(self.h.CONFIG_DIR, run_id, task_id, workspace=workspace, if_active=True)
             if current['state'] in TERMINAL:
                 return current
             title = args.get('title')
@@ -358,8 +365,8 @@ class Service:
                     'launchToken': task['launchToken'], 'sourceRunId': run_id,
                     'childRunId': child_id, 'targetProject': main, 'taskId': task_id,
                     'route': 'orchestration-worker'})
-                run_tasks.update_task(self.h.CONFIG_DIR, run_id, task_id, childRunId=child_id)
-                if run_tasks.get_task(self.h.CONFIG_DIR, run_id, task_id)['state'] == 'cancelled':
+                current = run_tasks.update_task(self.h.CONFIG_DIR, run_id, task_id, childRunId=child_id)
+                if current['state'] == 'cancelled':
                     raise ValueError('task launch was cancelled')
             prompt = self.worker_prompt(worker, text.strip())
             current, launch_attempted = run_tasks.begin_launch(self.h.CONFIG_DIR, run_id, task_id)
@@ -467,9 +474,8 @@ class Service:
         if result and row.get('childRunId'):
             body = run_tasks.accepted_result(row, self.h.RUNS)
             row['summary'] = body.decode() if isinstance(body, bytes) else body
-            acknowledge = getattr(run_tasks, 'acknowledge_result', None)
-            if acknowledge and args.get('_acknowledge', True):
-                refreshed = acknowledge(self.h.CONFIG_DIR, run_id, row['taskId'])
+            if args.get('_acknowledge', True):
+                refreshed = run_tasks.acknowledge_result(self.h.CONFIG_DIR, run_id, row['taskId'])
                 row['delivery'] = refreshed['delivery']
         active_children = row.get('childRunId') and run_tasks.has_live_descendants(self.h.CONFIG_DIR, row['childRunId'])
         row['workState'] = 'result_available' if row.get('result') else 'waiting_for_children' if active_children else 'working'
@@ -495,7 +501,12 @@ class Service:
             raise ValueError('worker identity does not match task authority')
         if row['state'] in TERMINAL:
             published = row.get('manifest') or {}
-            if row['state'] in ('completed', 'failed') and published.get('summary') == (args.get('summary') or '').strip() and published.get('outcome') == args.get('status', args.get('outcome', 'completed')) and published.get('checks') == args.get('checks', []):
+            if (row['state'] in ('completed', 'failed')
+                    and isinstance(args.get('summary'), str)
+                    and published.get('summary') == args['summary'].strip()
+                    and published.get('outcome') == args.get('status', args.get('outcome', 'completed'))
+                    and published.get('checks') == args.get('checks', [])
+                    and args.get('head', published.get('headCommit')) == published.get('headCommit')):
                 run_tasks.accepted_result(row, self.h.RUNS)
                 if meta.get('status') != ('complete' if row['state'] == 'completed' else 'failed'):
                     meta.update(phase='done', status='complete' if row['state'] == 'completed' else 'failed')
@@ -553,14 +564,18 @@ class Service:
         if run_dir.is_symlink():
             raise ValueError('worker directory is a symlink')
         content = summary.strip() + '\n'
-        atomic(run_dir / 'task-result.md', content)
-        atomic(run_dir / 'task-result.json', json.dumps(manifest, indent=2) + '\n')
+        manifest_text = json.dumps(manifest, indent=2) + '\n'
         result = {'path': 'task-result.md', 'sha256': hashlib.sha256(content.encode()).hexdigest(),
                   'manifestPath': 'task-result.json',
-                  'manifestSha256': hashlib.sha256((run_dir / 'task-result.json').read_bytes()).hexdigest()}
+                  'manifestSha256': hashlib.sha256(manifest_text.encode()).hexdigest()}
+
+        def write_result():
+            atomic(run_dir / 'task-result.md', content)
+            atomic(run_dir / 'task-result.json', manifest_text)
+
         self.active(parent)
         updated = run_tasks.complete_task(self.h.CONFIG_DIR, parent, row['taskId'],
-                    run_id, result, manifest, status=outcome)
+                    run_id, result, manifest, status=outcome, write_result=write_result)
         meta.update(phase='done', status='complete' if outcome == 'completed' else 'failed')
         if not self.h._write_run_meta(run_id, meta):
             raise ValueError('could not persist completed worker metadata')
@@ -635,8 +650,7 @@ class Service:
                 continue
             child = task.get('childRunId')
             if not child:
-                run_tasks.update_task(self.h.CONFIG_DIR, task['parentRunId'], task['taskId'],
-                                      cancellationPending=False, error=None)
+                run_tasks.record_cancel_cleanup(self.h.CONFIG_DIR, task['parentRunId'], task['taskId'])
                 continue
             child_meta = self.h.run_meta(child)
             if child_meta.get('route') == 'orchestration-worker':
@@ -647,13 +661,12 @@ class Service:
                 child_meta = self.h.run_meta(child)
                 child_meta.update(status='cancelled', phase='done')
                 self.h._write_run_meta(child, child_meta)
-                run_tasks.update_task(self.h.CONFIG_DIR, task['parentRunId'], task['taskId'],
-                                      cancellationPending=False, error=None)
+                run_tasks.record_cancel_cleanup(self.h.CONFIG_DIR, task['parentRunId'], task['taskId'])
             except ValueError as exc:
                 errors.append(str(exc))
-                run_tasks.update_task(self.h.CONFIG_DIR, task['parentRunId'], task['taskId'], error=str(exc))
+                run_tasks.record_cancel_cleanup(self.h.CONFIG_DIR, task['parentRunId'], task['taskId'],
+                                                error=str(exc))
         if errors:
-            run_tasks.update_task(self.h.CONFIG_DIR, run_id, row['taskId'], error='; '.join(errors))
             return {'taskId': row['taskId'], 'cancelled': False, 'errors': errors}
         if pending:
             return {**row, 'cancelled': False, 'cancellationPending': True}

@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 
+import integrations
 from settings_backup import gh_path
 
 ACCOUNT_TTL = 300
@@ -48,11 +49,12 @@ def repo_name(text):
     return '%s/%s' % match.groups()
 
 
-def _gh(*args, timeout=LIST_TIMEOUT):
+def _gh(*args, timeout=LIST_TIMEOUT, job='repos'):
     gh = gh_path()
     if not gh:
         raise GithubError('The gh CLI is not installed. Install it from https://cli.github.com.')
     env = dict(os.environ, GH_PROMPT_DISABLED='1', GH_NO_UPDATE_NOTIFIER='1', GIT_TERMINAL_PROMPT='0')
+    integrations.note(job)
     try:
         result = subprocess.run([gh, *args], capture_output=True, text=True, env=env,
                                 stdin=subprocess.DEVNULL, timeout=timeout)
@@ -194,5 +196,5 @@ def clone(name, directory):
         if origin(path) == name.lower():
             return path, False
         raise GithubError('%s already exists and is not a clone of %s' % (path, name))
-    _gh('repo', 'clone', name, path, timeout=CLONE_TIMEOUT)
+    _gh('repo', 'clone', name, path, timeout=CLONE_TIMEOUT, job='actions')
     return path, True

@@ -1,0 +1,168 @@
+/* cs-in is still used by #filter-menu's own open animation, below */
+@keyframes cs-in { from { opacity: 0; transform: translateY(-4px); } }
+#welcome-view { flex: 1; min-height: 0; overflow-y: auto; padding: 32px 22px 60px; }
+.welcome-wrap { max-width: 640px; margin: 0 auto; display: grid; gap: 20px; }
+.welcome-head h2 { margin: 0 0 6px; font-size: 20px; font-weight: 600; color: var(--heading); }
+.welcome-head h2:focus { outline: none; }
+.welcome-head p { margin: 0; color: var(--muted-strong); }
+.welcome-steps { margin: 0; padding: 0; list-style: none; counter-reset: welcome; display: grid; gap: 14px; }
+.welcome-step { counter-increment: welcome; display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.welcome-step > h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--heading); }
+.welcome-step > h3::before { content: counter(welcome) ". "; color: var(--muted-strong); }
+.welcome-step > p { margin: 0; }
+.welcome-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.welcome-continue {
+  min-height: 40px; padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent); color: var(--bg);
+  font: inherit; cursor: var(--orc-cursor-pointer, pointer);
+}
+/* Still used by the few buttons that stay native because they carry an
+   accessible name or description on the element itself, which cannot reach
+   a <button> inside a shadow root. */
+.settings-btn-inline {
+  font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px;
+  background: var(--chip); border: 1px solid var(--border); color: var(--heading); cursor: var(--orc-cursor-pointer, pointer);
+}
+.settings-btn-inline:not(:disabled):hover { background: var(--button-hover-chip); border-color: var(--accent); color: var(--heading); }
+.settings-btn-inline:disabled { opacity: .5; cursor: default; }
+/* Destructive actions. The design system ships primary and ghost only, so
+   danger re-points the ghost variant's own accent hooks at the red family —
+   no shadow piercing, just the custom properties the component already reads.
+   The label uses the component's own --orc-button-text (design system 2.0.0);
+   it used to re-point --orc-heading, which is the page's heading colour and
+   had no business being scoped to one button.
+
+   The AA note this replaces measured red-text on --panel. The ghost surface
+   is a 6% neutral tint over that same panel, which darkens it slightly and
+   so *raises* contrast for dark text: 6.77:1 day, 5.54:1 night, both clear
+   of 4.5:1. Calculated, not assumed. */
+orc-button.danger {
+  --orc-control-border: color-mix(in srgb, var(--red) 45%, var(--border));
+  --orc-button-text: var(--red-text);
+  --orc-accent: var(--red);
+  --orc-accent-text: var(--red-text);
+}
+/* <orc-dialog>'s shadow description wrapper has no padding of its own, so
+   slotted description content sits flush against the dialog's left edge and
+   the header rule instead of lining up with the heading and body. The light
+   DOM node is the only side of the boundary we can reach, so it carries the
+   same 1rem gutter the header and body use. Per-dialog rules win on
+   specificity where a dialog wants a different gutter. */
+orc-dialog > [slot="description"] { padding: 8px 1rem 0; }
+/* settings modals — every one of these is an <orc-dialog> now, which owns its
+   own surface, backdrop and heading inside its shadow root. What remains here
+   is per-dialog sizing, which the component exposes through
+   --orc-dialog-max-width. */
+#queue-dialog, #queue-mode-dialog, #export-dialog, #delete-dialog, #project-delete-dialog, #view-delete-dialog, #account-confirm-dialog,
+#settle-confirm-dialog, #terminal-close-dialog, #cancel-dialog, #wt-cleanup-dialog, #link-pr-dialog, #add-project-dialog, #run-rename-dialog {
+  --orc-dialog-max-width: 480px;
+}
+#queue-mode-dialog { --orc-dialog-body-padding: 12px 16px 16px; }
+#queue-mode-dialog > [slot="description"] { margin: 0; padding: 12px 16px 0; font-size: 13px; line-height: 1.55; color: var(--muted-strong); }
+.queue-mode-body { display: flex; flex-direction: column; gap: 10px; }
+.queue-mode-label { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted-strong); }
+.queue-mode-choices { display: flex; flex-direction: column; gap: 8px; }
+.queue-mode-choice {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 10px 12px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--bg);
+  color: inherit; font: inherit; text-align: left; cursor: var(--orc-cursor-pointer, pointer);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.queue-mode-choice:hover:not(:disabled):not([aria-checked="true"]) {
+  border-color: var(--control-border);
+  background: color-mix(in srgb, var(--text) 4%, var(--bg));
+}
+.queue-mode-choice[aria-checked="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.queue-mode-choice:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.queue-mode-choice:disabled { opacity: 0.65; cursor: not-allowed; }
+.queue-mode-radio {
+  flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; border-radius: 999px;
+  border: 1.5px solid var(--control-border);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.queue-mode-choice[aria-checked="true"] .queue-mode-radio { border-color: var(--accent); }
+.queue-mode-choice[aria-checked="true"] .queue-mode-radio::after {
+  content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--accent);
+}
+.queue-mode-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.queue-mode-title { color: var(--heading); font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.queue-mode-hint { color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+#queue-mode-error { margin: 0; }
+#queue-mode-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+#project-delete-dialog { --orc-dialog-max-width: 480px; max-height: min(82vh, 720px); }
+#view-dialog { --orc-dialog-max-width: 520px; }
+#theme-generate-dialog { --orc-dialog-max-width: 640px; }
+.theme-generate-field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted-strong); }
+.theme-generate-field textarea {
+  box-sizing: border-box; width: 100%; min-height: 220px; resize: vertical; padding: 8px 10px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--control-border); border-radius: 8px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.55;
+}
+.theme-generate-field textarea:focus { border-color: var(--focus); }
+#theme-generate-status:empty { display: none; }
+/* Year in review: the card sits beside its data controls when there is room
+   and stacks above them on narrow windows. The card SVG carries its own
+   theme colours, resolved when it is drawn. */
+#year-review-dialog { --orc-dialog-max-width: 920px; --orc-dialog-max-height: min(90vh, 860px); }
+#year-review-body { display: grid; gap: 16px; align-items: start; }
+#year-review-period { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+#year-review-stepper { display: flex; align-items: center; gap: 4px; }
+#year-review-label { min-width: 12.5em; text-align: center; font-weight: 600; color: var(--heading); font-variant-numeric: tabular-nums; }
+#year-review-stage { display: flex; flex-direction: column; align-items: center; gap: 10px; justify-self: center; width: min(100%, 360px); }
+#year-review-card { margin: 0; width: 100%; aspect-ratio: 1080 / 1350; border-radius: 14px; overflow: hidden; border: 1px solid var(--border); }
+#year-review-card img { display: block; width: 100%; height: 100%; }
+#year-review-card img:not([src]) { visibility: hidden; }
+#year-review-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+#year-review-status { margin: 0; min-height: 1.4em; }
+#year-review-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+#year-review-step { font-size: 13px; color: var(--muted-strong); font-variant-numeric: tabular-nums; text-align: center; }
+.year-review-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#year-review-paste { --orc-textarea-font-size: 12px; }
+#year-review-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+@media (min-width: 760px) {
+  #year-review-body { grid-template-columns: 360px minmax(0, 1fr); }
+  #year-review-period { grid-column: 1 / -1; }
+}
+#view-groups { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; max-height: 46vh; overflow-y: auto; }
+.view-group { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel, var(--bg)); }
+.view-group-add { align-self: flex-start; }
+/* OR divider between groups: a centred "or" chip on a hairline rule */
+.view-or { display: flex; align-items: center; gap: 8px; margin: 2px 0; color: var(--muted-strong); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.view-or::before, .view-or::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.view-cond-row { display: flex; gap: 6px; align-items: center; }
+.view-cond-row orc-select { flex: 1; min-width: 0; }
+.view-cond-row [data-remove-cond] {
+  flex-shrink: 0; width: 28px; height: 28px; padding: 0; display: flex;
+  align-items: center; justify-content: center; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+}
+.view-cond-row [data-remove-cond]:hover { border-color: var(--red); color: var(--red-text); }
+.view-cond-row [data-remove-cond]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+#view-add-group { margin-bottom: 14px; }
+#view-actions { display: flex; width: 100%; gap: 10px; align-items: center; justify-content: flex-end; }
+#view-actions #view-delete { display: block; margin-right: auto; }
+#export-list {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 14px 0; max-height: 40vh; overflow-y: auto;
+}
+/* the project path is the checkbox's own label now, so the monospace comes
+   through the font token the element reads rather than a <code> beside it */
+#export-list orc-checkbox { --orc-font-sans: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+#export-list .export-count { color: var(--muted-strong); font-size: 12px; }
+#export-actions, #delete-actions, #project-delete-actions, #cancel-actions, #view-delete-actions, #account-confirm-actions, #settle-confirm-actions, #terminal-close-actions, #wt-cleanup-actions, #link-pr-actions, #add-project-actions, #theme-generate-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+/* the other modals get breathing room from an input/list between hint and
+   actions; this dialog is hint-then-buttons, so space the row itself */
+#wt-cleanup-actions { margin-top: 16px; }
+#delete-dialog ul { margin: 12px 0 16px; padding-left: calc(1rem + 18px); font-size: 13px; }
+#delete-dialog li { margin: 4px 0; }
+#delete-warning-text { margin: 0; font-size: 13px; }
+.settings-btn-inline.danger {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+  /* red-text is AA-verified on panel (5.16:1 day / 6.80:1 night); any
+     red-tinted chip bg drops it under 4.5:1 — keep the panel bg */
+  background: var(--panel);
+  color: var(--red-text);
+}
+.settings-btn-inline.danger:not(:disabled):hover { background: var(--panel); border-color: var(--red); color: var(--red-text); }

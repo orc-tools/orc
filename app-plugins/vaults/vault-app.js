@@ -3,7 +3,7 @@
 // /api/vaults routes as Orc's Vaults screen (frontend.js), through the Orc
 // this phone is paired with, so what is added here is on that Mac at once.
 import {
-  vaultBuildEndedLine, vaultBuildSource, vaultLink, vaultPageGesture, vaultPageRequest, vaultPageState, vaultPageUrl, vaultToolLabel, vaultTrustsLink,
+  vaultBuildEndedLine, vaultBuildSource, vaultLink, vaultMode, vaultPageGesture, vaultPageRequest, vaultPageState, vaultPageUrl, vaultToolLabel, vaultTrustsLink,
 } from './vault-helpers.js';
 
 const slug = document.body.dataset.vault;
@@ -30,6 +30,20 @@ let pageToldAs = '';
 // it had loaded, for vaultPageGesture.
 let ownInputAt = -Infinity;
 const pageShownAt = new WeakMap();
+
+// Orc's mode, as Orc on this browser shows it: the light or dark saved
+// under orcTheme, else the system's. The app wears it too, as Orc does.
+const systemDark = matchMedia('(prefers-color-scheme: dark)');
+function savedMode() {
+  try { return localStorage.getItem('orcTheme'); } catch { return null; }
+}
+const mode = () => vaultMode(null, savedMode(), systemDark.matches);
+function wearMode() {
+  const saved = savedMode();
+  if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+  else delete document.documentElement.dataset.theme;
+}
+wearMode();
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => `&#${char.charCodeAt(0)};`);
 const building = () => detail?.build?.state === 'building';
@@ -187,7 +201,7 @@ function syncStage(stage) {
   frame.title = `${detail.vault.name || slug} page`;
   frame.setAttribute('sandbox', FRAME_SANDBOX);
   frame.setAttribute('referrerpolicy', 'no-referrer');
-  frame.src = vaultPageUrl(slug, page.version);
+  frame.src = vaultPageUrl(slug, page.version, mode());
   const old = [...stage.children];
   if (!old.some(node => node.tagName === 'IFRAME')) {
     stage.replaceChildren(frame);
@@ -313,6 +327,16 @@ function tellPage(target, error = '') {
   try { target.postMessage({ orcVaultState: vaultPageState(detail, error) }, '*'); } catch {}
 }
 
+function tellMode(target) {
+  try { target.postMessage({ orcVaultMode: mode() }, '*'); } catch {}
+}
+
+// Orc's mode switching, here, in Orc in another tab, or with the system's.
+function modeSwitched() {
+  wearMode();
+  for (const target of pageWindows()) tellMode(target);
+}
+
 function tellPages() {
   const told = JSON.stringify(vaultPageState(detail));
   if (told === pageToldAs) return;
@@ -326,6 +350,7 @@ async function answerPage(asked, source) {
   const now = performance.now();
   if (asked.ready) {
     pageShownAt.set(source, now);
+    tellMode(source);
     tellPage(source);
     return;
   }
@@ -394,6 +419,8 @@ root.addEventListener('keydown', event => {
   }
 });
 window.addEventListener('message', onMessage);
+systemDark.addEventListener('change', modeSwitched);
+window.addEventListener('storage', event => { if (event.key === 'orcTheme' || event.key === null) modeSwitched(); });
 for (const kind of ['pointerdown', 'keydown']) document.addEventListener(kind, () => { ownInputAt = performance.now(); }, true);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) clearTimeout(pollTimer);

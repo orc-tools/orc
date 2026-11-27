@@ -28,7 +28,7 @@ SHIPPED_CLIENT = Path(__file__).with_name('google-client.json')
 CALLBACK_PAGE = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>%(title)s · Orc</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:32em;margin:18vh auto;padding:0 24px;color:#1c1c1c;background:#fafafa}
-h1{font-size:22px;margin:0 0 8px}@media (prefers-color-scheme:dark){body{color:#eee;background:#161616}}</style></head>
+h1{font-size:24px;margin:0 0 8px}@media (prefers-color-scheme:dark){body{color:#eee;background:#161616}}</style></head>
 <body><h1>%(title)s</h1><p>%(text)s</p></body></html>'''
 
 

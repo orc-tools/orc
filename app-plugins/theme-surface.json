@@ -204,6 +204,10 @@
         "what": "A box-shadow on the composer while you type (none by default)"
       },
       {
+        "name": "--float-shadow",
+        "what": "The one shadow under every floating layer: menus, popovers, tooltips, toasts, drawers and anything being dragged. One layer with no spread, as it is also used inside drop-shadow()"
+      },
+      {
         "name": "--nc-beam-underlay",
         "what": "The colour of the composer's rim under its beam; the shell sets it on .newconv-prompt:has(textarea:focus), so set it there too"
       },
@@ -229,7 +233,7 @@
       },
       {
         "name": "--settled-shelf-shadow",
-        "what": "Shadow above the Settled shelf"
+        "what": "Shadow above the Settled shelf (--float-shadow by default)"
       },
       {
         "name": "--settled-head-justify",
@@ -541,11 +545,11 @@
       },
       {
         "name": "--note-shadow",
-        "what": "A filter on the note at rest: its drop shadow or glow"
+        "what": "A filter on the note at rest: its drop shadow or glow (none by default)"
       },
       {
         "name": "--note-shadow-raised",
-        "what": "That filter while the note is hovered, edited or dragged"
+        "what": "That filter while the note is hovered, edited or dragged (--float-shadow by default)"
       },
       {
         "name": "--note-font",
@@ -753,7 +757,7 @@
       },
       {
         "name": "nc-scroll",
-        "what": "The new-run screen's scrolling column inside #new-view: .newconv, then .nc-notes"
+        "what": "The new-run screen's scrolling column inside #new-view: .newconv, the row holding .nc-handout, then .nc-notes"
       },
       {
         "name": "nc-title",
@@ -956,6 +960,10 @@
         "what": "A run's state label in the list"
       },
       {
+        "name": "state-want",
+        "what": "The action or detail following a run's state label"
+      },
+      {
         "name": "unread-tag",
         "what": "The label on a run that stopped and has not been opened since"
       },
@@ -1101,7 +1109,7 @@
       },
       {
         "name": "factory-ticket-facts",
-        "what": "The details grid inside the Factory job ticket"
+        "what": "The row of facts inside the Factory job ticket"
       },
       {
         "name": "is-main",

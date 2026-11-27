@@ -965,7 +965,7 @@
   100% { translate: 0 -150%; opacity: 0; }
 }
 
-/* Typing heat (see index.html's --typing-heat): fast typing makes the
+/* Typing heat (see project-home.css's --typing-heat): fast typing makes the
    composer's edge surge like the lights, from rest through the neon to
    white-hot. It holds steady, with no beat. */
 :root[data-upside-down] .newconv-prompt[data-typing-hot] { animation: none; }

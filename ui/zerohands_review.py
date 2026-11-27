@@ -9,7 +9,12 @@ Read-only and best effort: with no reviewer package enabled, without `gh`,
 signed out, without access to the reviewer's repository, or with no run for
 the PR, `status` returns None and the panel draws no row. One run listing is
 shared by every PR for CACHE_SECONDS, and each call has a short timeout
-because it sits inside the panel's own read."""
+because it sits inside the panel's own read.
+
+A reviewer that names a `requestComment` can also be asked for a fresh
+review: `request_review` posts that one line on the PR as the signed-in
+person, the PR comments tab's one write of its own (an explicit click). It
+waits while a feedback round's fixes are unpushed (`request_hold`)."""
 from __future__ import annotations
 
 import json
@@ -20,12 +25,17 @@ import threading
 import time
 from typing import Any
 
+import integrations
 from app_plugins import Registry
 from stat_cache import keep_recent
 
 RUN_LIMIT = 100
 CACHE_SECONDS = 30
 GH_TIMEOUT = 8
+POST_TIMEOUT = 20
+# A second click this soon after a request posts nothing: the first one is
+# still starting the reviewer's run.
+REQUEST_COOLDOWN_SECONDS = 60
 PASS = "✅ Looks good to merge"
 QUEUED = {"queued", "waiting", "pending", "requested"}
 DONE = {"success", "neutral", "skipped"}
@@ -49,6 +59,7 @@ def reviewer() -> dict[str, str] | None:
 
 def _gh(args: list[str], timeout: int = GH_TIMEOUT) -> Any:
     env = dict(os.environ, GH_PROMPT_DISABLED="1", GIT_TERMINAL_PROMPT="0")
+    integrations.note("run-pr-panel")
     try:
         result = subprocess.run(["gh", *args], env=env, capture_output=True,
                                 text=True, timeout=timeout, check=False)
@@ -163,3 +174,64 @@ def status(owner_repo: str, number: int | str, reviews: Any = None,
     if (run.get("conclusion") or "").lower() not in DONE:
         return {**out, "state": "failed"}
     return {**out, **_verdict(reviews, config["login"], started)}
+
+
+def request_model(meta: dict[str, Any], pr_url: str,
+                  config: dict[str, str] | None = None) -> dict[str, Any] | None:
+    """What the PR comments tab's Request review button shows for this PR, or
+    None when there is no PR or the reviewer takes no request comment."""
+    config = reviewer() if config is None else config
+    comment = str((config or {}).get("requestComment") or "").strip()
+    if not pr_url or not comment:
+        return None
+    login = str(config.get("login") or "").strip()
+    name = login[:1].upper() + login[1:] if login else "the reviewer"
+    last = meta.get("reviewRequest")
+    requested = (last.get("at") if isinstance(last, dict) and last.get("pr") == pr_url
+                 and isinstance(last.get("at"), str) else None)
+    return {"name": name, "label": "Request %s review" % name, "comment": comment,
+            "requestedAt": requested, "hold": request_hold(meta, name)}
+
+
+def request_hold(meta: dict[str, Any], name: str) -> str | None:
+    """Why a review request waits, or None while it may go out. An open
+    feedback round's fixes are not on GitHub until its push, so a request
+    before then has the reviewer read the code it already reviewed."""
+    feedback = meta.get("prFeedback")
+    state = feedback.get("state") if isinstance(feedback, dict) else None
+    if state == "awaiting-answers":
+        return "Start the fixes first. %s can review again once they are pushed." % name
+    if state == "awaiting-push":
+        return "Push the fixes first, so %s reviews them." % name
+    return None
+
+
+def recently_requested(meta: dict[str, Any], pr_url: str, now: float) -> bool:
+    last = meta.get("reviewRequest")
+    stamp = last.get("epoch") if isinstance(last, dict) and last.get("pr") == pr_url else None
+    return (isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
+            and 0 <= now - stamp < REQUEST_COOLDOWN_SECONDS)
+
+
+def request_review(pr_url: str, config: dict[str, str] | None = None) -> str | None:
+    """Post the reviewer's request comment on `pr_url` as the signed-in
+    person. Returns None once it posted, else why it did not."""
+    config = reviewer() if config is None else config
+    comment = str((config or {}).get("requestComment") or "").strip()
+    if not comment:
+        return "No reviewer that takes a review request is enabled."
+    if not pr_url.startswith("https://"):
+        return "This run has no pull request."
+    env = dict(os.environ, GH_PROMPT_DISABLED="1", GIT_TERMINAL_PROMPT="0")
+    integrations.note("actions")
+    try:
+        result = subprocess.run(["gh", "pr", "comment", pr_url, "--body", comment], env=env,
+                                capture_output=True, text=True, timeout=POST_TIMEOUT, check=False)
+    except FileNotFoundError:
+        return "The GitHub CLI (gh) is not installed."
+    except (OSError, subprocess.SubprocessError):
+        return "GitHub did not answer in time. Try again."
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        return "GitHub refused the comment" + (": " + detail[-1] if detail else ".")
+    return None

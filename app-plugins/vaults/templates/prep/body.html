@@ -1,0 +1,63 @@
+<main data-placeholder="Ask, or add a point" data-chat-title="Ask about the meeting"><div class="sheet prep">
+  <header class="prep-head">
+    <h1>{{name}}</h1>
+    <p class="built" id="built">Not built yet.</p>
+  </header>
+
+  <article class="card" id="card" aria-labelledby="meeting-title">
+    <div class="card-main">
+      <h2 id="meeting-title">Your next meeting’s card appears here 15 minutes before it starts.</h2>
+      <p class="when" id="when">Calendar has to be on in Orc.</p>
+      <div class="card-do">
+        <button type="button" class="action lead" data-ask="Prep my next meeting now.">Prep my next meeting now</button>
+      </div>
+      <section class="why" aria-labelledby="why-title">
+        <h3 class="hide" id="why-title">Why</h3>
+        <div id="why"><p class="empty">What the meeting is about and what it asks of you, from its invite.</p></div>
+      </section>
+      <section class="points" aria-labelledby="points-title">
+        <h3 id="points-title">Three talking points</h3>
+        <ol class="talk" id="points"><li class="empty">Three things worth raising, drawn from the invite and what you read.</li></ol>
+      </section>
+    </div>
+    <div class="card-stub">
+      <section aria-labelledby="who-title">
+        <h3 id="who-title">Who</h3>
+        <ul class="guests" id="who"><li class="empty">The guests from the invite.</li></ul>
+      </section>
+      <section aria-labelledby="read-title">
+        <h3 id="read-title">What to read</h3>
+        <ul class="reads" id="read"><li class="empty">Docs linked in the invite, then related Notion pages and GitHub work.</li></ul>
+      </section>
+    </div>
+  </article>
+
+  <section class="sources" aria-labelledby="sources-title">
+    <h2 id="sources-title">Where it looks</h2>
+    <div class="src" id="calendar-source">
+      <b><svg class="icon tick" aria-hidden="true"><use href="#i-tick"/></svg>Calendar</b> <span class="src-state">Unchecked.</span>
+      <details><summary>Set up Calendar<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <div class="setup"><p>In Orc, open Calendar and connect a Google account or an iCal address. This vault reads your next 24 hours from it and builds 15 minutes before each meeting.</p></div>
+      </details>
+    </div>
+    <div class="src" id="notion-source">
+      <b><svg class="icon tick" aria-hidden="true"><use href="#i-tick"/></svg>Notion</b> <span class="src-state">Unchecked.</span>
+      <details><summary>Set up Notion<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <div class="setup"><p>Use the Claude login chosen in this vault’s Settings. Add Notion for that login.</p>
+          <code>claude mcp add --scope user --transport http notion https://mcp.notion.com/mcp</code>
+          <p>Open Claude Code, sign in to Notion with <b>/mcp</b>, then prep again.</p>
+          <a href="https://developers.notion.com/guides/mcp/get-started-with-mcp">Notion connection guide<svg class="icon" aria-hidden="true"><use href="#i-out"/></svg></a></div>
+      </details>
+    </div>
+    <div class="src" id="github-source">
+      <b><svg class="icon tick" aria-hidden="true"><use href="#i-tick"/></svg>GitHub</b> <span class="src-state">Unchecked.</span>
+      <details><summary>Set up GitHub<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <div class="setup"><p>On the Mac running Orc, install the GitHub CLI and sign in.</p>
+          <code>brew install gh</code><code>gh auth login</code>
+          <p>Check with <b>gh auth status</b>, then prep again.</p>
+          <a href="https://cli.github.com/">GitHub CLI downloads<svg class="icon" aria-hidden="true"><use href="#i-out"/></svg></a></div>
+      </details>
+    </div>
+    <p class="src-when" id="checked"></p>
+  </section>
+</div></main>

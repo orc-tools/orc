@@ -53,6 +53,11 @@ SNI_SUFFIX = ".orc-link"
 VIA_CODE, VIA_ACCOUNT = "code", "github"
 
 
+# Named in a laptop's hello when its Orc honours peer_view.PHONE_HEADER, so a
+# phone's request never reaches an Orc that would treat it as its own window.
+PHONE_CAPABILITY = "phoneVia"
+
+
 class LinkError(Exception):
     def __init__(self, status, message, **data):
         super().__init__(message)
@@ -753,7 +758,10 @@ class Link:
         return {"name": self.self_name(), "fingerprint": self.own_fingerprint(),
                 "orcPort": self.orc_port, "version": self.version(), "checkout": self.checkout(),
                 "linked": linked, "declined": bool(caller_fp) and caller_fp in (state.get("declined") or []),
-                "remoteUrl": self.remote_url() if linked else None}
+                # A linked laptop on an older Orc opens this one's own phone
+                # address from its phone badge.
+                "remoteUrl": self.remote_url() if linked else None,
+                PHONE_CAPABILITY: True}
 
     def open_tunnel(self, port=None, timeout=5, fingerprint=None):
         """A pinned TLS socket already CONNECTed to `port` on a linked laptop's loopback."""

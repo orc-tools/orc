@@ -43,7 +43,9 @@ function linkPeerHref(status, peer) {
   return port ? `http://127.0.0.1:${port}/` : '';
 }
 
-const LINK_PHONE_ACCESS = name => `Turn on Phone access in the Tailscale plugin on ${name}, then let the laptops reconnect`;
+// A phone opens every laptop through the one it is signed in to, which
+// leaves out an awake laptop whose Orc would not limit it to a phone's rights.
+const LINK_UPDATE_FOR_PHONE = name => `Update Orc on ${name} so your phone can open it`;
 
 // With one linked laptop the badge flips between the two. With more it opens
 // `menu`, one row per laptop.
@@ -53,31 +55,32 @@ export function linkSwitchModel(status) {
   const shownPeer = linkShownPeer(status);
   const shown = shownPeer ? shownPeer.name : status.selfName;
   const asleep = !!shownPeer && !shownPeer.online;
-  const selfHref = status.remote ? '' : `http://127.0.0.1:${status.localPort}/`;
+  const selfHref = status.remote ? status.selfUrl || '' : `http://127.0.0.1:${status.localPort}/`;
   if (peers.length === 1) {
     const peer = peers[0];
     const other = shownPeer ? status.selfName : peer.name;
     const otherAsleep = !shownPeer && !peer.online;
     const href = shownPeer ? selfHref : linkPeerHref(status, peer);
+    const switchTo = href || !status.remote
+      ? `Switch to ${other}${otherAsleep ? ', asleep, to see what it last sent' : ''}`
+      : LINK_UPDATE_FOR_PHONE(other);
     return {
       text: asleep ? `${shown} · asleep` : shown,
-      label: status.remote
-        ? `Showing ${shown}. ${href ? `Switch to ${other} over Tailscale` : LINK_PHONE_ACCESS(other)}`
-        : `Showing ${shown}${asleep ? ', asleep' : ''}. Switch to ${other}${otherAsleep ? ', asleep, to see what it last sent' : ''}`,
+      label: `Showing ${shown}${asleep ? ', asleep' : ''}. ${switchTo}`,
       href,
       asleep,
       onPeer: !!shownPeer,
       busy: { text: `${other}…`, label: `Opening ${other}` },
       to: { name: other, asleep: otherAsleep },
-      warm: !status.remote && !shownPeer && !!peer.online,
+      warm: !shownPeer && !!peer.online,
     };
   }
   const row = (id, name, current, sleeping, href) => ({
     id, name, current, asleep: sleeping, href,
     note: id === 'self' ? 'this laptop' : sleeping ? 'asleep' : '',
-    hint: status.remote && !href && !current ? LINK_PHONE_ACCESS(name) : '',
+    hint: status.remote && !href && !current ? LINK_UPDATE_FOR_PHONE(name) : '',
     busy: { text: `${name}…`, label: `Opening ${name}` },
-    warm: !status.remote && id !== 'self' && !current && !sleeping,
+    warm: id !== 'self' && !current && !sleeping && !!href,
   });
   return {
     text: asleep ? `${shown} · asleep` : shown,

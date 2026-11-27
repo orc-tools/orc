@@ -1,6 +1,7 @@
 {
   "apiVersion": 2,
   "id": "upside-down",
+  "icon": "icon.png",
   "name": "Upside Down",
   "version": "1.0.0",
   "description": "A small eighties town by day that turns upside down by night.",
@@ -11,7 +12,7 @@
       "label": "Upside Down",
       "description": "The lights are flickering~",
       "css": "theme.css",
-      "icon": "icon.png",
+      "icon": "dock-icon.png",
       "gary": "gary.png",
       "sheila": "sheila.png",
       "scene": "scene.bundle.js",

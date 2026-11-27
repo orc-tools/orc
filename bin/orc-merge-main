@@ -18,12 +18,16 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ui"))
 from merge_queue import (  # noqa: E402
     MergeQueue, MergeTransaction, ProtocolError as MergeError,
-    branch_checkout, lock_path, now, read_json, write_json,
+    branch_checkout, entry_for, lock_path, now, read_json, write_json,
 )
 import collision_radar  # noqa: E402
 import deploys  # noqa: E402
+import early_resolution  # noqa: E402
 import distribution_policy  # noqa: E402
 import release_version  # noqa: E402
+
+from run_lifecycle import Snapshot, write_meta  # noqa: E402
+from state_transitions import RefusedTransition  # noqa: E402
 
 
 MERGE_STATUSES = {"merging", "merging-to-parent"}
@@ -344,14 +348,25 @@ def merge_commit_for(repo, source_head, target_head):
     return commits[0] if commits else target_head
 
 
+def write_run_meta(path, meta):
+    write_meta(path, meta, caller="orc-merge-main")
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def record_release_version(meta_path, version):
     """Best-effort link from a release back to its run."""
     try:
-        meta = read_json(meta_path)
+        meta = Snapshot(read_json(meta_path))
         if meta.get("releaseVersion") == version:
             return
         meta["releaseVersion"] = version
-        write_json(meta_path, meta)
+        write_run_meta(meta_path, meta)
+    except RefusedTransition:
+        raise
     except Exception as exc:  # noqa: BLE001 — release metadata is non-critical
         print("orc-merge-main: release version metadata skipped: %s" % exc,
               file=sys.stderr)
@@ -483,7 +498,7 @@ def clear_post_merge_pending(runs_dir, run_id, *, settle=False, deploy=None, pus
     Re-reads meta.json right before writing: other writers keep it live."""
     meta_path = runs_dir / run_id / "meta.json"
     try:
-        meta = read_json(meta_path)
+        meta = Snapshot(read_json(meta_path))
         changed = meta.pop("postMergePending", None) is not None
         if settle and meta.get("settleAfterMerge") is not True:
             meta["settleAfterMerge"] = True
@@ -495,7 +510,7 @@ def clear_post_merge_pending(runs_dir, run_id, *, settle=False, deploy=None, pus
             meta["deployOnPush"] = deploy
             changed = True
         if changed:
-            write_json(meta_path, meta)
+            write_run_meta(meta_path, meta)
     except (MergeError, OSError):
         pass  # the UI's wrap-up window still closes on the clock
 
@@ -733,7 +748,7 @@ def merge_main(runs_dir, run_id, claim_token, post_merge=False):
 def _merge_main(runs_dir, run_id, claim_token, post_merge=False):
     run_dir = runs_dir / run_id
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = Snapshot(read_json(meta_path))
     if meta.get("runId") not in (None, run_id):
         raise MergeError("run metadata identity does not match directory")
     target, source, target_branch, source_branch, in_place = \
@@ -787,7 +802,7 @@ def _merge_main(runs_dir, run_id, claim_token, post_merge=False):
             if not repaired:
                 raise MergeError("run has no valid buildBaseCommit for recorded branch")
             meta["buildBaseCommit"] = repaired
-            write_json(meta_path, meta)
+            write_run_meta(meta_path, meta)
     attempt.begin(meta, source_branch, source_head, target_branch, target_head,
                   contained, claim_token)
     if contained and attempt.resolving:
@@ -796,9 +811,15 @@ def _merge_main(runs_dir, run_id, claim_token, post_merge=False):
     versioned = is_orc_repository(target)
     if not contained:
         try:
-            conflict_detail, warning = _merge_branch_with_rules(
-                target, primary, attempt.target_head, source_head,
-                versioned=versioned, run_id=run_id)
+            # A resolution already under way owns this merge and checks for
+            # its own two-parent commit, so a fix prepared early stays out.
+            conflict_detail, warning = ("resolution under way", None) if attempt.resolving \
+                else _merge_prepared_fix(target, primary, run_dir, attempt.target_head,
+                                         source_head, versioned=versioned, run_id=run_id)
+            if conflict_detail is not None:
+                conflict_detail, warning = _merge_branch_with_rules(
+                    target, primary, attempt.target_head, source_head,
+                    versioned=versioned, run_id=run_id)
         except distribution_policy.PolicyError as exc:
             attempt.conflicted(str(exc))
             raise MergeError(f"{exc}\nDefault branch restored and run escalated.") from exc
@@ -809,8 +830,10 @@ def _merge_main(runs_dir, run_id, claim_token, post_merge=False):
             print(warning, file=sys.stderr)
     target_head = git_value(target, "rev-parse", "HEAD")
     attempt.git_merged(warning)
-    attempt.finish(target_head, post_merge=post_merge,
+    attempt.finish(target_head, background=bool(claim_token), post_merge=post_merge,
                    desktop_update=desktop_update_after_merge(target))
+    # Landed: a fix prepared early is spent whether or not it was used.
+    early_resolution.discard(primary, run_dir)
     if versioned:
         # A retry after a restart finds the run already merged; the version is
         # already in its merge commit, so only the run's link to it is missing.
@@ -1040,6 +1063,129 @@ def _merge_branch_with_rules(target, primary, base_head, source_head, *, version
     return None, "\n".join(filter(None, warning_parts)) or None
 
 
+def _merge_prepared_fix(target, primary, run_dir, base_head, source_head, *,
+                       versioned=False, run_id=None):
+    """Land a fix Resolve now prepared, when one fits; else report why not.
+
+    Returns `_merge_branch_with_rules`'s (conflict_detail, warning). A detail
+    means nothing landed and the default checkout is back at `base_head`, so
+    the caller merges the bare branch as it always has. The fix's first
+    parent is the queued HEAD, so the finished merge still contains it."""
+    try:
+        commit = early_resolution.prepared_fix(primary, run_dir, source_head, base_head)
+    except Exception as exc:                        # noqa: BLE001 - never block the merge
+        return "prepared fix unreadable: %s" % exc, None
+    if not commit:
+        return "no prepared fix", None
+    try:
+        detail, warning = _merge_branch_with_rules(
+            target, primary, base_head, commit, versioned=versioned, run_id=run_id)
+    except (MergeError, distribution_policy.PolicyError) as exc:
+        # Its tree failed a hook or policy. The branch itself may still merge,
+        # so it gets its own attempt, once main is back where it was. A held
+        # (--no-commit) merge leaves HEAD alone, so clear it explicitly.
+        _abort_merge_cleanly(target, base_head)
+        if git_value(target, "rev-parse", "HEAD") != base_head or dirty_paths(target):
+            raise
+        detail, warning = str(exc).splitlines()[0], None
+    if detail is not None:
+        early_resolution.discard(primary, run_dir)
+    if detail is None:
+        print("orc-merge-main: used the conflict fix prepared by Resolve now (%s)"
+              % commit[:7], file=sys.stderr)
+    else:
+        print("orc-merge-main: the conflict fix prepared by Resolve now no longer "
+              "applies (%s); merging the branch instead" % detail, file=sys.stderr)
+    return detail, warning
+
+
+def early_resolution_state(runs_dir, run_id):
+    """The queued, unclaimed run Resolve now was pressed for, with its Git facts."""
+    run_dir = runs_dir / run_id
+    meta = read_json(run_dir / "meta.json")
+    if meta.get("runId") not in (None, run_id):
+        raise MergeError("run metadata identity does not match directory")
+    repo = meta.get("mainRepoPath") or meta.get("repoPath")
+    if not isinstance(repo, str) or not repo.strip() or not Path(repo).expanduser().is_dir():
+        raise MergeError("run has no repository")
+    primary = Path(repo).expanduser()
+    if meta.get("status") == "escalated" or isinstance(meta.get("mergeConflict"), dict):
+        raise MergeError("this run's conflict is already being resolved at the front; stop here")
+    _index, entry = entry_for(MergeQueue(runs_dir, str(primary)).read(), run_id)
+    if entry is None:
+        raise MergeError("run is not in the merge queue; the fix is no longer needed")
+    if entry.get("claimToken") or meta.get("status") in MERGE_STATUSES:
+        raise MergeError("this run has reached the front and is merging; Orc resolves "
+                         "any conflict there, so stop here")
+    state = early_resolution.read_state(run_dir)
+    if not state or state.get("sourceHead") != entry["head"]:
+        raise MergeError("Resolve now was not pressed for this queued HEAD")
+    target_branch = default_branch(primary)
+    target_head = git_value(primary, "rev-parse", "refs/heads/%s" % target_branch)
+    return run_dir, primary, entry["head"], target_branch, target_head, state
+
+
+def prepare_early_resolution(runs_dir, run_id):
+    run_dir, primary, source_head, target_branch, target_head, state = \
+        early_resolution_state(runs_dir, run_id)
+    if state["state"] != "preparing":
+        raise MergeError("Resolve now is not waiting for a fix (%s)" % state["state"])
+    checkout = early_resolution.scratch_checkout(primary, run_id)
+    if checkout.exists():
+        run_git(primary, "worktree", "remove", "--force", str(checkout), check=False)
+    checkout.parent.mkdir(parents=True, exist_ok=True)
+    run_git(primary, "worktree", "add", "--quiet", "--detach", str(checkout), source_head)
+    result = run_git(checkout, "merge", "--no-ff", "--no-edit", "-m",
+                     "Merge %s into %s ahead of the merge queue" % (target_branch, run_id),
+                     target_head, check=False)
+    conflicts = unmerged_paths(checkout)
+    early_resolution.write_state(run_dir, "preparing", source_head,
+                                 targetHead=target_head, checkout=str(checkout))
+    print("Resolve in scratch checkout: %s" % checkout)
+    if result.returncode == 0:
+        print("%s merged without conflicts; check it, then save the fix." % target_branch)
+    else:
+        print("Conflicted files: %s" % (", ".join(conflicts) or "see git status"))
+    return checkout
+
+
+def save_early_resolution(runs_dir, run_id):
+    run_dir, primary, source_head, _branch, target_head, state = \
+        early_resolution_state(runs_dir, run_id)
+    if state["state"] != "preparing":
+        raise MergeError("Resolve now is not waiting for a fix (%s)" % state["state"])
+    checkout = early_resolution.scratch_checkout(primary, run_id)
+    if not checkout.exists():
+        raise MergeError("no scratch checkout; run --prepare-early-resolution first")
+    require_no_git_operation(checkout, "scratch")
+    require_clean(checkout, "scratch")
+    commit = git_value(checkout, "rev-parse", "HEAD")
+    error = early_resolution.prepared_parents_error(primary, commit, source_head, target_head)
+    if error:
+        raise MergeError(error)
+    run_git(primary, "update-ref", early_resolution.ref_name(run_id), commit)
+    second = git_value(primary, "rev-parse", "%s^2" % commit)
+    early_resolution.write_state(run_dir, "ready", source_head, commit=commit,
+                                 targetHead=second)
+    run_git(primary, "worktree", "remove", "--force", str(checkout), check=False)
+    return commit
+
+
+def release_early_resolution(runs_dir, run_id, reason):
+    run_dir = runs_dir / run_id
+    meta = read_json(run_dir / "meta.json")
+    primary = meta.get("mainRepoPath") or meta.get("repoPath")
+    state = early_resolution.read_state(run_dir)
+    if primary:
+        checkout = early_resolution.scratch_checkout(primary, run_id)
+        if checkout and checkout.exists():
+            run_git(primary, "worktree", "remove", "--force", str(checkout), check=False)
+        run_git(primary, "update-ref", "-d", early_resolution.ref_name(run_id), check=False)
+    if state:
+        early_resolution.write_state(run_dir, "failed", state["sourceHead"],
+                                     detail=(reason or "released without a fix").strip()[:240])
+
+
 def regenerate_resolution_files(runs_dir, run_id):
     """Regenerate configured generated files inside an active resolution checkout."""
     (_meta, attempt, primary, _source, target_branch,
@@ -1096,7 +1242,8 @@ def merge_participants(runs_dir, run_id, only=None):
     the Ship gate's per-repository Merge; the primary is never in this list.
     """
     meta_path = runs_dir / run_id / "meta.json"
-    participants = participant_repositories(read_json(meta_path))
+    meta = Snapshot(read_json(meta_path))
+    participants = participant_repositories(meta)
     if only is not None:
         participants = [participant for participant in participants
                         if participant.get("id") == only]
@@ -1107,14 +1254,12 @@ def merge_participants(runs_dir, run_id, only=None):
     for participant in participants:
         result = merge_participant(runs_dir, run_id, participant)
         results.append(result)
-        # meta.json is live — other writers touch it, so re-read before writing.
-        meta = read_json(meta_path)
         merges = [record for record in meta.get("participantMerges", [])
                   if isinstance(record, dict) and record.get("id") != result["id"]]
         merges.append({"id": result["id"], "mergeCommit": result["mergeCommit"],
                        "mergedAt": now()})
         meta["participantMerges"] = merges
-        write_json(meta_path, meta)
+        write_run_meta(meta_path, meta)
     return results
 
 
@@ -1181,11 +1326,21 @@ def main(argv=None):
                         help="run per-project generated-file rules in an active conflict resolution")
     action.add_argument("--participant", metavar="ID",
                         help="land one non-primary participant repository only")
+    action.add_argument("--prepare-early-resolution", action="store_true",
+                        help="Resolve now: open a scratch merge of the default branch "
+                             "into the queued HEAD")
+    action.add_argument("--save-early-resolution", action="store_true",
+                        help="Resolve now: keep the committed scratch merge as the fix")
+    action.add_argument("--release-early-resolution", action="store_true",
+                        help="Resolve now: give up, saying why with --reason")
+    parser.add_argument("--reason", default="")
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id):
         parser.error("run_id is unsafe")
+    early = (args.prepare_early_resolution or args.save_early_resolution
+             or args.release_early_resolution)
     if args.claim_token and (args.claim_resolution or args.release_resolution
-                             or args.regenerate_generated or args.participant):
+                             or args.regenerate_generated or args.participant or early):
         parser.error("--claim-token cannot be combined with resolution or "
                      "participant operations")
     runs_dir = Path(os.environ.get("ORC_RUNS_DIR", "~/.orc/runs")).expanduser().resolve()
@@ -1193,6 +1348,19 @@ def main(argv=None):
     try:
         if read_json(runs_dir / args.run_id / "meta.json").get("lifecycleVersion") not in (3, 4):
             raise MergeError("retired runs are read-only; start a fresh run")
+        if early:
+            # Nothing here touches the default branch, the run branch or the
+            # queue, so it does not wait for a merge in progress.
+            if args.prepare_early_resolution:
+                prepare_early_resolution(runs_dir, args.run_id)
+            elif args.save_early_resolution:
+                commit = save_early_resolution(runs_dir, args.run_id)
+                print("saved the conflict fix for %s at %s; Orc uses it when the run "
+                      "reaches the front of the merge queue" % (args.run_id, commit))
+            else:
+                release_early_resolution(runs_dir, args.run_id, args.reason)
+                print("released Resolve now for %s" % args.run_id)
+            return 0
         target = target_repo_for(runs_dir, args.run_id)
         # The participant path takes the primary lock too: lock order is always
         # primary -> participant, and a crossed pair of runs must keep failing
@@ -1230,7 +1398,7 @@ def main(argv=None):
                     " (already merged)" if landing["contained"] else ""))
             merge_head, was_contained = merge_main(
                 runs_dir, args.run_id, args.claim_token, post_merge=push_after)
-    except MergeError as exc:
+    except (MergeError, OSError, RefusedTransition) as exc:
         print("orc-merge-main: %s" % exc, file=sys.stderr)
         if target:
             start_desktop_update(target, old_head)
@@ -1254,11 +1422,15 @@ def main(argv=None):
                                     push_pending=push_error is not None)
     if push_after:
         # A failed push keeps the run listed: its Push to origin button retries.
-        clear_post_merge_pending(runs_dir, args.run_id,
-                                 settle=settle_after and push_error is None,
-                                 # A merge already on main still deploys when this push publishes it.
-                                 deploy="yeet" if settle_after else "merge-and-push",
-                                 pushed=push_error is None)
+        try:
+            clear_post_merge_pending(
+                runs_dir, args.run_id, settle=settle_after and push_error is None,
+                deploy="yeet" if settle_after else "merge-and-push",
+                pushed=push_error is None)
+        except RefusedTransition as exc:
+            print("orc-merge-main: %s" % exc, file=sys.stderr)
+            start_desktop_update(target, old_head)
+            return 1
     note =" (already merged; metadata verified)" if was_contained else ""
     print("merged %s to main at %s%s" % (args.run_id, merge_head, note))
     if push_after:

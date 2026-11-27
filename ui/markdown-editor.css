@@ -1,0 +1,134 @@
+/* Crepe's palette lives in its theme files (@milkdown/crepe/theme/frame.css),
+   and orc-editor.entry.js deliberately imports only theme/common/style.css.
+   Without this block every --crepe-* below resolves to nothing, so each
+   declaration reading one is dropped — which is how the task checkboxes and
+   gutter handles ended up black on the dark panel. Mapping to Orc tokens
+   rather than importing a Crepe theme keeps one palette, and one that
+   follows day/night. The --crepe-color-diff-* names are omitted on purpose:
+   the vendored stylesheet defines those six itself. */
+/* Shared Milkdown Crepe palette + type scale for every markdown WYSIWYG
+   host in the app (the PR body — see .md-editor below). Crepe's
+   own scale is a full-page word processor's: 42px h1, 36px h2 and 120px of
+   side padding, which made a three-line body the loudest thing in
+   orc-ui. These steps are the `.md` ladder above, not a second scale: a
+   markdown body renders at one size in this app whether Orc drew it or
+   Crepe did. */
+.md-editor {
+  --crepe-base-font-size: 16px;
+  --crepe-font-default: var(--orc-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  --crepe-font-title: var(--crepe-font-default);
+  --crepe-font-code: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --crepe-color-background: var(--bg);
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: var(--panel);
+  --crepe-color-surface-low: var(--chip);
+  --crepe-color-on-surface: var(--heading);
+  --crepe-color-on-surface-variant: var(--muted-strong);
+  --crepe-color-outline: var(--control-border);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--accent-soft);
+  --crepe-color-on-secondary: var(--heading);
+  --crepe-color-inverse: var(--heading);
+  --crepe-color-on-inverse: var(--bg);
+  --crepe-color-inline-code: var(--red-text);
+  --crepe-color-inline-area: var(--code);
+  --crepe-color-hover: var(--chip);
+  --crepe-color-selected: var(--accent-soft);
+  --crepe-shadow-1: var(--float-shadow);
+  --crepe-shadow-2: var(--float-shadow);
+}
+.md-editor .md-html-comment { color: var(--muted-strong); font-size: .92em; }
+.md-editor .md-html-comment::before {
+  content: "Hidden on GitHub";
+  margin-right: 6px; padding: 1px 6px; border-radius: 4px;
+  background: var(--chip); color: var(--muted-strong);
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+/* Crepe's floating surfaces (selection toolbar, slash menu, link tooltip and
+   editor, language picker, table cell menu) take Orc's panel recipe: panel
+   fill, hairline border, 8px radius, offset shadow. The vendored stylesheet
+   is appended after this one, so each override carries one more class than
+   the rule it replaces. Sizes step Crepe's word-processor scale (32px items,
+   24px icons, 14px/600 labels) down to Orc's compact controls. */
+.md-editor .milkdown .milkdown-toolbar,
+.md-editor .milkdown .milkdown-slash-menu,
+.md-editor .milkdown .milkdown-link-preview > .link-preview,
+.md-editor .milkdown .milkdown-link-edit > .link-edit,
+.md-editor .milkdown .milkdown-code-block .list-wrapper,
+.md-editor .milkdown .milkdown-table-block .cell-handle .button-group {
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--crepe-shadow-1);
+}
+.md-editor .milkdown .milkdown-toolbar .toolbar-item { width: 28px; height: 28px; margin: 3px; padding: 4px; }
+.md-editor .milkdown .milkdown-toolbar .toolbar-item svg { width: 18px; height: 18px; }
+.md-editor .milkdown .milkdown-toolbar .divider { height: 18px; margin: 8px 3px; }
+.md-editor .milkdown .milkdown-slash-menu .tab-group { padding: 6px 6px 0; }
+.md-editor .milkdown .milkdown-slash-menu .tab-group ul { padding: 0 0 6px; gap: 2px; }
+.md-editor .milkdown .milkdown-slash-menu .tab-group ul li { padding: 4px 8px; font-size: 12px; line-height: 18px; border-radius: 6px; }
+.md-editor .milkdown .milkdown-slash-menu .menu-groups { padding: 2px 6px 6px; max-height: 360px; }
+.md-editor .milkdown .milkdown-slash-menu .menu-groups .menu-group h6 {
+  padding: 10px 8px 4px; font-size: 11px; line-height: 16px; text-transform: none; color: var(--muted-strong);
+}
+.md-editor .milkdown .milkdown-slash-menu .menu-groups .menu-group li { min-width: 200px; gap: 10px; padding: 6px 8px; border-radius: 6px; }
+.md-editor .milkdown .milkdown-slash-menu .menu-groups .menu-group li svg { width: 18px; height: 18px; }
+.md-editor .milkdown .milkdown-slash-menu .menu-groups .menu-group li > span { font-size: 13px; font-weight: 500; line-height: 18px; }
+.md-editor .milkdown .milkdown-slash-menu .menu-groups .menu-group + .menu-group::before { margin: 4px 8px 0; }
+.md-editor .milkdown .milkdown-block-handle .operation-item { width: 26px; height: 26px; padding: 3px; }
+.md-editor .milkdown .milkdown-block-handle .operation-item svg { width: 20px; height: 20px; }
+.md-editor .milkdown .milkdown-link-preview > .link-preview > .link-display,
+.md-editor .milkdown .milkdown-link-edit > .link-edit > .input-area { font-size: 13px; }
+.md-editor .milkdown .milkdown-code-block {
+  padding: 8px 14px 14px; border-radius: 8px; background: var(--code);
+  border: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.md-editor .milkdown .milkdown-code-block .cm-editor,
+.md-editor .milkdown .milkdown-code-block .cm-gutters { background: transparent; }
+.md-editor .milkdown .milkdown-code-block .cm-editor,
+.md-editor .milkdown .milkdown-code-block .milkdown-code-block-placeholder {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.7;
+}
+.md-editor .milkdown .milkdown-code-block .list-wrapper { padding-top: 8px; }
+.md-editor .milkdown .milkdown-code-block .language-list-item { padding: 4px 14px; font-size: 13px; font-weight: 500; }
+.md-editor .milkdown .milkdown-table-block th,
+.md-editor .milkdown .milkdown-table-block td {
+  padding: 4px 12px; font-size: 13px; border-color: color-mix(in srgb, var(--border) 60%, transparent);
+}
+.md-editor .milkdown .milkdown-table-block th { background: var(--panel); font-weight: 600; }
+.md-editor .milkdown .ProseMirror {
+  min-height: 250px; box-sizing: border-box;
+  padding: 4px 22px 14px; font-size: 14px; line-height: 1.55;
+}
+/* Crepe sizes its paragraphs itself (16px/24px), so inheriting from the
+   root above is not enough to reach DESIGN.md's body step. */
+.md-editor .milkdown .ProseMirror p { font-size: 14px; line-height: 1.55; }
+.md-editor .milkdown .ProseMirror h1 { font-size: 24px; line-height: 1.3; font-weight: 700; margin-top: 32px; }
+.md-editor .milkdown .ProseMirror h2 { font-size: 16px; line-height: 1.3; font-weight: 600; margin-top: 32px; }
+.md-editor .milkdown .ProseMirror h3 { font-size: 14.5px; line-height: 1.35; font-weight: 600; margin-top: 20px; }
+.md-editor .milkdown .ProseMirror h4,
+.md-editor .milkdown .ProseMirror h5,
+.md-editor .milkdown .ProseMirror h6 { font-size: 13px; line-height: 1.4; font-weight: 600; margin-top: 16px; }
+/* Crepe puts a widget first, and on focus its virtual cursor, so the opening
+   block is the first child that is neither. */
+.md-editor .milkdown .ProseMirror > :nth-child(1 of :not(.ProseMirror-widget, .prosemirror-virtual-cursor)) { margin-top: 0; }
+.ticket-editor-fallback { padding-left: 40px; }
+/* The bar is opaque so a dimmed button never shows the body scrolling under it. */
+.pr-delivery-bar { position: sticky; top: 0; z-index: 2; background: var(--panel); }
+.pr-delivery { display: block; width: 100%; border: 0; min-height: 64px; }
+.pr-delivery[hidden], .chat-delivery iframe[hidden] { display: none; }
+/* Unsaved PR body: dimmed and inert, but kept in place so nothing jumps. */
+.pr-delivery, .chat-delivery iframe { transition: opacity 200ms ease; }
+.pr-delivery[data-saving], .chat-delivery iframe[data-saving] { opacity: .4; }
+.pr-body-editor { min-height: 60vh; overflow: hidden; background: transparent; }
+.pr-body-editor .milkdown { min-height: 60vh; cursor: text; }
+/* Same reading column as .log-view and the Raw textarea, so the toggle
+   between views never shifts the text. */
+.pr-body-editor .milkdown .ProseMirror { padding: 36px max(24px, calc((100% - 832px) / 2)) 80px; }
+.pr-body-editor .crepe-placeholder::before { content: "Write the PR body\2026"; }
+.pr-body-editor textarea {
+  display: block; width: 100%; height: 100%; min-height: 60vh; box-sizing: border-box;
+  padding: 12px; background: transparent; color: var(--text); border: 0;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.7; resize: vertical;
+}
+.pr-body-editor textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.ticket-editor-fallback { margin: 0; padding: 12px; color: var(--muted-strong); font-size: 13px; }

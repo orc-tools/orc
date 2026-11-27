@@ -1,0 +1,670 @@
+/* Project home (#new-view) — the project header and start bar sit in normal
+   flow at the top of every viewport this app supports; the note handout,
+   fireflies and mist are absolutely positioned over and behind them (see
+   .nc-handout/.nc-fireflies/.nc-mist), so they carry no layout height and
+   can never push the header or start bar below the fold. */
+#new-view {
+  position: relative; isolation: isolate; flex: 1; min-height: 0; overflow: hidden;
+  display: block;
+}
+/* The view itself never scrolls — it is the still frame the decoration is
+   sized against. An absolutely positioned layer inside a scroll container is
+   only one viewport tall and then travels up with the content, which left the
+   mist's hard edge stranded mid-page. This wrapper scrolls
+   instead, so the layers stay pinned to what you can actually see. */
+.nc-scroll {
+  height: 100%; overflow-x: hidden; overflow-y: auto; padding: 22px 24px 40px;
+  display: flex; flex-direction: column;
+}
+/* Fireflies — two parallax mote layers of the same palette. Decorative and
+   outside the interaction tree; each layer's dots bob and cross-fade on
+   opposite phases so the field flickers instead of pulsing in unison.
+   Colours, size, halo and strength come from the --nc-firefly-* and
+   --nc-mist-* tokens: the fallbacks are the night look, which every theme
+   shares. The Swamp package supplies its stronger day palette. */
+.nc-fireflies { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+:root[data-animations-off] .nc-fireflies { display: none; }
+.nc-fireflies::before, .nc-fireflies::after {
+  content: ""; position: absolute; inset: 0; opacity: var(--nc-firefly-alpha, .8);
+}
+/* Each mote is a bright core; the drop-shadow gives it a soft firefly halo. */
+.nc-fireflies::before {
+  --ff-gold: var(--nc-firefly-gold, var(--yellow)); --ff-lime: var(--nc-firefly-lime, var(--green)); --ff-size: var(--nc-firefly-size, 1);
+  filter: var(--nc-firefly-halo-gold, drop-shadow(0 0 5px color-mix(in srgb, var(--yellow) 65%, transparent)));
+  background:
+    radial-gradient(circle calc(3px * var(--ff-size)) at 20% 70%, var(--ff-gold), transparent 70%),
+    radial-gradient(circle calc(2.5px * var(--ff-size)) at 12% 52%, var(--ff-lime), transparent 70%),
+    radial-gradient(circle calc(3px * var(--ff-size)) at 34% 84%, var(--ff-gold), transparent 70%),
+    radial-gradient(circle calc(2.5px * var(--ff-size)) at 68% 78%, var(--ff-lime), transparent 70%),
+    radial-gradient(circle calc(3px * var(--ff-size)) at 82% 60%, var(--ff-gold), transparent 70%),
+    radial-gradient(circle calc(2.5px * var(--ff-size)) at 50% 90%, var(--ff-lime), transparent 70%),
+    radial-gradient(circle calc(2.5px * var(--ff-size)) at 26% 30%, var(--ff-gold), transparent 70%),
+    radial-gradient(circle calc(2.5px * var(--ff-size)) at 90% 34%, var(--ff-lime), transparent 70%);
+}
+.nc-fireflies::after {
+  --ff-gold: var(--nc-firefly-gold, var(--yellow)); --ff-lime: var(--nc-firefly-lime, var(--green)); --ff-size: var(--nc-firefly-size, 1);
+  filter: var(--nc-firefly-halo-lime, drop-shadow(0 0 4px color-mix(in srgb, var(--green) 60%, transparent)));
+  background:
+    radial-gradient(circle calc(2.5px * var(--ff-size)) at 28% 46%, var(--ff-gold), transparent 70%),
+    radial-gradient(circle calc(2px * var(--ff-size)) at 44% 66%, var(--ff-lime), transparent 70%),
+    radial-gradient(circle calc(2.5px * var(--ff-size)) at 60% 40%, var(--ff-gold), transparent 70%),
+    radial-gradient(circle calc(2px * var(--ff-size)) at 74% 88%, var(--ff-lime), transparent 70%),
+    radial-gradient(circle calc(2.5px * var(--ff-size)) at 88% 74%, var(--ff-gold), transparent 70%),
+    radial-gradient(circle calc(2px * var(--ff-size)) at 16% 82%, var(--ff-lime), transparent 70%),
+    radial-gradient(circle calc(2px * var(--ff-size)) at 8% 24%, var(--ff-gold), transparent 70%),
+    radial-gradient(circle calc(2px * var(--ff-size)) at 40% 20%, var(--ff-lime), transparent 70%);
+}
+/* Ground mist — two oversized, heavily blurred bands anchored to the
+   bottom edge. They're wider than the view (left/width overshoot the
+   bounds) so a slow horizontal drift never reveals a hard edge. */
+.nc-mist { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.nc-mist::before, .nc-mist::after {
+  content: ""; position: absolute; left: -20%; width: 140%; height: 96px;
+  filter: blur(20px);
+}
+.nc-mist::before {
+  bottom: -10px; opacity: var(--nc-mist-alpha-low, .16);
+  background: linear-gradient(90deg, transparent, var(--nc-mist-moss, color-mix(in srgb, var(--green) 40%, transparent)), transparent);
+}
+.nc-mist::after {
+  bottom: 26px; opacity: var(--nc-mist-alpha-high, .1);
+  background: linear-gradient(90deg, transparent, var(--nc-mist-haze, color-mix(in srgb, var(--yellow) 35%, transparent)), transparent);
+}
+.newconv {
+  position: relative; z-index: 1; max-width: 1080px; width: 100%; margin-inline: auto;
+  display: flex; flex-direction: column; gap: 12px;
+}
+/* Shared ticket badges in the composer and the context menu shared with plugins. */
+.nc-ticket-badge { --tint: var(--yellow); }
+.nc-ticket-badge[data-tint="green"] { --tint: var(--green); }
+.nc-ticket-badge[data-tint="cyan"] { --tint: var(--cyan); }
+.nc-ticket-badge[data-tint="orange"] { --tint: var(--orange); }
+.nc-ticket-badge[data-tint="purple"] { --tint: var(--purple); }
+.nc-prompt-tickets { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px 0; }
+.nc-prompt-tickets[hidden] { display: none; }
+.newconv-prompt.has-tickets #nc-prompt { padding-top: 10px; }
+.nc-ticket-badge {
+  display: inline-flex; align-items: stretch; height: 26px; overflow: hidden; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--tint) 46%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tint) 28%, var(--panel)), color-mix(in srgb, var(--tint) 18%, var(--panel)));
+}
+.nc-ticket-badge.is-landing { animation: nc-badge-land .44s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes nc-badge-land {
+  0% { transform: scale(.55); }
+  60% { transform: scale(1.08); }
+}
+.nc-ticket-badge-link {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 7px 0 8px;
+  color: color-mix(in srgb, var(--tint) 40%, var(--heading));
+  font: 650 11.5px/1 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em;
+  text-decoration: none;
+}
+.nc-ticket-badge-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.nc-ticket-badge-glyph { width: 13px; height: 13px; flex: none; }
+/* A meeting's badge names it in full; a long title ends in an ellipsis. */
+.nc-meeting-badge { max-width: 100%; }
+.nc-meeting-badge .nc-ticket-badge-link { min-width: 0; letter-spacing: .02em; }
+.nc-meeting-badge .nc-ticket-badge-link > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-ticket-badge-remove {
+  display: inline-flex; align-items: center; justify-content: center; width: 24px; padding: 0;
+  border: 0; border-left: 1px solid color-mix(in srgb, var(--tint) 34%, transparent);
+  background: none; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+}
+.nc-ticket-badge-remove svg { width: 12px; height: 12px; }
+.nc-ticket-badge-remove:hover { color: var(--heading); background: color-mix(in srgb, var(--tint) 18%, transparent); }
+.nc-ticket-badge-link:focus-visible, .nc-ticket-badge-remove:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.note-menu {
+  position: fixed; z-index: 80; display: flex; flex-direction: column; min-width: 200px; padding: 5px;
+  border: 1px solid var(--control-border); border-radius: 10px; background: var(--panel);
+  box-shadow: var(--float-shadow); transform-origin: 0 0;
+}
+.note-menu[hidden] { display: none; }
+.note-menu:not([hidden]) { animation: nc-menu-in .12s ease-out; }
+@keyframes nc-menu-in { from { opacity: 0; transform: scale(.96); } }
+.note-menu button {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 7px 10px;
+  border: 0; border-radius: 6px; background: none; color: var(--text);
+  font: inherit; font-size: 13px; text-align: left; cursor: var(--orc-cursor-pointer, pointer);
+}
+.note-menu button:hover, .note-menu button:focus-visible { background: var(--chip); color: var(--heading); }
+.note-menu button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.note-menu button[aria-disabled="true"] { opacity: .5; cursor: default; background: none; }
+.note-menu button[data-key="delete"] { margin-top: 5px; position: relative; }
+.note-menu button[data-key="delete"]::before {
+  content: ""; position: absolute; left: 6px; right: 6px; top: -3px; height: 1px; background: var(--border);
+}
+.note-menu button.is-danger { color: var(--red-text); }
+.note-menu button[aria-checked="true"]::after { content: "✓"; margin-left: 12px; color: var(--accent); }
+.note-menu button.is-danger:hover, .note-menu button.is-danger:focus-visible { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red-text); }
+.note-menu-hint { color: var(--muted-strong); font: 500 10.5px/1 "JetBrains Mono", ui-monospace, monospace; }
+@media (forced-colors: active) {
+  .nc-ticket-badge, .note-menu { border: 1px solid CanvasText; }
+}
+/* The question names the project, and the name is the switcher: a dotted
+   underline says it can be changed, hover and focus turn it interaction
+   blue. The project arrives with /api/config; until then the heading keeps
+   its space but stays hidden, so the row never grows and never asks
+   "in ?" with the name missing. */
+.nc-title {
+  margin: 0 0 20px; color: var(--heading); text-align: center; text-wrap: balance;
+  font-size: clamp(22px, 2.4vw, 30px); font-weight: 600; line-height: 1.25; letter-spacing: -.02em;
+}
+.nc-title.unplaced .nc-title-in, .nc-title:not(.unplaced) .nc-title-unplaced { display: none; }
+.nc-title:has(#nc-project-name:empty) { visibility: hidden; }
+.nc-project-switch {
+  margin: 0 -2px; padding: 0 2px; border: 0; border-radius: 6px; background: none;
+  color: inherit; font: inherit; letter-spacing: inherit; cursor: var(--orc-cursor-pointer, pointer);
+  text-decoration: underline dotted var(--muted); text-decoration-thickness: 2px; text-underline-offset: .2em;
+}
+.nc-project-switch:hover, .nc-project-switch:focus-visible { color: var(--accent-text); text-decoration-color: currentColor; }
+.newconv { animation: nc-in .3s cubic-bezier(.22,1,.36,1) both; }
+.nc-beam::before { animation: nc-swamp-beam 7s linear infinite; }
+/* Focus quickens the beam — the always-on cue that survives ring suppression. */
+.newconv-prompt:has(textarea:focus) .nc-beam::before { animation-duration: 3s; }
+.nc-fireflies::before { animation: nc-firefly-a 9s ease-in-out infinite; }
+.nc-fireflies::after { animation: nc-firefly-b 6.5s ease-in-out infinite; }
+/* The two mist bands drift at different, much slower speeds and start
+   from opposite ends so they never line up or read as one layer. */
+.nc-mist::before { animation: nc-mist-a 40s ease-in-out infinite alternate; }
+.nc-mist::after { animation: nc-mist-b 65s ease-in-out infinite alternate; }
+@keyframes nc-firefly-a {
+  0%, 100% { transform: translateY(0); opacity: .35; }
+  50% { transform: translateY(-24px); opacity: 1; }
+}
+@keyframes nc-firefly-b {
+  0%, 100% { transform: translateY(0); opacity: .9; }
+  50% { transform: translateY(-15px); opacity: .2; }
+}
+@keyframes nc-mist-a {
+  0% { transform: translateX(-8%); }
+  100% { transform: translateX(8%); }
+}
+@keyframes nc-mist-b {
+  0% { transform: translateX(8%); }
+  100% { transform: translateX(-8%); }
+}
+@keyframes nc-in { from { opacity: 0; } }
+@keyframes nc-swamp-beam { to { transform: rotate(384deg) scale(3); } }
+.newconv-field { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 200px; }
+.newconv-field orc-select { width: 100%; }
+/* Start bar: the question, the composer and its tray, centred above the
+   board. The top padding grows with the window height, so a tall view gives
+   the question room instead of pinning it to the top edge. It stacks above
+   what follows it, such as the Set up verification card (z-index 1), so the
+   composer's menus open over that card instead of under it. */
+.nc-startbar {
+  position: relative; z-index: 2;
+  display: flex; flex-direction: column; width: 100%; max-width: 820px; margin-inline: auto;
+  padding: clamp(4px, 7vh, 72px) 0 clamp(8px, 3vh, 28px);
+}
+/* Transparent borders keep the launch controls quiet until hovered or open. */
+.nc-startbar-config {
+  --orc-control-border: transparent;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0;
+}
+.nc-startbar-config > .newconv-field { flex-direction: row; align-items: center; gap: 4px; flex: none; min-width: 0; }
+.nc-startbar-config > .newconv-field ~ .newconv-field::before {
+  content: ""; flex: none; width: 1px; height: 18px; margin-inline: 4px; background: var(--border);
+}
+.nc-startbar-config orc-model-picker { flex: 1; min-width: 0; }
+.nc-startbar-effort { width: 238px; }
+/* When every launch toggle has given up its name and the row still wraps,
+   ui/js/launch-bar-fit.js marks it data-tight: it holds one line by
+   narrowing the effort track first, then truncating the model's name. */
+@media (min-width: 701px) {
+  .nc-startbar-config[data-tight] { flex-wrap: nowrap; }
+  .nc-startbar-config[data-tight] > .nc-startbar-effort { flex: 0 3 238px; min-width: 190px; }
+  .nc-startbar-config[data-tight] > .nc-startbar-model { flex: 0 1 auto; min-width: 96px; }
+  .nc-startbar-config[data-tight] orc-effort-slider { min-width: 0; }
+}
+.nc-startbar .newconv-prompt footer > .nc-actions { flex: none; }
+/* The tray tucks under the composer's rounded bottom edge, inset so it
+   reads as part of the composer rather than a second card: it shows the live
+   outcome line for what Enter will do, plus any status/error notices. Its top
+   padding clears the 12px tucked under the composer plus the focus ring or an
+   outer rim, while the bottom padding keeps descenders, icons and underlines
+   clear of the bottom edge. Themes whose sans typeface sits high in its line
+   carry that shift in --orc-font-sans-nudge. */
+.nc-tray {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
+  margin: -12px 14px 0;
+  padding: calc(20px + var(--orc-font-sans-nudge, 0px)) 14px calc(8px - var(--orc-font-sans-nudge, 0px)) 14px;
+  border: 1px solid var(--border); border-top: 0; border-radius: 0 0 12px 12px;
+  background: color-mix(in srgb, var(--panel) 55%, var(--bg));
+  color: var(--muted-strong); font-size: 12px;
+}
+/* While the prompt is typed in, the tray rises over the composer's typing
+   glow, clipped to start at the composer's bottom edge: under the glow its
+   straight sides show through as square corners. It stays beneath for a
+   keyboard focus ring or an open skills list, which reach below the
+   composer, and on a phone, where it sits too near the corners to clip. */
+@media (min-width: 701px) {
+  .newconv-prompt:has(textarea:focus:not([aria-expanded="true"])) + .nc-tray {
+    position: relative; z-index: 2; clip-path: inset(12px -100vmax -100vmax);
+  }
+  .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) + .nc-tray { z-index: auto; clip-path: none; }
+}
+#nc-effort-notice, #nc-cli-notice { flex: 1 1 100%; }
+/* Set up verification (ui/js/verification-setup.js): a suggestion as wide
+   as the composer, under it, until the project tells runs how to verify
+   their work. */
+.nc-verify-card {
+  position: relative; z-index: 1; box-sizing: border-box; display: flex; align-items: flex-start; gap: 14px;
+  width: 100%; max-width: 820px; margin: 0 auto 8px; padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--green) 55%, var(--border)); border-radius: 12px;
+  background: var(--panel);
+}
+.nc-verify-card[hidden], #new-view[data-evals] .nc-verify-card { display: none; }
+.nc-verify-icon {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px;
+  background: color-mix(in srgb, var(--green) 20%, var(--panel)); color: var(--green-text, var(--green));
+}
+.nc-verify-body { flex: 1; min-width: 0; }
+.nc-verify-eyebrow {
+  margin: 0 0 3px; color: var(--green-text, var(--green));
+  font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+}
+.nc-verify-title { margin: 0 0 4px; color: var(--heading, var(--text)); font-size: 14px; font-weight: 650; }
+.nc-verify-text { margin: 0; color: var(--muted-strong); font-size: 12.5px; line-height: 1.45; text-wrap: pretty; }
+.nc-verify-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+/* Update steps from project Settings quotes what the user asked for. */
+.nc-verify-change {
+  margin: 8px 0 0; padding: 6px 10px; border-radius: 6px; background: var(--code); color: var(--text);
+  font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.nc-verify-change[hidden], .nc-verify-field[hidden] { display: none; }
+/* Set up verification's two choices, as one small form under a rule: where
+   the steps are saved, and the setup run's model (plan-builds.js). Labels
+   share a left column and each note sits under the control it explains; the
+   Runs with row's own label, controls and note join its field's grid. */
+.nc-verify-choose {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px;
+  margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.nc-verify-choose[hidden], .nc-verify-actions[hidden] { display: none; }
+.nc-verify-field { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; row-gap: 5px; align-items: start; }
+.nc-verify-field > *, .nc-verify-runs > * { grid-column: 2; }
+.nc-verify-runs:not([hidden]) { display: contents; }
+.nc-verify-field > .nc-verify-label, .nc-verify-runs > .plan-builds-label {
+  grid-column: 1; margin: 0; color: var(--muted-strong); font-size: 12px; font-weight: 600; line-height: 30px;
+}
+.nc-verify-choose .nc-verify-actions { grid-column: 1 / -1; margin-top: 2px; }
+.nc-verify-hint { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.45; }
+.nc-verify-hint[hidden] { display: none; }
+/* The repo choice takes the card's own font, and the model controls shrink
+   to its height so Start setup stays the strongest thing on the card. In
+   that font the label drops by the theme's nudge, still 24px tall. */
+.nc-verify-field orc-segmented { justify-self: start; font-family: inherit; --orc-text: var(--heading); }
+.nc-verify-field orc-segmented::part(option) {
+  padding: calc(2 * var(--orc-font-sans-nudge, 0px)) 12px 0; font-size: 12.5px;
+  line-height: calc(24px - 2 * var(--orc-font-sans-nudge, 0px));
+}
+.nc-verify-runs :is(orc-model-picker, orc-select)::part(trigger) { min-height: 30px; padding-block: 4px; font-size: 12.5px; }
+@media (max-width: 640px) {
+  .nc-verify-choose { grid-template-columns: minmax(0, 1fr); }
+  .nc-verify-field > *, .nc-verify-runs > *,
+  .nc-verify-field > .nc-verify-label, .nc-verify-runs > .plan-builds-label { grid-column: 1; line-height: 1.45; }
+}
+/* Project settings: per-project generated file regeneration rules. */
+.gen-rules-list { display: flex; flex-direction: column; gap: 6px; }
+.gen-rules-list:empty { display: none; }
+.gen-rule-row {
+  display: grid; grid-template-columns: minmax(120px, 1fr) minmax(160px, 1.5fr) auto;
+  align-items: center; gap: 6px;
+}
+.gen-rule-row input[type="text"], #proj-deploy-command {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: 6px 10px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--control-border); border-radius: 8px;
+  font: 12.5px "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.gen-rule-row input[type="text"]:focus-visible, #proj-deploy-command:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+@media (max-width: 640px) {
+  .gen-rule-row { grid-template-columns: 1fr; }
+}
+/* Evals candidates take the board's place under the composer: one row per
+   candidate, each a strip of the composer's own launch controls, and what
+   Start will fan out. */
+.nc-evals {
+  display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 820px; margin-inline: auto;
+  padding: 12px 14px 14px; border: 1px solid color-mix(in srgb, var(--yellow) 30%, var(--border)); border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 55%, var(--bg));
+}
+.nc-evals[hidden] { display: none; }
+.nc-evals-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.nc-evals-head h3 { margin: 0; color: var(--heading); font-size: 13px; font-weight: 600; letter-spacing: normal; text-transform: none; }
+.nc-evals-hint { flex: 1 1 240px; margin: 0; color: var(--muted-strong); font-size: 12px; }
+.nc-evals-count { color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums; }
+.nc-evals-rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.nc-evals-row { padding: 5px 6px 5px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.nc-evals-row.is-unavailable { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); }
+/* Transparent borders keep a row's controls as quiet as the composer's. */
+.nc-evals-setup {
+  --orc-control-border: transparent;
+  display: grid; grid-template-columns: 22px minmax(120px, 1fr) minmax(170px, 210px) auto auto 30px;
+  grid-template-areas: "number model effort flags own remove"; align-items: center; gap: 4px 8px;
+}
+.nc-evals-number {
+  grid-area: number; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow-text);
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.nc-evals-model { grid-area: model; min-width: 0; }
+.nc-evals-effort { grid-area: effort; min-width: 0; }
+.nc-evals-effort orc-effort-slider { min-width: 0; }
+/* One composer has one goblin; a row keeps the track and the level. */
+.nc-evals-effort orc-effort-slider::part(face) { display: none; }
+.nc-evals-note { display: block; color: var(--muted-strong); font-size: 12px; line-height: 1.35; }
+.nc-evals-note[hidden] { display: none; }
+.nc-evals-flags { grid-area: flags; display: flex; align-items: center; gap: 4px; }
+.nc-evals-own {
+  grid-area: own; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 999px; background: none; color: var(--muted-strong);
+  font: inherit; font-size: 12px; white-space: nowrap; cursor: var(--orc-cursor-pointer, pointer);
+  transition: background-color .15s ease-out, border-color .15s ease-out, color .15s ease-out;
+}
+.nc-evals-own:hover { border-color: var(--orc-green, var(--border)); color: var(--heading); }
+.nc-evals-own[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--yellow) 60%, transparent); background: color-mix(in srgb, var(--yellow) 12%, transparent); color: var(--heading);
+}
+.nc-evals-own[aria-pressed="true"] svg { color: var(--yellow); }
+.nc-evals-remove {
+  grid-area: remove; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 999px;
+  background: none; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+}
+.nc-evals-remove:hover { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--heading); }
+.nc-evals-prompt {
+  display: block; width: 100%; min-height: 64px; margin: 6px 0 3px; padding: 8px 10px; resize: vertical;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text);
+  font: inherit; font-size: 13px; line-height: 1.5;
+}
+.nc-evals-prompt[hidden] { display: none; }
+.nc-evals-add {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border: 1px dashed var(--control-border, var(--border)); border-radius: 999px; background: none; color: var(--text);
+  font: inherit; font-size: 12px; cursor: var(--orc-cursor-pointer, pointer);
+}
+.nc-evals-add:hover:not(:disabled) { border-color: var(--orc-green, var(--border)); color: var(--heading); }
+.nc-evals-add:disabled { opacity: .45; cursor: not-allowed; }
+:is(.nc-evals-own, .nc-evals-remove, .nc-evals-add, .nc-evals-prompt):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (max-width: 700px) {
+  .nc-evals-setup {
+    grid-template-columns: 22px minmax(0, 1fr) auto 44px;
+    grid-template-areas: "number model model remove" "effort effort effort effort" "flags flags own own";
+  }
+  .nc-evals-own { justify-self: end; }
+  .nc-evals-own, .nc-evals-add { height: auto; min-height: 44px; }
+  .nc-evals-remove { width: 44px; height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .nc-evals-own { transition: none; } }
+@media (forced-colors: active) {
+  .nc-evals, .nc-evals-row { border-color: CanvasText; }
+  .nc-evals-own[aria-pressed="true"] { border-color: Highlight; background: Highlight; color: HighlightText; }
+  .nc-evals-own[aria-pressed="true"] svg { color: HighlightText; }
+}
+orc-effort-slider { display: block; width: 100%; min-width: 210px; height: 34px; }
+/* /orc is the only mode there is now, so the picker is a static label, not
+   a control — same flex-column shape as the field beside it (label font
+   size/weight matched to <orc-select>'s own shadow-DOM label so the two
+   line up), with no interactive affordance (no button, no focus ring, no
+   click target). */
+/* The transport picker is the design-system <orc-segmented> component. Its
+   theme bridge comes from the shared --orc-* layer at :root. Two things stay
+   local: the layout, and the one deliberate deviation from the shared layer —
+   segment labels take the heading colour, not the body text colour, so
+   unselected segments stay legible at 12px. */
+orc-segmented.newconv-transport {
+  display: inline-flex;
+  --orc-text: var(--heading);
+}
+/* The class selector above outranks the UA's bare [hidden] rule, so the
+   transport toggle needs its own override to actually disappear when
+   launchAvailable is false (In-5). */
+orc-segmented.newconv-transport[hidden] { display: none; }
+/* The new-conversation prompt owns this glowing-composer treatment. */
+.newconv-prompt {
+  position: relative; isolation: isolate;
+  border: var(--composer-border-width, 1px) solid var(--composer-border-color, var(--control-border));
+  border-radius: var(--composer-radius, 9px);
+  background: var(--composer-bg, var(--panel)); box-shadow: var(--composer-shadow, none);
+  transition: border-color .16s ease-out, outline-color .16s ease-out;
+}
+/* ::before draws the typing glow (see --typing-heat below). */
+.newconv-prompt::before {
+  content: ""; position: absolute; inset: -1px; z-index: -1;
+  border: 1px solid transparent; border-radius: inherit; pointer-events: none;
+  box-shadow: var(--typing-glow, none);
+}
+/* The beam is a square of conic gradient turning behind the content, under
+   a cover that paints the panel over everything but the 1px border. Turning
+   the square is a transform, which the compositor animates by itself;
+   animating the gradient's own angle made WebKit style and repaint the
+   composer on every frame for as long as it was on screen. The square is
+   drawn at a third of its size and scaled up, since the gradient is soft
+   and a full-size layer costs nine times the memory. A mask-composite ring
+   would need no cover, but WebKit sometimes drops the mask and floods the
+   whole composer with the gradient. */
+.nc-beam {
+  position: absolute; inset: -1px; z-index: -1; overflow: hidden; container-type: size;
+  border-radius: inherit; pointer-events: none;
+  background: var(--nc-beam-underlay, transparent);
+}
+/* A square as wide as the composer's width plus its height reaches past
+   every corner at any angle. */
+.nc-beam::before {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  --nc-beam-side: calc((100cqw + 100cqh) / 3);
+  width: var(--nc-beam-side); height: var(--nc-beam-side);
+  margin: calc(var(--nc-beam-side) / -2) 0 0 calc(var(--nc-beam-side) / -2);
+  transform: rotate(24deg) scale(3);
+  background: conic-gradient(
+    transparent 0 58%,
+    color-mix(in srgb, var(--green) 32%, transparent) 66%,
+    var(--green) 73%,
+    color-mix(in srgb, var(--yellow) 76%, var(--green)) 78%,
+    color-mix(in srgb, var(--green) 34%, transparent) 85%,
+    transparent 92% 100%);
+}
+/* The cover gets its own compositing layer. The turning square is one, and
+   WebKit otherwise paints the cover into the layer beneath it whenever its
+   overlap check misses, as it does in the plan page's sticky chat strip,
+   so the whole gradient floods the composer. It paints the composer's own
+   background, so a theme's --composer-bg reads the same under the beam. */
+.nc-beam::after {
+  content: ""; position: absolute; inset: 0; will-change: transform;
+  border: 1px solid transparent; border-radius: inherit;
+  background: linear-gradient(var(--composer-bg, var(--panel)) 0 0) padding-box;
+}
+.newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+  border-color: var(--focus); outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.newconv-prompt textarea {
+  display: block; width: 100%; min-height: 132px; resize: vertical; box-sizing: border-box;
+  padding: 13px 14px 8px; border: 0; outline: 0; background: transparent;
+  color: var(--text); font: inherit; line-height: 1.5;
+}
+.newconv-prompt footer {
+  min-height: 45px; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 5px 8px 6px 13px; border-top: 1px solid var(--border);
+  color: var(--muted-strong); font-size: 11px;
+}
+/* Project home's composer, sized and rounded like a chat prompt: the
+   toolbar replaces the footer's hint line, so the divider above it goes. */
+.nc-startbar .newconv-prompt { z-index: 1; border-radius: var(--composer-radius, 16px); }
+#nc-prompt { min-height: 0; max-height: 40vh; overflow-y: auto; padding: 16px 18px 6px; font-size: 15px; }
+.nc-startbar .newconv-prompt footer { border-top: 0; padding: 4px 10px 10px; }
+/* Soft always-on focus cue that lives in the beam itself: focus lights a
+   faint green rim under the sweeping gradient (plus the speed-up in the
+   motion block). Keyboard focus still gets the full ring above. */
+.newconv-prompt:has(textarea:focus) { --nc-beam-underlay: color-mix(in srgb, var(--green) 45%, transparent); }
+/* Typing speed heats the composer: ui/js/typing-fx.js sets --typing-heat
+   from 0 to 1 and back to 0 once typing stops, and each fun mode's
+   stylesheet draws it in its own palette over this swamp default.
+   Registered so the cooling can transition. At 0 every mix gives back the
+   composer's own resting or focus colour and every glow has no size, so a
+   cold composer looks as it always has. Each heat rule repeats the
+   focus-ring selector to outrank the ring's border colour, which would
+   otherwise hold a focused composer cold, and --typing-heat-rest carries
+   the ring's colour into the mix. --typing-pulse beats while the composer
+   is hot, and --typing-beat only lets it show in the top half of the
+   heat, so everyday typing glows steadily and only a fast run throbs.
+   typing-fx.js marks a hot composer data-typing-hot and keeps the mark
+   until the heat has faded: the beat is a custom property, so WebKit
+   styles the composer on every frame it runs, and beating for as long as
+   the composer had focus spent that on a glow with no size.
+   The glow is a --typing-glow shadow list that ::before draws: WebKit,
+   which Orc.app runs on, draws a steady blurred box-shadow on the composer
+   itself with square corners, while the same shadow on ::before follows
+   the curve. Its value is resolved on the composer, so ::before sees the
+   heat without the registered properties inheriting. */
+@property --typing-heat {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+@property --typing-pulse {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+@keyframes typing-pulse { 50% { --typing-pulse: 1; } }
+.newconv-prompt[data-typing-hot] { animation: typing-pulse 1.5s ease-in-out infinite; }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  .newconv-prompt {
+    --typing-heat-rest: var(--control-border);
+    --typing-beat: calc(var(--typing-pulse) * clamp(0, (var(--typing-heat) - .5) * 2, 1));
+    /* The bog's green boiling up to toxic lime. */
+    --typing-toxic: color-mix(in oklab, var(--green) 55%, #b4f000);
+    transition: border-color .16s ease-out, outline-color .16s ease-out, --typing-heat 1s ease-out;
+  }
+  .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) { --typing-heat-rest: var(--focus); }
+  /* The swamp bubbles: a tight toxic rim, and a green bloom that rises and
+     swells with each beat like gas off the bog. */
+  .newconv-prompt,
+  .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    border-color: color-mix(in srgb,
+      color-mix(in oklab, var(--green), var(--typing-toxic) clamp(0%, (var(--typing-heat) - .5) * 200%, 100%))
+        clamp(0%, var(--typing-heat) * 200%, 100%),
+      var(--typing-heat-rest));
+    --typing-glow:
+      0 0 calc(var(--typing-heat) * 4px) calc(var(--typing-heat) * 1px) color-mix(in srgb, var(--typing-toxic) calc(var(--typing-heat) * 50%), transparent),
+      0 calc(var(--typing-beat) * -2px) calc(var(--typing-heat) * 12px + var(--typing-beat) * 5px) calc(var(--typing-heat) * 1px + var(--typing-beat) * 1px)
+        color-mix(in srgb, var(--green) calc(var(--typing-heat) * 22% + var(--typing-beat) * 8%), transparent);
+  }
+}
+.nc-status { flex: 1 1 auto; min-width: 0; }
+.nc-newline-hint { flex: none; white-space: nowrap; }
+#nc-status:is(.launching, .error, .needs-trust, .blocked, :not(.keys)) + .nc-newline-hint { display: none; }
+/* Enter writes a plan where it used to build, so the hint leads with that. */
+.nc-status > strong { color: var(--heading); font-weight: 600; }
+.nc-status.needs-trust { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text); }
+.nc-status.needs-trust button { font: inherit; color: var(--accent); background: none; border: 1px solid currentColor; border-radius: 4px; padding: 6px 10px; min-height: 44px; cursor: var(--orc-cursor-pointer, pointer); }
+.nc-status.needs-trust button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.nc-status.error { color: var(--red-text); }
+/* Post-Start confirmation: the launch happens in a background process, so
+   this footer state is the only visible proof the run actually initiated. */
+.nc-status.launching {
+  display: inline-flex; align-items: center; gap: 7px;
+  overflow: hidden; color: var(--green-text); font-weight: 600; white-space: nowrap;
+}
+.nc-status.launching svg { flex: none; }
+.nc-status.launching > a {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-run-link {
+  color: inherit;
+  display: inline-flex; align-items: center; gap: 7px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.nc-launch-dot {
+  flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green); animation: dot-pulse 1.6s ease-in-out infinite;
+}
+
+.nc-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 7px; }
+.prompt-dictation-panel { display: flex; align-items: center; gap: 10px; padding: 8px 14px; color: var(--muted-strong); font-size: 12px; }
+.prompt-dictation-panel[hidden] { display: none; }
+.prompt-dictation-panel > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* Preparing, downloading and transcribing sit in the composer's bar, so the
+   composer keeps its height. The message gives way first, down to its
+   spinner, and ends in "…" with its full text as a title; only then does the
+   model label beside it shorten. */
+.prompt-dictation-progress {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 1000 auto; min-width: 21px; /* the dot and spinner */
+  color: var(--muted-strong); font-size: 12px; white-space: nowrap;
+}
+.prompt-dictation-progress[hidden] { display: none; }
+.prompt-dictation-progress > [role="status"] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.prompt-dictation-progress > .status-spinner { flex: none; }
+:is(.chat-session-settings, .plan-chat-model):not([hidden]) + .prompt-dictation-progress::before {
+  content: "·"; flex: none; margin-right: 2px;
+}
+/* On the project home the bar holds the launch settings, so the message takes
+   the spot before the microphone. It only fills the room the settings leave
+   (the buttons' group grows from zero), so it never pushes them to wrap. */
+.nc-actions:has(> .prompt-dictation-progress:not([hidden])) { flex-wrap: nowrap; min-width: 0; }
+.nc-actions > :not(.prompt-dictation-progress) { flex: none; }
+@media (min-width: 701px) {
+  .nc-startbar .newconv-prompt footer > .nc-actions:has(> .prompt-dictation-progress:not([hidden])) { flex: 1 1 0; }
+}
+.prompt-dictate.is-recording { background: color-mix(in srgb, var(--green) 16%, transparent); border-radius: 6px; }
+.prompt-dictate.is-recording svg { color: var(--green-text); }
+/* The composer's three actions are design-system buttons. Start and Create
+   ticket are peers; whichever Enter will perform takes variant="primary", so
+   the button and the hint below it never disagree about what the keyboard is
+   about to do. Weight, hover, focus ring and the disabled treatment all come
+   from the element. */
+
+@media (max-width: 700px) {
+  .nc-scroll { padding: 16px 16px max(24px, env(safe-area-inset-bottom)); }
+  .nc-startbar { padding-top: 8px; }
+  .nc-fireflies, .nc-mist { display: none; }
+  .nc-startbar .nc-beam { display: none; }
+  .newconv-field { min-width: min(200px, 100%); }
+  /* Three rows: the model with the launch options at the right of its row,
+     then effort across the width, then the actions. The model takes what
+     the options leave, sized to its name so the arrow sits beside it, and
+     a long name ends in an ellipsis before an option wraps. */
+  .nc-startbar-config { width: 100%; column-gap: 0; }
+  .nc-startbar-config > .newconv-field ~ .newconv-field::before { display: none; }
+  .nc-startbar-config > .nc-startbar-model { flex: 1 1 0; width: auto; }
+  .nc-startbar-config orc-model-picker { flex: 0 1 auto; }
+  .nc-startbar-config > .nc-startbar-effort { order: 1; flex: 1 1 100%; width: auto; }
+  .nc-startbar-config > :is(.nc-startbar-fast, .nc-startbar-permission, .nc-startbar-evals, .nc-startbar-cloud, .nc-startbar-auto-merge, .nc-startbar-account) { flex: none; width: auto; }
+  .newconv-prompt footer { align-items: flex-start; flex-direction: column; }
+  .nc-startbar .newconv-prompt footer { gap: 4px; }
+  .nc-actions { align-self: flex-end; }
+  /* A finger cannot drag the corner grip. */
+  #nc-prompt { height: 6.5em; resize: none; }
+  .nc-tray { margin-inline: 8px; }
+}
+/* Keyboard shortcuts mean nothing on a touch keyboard, so ncSyncIntent()
+   writes the mode line there instead and marks only key hints .keys. A key
+   hint stays in the accessibility tree (it is the prompt's description);
+   the mode line, launch progress, errors and why the button is disabled
+   all show. */
+@media (hover: none) and (pointer: coarse) {
+  .nc-newline-hint { display: none; }
+  .nc-status.keys:not(.launching):not(.error):not(.needs-trust):not(.blocked) {
+    position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+  }
+}
+@media (forced-colors: active) {
+  .nc-fireflies { display: none; }
+  .nc-mist { display: none; }
+  .newconv-prompt { border-color: CanvasText; }
+  .newconv-prompt::before { border: 1px solid CanvasText; }
+  .nc-beam { display: none; }
+  .newconv-prompt:has(textarea:focus-visible):not([data-suppress-focus-ring]) {
+    border-color: Highlight; outline-color: Highlight;
+  }
+  .newconv-prompt:has(textarea:focus) { border-color: Highlight; }
+  /* the composer buttons carry forced-colors behaviour inside their own
+     shadow roots; only the launch dot is still ours to state here */
+  .nc-launch-dot { border: 1px solid CanvasText; }
+}
+#settings-view, #changelog-view, #stats-view { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 22px 60px; }
+.newconv-prompt textarea { tab-size: 2; white-space: pre-wrap; }
+.linkish { border: 0; background: none; padding: 0; color: var(--accent-text); font: inherit; cursor: var(--orc-cursor-pointer, pointer); text-decoration: underline; }

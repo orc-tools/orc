@@ -177,14 +177,31 @@ function probeDurations(run, assets) {
   probe.src = assetUrl(run.id, asset);
 }
 
+// The pictures the stage shows for `asset`, as the picture viewer
+// (ui/js/palette.js) takes them: a mockup and what was built from it are one
+// pair, so the viewer switches between them; a lone image has no pair.
+function stagePictures(asset, runId) {
+  const name = asset.path.split('/').pop();
+  if (asset.built) {
+    return [
+      { src: assetUrl(runId, asset), alt: `Mockup ${name}`, label: 'Mockup', set: 0 },
+      { src: fileUrl(runId, asset.built.path), alt: `Built ${asset.built.flow || name}`, label: 'Built', set: 0 },
+    ];
+  }
+  return asset.media === 'image' ? [{ src: assetUrl(runId, asset), alt: name, label: '', set: -1 }] : [];
+}
+
+// Each picture is a button that opens it full screen.
+const zoomHtml = (picture, index) => `<button type="button" class="assets-zoom" data-zoom="${index}" data-focus-key="zoom:${index}" aria-label="${esc(`Open ${picture.alt} full screen`)}" title="Open full screen (Enter)"><img src="${esc(picture.src)}" alt="${esc(picture.alt)}"></button>`;
+
 function stageHtml(asset, runId) {
   if (!asset) return '';
   const name = esc(asset.path.split('/').pop());
+  const pictures = stagePictures(asset, runId);
   if (asset.built) {
-    return `<figure class="assets-pair-pane"><img src="${esc(assetUrl(runId, asset))}" alt="${esc(`Mockup ${name}`)}"><figcaption>Mockup</figcaption></figure>
-      <figure class="assets-pair-pane"><img src="${esc(fileUrl(runId, asset.built.path))}" alt="${esc(`Built ${asset.built.flow || name}`)}"><figcaption>Built</figcaption></figure>`;
+    return pictures.map((picture, index) => `<figure class="assets-pair-pane">${zoomHtml(picture, index)}<figcaption>${esc(picture.label)}</figcaption></figure>`).join('\n      ');
   }
-  if (asset.media === 'image') return `<img src="${esc(assetUrl(runId, asset))}" alt="${name}">`;
+  if (asset.media === 'image') return zoomHtml(pictures[0], 0);
   if (asset.media === 'video') return '';
   return `<div class="assets-stage-audio">${ASSET_ICONS.audio}<span>${name}</span></div>`;
 }
@@ -410,6 +427,16 @@ onRunDiffFiles(runId => { if (assetsTab.run?.id === runId && !$('run-panel-asset
     event.preventDefault();
   });
   body.addEventListener('click', event => {
+    const zoom = event.target.closest('[data-zoom]');
+    if (zoom) {
+      const items = stagePictures(selectedAsset(runAssets(assetsTab.run)), assetsTab.run.id);
+      if (!items.length) return;
+      // The viewer hands focus back to what had it, and WKWebView leaves a
+      // clicked <button> unfocused.
+      zoom.focus({ preventScroll: true });
+      window.postMessage({ type: 'orc-lightbox', items, i: Number(zoom.dataset.zoom) }, location.origin);
+      return;
+    }
     const item = event.target.closest('[data-asset]');
     if (item) {
       const asset = runAssets(assetsTab.run).find(entry => entry.path === item.dataset.asset);

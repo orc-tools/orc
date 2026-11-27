@@ -1,19 +1,22 @@
-import { fetchConfigData } from './config-data.js';
+import { orcRegisterOverlayCloser, reflectRunChange } from './panel-navigation.js';
+import { resolvePrUrls } from './pr-badge.js';
+import { fetchConfigData, normPath } from './config-data.js';
 // orc-ui: Command palette (Cmd/Ctrl+K).
 
-import { ncCurrentProject, ncFetchProjects, ncProjectName, ncProjects, ncSwitchProject, orcRegisterOverlayCloser, refresh, routeWithViewTransition, setSoundsEnabled, syncSettingsPowerMode } from './activity.js';
+import { ncCurrentProject, ncFetchProjects, ncProjectName, ncProjects, ncSwitchProject, refresh, routeWithViewTransition, setSoundsEnabled, syncSettingsPowerMode, closeSettingsToOrigin } from './activity.js';
 import { openQueueModeModal } from './queue-mode-modal.js';
-import { STATUS_VALUES, controlForkLocked, forkIntoComposer, tabsFor } from './control.js';
+import { STATUS_VALUES, controlForkLocked, forkIntoComposer } from './control.js';
 import { bindContextMenu, placeContextMenu } from './context-menu.js';
 import { closeImageMenu, isImageMenuOpen, wasImageMenuDismissedOverLightbox } from './image-menu.js';
-import { $, LINK_TYPE_LABELS, POWER_MODES, RUN_MODE_LABEL, announce, applyStatusPatch, artifactRoute, esc, fileUrl, isReadOnlyRun, powerMode, runs, selectArtifact, previewThemeMode, setPowerMode, setSidebarProjectOrder, setSidebarStatusOrder, setThemeMode, sidebarProjectOrder, statusOrderFromConfigPayload, syncOpenArtifactThemes, themeMode, toast } from './core.js';
-import { changeRunPause, clearMergeQueue, openAddProject, openCancel, openLinkPr, openQueueDialog, patchRun, postLinkAction, postOpenTerminal, postProjectScript, reflectRunChange, resolvePrUrls, resumeId } from './dialogs.js';
-import { q } from './diff.js';
+import { $, LINK_TYPE_LABELS, POWER_MODES, RUN_MODE_LABEL, announce, applyStatusPatch, artifactRoute, esc, fileUrl, isReadOnlyRun, powerMode, runs, selectArtifact, previewThemeMode, setPowerMode, setSidebarProjectOrder, setThemeMode, sidebarProjectOrder, syncOpenArtifactThemes, themeMode, toast, tabsFor } from './core.js';
+import { changeRunPause, clearMergeQueue, openAddProject, openCancel, openLinkPr, openQueueDialog, patchRun, postLinkAction, postOpenTerminal, postProjectScript, resumeId } from './dialogs.js';
+import { diffHiddenFindCounts, q } from './diff.js';
 import { projectOrderKeys, queryRank, rememberSettle, renderList, runProject, selectProjectFilter } from './filters.js';
 import { runPauseActions } from './run-presentation.js';
 import { openMergePlanner } from './merge-plan.js';
+import { animationsOff, onReducedMotionChange, setAnimationsOff, systemReducedMotion } from './motion.js';
 import { openYearInReview } from './secondary-screens.js';
-import { closeSettingsToOrigin, focusSettingsHeading, normPath, projectOrderFromConfigPayload, requestSettingsSpotlight, settingsDirty, settingsViewActive } from './settings.js';
+import { focusSettingsHeading, projectOrderFromConfigPayload, requestSettingsSpotlight, settingsDirty, settingsViewActive } from './settings.js';
 import { hasUnsavedInstructions, syncInstructionsFromCommand } from './instructions.js';
 import { TICKET_STATUS_LABELS } from './tickets.js';
 import { planPictureNotes } from './plan-notes.js';
@@ -21,6 +24,7 @@ import { setCustomSounds, setEventSounds } from './sound.js';
 import { trackUsage } from './usage-tracking.js';
 import { setShortcutOverrides, shortcutMatches } from './shortcuts.js';
 import { configurablePlugins, pluginCommands } from './app-plugins.js';
+import { pluginGitFields, requestPluginGitInstall } from './plugin-settings.js';
 import { downloadPrivatePlugin, formatBytes, revealInFinder } from './finder.js';
 import {
   basicsAccents, chooseFunMode, defaultTheme, isCustomAccent, paintedFunMode, pickableFunModes, previewBasicsAccent, previewFunMode, savedBasicsAccent,
@@ -354,7 +358,7 @@ import {
         box-sizing: border-box;
         block-size: 30px;
         padding: 6px 9px;
-        border-radius: 7px;
+        border-radius: 8px;
         font-size: 13.5px;
         overflow-wrap: normal;
       }
@@ -473,8 +477,7 @@ import {
       ticketListError = 'Tickets could not be loaded.';
     }
     if (!dialog.open || generation !== openGeneration || tier !== 'link-ticket') return;
-    render();
-    setSelected(firstSelectable());
+    render(true);
   }
   function ticketTierRows(run) {
     // Creating leads: on a fresh install it is the only thing this tier can do,
@@ -773,6 +776,16 @@ import {
     cmds.push({ label: 'Clear merge queue', action: () => openQueueCommand(true) });
     cmds.push({ label: 'Open merge planner', sub: 'Order selected runs for the merge queue', action: () => { closePalette(); openMergePlanner(); } });
     cmds.push({ label: 'Toggle dark mode…', sub: 'Preview each mode as you move', keywords: ['light mode'], action: openThemeModeTier });
+    const animationsAreOff = animationsOff();
+    cmds.push({
+      label: animationsAreOff ? 'Toggle animations on' : 'Toggle animations off',
+      sub: animationsAreOff ? 'Animations are off' : systemReducedMotion()
+        ? 'Orc setting is on · System Reduce Motion is active'
+        : 'Animations are on',
+      keywords: ['reduce animations', 'character animations'],
+      track: 'Toggle animations',
+      action: () => { closePalette(); setAnimationsOff(!animationsAreOff); },
+    });
     const installed = pickableFunModes();
     if (installed.length) cmds.push({ label: 'Toggle theme…', sub: 'Preview each fun mode as you move', action: openFunThemeTier });
     cmds.push({ label: 'Browse themes', sub: 'Install and manage themes in Settings', action: () => { location.hash = 'settings/visuals'; closePalette(); } });
@@ -816,6 +829,7 @@ import {
         else location.hash = 'settings/orchestrate';
       },
     });
+    cmds.push({ label: 'Add plugin…', sub: 'Paste a Git URL, or browse plugins', keywords: ['install plugin', 'plugin from git'], action: () => resetTier('add-plugin') });
     cmds.push({ label: 'Browse plugins', sub: 'Manage plugins in Settings', action: () => { location.hash = 'settings/plugins'; closePalette(); } });
     for (const plugin of configurablePlugins()) cmds.push(pluginSettingsRow(plugin));
     const queueModeOn = powerMode === 'low';
@@ -828,7 +842,9 @@ import {
       action: () => { closePalette(); choosePowerMode(nextMode); },
     });
     cmds.push({ label: 'Back up runs', sub: 'Download every run as a zip', action: () => { closePalette(); backupRuns(); } });
-    cmds.push({ label: 'View animations', action: () => { location.hash = 'gallery'; closePalette(); } });
+    if (window.ORC_SHOW_ANIMATIONS_GALLERY === true) {
+      cmds.push({ label: 'View animations', action: () => { location.hash = 'gallery'; closePalette(); } });
+    }
     if (installerAvailable) cmds.push(installerRow(), exportInstallerRow());
     if (installerPrivatePlugins.length) {
       cmds.push({
@@ -1032,6 +1048,9 @@ import {
       previewBasicsAccent(row?.basicsAccent || savedBasicsAccent());
     } else paintFunTheme(row && 'funMode' in row ? row.funMode : funThemeStart);
   }
+  onReducedMotionChange(() => {
+    if (dialog.open && tier === 'root') render();
+  });
   window.addEventListener('orc-plugins-changed', () => {
     if (dialog.open && (tier === 'root' || tier === 'fun-theme')) render();
   });
@@ -1086,6 +1105,24 @@ import {
       title: project.path,
       action: () => { closePalette(); ncSwitchProject(project.path); },
     }));
+  }
+  // Add plugin: the query is the address to install from, not a filter, so
+  // both rows always show. A pasted GitHub page names the branch it shows.
+  // owner/repo for a GitHub address, so the row names the repository rather
+  // than cutting a long URL off mid-way. Any other address shows as typed.
+  const gitRepoName = url => url.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([\w.-]+\/[\w.-]+?)(?:\.git)?$/i)?.[1] || url;
+  function addPluginRows(q) {
+    const text = q.trim();
+    const fields = pluginGitFields(text);
+    const install = text
+      ? { label: `Install from ${gitRepoName(fields.url)}`, track: 'Add plugin from Git', notranslate: true,
+        sub: fields.branch ? `Branch ${fields.branch}` : 'Pick its branch next',
+        action: () => { closePalette(); requestPluginGitInstall(fields); } }
+      : { label: 'Install from Git…', track: 'Add plugin from Git', sub: 'Paste the repository or its GitHub page above',
+        action: () => { closePalette(); requestPluginGitInstall(); } };
+    const browse = { label: 'Browse plugins', sub: 'Open the plugins page in Settings',
+      action: () => { location.hash = 'settings/plugins'; closePalette(); } };
+    return [install, browse];
   }
   // Kept out of the query filter: a search that finds no project is exactly
   // when adding one is wanted. What was typed, a path or a name to search for,
@@ -1198,6 +1235,7 @@ import {
     if (tier === 'switch-project') {
       return [{ label: null, rows: [...above, ...filterRows(switchProjectRows()), addProjectRow(query.trim())] }];
     }
+    if (tier === 'add-plugin') return [{ label: null, rows: [...above, ...addPluginRows(query)] }];
     if (tier === 'theme') return subTier(themeRows());
     if (tier === 'private-plugin') {
       return subTier(installerPrivatePlugins.map(plugin => ({
@@ -1280,6 +1318,7 @@ import {
       : tier === 'merge-queue' ? 'Open merge queue — Choose project'
       : tier === 'clear-merge-queue' ? 'Clear merge queue — Choose project'
       : tier === 'switch-project' ? 'Switch project'
+      : tier === 'add-plugin' ? 'Add plugin'
       : tier === 'theme' ? 'Toggle dark mode'
       : tier === 'private-plugin' ? 'Download private plugin'
       : tier === 'fun-theme' ? 'Toggle theme'
@@ -1290,6 +1329,7 @@ import {
     combo.setAttribute('placeholder', tier === 'runs' ? 'Search runs…' : tier === 'project' ? 'Search projects…'
       : tier === 'merge-queue' || tier === 'clear-merge-queue' ? 'Search projects…'
       : tier === 'switch-project' ? 'Search projects to switch to…'
+      : tier === 'add-plugin' ? 'Paste a Git repository URL…'
       : tier === 'basics-accent' ? 'Filter colours…'
       : tier === 'theme' || tier === 'fun-theme' ? 'Filter themes…' : tier === 'status' ? 'Filter statuses…'
       : tier === 'link-type' ? 'Choose a link type…' : tier === 'link-target' ? 'Search runs to link…'
@@ -1299,6 +1339,7 @@ import {
     combo.setAttribute('aria-label', tier === 'project' ? 'Search projects to filter by'
       : tier === 'merge-queue' || tier === 'clear-merge-queue' ? 'Search projects for merge queue'
       : tier === 'switch-project' ? 'Search projects to switch to'
+      : tier === 'add-plugin' ? 'Git repository URL of the plugin to add'
       : tier === 'basics-accent' ? 'Filter Basics accent colours'
       : 'Search runs or commands');
   }
@@ -1463,6 +1504,12 @@ import {
 })();
 
 // TESTABLE: content-find helpers
+// One pattern for every place Find counts, so the pane and the diff's folded
+// files agree on what a match is.
+function contentFindPattern(query) {
+  return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
+}
+
 function contentFindMatches(nodes, query, doc) {
   if (!query) return [];
   const segments = [];
@@ -1472,12 +1519,14 @@ function contentFindMatches(nodes, query, doc) {
     text += node.data;
     segments.push({ node, start, end: text.length });
   }
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const found = [];
-  for (const result of text.matchAll(new RegExp(escaped, 'giu'))) {
+  let index = 0;
+  for (const result of text.matchAll(contentFindPattern(query))) {
     const start = result.index, end = start + result[0].length;
-    const first = segments.find(segment => start >= segment.start && start < segment.end);
-    const last = segments.find(segment => end > segment.start && end <= segment.end);
+    while (segments[index].end <= start) index++;
+    const first = segments[index];
+    while (segments[index].end < end) index++;
+    const last = segments[index];
     if (first && last) found.push({
       doc, node: first.node, start: start - first.start,
       endNode: last.node, end: end - last.start,
@@ -1489,42 +1538,173 @@ function contentFindMatches(nodes, query, doc) {
 function wrappedMatchIndex(current, step, total) {
   return total ? (current + step + total) % total : -1;
 }
+
+// The diff redraws its rows as it scrolls, polls and changes layout, so the
+// current match is found again by where it sits (its line and which match on
+// that line), not by its place in a list that just changed. A key that is
+// gone keeps the old position, held inside the new list.
+function keptMatchIndex(keys, key, fallback) {
+  const at = key ? keys.indexOf(key) : -1;
+  if (at !== -1) return at;
+  return keys.length ? Math.min(Math.max(fallback, 0), keys.length - 1) : -1;
+}
+
+function hiddenMatchesLabel(total) {
+  return total === 1 ? '1 match' : `${total} matches`;
+}
 // END TESTABLE: content-find helpers
 
-// Outside the composer, only the native shell owns the shortcut; browser
-// artifact search stays native.
+// For pane search, only the native shell owns the shortcut.
 (function () {
   const bar = $('content-find'), input = $('content-find-input');
   const count = $('content-find-count'), prev = $('content-find-prev'), next = $('content-find-next');
   let matches = [], activeMatchIndex = -1, restoreTo = null, selectedDocument = null;
 
-  function targetDocument() {
-    const frame = $('content').querySelector(':scope > iframe:not([hidden])');
-    if (frame) {
-      try { if (frame.contentDocument?.body) return frame.contentDocument; } catch {}
+  const main = document.querySelector('main'), panel = $('run-diff');
+  const content = $('content');
+  let lastPane = null, scope = null;
+
+  function rememberPane(event) {
+    if (bar.contains(event.target)) return;
+    lastPane = event.target.closest('#run-diff, main');
+  }
+  document.addEventListener('pointerdown', rememberPane, true);
+  document.addEventListener('focusin', rememberPane, true);
+  document.addEventListener('orc:side-panel', () => { lastPane = null; });
+
+  function findScope() {
+    const focus = document.activeElement;
+    const pane = focus?.matches('iframe') ? focus.closest('#run-diff, main') : lastPane;
+    if (!panel.hidden && (pane !== main || getComputedStyle(panel).position === 'fixed')) {
+      return panel.querySelector('[role="tabpanel"]:not([hidden])');
     }
-    return document;
+    if (!content.hidden) return content;
+    return main.querySelector(':scope > [id$="-view"]:not([hidden])');
   }
 
-  function textNodes(doc) {
-    const root = doc === document ? $('content') : doc.body;
-    if (!root) return [];
-    const nodes = [], walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const parent = node.parentElement;
-        if (!node.data || !node.data.trim() || !parent || parent.closest('script, style, [hidden], [aria-hidden="true"]')) {
-          return NodeFilter.FILTER_REJECT;
-        }
-        return parent.getClientRects().length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-      }
-    });
-    while (walker.nextNode()) nodes.push(walker.currentNode);
-    return nodes;
+  // Every match gets a soft accent tint and the current one a solid accent, as
+  // browser find does. The Highlight API paints over the text without touching
+  // the diff's markup; WebKit before Safari 17.2 lacks it and keeps the old
+  // selection. A ::highlight() rule only reaches text in its own tree, so each
+  // shadow root and frame Find enters adopts the same sheet.
+  const highlightsSupported = typeof Highlight === 'function' && Boolean(window.CSS?.highlights);
+  const HIGHLIGHT_CSS = '::highlight(orc-find) { background-color: color-mix(in srgb, var(--accent, #78a9c2) 32%, transparent); }\n' +
+    '::highlight(orc-find-current) { background-color: var(--accent, #78a9c2); color: var(--bg, #1a1c20); }';
+  const styledTrees = new WeakSet();
+  const paintedWindows = new Set();
+  const roots = new Set();
+  let currentKey = null, heldIndex = 0, refreshTimer = 0;
+
+  function styleTree(tree) {
+    if (!highlightsSupported || styledTrees.has(tree)) return;
+    styledTrees.add(tree);
+    const view = (tree.ownerDocument || tree).defaultView;
+    try {
+      const sheet = new view.CSSStyleSheet();
+      sheet.replaceSync(HIGHLIGHT_CSS);
+      tree.adoptedStyleSheets = [...tree.adoptedStyleSheets, sheet];
+    } catch (err) {}
   }
 
   function collect(query) {
-    const doc = targetDocument();
-    return contentFindMatches(textNodes(doc), query, doc);
+    roots.clear();
+    if (!query || !scope) return [];
+    const found = [];
+    let nodes = [], tree;
+    function flush() {
+      if (!nodes.length) return;
+      for (const match of contentFindMatches(nodes, query, nodes[0].ownerDocument)) found.push(match);
+      nodes = [];
+    }
+    function visit(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const root = node.getRootNode();
+        const parent = node.parentElement || root.host;
+        if (!node.data || !parent?.getClientRects().length) return;
+        if (root !== tree) { flush(); tree = root; }
+        nodes.push(node);
+        return;
+      }
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        if (node === bar || node.matches('script, style, template, [hidden], [aria-hidden="true"], .sr-only')) return;
+        const style = node.ownerDocument.defaultView.getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+        if (node.localName === 'iframe') {
+          const body = node.contentDocument?.body;
+          if (body) { styleTree(node.contentDocument); visit(body); }
+          return;
+        }
+        if (node.shadowRoot) {
+          roots.add(node.shadowRoot);
+          styleTree(node.shadowRoot);
+          visit(node.shadowRoot);
+          return;
+        }
+        if (node.localName === 'slot') {
+          const assigned = node.assignedNodes({ flatten: true });
+          if (assigned.length) { assigned.forEach(visit); return; }
+        }
+      }
+      node.childNodes.forEach(visit);
+    }
+    visit(scope);
+    flush();
+    const seen = new Map();
+    for (const match of found) {
+      const base = lineKey(match.node);
+      const nth = seen.get(base) || 0;
+      seen.set(base, nth + 1);
+      match.key = base && `${base}#${nth}`;
+    }
+    return found;
+  }
+
+  // A diff row's file, side and index; other text has no stable place.
+  function lineKey(node) {
+    const element = node.parentElement;
+    const line = element?.closest('[data-line-index], [data-line]');
+    if (!line) return null;
+    const side = line.closest('[data-deletions]') ? 'old' : 'new';
+    const file = node.getRootNode().host?.closest('[data-path]')?.dataset.path ?? '';
+    return `${file}|${side}|${line.getAttribute('data-line-index') ?? line.getAttribute('data-line')}`;
+  }
+
+  function clearHighlights() {
+    for (const view of paintedWindows) {
+      try {
+        view.CSS.highlights.delete('orc-find');
+        view.CSS.highlights.delete('orc-find-current');
+      } catch (err) {}
+    }
+    paintedWindows.clear();
+  }
+
+  function paintHighlights() {
+    clearHighlights();
+    const byWindow = new Map();
+    matches.forEach((match, index) => {
+      const view = match.doc.defaultView;
+      if (!view?.Highlight) return;
+      if (!byWindow.has(view)) byWindow.set(view, { all: [], current: [] });
+      const range = new view.StaticRange({ startContainer: match.node, startOffset: match.start, endContainer: match.endNode, endOffset: match.end });
+      byWindow.get(view)[index === activeMatchIndex ? 'current' : 'all'].push(range);
+    });
+    for (const [view, { all, current }] of byWindow) {
+      view.CSS.highlights.set('orc-find', new view.Highlight(...all));
+      view.CSS.highlights.set('orc-find-current', new view.Highlight(...current));
+      paintedWindows.add(view);
+    }
+  }
+
+  // Folded and not-yet-painted diff files hold no rows to search, so their
+  // header says how many matches wait inside.
+  function markHiddenMatches({ clear = false } = {}) {
+    const counts = !clear && input.value && scope?.closest('#run-diff')
+      ? diffHiddenFindCounts(scope, contentFindPattern(input.value)) : new Map();
+    for (const path of scope?.querySelectorAll('.diff-file-head .diff-path[data-find-hidden]') || []) {
+      if (!counts.has(path)) path.removeAttribute('data-find-hidden');
+    }
+    for (const [path, total] of counts) path.dataset.findHidden = hiddenMatchesLabel(total);
   }
 
   function paintCount() {
@@ -1537,41 +1717,132 @@ function wrappedMatchIndex(current, step, total) {
     selectedDocument = null;
   }
 
-  function selectMatch(index) {
+  function showMatch({ scroll }) {
     clearSelection();
-    if (!matches.length) { activeMatchIndex = -1; paintCount(); return; }
-    activeMatchIndex = wrappedMatchIndex(index, 0, matches.length);
-    const match = matches[activeMatchIndex], range = match.doc.createRange();
-    range.setStart(match.node, match.start);
-    range.setEnd(match.endNode, match.end);
-    const selection = match.doc.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    selectedDocument = match.doc;
-    (match.node.parentElement || match.node).scrollIntoView({ block: 'center' });
+    const match = matches[activeMatchIndex];
+    // With nothing on screen (a folded file), the place is held for when the
+    // rows come back.
+    if (match) { currentKey = match.key; heldIndex = activeMatchIndex; }
+    if (highlightsSupported) paintHighlights();
+    else if (match) {
+      // WebKit drops a Range added from a diff's shadow root while Find has focus.
+      match.doc.getSelection().setBaseAndExtent(match.node, match.start, match.endNode, match.end);
+      selectedDocument = match.doc;
+    }
+    if (match && scroll) scrollToMatch(match);
     paintCount();
   }
 
+  // Centre the match by scrolling its pane up or down only. scrollIntoView
+  // also slid the diff's code sideways to line up a long row's text node,
+  // cutting the start off every line.
+  function scrollToMatch(match) {
+    const element = match.node.parentElement || match.node.getRootNode().host;
+    const range = match.doc.createRange();
+    range.setStart(match.node, match.start);
+    range.setEnd(match.endNode, match.end);
+    const rect = range.getBoundingClientRect();
+    for (let node = element; node; node = node.parentElement || node.getRootNode().host) {
+      const { overflowY } = node.ownerDocument.defaultView.getComputedStyle(node);
+      const scroller = node === node.ownerDocument.scrollingElement || /auto|scroll/.test(overflowY);
+      if (!scroller || node.scrollHeight <= node.clientHeight) continue;
+      const box = node === node.ownerDocument.scrollingElement ? { top: 0, height: node.clientHeight } : node.getBoundingClientRect();
+      node.scrollTop += rect.top + rect.height / 2 - (box.top + box.height / 2);
+      break;
+    }
+    // Sideways only when the match is out of sight: past the right edge it
+    // comes in with a little room, and left of the code it goes back to the
+    // start, the one spot a sticky line-number gutter never covers.
+    for (let node = element; node; node = node.parentElement || node.getRootNode().host) {
+      if (node.scrollWidth <= node.clientWidth || !/auto|scroll/.test(node.ownerDocument.defaultView.getComputedStyle(node).overflowX)) continue;
+      const box = node.getBoundingClientRect();
+      if (rect.right > box.left + node.clientWidth) node.scrollLeft += rect.right - (box.left + node.clientWidth) + 32;
+      else if (rect.left < box.left) node.scrollLeft = 0;
+      break;
+    }
+    // A frame's own scroll is done; the pane around it still has to bring
+    // the frame into view.
+    const frame = match.doc.defaultView.frameElement;
+    if (frame) frame.scrollIntoView({ block: 'nearest' });
+  }
+
+  function selectMatch(index) {
+    activeMatchIndex = matches.length ? wrappedMatchIndex(index, 0, matches.length) : -1;
+    showMatch({ scroll: true });
+  }
+
+  function watchTrees() {
+    treeObserver.disconnect();
+    // A shadow root's changes stay inside it, so each one Find entered is
+    // watched too. Opening a folded file only flips its <details>.
+    treeObserver.observe(scope, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['open'] });
+    for (const tree of roots) treeObserver.observe(tree, { childList: true, subtree: true, characterData: true });
+  }
+
   function search() {
+    currentKey = null;
+    heldIndex = 0;
     matches = collect(input.value);
+    watchTrees();
+    markHiddenMatches();
     selectMatch(matches.length ? 0 : -1);
   }
 
+  // Rows the diff redrew are new nodes: find the matches again, keep the
+  // current one where it was, and leave the scroll alone.
+  function refresh() {
+    refreshTimer = 0;
+    if (bar.hidden || !scope) return;
+    matches = collect(input.value);
+    watchTrees();
+    markHiddenMatches();
+    activeMatchIndex = keptMatchIndex(matches.map(match => match.key), currentKey, heldIndex);
+    showMatch({ scroll: false });
+  }
+  // The bar sits inside the pane, and its own count changing is no reason to
+  // search again. A live Chat changes often, so redraws settle first.
+  const treeObserver = new MutationObserver(records => {
+    if (refreshTimer || records.every(record => bar.contains(record.target))) return;
+    refreshTimer = setTimeout(refresh, 120);
+  });
+
   function close() {
+    if (bar.hidden) return;
+    visibilityObserver.disconnect();
+    treeObserver.disconnect();
+    clearTimeout(refreshTimer);
+    refreshTimer = 0;
+    matches = [];
+    markHiddenMatches({ clear: true });
+    scope = null;
+    roots.clear();
+    currentKey = null;
+    clearHighlights();
     clearSelection();
     bar.hidden = true;
-    if (restoreTo?.isConnected) restoreTo.focus();
+    if (restoreTo?.isConnected && (bar.contains(document.activeElement) || document.activeElement === document.body)) restoreTo.focus();
     restoreTo = null;
   }
 
+  const visibilityObserver = new MutationObserver(() => {
+    if (scope && !scope.getClientRects().length) close();
+  });
   window.orcOpenContentFind = () => {
-    if ($('content').hidden) return;
-    if (bar.hidden) restoreTo = document.activeElement;
+    const target = findScope();
+    if (!target) return;
+    if (bar.hidden || !bar.contains(document.activeElement)) restoreTo = document.activeElement;
+    scope = target;
+    styleTree(document);
+    const host = panel.contains(scope) ? scope : scope === content ? $('content-shell') : main;
+    if (bar.parentElement !== host) host.prepend(bar);
+    visibilityObserver.disconnect();
+    for (const element of new Set([scope, panel])) {
+      visibilityObserver.observe(element, { attributes: true, attributeFilter: ['hidden'] });
+    }
     bar.hidden = false;
     input.focus();
-    input.input?.select();   // <orc-input> forwards focus but not select
-    // The Chat draws only its latest rows until something asks for them all.
-    document.dispatchEvent(new CustomEvent('orc:content-find'));
+    input.input?.select();
+    if (scope === content) document.dispatchEvent(new CustomEvent('orc:content-find'));
     search();
   };
   window.orcCloseContentFind = close;
@@ -1677,7 +1948,6 @@ window.addEventListener('beforeunload', e => {
 // then newly discovered projects appended in first-seen order
 fetchConfigData().then(d => {
   setSidebarProjectOrder(projectOrderFromConfigPayload(d));
-  setSidebarStatusOrder(statusOrderFromConfigPayload(d));
   setSoundsEnabled(d.config?.ui?.sounds !== false);
   setCustomSounds(d.customSounds);
   setEventSounds(d.config?.ui?.eventSounds);
@@ -1854,6 +2124,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) refr
     spot = null;
     noteField.value = '';
     noteError.hidden = true;
+    plan?.draft('');
   }
   // A swipe or an arrow key never takes the reader off a note with words in it.
   const writing = () => Boolean(spot && noteField.value.trim());
@@ -1907,7 +2178,9 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) refr
     shown = note.id;
     paintNotes();
   });
-  noteField.addEventListener('input', growField);
+  // The plan keeps the words, so a reload, which closes the viewer, hands
+  // them to its chat box.
+  noteField.addEventListener('input', () => { growField(); plan?.draft(noteField.value); });
   const NUDGE = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   noteField.addEventListener('keydown', e => {
     // Alt and an arrow move the pin, for a reader with no pointer to place it.
@@ -2058,7 +2331,8 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) refr
     resetZoom();
     items = [];
     rows = [];
-    if (plan) plan.onchange = null;
+    // Closing the viewer puts its unsent note away, as Cancel does.
+    if (plan) { plan.onchange = null; plan.draft(''); }
     plan = null;
     wanted = false;
     listOpen = false;

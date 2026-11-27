@@ -1,10 +1,11 @@
 // orc-ui: the Project order dialog, opened from the cog beside Group by →
 // Project in the sidebar filter menu. Each move saves config.ui.projectOrder.
 
+import { normPath } from './config-data.js';
 import { $, announce, esc, setSidebarProjectOrder } from './core.js';
 import { focusControl, keepProjectIcons, projectIconHtml, renderList } from './filters.js';
 import { ICON_DOWN, ICON_GRIP, ICON_UP } from './merge-plan.js';
-import { normPath, projectName, projectOrderFromConfigPayload, setSettingsDeferredData, settingsData } from './settings.js';
+import { projectName, projectOrderFromConfigPayload, setSettingsDeferredData, settingsData } from './settings.js';
 
 
 const dialog = $('project-order-dialog');
@@ -151,7 +152,7 @@ document.addEventListener('click', event => {
 });
 $('project-order-done').onclick = () => { dialog.open = false; };
 
-// Shared arrow-button and drag-to-reorder wiring for #project-order-list and #status-order-list.
+// Shared arrow-button and drag-to-reorder wiring for #project-order-list.
 export function wireOrderList({ list: listEl, rowSelector, getKeys, move: onMove, render: onRender }) {
   let dragKey = null;
   listEl.addEventListener('click', event => {

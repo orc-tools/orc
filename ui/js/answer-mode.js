@@ -1,9 +1,7 @@
+import { refresh, showSendingAnswers, reflectRunChange } from './panel-navigation.js';
 import { $, announce, esc, holdInert, runs, setRuns, showToast } from './core.js';
-import { refresh } from './activity.js';
-import { showSendingAnswers } from './chat.js';
 import { ASSET_ICONS, clipUrl, clockTime } from './assets-panel.js';
 import { clipError, clipPlayback, onClipChange, onClipTime, playClips, setClipsPaused, stopClips } from './clip-player.js';
-import { reflectRunChange } from './dialogs.js';
 import { knownHarness } from './harnesses.js';
 import { prRoundCardPending, syncPrRoundCard } from './pr-round-card.js';
 import { loadPrReview, prDraftFile, prReviewCardPending, prReviewState, reloadPrReview, syncPrReviewCard } from './pr-review-card.js';
@@ -90,7 +88,7 @@ async function amFetchQuestionSet(runId, answerId = null) {
 // nothing to answer.
 const amSent = new Map();
 
-function pendingQuestionKey(run) {
+export function pendingQuestionKey(run) {
   const meta = run?.meta;
   // Codex questions stay on their card until Codex acknowledges the answer.
   if (!meta?.pendingQuestion || meta.harness === 'codex') return null;
@@ -244,6 +242,45 @@ function amDraftFirstHtml(question, title) {
   return `<p class="am-invite-title">${title}</p>${amDraftWhere(question.comment)}${body ? `<blockquote class="am-invite-quote">${amInlineCode(body)}</blockquote>` : ''}`;
 }
 
+// A lone choice question is answered on the card itself. A written answer, a
+// take to listen to, or a set that can only be copied still opens Answer mode.
+function amInlineSet(set) {
+  const question = set.questions[0];
+  return amSingleSet(set) && !amReviewSet(set) && set.sendable && !set.readOnly
+    && question.type !== 'text' && question.options.length > 0 && !(question.clips || []).length;
+}
+
+function amInlineCardHtml(run, set, answers, error, sending) {
+  const agent = amAgentName(run.meta);
+  const question = set.questions[0];
+  const picked = answers[question.id]?.picked || [];
+  const type = question.type === 'multi' ? 'checkbox' : 'radio';
+  const options = question.options.map((option, index) => {
+    const key = index < 9 ? String(index + 1) : '';
+    const note = amOptionNotes(option)[0];
+    return `<label class="am-invite-opt">${key ? `<kbd aria-hidden="true">${key}</kbd>` : '<span></span>'}<input type="${type}" name="am-card-${esc(question.id)}" value="${esc(option.label)}" data-am-card-pick${picked.includes(option.label) ? ' checked' : ''}${key ? ` aria-keyshortcuts="${key}"` : ''}><span class="am-invite-opt-text"><strong>${esc(option.label)}${option.recommended ? '<span class="am-pill">Recommended</span>' : ''}</strong>${note ? `<small>${esc(note)}</small>` : ''}</span><span class="am-invite-tick" aria-hidden="true"></span></label>`;
+  }).join('');
+  const own = (answers[question.id]?.other || '').trim();
+  const last = Math.min(question.options.length, 9);
+  const keys = last > 1 ? `<span class="am-invite-keys" aria-hidden="true"><kbd>1</kbd> to <kbd>${last}</kbd> pick</span>` : '';
+  return `<div class="am-invite" role="region" aria-label="Question from ${esc(agent)}">
+    <div class="am-invite-head"><span class="am-invite-dot" aria-hidden="true"></span><strong>${esc(agent)} needs an answer</strong><span>1 question</span></div>
+    <div class="am-invite-first">
+      <p class="am-invite-q" id="am-card-q">${esc(question.prompt)}?</p>
+      <fieldset class="am-invite-opts" data-type="${question.type}" aria-labelledby="am-card-q">${options}</fieldset>
+      ${own ? `<p class="am-invite-own">Your own answer goes with it: <q>${esc(own)}</q></p>` : ''}
+    </div>
+    <p class="am-invite-error" role="alert">${esc(error)}</p>
+    <div class="am-invite-actions"><button type="button" class="am-btn primary" data-am-card-send${sending ? ' disabled' : ''}>${sending ? 'Sending…' : 'Send answer'}</button><button type="button" class="am-btn ghost" data-answer-mode-start>${question.other ? 'Something else' : 'More options'}</button>${keys}</div>
+  </div>`;
+}
+
+// Several steps show as a bar each beside the heading, the first one lit.
+function amStepsHtml(steps) {
+  if (steps === 1) return '<span>1 step</span>';
+  return `<span class="am-invite-steps"><span class="am-invite-bars" aria-hidden="true"><i class="is-now"></i>${'<i></i>'.repeat(Math.min(steps, 6) - 1)}</span>Step 1 of ${steps}</span>`;
+}
+
 function amCardHtml(run, set) {
   const agent = amAgentName(run.meta);
   const count = set.questions.length;
@@ -252,8 +289,8 @@ function amCardHtml(run, set) {
   const later = steps - 1;
   const review = amReviewSet(set);
   const draft = amDraftSet(set);
-  const badge = review ? (count === 1 ? '1 comment' : `${count} comments`)
-    : count === 1 ? '1 question' : steps === 1 ? '1 step' : `${steps} steps`;
+  const badge = review ? `<span>${count === 1 ? '1 comment' : `${count} comments`}</span>`
+    : count === 1 ? '<span>1 question</span>' : amStepsHtml(steps);
   const label = count === 1 ? esc(first.header || (review ? 'Review comment' : 'Question')) : `First up${first.header ? ` · ${esc(first.header)}` : ''}`;
   const who = review && first.comment?.author ? `<span class="am-invite-who">${esc(first.comment.author)}${first.comment.path ? ` on <code>${esc(first.comment.path)}</code>` : ''}</span>` : '';
   const pr = draft ? /\/pull\/(\d+)/.exec(set.review?.pr || '')?.[1] : null;
@@ -262,15 +299,27 @@ function amCardHtml(run, set) {
     : review
     ? `${esc(agent)} looked into ${count === 1 ? 'a review comment' : `${count} review comments`}`
     : `${esc(agent)} needs ${count === 1 ? 'an answer' : `${count} answers`}`;
+  const head = `<div class="am-invite-head"><span class="am-invite-dot" aria-hidden="true"></span><strong>${ask}</strong>${badge}</div>`;
+  if (!review) {
+    // Questions: the first one sits beside the button that starts on it; the
+    // steps after it are the bars in the heading.
+    return `<div class="am-invite" role="region" aria-label="Questions from ${esc(agent)}">${head}
+    <div class="am-invite-body"><div class="am-invite-first"><div class="am-invite-label">${label}</div><p class="am-invite-q">${esc(amCommentText(first))}</p></div>
+    <button type="button" class="am-btn primary" data-answer-mode-start>Start answering</button></div>
+  </div>`;
+  }
   const firstHtml = draft ? amDraftFirstHtml(first, label)
-    : `<div class="${review ? 'am-invite-title' : 'am-invite-label'}">${label}</div>${who}<p>${esc(amCommentText(first))}</p>`;
-  return `<div class="am-invite" role="region" aria-label="${draft ? 'Drafted review comments' : review ? 'Review comments' : 'Questions'} from ${esc(agent)}">
-    <div class="am-invite-head"><span class="am-invite-dot" aria-hidden="true"></span><strong>${ask}</strong><span>${badge}</span></div>
+    : `<div class="am-invite-title">${label}</div>${who}<p>${esc(amCommentText(first))}</p>`;
+  return `<div class="am-invite" role="region" aria-label="${draft ? 'Drafted review comments' : 'Review comments'} from ${esc(agent)}">
+    ${head}
     <div class="am-invite-first">${firstHtml}</div>
-    ${later ? `<p class="am-invite-later"><i aria-hidden="true"></i><i aria-hidden="true"></i><span>${review ? (later === 1 ? '1 more comment' : `${later} more comments`) : later === 1 ? '1 more step' : `${later} more steps`}, hidden until you get there</span></p>` : ''}
+    ${later ? `<p class="am-invite-later"><i aria-hidden="true"></i><i aria-hidden="true"></i><span>${later === 1 ? '1 more comment' : `${later} more comments`}, hidden until you get there</span></p>` : ''}
     ${draft ? `<p class="am-invite-note">Keep, edit or drop ${count === 1 ? 'it' : 'each one'}, then send the review. Nothing goes to GitHub until you send it.</p>`
-      : review ? '<p class="am-invite-note">Nothing changes and nothing goes to GitHub until you answer.</p>' : ''}
-    <div class="am-invite-actions"><button type="button" class="am-btn primary" data-answer-mode-start>${draft ? (count === 1 ? 'Check the comment' : 'Go through the comments') : review ? 'Review the comments' : 'Start answering'}</button></div>
+      : '<p class="am-invite-note">Nothing changes and nothing goes to GitHub until you answer.</p>'}
+    <div class="am-invite-actions">${!draft
+      // The PR comments tab lays the same answers out at once, as a plan.
+      ? `<a class="am-btn primary" href="#${encodeURIComponent(run.id)}/pr-comments.html">See the plan</a><button type="button" class="am-btn ghost" data-answer-mode-start>One at a time</button>`
+      : `<button type="button" class="am-btn primary" data-answer-mode-start>${count === 1 ? 'Check the comment' : 'Go through the comments'}</button>`}</div>
   </div>`;
 }
 
@@ -328,6 +377,13 @@ export function syncAnswerCard(run) {
 }
 
 function amPaintCard(host, run, entry) {
+  const inline = !!entry.set && amInlineSet(entry.set);
+  if (inline && !entry.answers) {
+    const draft = amReadDraft(run.id, entry.set);
+    entry.answers = amMergeAnswers(amBlankAnswers(entry.set), draft?.answers);
+    entry.picked = new Set(draft?.picked || []);
+    entry.notes = draft?.notes || '';
+  }
   const signature = JSON.stringify([run.id, entry.key, !!entry.set, entry.error]);
   if (host.dataset.signature === signature && !host.hidden) return;
   host.dataset.signature = signature;
@@ -336,11 +392,83 @@ function amPaintCard(host, run, entry) {
   const scroller = host.closest('.chat-scroll');
   const following = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
   host.hidden = !entry.set && !entry.error;
-  host.innerHTML = entry.set ? amCardHtml(run, entry.set)
+  host.innerHTML = inline ? amInlineCardHtml(run, entry.set, entry.answers, '', false)
+    : entry.set ? amCardHtml(run, entry.set)
     : entry.error ? `<div class="am-invite"><p class="am-invite-error" role="alert">${esc(entry.error)}</p></div>` : '';
   if (following) scroller.scrollTop = scroller.scrollHeight;
   const start = host.querySelector('[data-answer-mode-start]');
-  if (start) start.onclick = () => openAnswerMode(run.id, start);
+  if (start) start.onclick = () => openAnswerMode(run.id, start, null, { other: inline });
+  if (inline) amWireInlineCard(host, run, entry);
+  else { host.onchange = host.onclick = null; amCardKeys = null; }
+}
+
+function amSaveInlineDraft(runId, entry) {
+  try {
+    sessionStorage.setItem(amDraftKey(runId, entry.set), JSON.stringify({
+      answers: entry.answers, picked: [...entry.picked], step: 0, notes: entry.notes,
+    }));
+  } catch {}
+}
+
+function amInlineError(host, message) {
+  const alert = host.querySelector('.am-invite-error');
+  if (alert) alert.textContent = message;
+}
+
+// The card's own choices: a pick saves to the same draft Answer mode reads, so
+// Something else opens on what you picked here.
+// The lone question's keys, live while its card shows: 1 to 9 pick from
+// anywhere on the page that is not a text box, Enter sends from a choice.
+let amCardKeys = null;
+
+function amWireInlineCard(host, run, entry) {
+  const question = entry.set.questions[0];
+  const inputs = () => [...host.querySelectorAll('[data-am-card-pick]')];
+  const pick = input => {
+    const answer = entry.answers[question.id];
+    answer.picked = question.type === 'multi'
+      ? inputs().filter(item => item.checked).map(item => item.value)
+      : input.checked ? [input.value] : [];
+    entry.picked.add(question.id);
+    amInlineError(host, '');
+    amSaveInlineDraft(run.id, entry);
+  };
+  const send = () => {
+    const answer = entry.answers[question.id];
+    if (!(answer.picked || []).length && !(answer.other || '').trim()) {
+      amInlineError(host, 'Pick an answer before sending.');
+      return;
+    }
+    const button = host.querySelector('[data-am-card-send]');
+    if (button) { button.disabled = true; button.textContent = 'Sending…'; }
+    amSendNow(amNewState(run.id, entry.set, { answers: entry.answers, picked: [...entry.picked], notes: entry.notes },
+      host.querySelector('[data-answer-mode-start]')));
+  };
+  host.onchange = event => {
+    const input = event.target.closest?.('[data-am-card-pick]');
+    if (!input) return;
+    pick(input);
+    // WebKit leaves focus where it was when a label is clicked, and Enter
+    // sends from the picked choice.
+    input.focus({ preventScroll: true });
+  };
+  host.onclick = event => {
+    if (event.target.closest?.('[data-am-card-send]')) send();
+  };
+  amCardKeys = event => {
+    if (event.key === 'Enter' && event.target.matches?.('[data-am-card-pick]')) {
+      event.preventDefault();
+      if (!event.repeat) send();
+      return;
+    }
+    if (!/^[1-9]$/.test(event.key)) return;
+    const input = inputs()[Number(event.key) - 1];
+    if (!input) return;
+    event.preventDefault();
+    input.checked = question.type === 'multi' ? !input.checked : true;
+    pick(input);
+    input.focus({ preventScroll: true });
+  };
 }
 
 // ---------- Answer mode ----------
@@ -402,8 +530,8 @@ function amAnswered(question) {
     : !!(answer.picked || []).length || !!(answer.other || '').trim();
 }
 
-function amAnswerText(question, otherSeparator = ' — ') {
-  const answer = am.answers[question.id] || {};
+function amAnswerText(question, otherSeparator = ' — ', answers = am.answers) {
+  const answer = answers[question.id] || {};
   if (question.type === 'text') return (answer.text || '').trim();
   const picked = question.options.map(option => option.label).filter(label => (answer.picked || []).includes(label));
   const other = (answer.other || '').trim();
@@ -451,14 +579,29 @@ function amStepLabel(index) {
   return questions.length === 1 ? questions[0].header || `${amNoun()} ${questions[0].number}` : questions.map(q => q.header).filter(Boolean).join(' and ') || 'These together';
 }
 
-export async function openAnswerMode(runId, opener = null, answerId = null) {
+// Answer mode's state for a question set, from a saved draft when there is one.
+function amNewState(runId, set, draft, opener, answerId = null) {
+  const run = runs.find(item => item.id === runId);
+  return {
+    runId, set, answerId, key: run ? amQuestionsKey(run) : null, phase: run?.meta?.phase ?? null, opener: opener || document.activeElement,
+    title: run?.meta?.title || runId, agent: amAgentName(run?.meta),
+    answers: set.readOnly ? {} : amMergeAnswers(amBlankAnswers(set), draft?.answers),
+    picked: new Set(draft?.picked || draft?.touched || []),
+    step: Math.min(Math.max(0, draft?.step || 0), amMaxStep(set)),
+    notes: draft?.notes || '', error: '', sending: false, updated: new Set(),
+    threads: new Map(), pendingAsks: new Map(), askTimer: null, clip: null, focusOther: false,
+  };
+}
+
+// `other` puts the cursor in the question's own-answer box: the chat card's
+// Something else opens here.
+export async function openAnswerMode(runId, opener = null, answerId = null, { other = false } = {}) {
   if (am?.runId === runId && am.answerId === answerId) {
     $('answer-mode').querySelector('.am-card')?.scrollIntoView({ block: 'nearest' });
     return;
   }
   if (amOpening === runId) return;
   amOpening = runId;
-  const run = runs.find(item => item.id === runId);
   let set;
   try {
     set = await amFetchQuestionSet(runId, answerId);
@@ -469,16 +612,8 @@ export async function openAnswerMode(runId, opener = null, answerId = null) {
     if (amOpening === runId) amOpening = null;
   }
   if (decodeURIComponent(location.hash.slice(1).split('/')[0] || '') !== runId) return;
-  const draft = set.readOnly ? null : amReadDraft(runId, set);
-  am = {
-    runId, set, answerId, key: run ? amQuestionsKey(run) : null, phase: run?.meta?.phase ?? null, opener: opener || document.activeElement,
-    title: run?.meta?.title || runId, agent: amAgentName(run?.meta),
-    answers: set.readOnly ? {} : amMergeAnswers(amBlankAnswers(set), draft?.answers),
-    picked: new Set(draft?.picked || draft?.touched || []),
-    step: Math.min(Math.max(0, draft?.step || 0), amMaxStep(set)),
-    notes: draft?.notes || '', error: '', sending: false, updated: new Set(),
-    threads: new Map(), pendingAsks: new Map(), askTimer: null, clip: null,
-  };
+  am = amNewState(runId, set, set.readOnly ? null : amReadDraft(runId, set), opener, answerId);
+  am.focusOther = other;
   amShow();
 }
 
@@ -494,12 +629,26 @@ function amShow() {
   amLoadThreads();
 }
 
+// Back from Answer mode, a lone question's card shows what was picked or
+// written there, from the draft both of them save to.
+function amRefreshInlineCard(runId) {
+  const entry = amCards.get(runId);
+  const host = $('answer-card');
+  if (!entry?.answers || !host || amCardRunId !== runId || host.dataset.card) return;
+  entry.answers = null;
+  delete host.dataset.signature;
+  const run = runs.find(item => item.id === runId);
+  if (run) amPaintCard(host, run, entry);
+}
+
 export function closeAnswerMode({ restoreFocus = true } = {}) {
   if (!am) return;
   amStopClips();
   const opener = am.opener;
+  const runId = am.runId;
   clearTimeout(am.askTimer);
   am = null;
+  amRefreshInlineCard(runId);
   const host = $('answer-mode');
   host.hidden = true;
   host.replaceChildren();
@@ -840,7 +989,9 @@ function amRender({ focus = false } = {}) {
   amPaintClips();
   if (focus) {
     const target = am.set.readOnly ? host.querySelector('.am-q') : review ? host.querySelector('[data-am="send"]:not(:disabled)') || host.querySelector('#am-review-title')
-      : host.querySelector('.am-question input:checked, .am-question input, .am-question textarea');
+      : (am.focusOther && host.querySelector('.am-question [data-am-other]'))
+        || host.querySelector('.am-question input:checked, .am-question input, .am-question textarea');
+    am.focusOther = false;
     if (target && (am.set.readOnly || (review && target.id === 'am-review-title'))) target.tabIndex = -1;
     target?.focus({ preventScroll: true });
   }
@@ -1032,13 +1183,12 @@ async function amCopy() {
 
 // The server can hold a send for seconds while the agent's turn settles, so
 // nothing here waits for its reply. A refused send reopens the answers.
-async function amSendNow() {
-  const sending = am;
+async function amSendNow(sending = am) {
   const { runId, set } = sending;
   const gateAnswers = set.kind === 'clarification' && {
     label: set.label, runId,
     answers: set.questions.map(question => ({
-      question: `${question.prompt}?`, answer: amAnswerText(question, ' — other: ') || 'Skipped',
+      question: `${question.prompt}?`, answer: amAnswerText(question, ' — other: ', sending.answers) || 'Skipped',
     })),
     notes: set.notes ? sending.notes.trim() : '',
   };
@@ -1289,6 +1439,13 @@ document.addEventListener('keydown', event => {
   } else if (!review && event.key.length === 1 && amPickByKey(event.key.toLowerCase())) {
     event.preventDefault();
   }
+});
+
+document.addEventListener('keydown', event => {
+  const host = $('answer-card');
+  if (!amCardKeys || am || !host || host.hidden || event.defaultPrevented || event.isComposing
+    || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target === document.body || host.contains(event.target)) amCardKeys(event);
 });
 
 window.addEventListener('resize', () => { if (am) placeAnswerMode(); });

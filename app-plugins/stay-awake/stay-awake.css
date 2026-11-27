@@ -15,7 +15,7 @@
 }
 #stay-awake[data-stay-awake="broken"]::after {
   content: "!"; position: absolute; top: -5px; right: -5px; width: 14px; height: 14px; box-sizing: border-box;
-  border: 2px solid var(--panel); border-radius: 7px; background: var(--red); color: var(--bg);
+  border: 2px solid var(--panel); border-radius: 8px; background: var(--red); color: var(--bg);
   font: 800 9px/10px system-ui, sans-serif; text-align: center; pointer-events: none;
 }
 #stay-awake[aria-busy="true"] { cursor: progress; }

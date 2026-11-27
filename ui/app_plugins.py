@@ -89,6 +89,9 @@ REMOVED_PACKAGES = {
     # Built into Orc again (ui/js/secrets.js, bin/orc-secret, Settings -> Account):
     # a pinned or linked copy would shadow core's bin/orc-secret and duplicate cards.
     'secrets': 'Secrets',
+    # Built into core (ui/ship_when_done.py, ui/js/ship-when-done.js, Settings -> Projects):
+    # a pinned or linked copy would run a second watch loop and show a duplicate toggle.
+    'auto-merge': 'Auto merge',
 }
 # What a linked package may contribute: the browser reloads these from the
 # folder as it changes, while code core imports would keep a stale copy.
@@ -453,11 +456,22 @@ def manifest(root):
     return value
 
 
+# The PR comment that asks the reviewer for a fresh review, such as
+# "/zerohands review": one short line, posted as the person.
+REVIEW_REQUEST_MAX = 200
+
+
 def _validate_pull_request_reviewer(value):
-    if (not isinstance(value, dict) or value.keys() != {'repository', 'workflow', 'login'}
+    required = {'repository', 'workflow', 'login'}
+    if (not isinstance(value, dict) or not required <= value.keys() <= required | {'requestComment'}
             or not isinstance(value['repository'], str) or not GITHUB_REPOSITORY.fullmatch(value['repository'])
             or not all(isinstance(value[key], str) and value[key].strip() for key in ('workflow', 'login'))):
         raise PluginError('Pull request reviewer requires a GitHub owner/repo, a workflow and a reviewer login')
+    request = value.get('requestComment')
+    if request is not None and (not isinstance(request, str) or not request.strip()
+                                or '\n' in request or len(request) > REVIEW_REQUEST_MAX):
+        raise PluginError('Pull request reviewer requestComment must be one line of at most %d characters'
+                          % REVIEW_REQUEST_MAX)
 
 
 # A plugin zip dropped on Settings -> Plugins. The cap on the zip is the one
@@ -644,11 +658,33 @@ class Registry:
         self._manifests = {}
         self._policy = catalog_policy(self.root)
 
+    @staticmethod
+    def _unvalidated_manifest(path):
+        """The manifest of a package that failed validation, when it still
+        names a valid id; None otherwise."""
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        if isinstance(value, dict) and isinstance(value.get('id'), str) and IDENTIFIER.fullmatch(value['id']):
+            return value
+        return None
+
     def _scan(self, folder):
         if folder not in self._scans:
             found = {}
             for path in sorted((self.root / folder).glob('*/orc-plugin.json')):
-                value = manifest(path.parent)
+                try:
+                    value = manifest(path.parent)
+                except PluginError:
+                    # A package that fails validation (a stray __pycache__
+                    # from running its tests, say) stays in the catalog:
+                    # list() validates it again and reports the error on its
+                    # own row, instead of one bad package taking down every
+                    # caller of the registry.
+                    value = self._unvalidated_manifest(path)
+                    if value is None:
+                        continue
                 if value['id'] in found:
                     raise PluginError('Duplicate bundled plugin id')
                 found[value['id']] = (path.parent, value)
@@ -771,9 +807,16 @@ class Registry:
         catalog = self.catalog()
         rows = [row for identifier in sorted(catalog.keys() | state['installed'].keys())
                 if (row := self._row(identifier, state, catalog))]
+        by_id = {row['id']: row for row in rows}
         for identifier in state.get('retired', {}):
             row = self._retired_row(identifier, state)
-            if row:
+            if not row:
+                continue
+            # A removed copy of a catalog package shows on that package's own
+            # card, so Settings has one card per id.
+            if identifier in by_id:
+                by_id[identifier].update(state='stopping', message=row['message'])
+            else:
                 rows.append(row)
         return {'revision': state['revision'], 'setupComplete': state.get('setupComplete', False), 'plugins': rows}
 
@@ -821,6 +864,8 @@ class Registry:
                'trust': trust(data), 'linked': str(root) if linked else None,
                'olderApi': type(data.get('apiVersion')) is int and data['apiVersion'] < API_VERSION,
                'state': 'error' if error else 'enabled' if enabled else 'disabled' if record else 'available'}
+        if record and record.get('gitSource'):
+            row['gitSource'] = self._git_row(identifier, record)
         if record and not enabled and self.external_service_pending(record):
             row.update(state='stopping', message=self.recovery_message(record))
         return row
@@ -856,7 +901,11 @@ class Registry:
         """Where package ``identifier`` runs from while it is enabled and sound,
         else None. Unlike list(), it reads no other package."""
         catalog = self.catalog()
-        record = self._state()['installed'].get(identifier)
+        package = self._enabled_package(identifier, self._state()['installed'], catalog)
+        return package[0] if package else None
+
+    def _enabled_package(self, identifier, installed, catalog):
+        record = installed.get(identifier)
         if self._always_on(identifier, catalog):
             root = catalog[identifier][0]
         elif self._blocked_by_policy(identifier, catalog):
@@ -866,14 +915,13 @@ class Registry:
             root = bundled[0] if bundled and bundled[1].get('required') else None
         else:
             required = identifier in catalog and catalog[identifier][1].get('required')
-            root = self._root(record) if record.get('enabled') or required else None
+            root = self._root(record, catalog=catalog) if record.get('enabled') or required else None
         if root is None:
             return None
         try:
-            self._manifest(root)
+            return root, self._manifest(root)
         except PluginError:
             return None
-        return root
 
     def external_service_pending(self, record):
         external = record['manifest'].get('contributes', {}).get('externalService', {})
@@ -899,8 +947,18 @@ class Registry:
                 + stop + ', or exit its terminal if started manually. Then choose Apply again. Data and worktrees remain.')
 
     def contributions(self, kind):
-        return [(Path(row['root']), row['contributes'][kind]) for row in self.list()['plugins']
-                if row['enabled'] and not row['error'] and kind in row.get('contributes', {})]
+        installed = self._state()['installed']
+        catalog = self.catalog()
+        providers = []
+        for identifier in sorted(catalog.keys() | installed.keys()):
+            package = self._enabled_package(identifier, installed, catalog)
+            if package is None:
+                continue
+            root, data = package
+            if kind in data.get('contributes', {}):
+                data = self._with_catalog_icon(identifier, data)
+                providers.append((root, data['contributes'][kind]))
+        return providers
 
     def repository_rules(self, repo):
         slug = github_origin(repo)
@@ -923,8 +981,9 @@ class Registry:
 
     def pull_request_reviewer(self):
         """The first enabled package's reviewer that reviews pull requests in a
-        GitHub Actions workflow, as ``{'repository', 'workflow', 'login'}``,
-        or None while no enabled package provides one."""
+        GitHub Actions workflow, as ``{'repository', 'workflow', 'login'}``
+        plus the optional ``'requestComment'`` that asks it for a review, or
+        None while no enabled package provides one."""
         providers = self.contributions('pullRequestReviewer')
         return dict(providers[0][1]) if providers else None
 
@@ -1158,12 +1217,14 @@ class Registry:
         return bundled
 
     def _install_plan(self, source, data, before, *, enable, bundled, adopt_legacy=None, source_revision=None,
-                      replace_running=False):
+                      replace_running=False, git_source=None, service_stops=False):
         """(record, state after, adopted links) for installing ``source``, or
         the refusal. It writes nothing, so checking a zip runs exactly what
         installing it would. ``replace_running`` replaces an enabled package
         that runs code in place: the runtime stops the old revision and starts
-        the new one, as it does for a bundled package Orc updates."""
+        the new one, as it does for a bundled package Orc updates.
+        ``service_stops`` checks a plan whose caller stops an enabled copy's
+        running external service first (install_over)."""
         identifier = data['id']
         if data.get('required') and not bundled:
             raise PluginError('Only bundled policy can require a package')
@@ -1172,7 +1233,9 @@ class Registry:
         content_digest = digest(source)
         previous = before['installed'].get(identifier)
         retained = previous or before.get('retired', {}).get(identifier)
-        if retained and retained['digest'] != content_digest and self.external_service_pending(retained):
+        stopped_first = service_stops and previous and previous['enabled'] and not previous.get('linked')
+        if (retained and retained['digest'] != content_digest and not stopped_first
+                and self.external_service_pending(retained)):
             raise PluginError('Stop the previous external service before replacing its package. ' + self.recovery_message(retained))
         if (not bundled and not replace_running and previous and previous['enabled'] and not previous.get('linked')
                 and previous['digest'] != content_digest
@@ -1181,6 +1244,8 @@ class Registry:
             raise PluginError('Disable this executable package before updating it; the working revision was retained')
         record = {'id': identifier, 'digest': content_digest, 'enabled': bool(enable or data.get('required')),
                   'manifest': data, 'sourceRevision': source_revision, 'skillHomes': self._skill_homes()}
+        if git_source:
+            record['gitSource'] = git_source
         if adopted:
             record['adoptedCommands'] = {str(path): str(target) for path, target in adopted.items()}
         after = json.loads(json.dumps(before))
@@ -1192,8 +1257,39 @@ class Registry:
         self._validate_links(before, after, adopted)
         return record, after, adopted
 
+    def install_over(self, source, *, expected_revision=None, run=subprocess.run, sleep=time.sleep, **kwargs):
+        """A manual install (a path, a zip or Install from Git) of ``source``.
+        It replaces the copy of its id you have in place, even while it runs:
+        a running external service is stopped with the old copy's stopCommand
+        and started again with the new copy's, so installing a newer copy
+        never needs a manual stop. What install() would refuse is refused
+        before the service stops. A copy being turned off or removed is left
+        alone: install() refuses it with the manual step. The result carries
+        ``message`` when the service restarted or stayed stopped."""
+        source = Path(source).absolute()
+        data = manifest(source)
+        bundled = self._install_source(source, data, False)
+        with self._lock(expected_revision) as before:
+            record, _after, _adopted = self._install_plan(
+                source, data, before, enable=kwargs.get('enable', True), bundled=bundled,
+                adopt_legacy=kwargs.get('adopt_legacy'), source_revision=kwargs.get('source_revision'),
+                replace_running=True, git_source=kwargs.get('git_source'), service_stops=True)
+            previous = before['installed'].get(data['id'])
+        results = []
+
+        def install():
+            results.append(self.install(source, expected_revision=expected_revision, replace_running=True, **kwargs))
+        done = ''
+        if previous and not previous.get('linked') and previous['digest'] != record['digest']:
+            done = self._replace_running(previous, install, run, sleep)
+        if not results:
+            install()
+        if not done:
+            return results[0]
+        return {**results[0], 'message': '%s installed%s.' % (data.get('name') or data['id'], done)}
+
     def install(self, source, enable=True, expected_revision=None, *, bundled=False, adopt_legacy=None, source_revision=None,
-                replace_running=False):
+                replace_running=False, git_source=None):
         source = Path(source).absolute()
         data = manifest(source)
         identifier = data['id']
@@ -1201,7 +1297,7 @@ class Registry:
         with self._lock(expected_revision) as before:
             record, after, adopted = self._install_plan(
                 source, data, before, enable=enable, bundled=bundled, adopt_legacy=adopt_legacy,
-                source_revision=source_revision, replace_running=replace_running)
+                source_revision=source_revision, replace_running=replace_running, git_source=git_source)
             content_digest = record['digest']
             destination = self._root(record)
             created = not bundled and not destination.exists()
@@ -1272,7 +1368,8 @@ class Registry:
                 self._refuse_zip(root, data, state)
                 self._install_source(root, data, False)
                 with self._lock(None) as before:
-                    self._install_plan(root, data, before, enable=True, bundled=False, replace_running=True)
+                    self._install_plan(root, data, before, enable=True, bundled=False, replace_running=True,
+                                       service_stops=True)
             except PluginError as error:
                 result['error'] = _zip_refusal(error)
                 return result
@@ -1295,7 +1392,7 @@ class Registry:
                 root = unpack_zip(archive, Path(tmp) / 'zip')
                 data = manifest(root)
                 self._refuse_zip(root, data, self._state())
-                return self.install(root, enable=True, expected_revision=expected_revision, replace_running=True)
+                return self.install_over(root, enable=True, expected_revision=expected_revision)
             except Conflict:
                 raise
             except PluginError as error:
@@ -1653,6 +1750,17 @@ class Registry:
         if not record or record.get('linked') or record.get('sourceRevision') or digest(source) == record['digest']:
             return None
         name = manifest(source).get('name') or identifier
+        done = self._replace_running(record, lambda: self.install(source, enable=record['enabled'], replace_running=True),
+                                     run, sleep)
+        return None if done is None else name + ' updated to this release' + done
+
+    def _replace_running(self, record, install, run, sleep):
+        """Runs ``install`` in place of ``record``'s copy. A running external
+        service is stopped with the old copy's stopCommand and started again
+        with the new copy's. Returns what happened to the service, appended to
+        the line that names the update ('' when none ran), or None when the
+        package is mid-disable and nothing was replaced."""
+        identifier = record['id']
         running = self.external_service_pending(record)
         if running and not record['enabled']:
             return None  # Mid-disable: Settings is waiting on the user to stop it.
@@ -1663,12 +1771,20 @@ class Registry:
                 if time.monotonic() >= deadline:
                     raise PluginError('its service did not stop. ' + self.recovery_message(record))
                 sleep(0.25)
-        self.install(source, enable=record['enabled'], replace_running=True)
+        try:
+            install()
+        except BaseException:
+            if running:  # The old copy is still installed: start its service again.
+                try:
+                    self._service_command(record, 'startCommand', run)
+                except (PluginError, OSError, subprocess.SubprocessError):
+                    pass
+            raise
         if not running:
-            return name + ' updated to this release'
+            return ''
         if self._service_command(self._state()['installed'][identifier], 'startCommand', run):
-            return name + ' updated to this release; its service restarted'
-        return name + ' updated to this release; its service is stopped, so start it again'
+            return '; its service restarted'
+        return '; its service is stopped, so start it again'
 
     def _service_command(self, record, key, run):
         """Runs the record's externalService ``key`` command from its pinned copy;
@@ -1683,7 +1799,8 @@ class Registry:
             raise PluginError('%s exited %d%s' % (shlex.join(command), done.returncode, ': ' + last[0] if last else ''))
         return True
 
-    def install_git(self, source, subdir, ref='HEAD', **kwargs):
+    @staticmethod
+    def _validate_git_source(source):
         parsed = urlsplit(source)
         if source.startswith('-') or '\n' in source or '\r' in source or parsed.query or parsed.fragment:
             raise PluginError('Invalid Git source')
@@ -1693,38 +1810,207 @@ class Registry:
             raise PluginError('Credential-bearing Git URLs are not accepted; use your Git credential helper')
         if not parsed.scheme and not (source.startswith('/') or re.fullmatch(r'[\w.-]+@[\w.-]+:[\w./-]+', source)):
             raise PluginError('Use an explicit Git URL or absolute local path')
-        relative_path(subdir)
-        if not ref or ref.startswith('-') or any(c.isspace() for c in ref):
+
+    @staticmethod
+    def _validate_branch(branch):
+        if (not isinstance(branch, str) or not branch or branch.startswith('-') or '..' in branch
+                or not re.fullmatch(r'[\w./-]+', branch) or branch.endswith(('/', '.lock')) or '//' in branch):
+            raise PluginError('Invalid Git branch name')
+
+    @staticmethod
+    def _git(*args, check=True):
+        """Git with the machine's own sign-in, never a prompt, hooks or the
+        ext transport. The system config stays on: Homebrew's and Apple's Git
+        keep the keychain sign-in for HTTPS there."""
+        env = {**os.environ, 'GIT_TERMINAL_PROMPT': '0'}
+        env.pop('GIT_CONFIG_NOSYSTEM', None)
+        result = subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.ext.allow=never', *args],
+                                env=env, capture_output=True, timeout=300)
+        if result.returncode and check:
+            raise PluginError('Git could not read the source/revision; check access with your existing credentials')
+        return result
+
+    def _clone(self, source, tmp, branch=None):
+        clone = Path(tmp) / 'source'
+        narrow = ['--single-branch', '--branch', branch] if branch else []
+        self._git('clone', '--no-checkout', '--no-local', *narrow, '--', source, str(clone))
+        return clone
+
+    def _package_at(self, clone, commit, subdir, tmp):
+        """The package folder ``subdir`` at ``commit``, without .git or the
+        rest of the repository. An empty ``subdir`` is the repository root."""
+        archive = Path(tmp) / 'package.tar'
+        archive.write_bytes(self._git('-C', str(clone), 'archive', commit + (':' + subdir if subdir else '')).stdout)
+        package = Path(tmp) / 'package'
+        package.mkdir()
+        with tarfile.open(archive) as handle:
+            for member in handle.getmembers():
+                if member.name.rstrip('/') in ('', '.'):
+                    continue
+                target = package / relative_path(member.name.rstrip('/'))
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif member.isfile():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(handle.extractfile(member).read())
+                    target.chmod(member.mode & 0o777)
+                else:
+                    raise PluginError('Git package contains links or special files')
+        return package
+
+    def install_git(self, source, subdir='', ref=None, *, branch=None, follow=False, **kwargs):
+        """Installs the package at ``subdir`` of a Git repository. With
+        ``branch`` it installs that branch's current commit and remembers the
+        branch: pinned there, or following it when ``follow`` is true. Without
+        one it installs ``ref`` (HEAD by default) and remembers nothing."""
+        self._validate_git_source(source)
+        subdir = (subdir or '').strip('/')
+        if subdir:
+            relative_path(subdir)
+        if branch is not None:
+            self._validate_branch(branch)
+            if ref is not None:
+                raise PluginError('Choose a branch or a revision, not both')
+        ref = ref or 'HEAD'
+        if ref.startswith('-') or any(c.isspace() for c in ref):
             raise PluginError('Invalid Git revision')
         with tempfile.TemporaryDirectory(prefix='orc-app-plugin-') as tmp:
-            clone = Path(tmp) / 'source'
-            env = {**os.environ, 'GIT_TERMINAL_PROMPT': '0', 'GIT_CONFIG_NOSYSTEM': '1'}
-            def git(*args):
-                result = subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.ext.allow=never',
-                                         *args], env=env, capture_output=True)
-                if result.returncode:
-                    raise PluginError('Git could not read the source/revision; check access with your existing credentials')
-                return result.stdout
-            git('clone', '--no-checkout', '--no-local', '--', source, str(clone))
-            commit = git('-C', str(clone), 'rev-parse', '--verify', ref + '^{commit}').decode().strip()
-            archive = Path(tmp) / 'package.tar'
-            archive.write_bytes(git('-C', str(clone), 'archive', commit + ':' + subdir))
-            package = Path(tmp) / 'package'
-            package.mkdir()
-            with tarfile.open(archive) as handle:
-                for member in handle.getmembers():
-                    target = package / relative_path(member.name.rstrip('/'))
-                    if member.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    elif member.isfile():
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_bytes(handle.extractfile(member).read())
-                        target.chmod(member.mode & 0o777)
-                    else:
-                        raise PluginError('Git package contains links or special files')
-            result = self.install(package, source_revision=commit, **kwargs)
-            result['sourceRevision'] = commit
-            return result
+            clone = self._clone(source, tmp, branch)
+            commit = self._git('-C', str(clone), 'rev-parse', '--verify',
+                               ('refs/heads/' + branch if branch else ref) + '^{commit}').stdout.decode().strip()
+            package = self._package_at(clone, commit, subdir, tmp)
+            git_source = {'url': source, 'subdir': subdir, 'branch': branch, 'follow': bool(follow)} if branch else None
+            result = self.install_over(package, source_revision=commit, git_source=git_source, **kwargs)
+        if branch:
+            self._note_git_check(result['installedId'], latest=commit, behind=0)
+            result = {**self.list(), **{key: result[key] for key in ('installedId', 'message') if key in result}}
+        result['sourceRevision'] = commit
+        return result
+
+    # Results of the last check of each Git package's branch. They change on
+    # every check, so they live beside the registry state, not in it: a check
+    # must not move the revision a Settings page holds.
+    GIT_CHECK_LOCK = threading.Lock()
+
+    @property
+    def git_checks_path(self):
+        return self.home / '.orc/app-plugins-git.json'
+
+    def _git_checks(self):
+        try:
+            value = json.loads(self.git_checks_path.read_text())
+        except (OSError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _note_git_check(self, identifier, **fields):
+        path = self.git_checks_path
+        if path.is_symlink() or not path.parent.resolve().is_relative_to(self.data_boundary):
+            raise PluginError('Plugin state cannot escape its home: ' + str(path))
+        with self.GIT_CHECK_LOCK:
+            checks = self._git_checks()
+            checks[identifier] = {'checkedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                                  'latest': None, 'behind': None, 'error': None, **fields}
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_json(path, checks)
+
+    @staticmethod
+    def _github_slug(url):
+        match = re.fullmatch(r'(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)'
+                             r'([A-Za-z0-9-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?', url)
+        return match[1] if match else None
+
+    def _git_row(self, identifier, record):
+        """What Settings shows of a Git package's source: its branch, the
+        commit installed, and what the last check of the branch found."""
+        source = record['gitSource']
+        commit = record.get('sourceRevision')
+        check = self._git_checks().get(identifier) or {}
+        latest = check.get('latest')
+        slug = self._github_slug(source['url'])
+        behind = check.get('behind')
+        return {**source, 'repo': slug, 'commit': commit,
+                'checkedAt': check.get('checkedAt'), 'latest': latest, 'behind': behind,
+                'error': check.get('error'),
+                'compareUrl': ('https://github.com/%s/compare/%s...%s' % (slug, commit[:12], latest[:12])
+                               if slug and commit and latest and latest != commit else None)}
+
+    def _git_record(self, identifier):
+        record = self._state()['installed'].get(identifier)
+        if not record or not record.get('gitSource'):
+            raise PluginError('This plugin was not installed from a Git branch')
+        return record
+
+    def set_git_follow(self, identifier, follow, expected_revision=None, run=subprocess.run, sleep=time.sleep):
+        """Pins a Git package at the commit it has, or makes it follow its
+        branch; following updates to the branch's tip at once."""
+        self._git_record(identifier)
+        with self._lock(expected_revision) as before:
+            after = json.loads(json.dumps(before))
+            after['installed'][identifier]['gitSource']['follow'] = bool(follow)
+            self._commit(before, after)
+        if follow:
+            self.check_git(identifier, run=run, sleep=sleep)
+        return self.list()
+
+    def update_git(self, identifier, expected_revision=None, run=subprocess.run, sleep=time.sleep):
+        """Installs the newest commit on a Git package's branch, whether it
+        follows the branch or is pinned. A failure keeps the working copy."""
+        record = self._git_record(identifier)
+        if expected_revision is not None and self._state()['revision'] != expected_revision:
+            raise Conflict('Plugins changed elsewhere; reload and try again')
+        line = self._check_one(identifier, record, run, sleep, update=True)
+        error = (self._git_checks().get(identifier) or {}).get('error')
+        if error:
+            raise PluginError(error)
+        return {**self.list(), 'message': line}
+
+    def check_git(self, identifier=None, run=subprocess.run, sleep=time.sleep):
+        """Checks each Git package's branch (or only ``identifier``'s): a
+        following package updates to a newer commit; a pinned one notes how
+        many commits it is behind. Returns one line per package checked. A
+        failure keeps the working copy and is shown on its card."""
+        installed = self._state()['installed']
+        lines = []
+        for name, record in sorted(installed.items()):
+            if record.get('gitSource') and identifier in (None, name):
+                lines.append(self._check_one(name, record, run, sleep, update=record['gitSource'].get('follow')))
+        if identifier is not None and not lines:
+            raise PluginError('This plugin was not installed from a Git branch')
+        return lines
+
+    def _check_one(self, identifier, record, run, sleep, *, update):
+        source = record['gitSource']
+        commit = record.get('sourceRevision')
+        name = record['manifest'].get('name') or identifier
+        try:
+            with tempfile.TemporaryDirectory(prefix='orc-app-plugin-') as tmp:
+                clone = self._clone(source['url'], tmp, source['branch'])
+                latest = self._git('-C', str(clone), 'rev-parse', '--verify',
+                                   'refs/heads/%s^{commit}' % source['branch']).stdout.decode().strip()
+                counted = self._git('-C', str(clone), 'rev-list', '--count', '%s..%s' % (commit, latest), check=False)
+                behind = int(counted.stdout) if not counted.returncode else None
+                if latest == commit or not update:
+                    self._note_git_check(identifier, latest=latest, behind=0 if latest == commit else behind)
+                    return '%s is at %s' % (name, commit[:7]) if latest == commit else (
+                        '%s is pinned at %s; the branch is at %s' % (name, commit[:7], latest[:7]))
+                package = self._package_at(clone, latest, source['subdir'], tmp)
+                current = self._state()['installed'].get(identifier)
+                if not current or current.get('sourceRevision') != commit:
+                    raise PluginError('the plugin changed while Orc checked its branch')
+                done = self._replace_running(current, lambda: self.install(
+                    package, enable=current['enabled'], source_revision=latest, git_source=current['gitSource'],
+                    replace_running=True), run, sleep)
+                if done is None:
+                    raise PluginError('turn it on again first: it is being turned off')
+            self._note_git_check(identifier, latest=latest, behind=0)
+            return '%s updated to %s%s' % (name, latest[:7], done)
+        except (PluginError, OSError, subprocess.SubprocessError, ValueError) as error:
+            previous = self._git_checks().get(identifier) or {}
+            self._note_git_check(identifier, latest=previous.get('latest'), behind=previous.get('behind'),
+                                 error='%s did not update: %s' % (name, error) if update
+                                 else 'Orc could not check the branch: %s' % error)
+            return '%s did not update: %s' % (name, error)
 
 
 class Runtime:

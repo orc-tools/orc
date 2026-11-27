@@ -12,6 +12,7 @@ import { compactSetupNotice, createServerSetup, openServerSetup, queueAgentDevSe
 import { mountGreg } from './qa-greg.js';
 import { buttonsFor, loadPageScripts, qaBrowserPlugins } from './qa-plugins.js';
 import { createQaFixTerminal, getQaTerminal, resetQaTerminal } from './qa-terminal.js';
+import { installTextStageLinks } from './text-stage.js';
 
 const runId = decodeURIComponent(location.pathname.split('/').filter(Boolean)[1] || '');
 const rail = document.getElementById('qa-rail');
@@ -557,7 +558,7 @@ function appRow(app) {
   let label = { recreate: 'Worktree removed', setup: 'Not checked out' }[app.startAction] || 'Stopped';
   let link = app.canStart ? `<button type="button" class="qa-link" data-act="app" data-target="pr" data-do="start"${busy ? ' disabled' : ''}>${startLabel(app)}</button>` : '';
   if (app.state === 'none' && !app.canStart) {
-    return `<div class="qa-status"><span class="qa-dot muted"></span><b>Orc can't start this ${isReview() ? "PR's" : "run's"} app</b></div>
+    return `<div class="qa-status qa-status-wide"><span class="qa-dot muted"></span><b>Orc can't start this ${isReview() ? "PR's" : "run's"} app</b></div>
       ${blockedNote(app.blocked, true)}`;
   }
   if (app.state === 'running') {
@@ -573,7 +574,7 @@ function appRow(app) {
   const stopped = app.state !== 'running' ? stoppedProblem(app) : null;
   if (stopped) { dot = 'red'; label = 'Setup stopped'; }
   const error = state.errors[where] || (stopped ? stoppedSummary(stopped) : app.state === 'error' ? app.error : null);
-  return `<div class="qa-status"><span class="qa-dot ${dot}"></span><b>${label}</b>${host ? `<span class="mono">${escapeHtml(host)}</span>` : ''}${link}</div>
+  return `<div class="qa-status"><span class="qa-dot ${dot}"></span><b>${label}</b>${host ? `<span class="qa-val mono" title="${escapeHtml(host)}">${escapeHtml(host)}</span>` : ''}${link}</div>
     ${error ? `<div class="qa-error">${escapeHtml(error)}</div>` : ''}${stopped ? '' : problemLines(app)}`;
 }
 
@@ -581,7 +582,7 @@ function reviewRow(review) {
   if (!review) return '';
   const dot = review.blocking > 0 ? 'orange' : review.state === 'done' ? 'green' : 'muted';
   const link = review.hash ? `<button type="button" class="qa-link" data-act="open-run" data-hash="${escapeHtml(review.hash)}">Open review</button>` : '';
-  return `<div class="qa-status"><span class="qa-dot ${dot}"></span><b>Code review</b><span>${escapeHtml(review.summary || '')}</span>${link}</div>`;
+  return `<div class="qa-status"><span class="qa-dot ${dot}"></span><b>Code review</b><span class="qa-val">${escapeHtml(review.summary || '')}</span>${link}</div>`;
 }
 
 function outputTail(command, lines = 3) {
@@ -764,16 +765,20 @@ function failureFoot(data) {
   return { button: `<button type="button" class="qa-btn primary" data-act="send-failures"${busy ? ' disabled' : ''}>${busy ? (review ? 'Adding…' : 'Sending…') : escapeHtml(label)}</button>`, text };
 }
 
+// The badge leads the title, on its line; the trailing space keeps "QA" a
+// word of its own for a screen reader.
+const QA_TAG = '<span class="qa-tag">QA</span> ';
+
 function renderRail() {
   const data = state.data;
   const keepScroll = rail.querySelector('.qa-steps')?.scrollTop || 0;
   if (state.missing) {
-    rail.innerHTML = `<div class="qa-rail-head"><div class="qa-crumb"><span class="qa-tag">QA</span></div></div>
+    rail.innerHTML = `<div class="qa-rail-head">${QA_TAG}</div>
       <div class="qa-empty-rail"><p>This run is not on this computer.</p></div>`;
     return;
   }
   if (!data) {
-    rail.innerHTML = `<div class="qa-rail-head"><div class="qa-crumb"><span class="qa-tag">QA</span></div></div>
+    rail.innerHTML = `<div class="qa-rail-head">${QA_TAG}</div>
       <div class="qa-empty-rail"><p>${escapeHtml(state.loadError || 'Loading…')}</p></div>`;
     return;
   }
@@ -793,10 +798,9 @@ function renderRail() {
   const foot = failureFoot(data);
   const summary = finished ? `Finished · ${passed} passed, ${failed} failed` : `Each result, note and screenshot is kept with the ${isReview() ? 'review' : 'run'}`;
   rail.innerHTML = `<div class="qa-rail-head">
-      <div class="qa-crumb"><span class="qa-tag">QA</span>${pr ? `${prLink(pr)}${pr.author ? `<span>by ${escapeHtml(pr.author)}</span>` : ''}` : ''}</div>
-      <h1>${escapeHtml(run.title || run.id)}</h1>
-      ${appRow(data.app)}
-      ${reviewRow(data.review)}
+      <h1${pr ? ' class="has-crumb"' : ''}>${QA_TAG}<span class="qa-title">${escapeHtml(run.title || run.id)}</span></h1>
+      ${pr ? `<div class="qa-crumb">${prLink(pr)}${pr.author ? `<span>by ${escapeHtml(pr.author)}</span>` : ''}</div>` : ''}
+      <div class="qa-statuses">${appRow(data.app)}${reviewRow(data.review)}</div>
       ${state.loadError ? `<p class="qa-error" role="status">${escapeHtml(state.loadError)}</p>` : ''}
     </div>
     <div class="qa-steps-head"><span>Steps · ${checked} of ${total} checked</span><span class="qa-bar" role="progressbar" aria-label="Steps checked" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${checked}"><i style="width:${pct}%"></i></span></div>
@@ -890,7 +894,7 @@ pageView.innerHTML = `<div class="qa-toolbar">
     <button type="button" class="qa-nav" data-act="forward" aria-label="Forward">→</button>
     <button type="button" class="qa-nav" data-act="reload" aria-label="Reload">↻</button>
     <button type="button" class="qa-btn" data-act="step-page" aria-label="Go to current step" title="Go to current step"><span aria-hidden="true">↩</span><span class="qa-wide-label">Go to current step</span></button>
-    <label class="qa-url mono"><span class="qa-where"></span><span class="qa-host"></span><input class="qa-path" aria-label="Address" spellcheck="false" autocomplete="off" autocapitalize="off"><span class="qa-url-hint" hidden><kbd>Enter</kbd> go · <kbd>Esc</kbd> cancel</span></label>
+    <label class="qa-url mono"><span class="qa-host"></span><input class="qa-path" aria-label="Address" spellcheck="false" autocomplete="off" autocapitalize="off"></label>
     <span class="qa-plugin-buttons"></span>
     <span class="qa-capture"><button type="button" class="qa-btn qa-glyph" data-act="screenshot" aria-label="Capture screenshot" title="Capture screenshot"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 6.5h4l1.7-2.8h6.6L17 6.5h4v13H3z"/><circle cx="12" cy="13" r="3.7"/></svg></button><span class="qa-capture-notice" role="status" data-qa-cutout hidden></span></span>
     <button type="button" class="qa-btn quiet" data-act="open-external" aria-label="Open in browser" title="Open in browser"><span class="qa-wide-label">Open in browser</span><span aria-hidden="true">↗</span></button>
@@ -1037,7 +1041,6 @@ function updatePageToolbar() {
   const native = nativeBridge();
   const shown = shownPage(step);
   const { host, path } = toolbarAddress(step);
-  pageView.querySelector('.qa-where').textContent = state.data.app?.label || (isReview() ? 'This PR' : 'This run');
   pageView.querySelector('.qa-host').textContent = host;
   if (document.activeElement !== addressInput) addressInput.value = path;
   const empty = Boolean(pageEmptyState(step));
@@ -1170,7 +1173,6 @@ pageView.addEventListener('toggle', event => {
 // there, Esc puts back the current address.
 addressInput.addEventListener('focus', () => {
   addressInput.closest('.qa-url').classList.add('editing');
-  pageView.querySelector('.qa-url-hint').hidden = false;
   const step = paneStep();
   if (step) {
     const { host, path } = toolbarAddress(step);
@@ -1180,7 +1182,6 @@ addressInput.addEventListener('focus', () => {
 });
 addressInput.addEventListener('blur', () => {
   addressInput.closest('.qa-url').classList.remove('editing');
-  pageView.querySelector('.qa-url-hint').hidden = true;
   updatePageToolbar();
 });
 addressInput.addEventListener('keydown', event => {
@@ -1218,7 +1219,7 @@ function renderCommandView(step) {
   } else if (command?.state === 'stopped') status = `<span class="bad">Stopped</span>${command.durationMs != null ? ' · ' + seconds(command.durationMs) : ''}`;
   else if (command?.state === 'failed') status = '<span class="bad">It could not start.</span>';
   else if (running) status = '<span class="run">Running…</span>';
-  const log = command && !running && command.logUrl ? `<a href="${escapeHtml(command.logUrl)}" target="_blank" rel="noopener">Open the full log</a>` : '';
+  const log = command && !running && command.logUrl ? `<a href="${escapeHtml(command.logUrl)}" target="_blank" rel="noopener" data-text-stage data-text-title="${escapeHtml(step.title || step.command || 'Command log')}" data-text-path="${escapeHtml(command.logUrl.replace(/^\/runs\/[^/]+\//, ''))}" data-copy-label="Copy log">Open the full log</a>` : '';
   const output = otherView.querySelector('.qa-output');
   const stick = !output || running || output.scrollTop + output.clientHeight >= output.scrollHeight - 8;
   const keep = output?.scrollTop || 0;
@@ -1402,6 +1403,24 @@ const tabs = createToolTabs({
   },
 });
 
+// A page another tab asks for, such as an MCP server's sign-in: the app's own
+// pages open in a new Browser tab, where its plugins run, and any other site
+// in the normal browser.
+window.addEventListener('orc-qa-open-page', event => {
+  const url = event.detail?.url;
+  const appUrl = state.data?.app?.url || steps().find(row => row.url)?.url;
+  if (typeof url !== 'string') return;
+  if (!appUrl || !sameApp(url, appUrl) || pageEmptyState({ kind: 'page', url: appUrl })) {
+    openExternal(url);
+    return announce('The sign-in opens in your browser.');
+  }
+  tabs.open('Browser');
+  keepPage(paneStep(), url);
+  pointBrowser(url);
+  updatePageToolbar();
+  announce('The sign-in opened in a new Browser tab.');
+});
+
 function paneStep() {
   const tab = tabs.active;
   if (tab === tabs.qa) return currentStep();
@@ -1454,7 +1473,7 @@ let lastViewport = null;
 function syncViewport() {
   if (!nativeBridge()) return;
   const step = paneStep();
-  const visible = Boolean(step && step.kind === 'page' && !pageView.hidden && !viewport.hidden && !root.querySelector('.qa-setup-dialog[open]') && document.visibilityState === 'visible');
+  const visible = Boolean(step && step.kind === 'page' && !pageView.hidden && !viewport.hidden && !root.querySelector('.qa-setup-dialog[open]') && !document.querySelector('dialog.text-stage[open]') && document.visibilityState === 'visible');
   let message = { action: 'viewport', visible: false };
   if (visible) {
     const rect = viewport.getBoundingClientRect();
@@ -1520,6 +1539,8 @@ function render() {
   }
   syncViewport();
 }
+
+installTextStageLinks(document, { onOpen: syncViewport, onClose: syncViewport });
 
 if (!runId) {
   state.missing = true;

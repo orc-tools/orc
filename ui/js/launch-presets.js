@@ -6,10 +6,12 @@
 // core never imports a package.
 //
 // A source is:
-//   list()        -> [{ id, name, caption, icon, lead, orchestrates? }]
+//   list()        -> [{ id, name, caption, icon, lead, orchestrates?, planner? }]
 //                    icon: { image: '<data URL>' } | { agent: '<agent id>' } | null
 //                    lead: { agent, model, effort?, fast? } | null
 //                    orchestrates: boolean (defaults to true when omitted)
+//                    planner: { agent, model, name }: the model a plan started
+//                    on the preset is written on, when its planner is on offer
 //   current()     -> the id of the preset the composer launches on
 //   pick(id)      -> makes that preset the composer's, and notifies
 //   configure(id) -> opens the settings that edit that preset

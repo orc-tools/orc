@@ -30,6 +30,7 @@ MAX_SHOT_BYTES = 8 * 1024 * 1024
 MAX_SHOTS_PER_STEP = 6
 MAX_BODY_BYTES = 256 * 1024
 STOP_GRACE_SECONDS = 5
+OUTPUT_DRAIN_SECONDS = 2
 # A failed step goes to your review of a colleague's pull request, or to your
 # own run's agent, never both: which one is the server's call (the run's kind),
 # so a colleague's step text never reaches an agent that edits code.
@@ -463,18 +464,31 @@ def run_command(run_dir, run_id, document, step_id, cwd, env=None, seen=None):
         os.makedirs(folder, exist_ok=True)
         started, clock = now_iso(), time.monotonic()
         sandbox_meta = {"engine": qa_sandbox.ENGINE_NAME, "network": "localhost", "writes": "scratch-only"}
-        with open(os.path.join(folder, step_id + ".log"), "wb") as log:
-            try:
-                process = subprocess.Popen(argv, cwd=cwd, env=sandbox_env, stdin=subprocess.DEVNULL,
-                                           stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            except OSError as error:
-                process = None
+        log = open(os.path.join(folder, step_id + ".log"), "wb", buffering=0)
+        copier = None
+        try:
+            # The command writes into a pipe, never the log itself: the log
+            # sits under ~/.orc, which the sandbox hides, and Node aborts at
+            # startup when its stdout is a file it may not look at.
+            process = subprocess.Popen(argv, cwd=cwd, env=sandbox_env, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError as error:
+            process = None
+            with log:
                 log.write(("Could not start: %s\n" % error).encode())
-                state = {"state": "failed", "exitCode": None, "startedAt": started, "durationMs": 0, "sandbox": sandbox_meta}
-            else:
-                rollback.callback(run_terminal.stop_process, process)
-                state = {"state": "running", "exitCode": None, "startedAt": started, "durationMs": None,
-                         "pid": process.pid, "sandbox": sandbox_meta}
+            state = {"state": "failed", "exitCode": None, "startedAt": started, "durationMs": 0, "sandbox": sandbox_meta}
+        else:
+            rollback.callback(run_terminal.stop_process, process)
+            try:
+                copier = threading.Thread(target=_copy_output, name="orc-qa-command-output", daemon=True,
+                                          args=(process.stdout, log))
+                copier.start()
+            except BaseException:
+                process.stdout.close()
+                log.close()
+                raise
+            state = {"state": "running", "exitCode": None, "startedAt": started, "durationMs": None,
+                     "pid": process.pid, "sandbox": sandbox_meta}
         results = qa_steps.read_results(run_dir)
         qa_steps.entry_for(results, step)["command"] = state
         qa_steps.write_results(run_dir, results)
@@ -484,16 +498,39 @@ def run_command(run_dir, run_id, document, step_id, cwd, env=None, seen=None):
                 _running[(run_id, step_id)] = process
                 try:
                     threading.Thread(target=_await_command, name="orc-qa-command", daemon=True,
-                                     args=(run_dir, run_id, step_id, process, clock, cleanup)).start()
+                                     args=(run_dir, run_id, step_id, process, clock, cleanup, copier)).start()
                 except BaseException:
                     del _running[(run_id, step_id)]
                     raise
             rollback.pop_all()
 
 
-def _await_command(run_dir, run_id, step_id, process, clock, cleanup=()):
+def _copy_output(pipe, log):
+    """Copies a command's output into its log as it arrives, until every
+    process holding the pipe has closed it. A log that stops taking writes
+    still drains the pipe, so the command never blocks on a full one."""
+    try:
+        while True:
+            chunk = os.read(pipe.fileno(), 65536)
+            if not chunk:
+                return
+            try:
+                log.write(chunk)
+            except OSError:
+                pass
+    finally:
+        pipe.close()
+        log.close()
+
+
+def _await_command(run_dir, run_id, step_id, process, clock, cleanup=(), copier=None):
     try:
         code = process.wait()
+        if copier is not None:
+            # Output the command wrote before it ended lands in the log before
+            # the step reads as done. Something it left running may hold the
+            # pipe open: its output keeps landing, but the step does not wait.
+            copier.join(OUTPUT_DRAIN_SECONDS)
         with run_lock(run_id):
             results = qa_steps.read_results(run_dir)
             stored = results["steps"].get(step_id)

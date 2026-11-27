@@ -1,9 +1,9 @@
 // orc-ui: the right-click menu on a file or folder link in Chat, offering
 // where to open it. Web links use the browser's own context menu.
 
+import { revealDiffPanel } from './panel-navigation.js';
 import { $, esc, showToast, toast } from './core.js';
 import { bindContextMenu, placeContextMenu } from './context-menu.js';
-import { revealDiffPanel } from './diff-panel.js';
 import { fileActions, filesPanelAvailable, runFileAction, openRunFile } from './files-panel.js';
 import { revealInFileManagerLabel } from './finder.js';
 

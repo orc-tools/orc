@@ -98,7 +98,7 @@
      box can turn square in WebKit. */
   .cc-jump .cc-list::before {
     content: ""; position: absolute; z-index: -1; inset: -1px; border-radius: inherit;
-    box-shadow: 0 8px 24px rgb(0 0 0 / .35); pointer-events: none;
+    box-shadow: var(--float-shadow); pointer-events: none;
   }
   .cc-jump .cc-list .cp-key[aria-current] { border-color: transparent; background: color-mix(in srgb, var(--heading) 7%, transparent); }
   .cc-jump:not([data-open]) .cc-list { display: none; }
@@ -243,12 +243,32 @@ a.control-task-title:hover { text-decoration: underline; }
 .control-path { display: flex; flex-wrap: wrap; min-width: 0; }
 .control-path-dir, .control-path-name { flex: 0 1 auto; min-width: 0; }
 .control-path-dir { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; color: var(--muted-strong); }
-.control-model-groups { display: grid; gap: 12px; }
-.control-model-group h6 { margin: 0 0 6px; color: var(--muted-strong); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
-.control-model-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.control-model-list li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, .7fr); gap: 10px; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.control-model-list strong { color: var(--heading); }
-.control-model-list span { color: var(--muted-strong); }
+/* Models and Cost. A model id keeps one line at every width: the cell with
+   max-width 0 takes what the other column leaves, and an id wider than that
+   ends in an ellipsis. */
+.control-table { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.control-table :is(th, td) { padding: 7px 0; text-align: left; vertical-align: top; font-weight: 400; }
+.control-table thead th {
+  padding-top: 0; border-bottom: 1px solid var(--border); color: var(--muted-strong);
+  font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+}
+.control-table tbody tr + tr > * { border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent); }
+.control-table .control-table-num { width: 1%; padding-left: 16px; text-align: right; white-space: nowrap; }
+.control-table td.control-table-num { color: var(--heading); }
+.control-table-cell { max-width: 0; }
+.control-table-id { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--heading); font-weight: 600; }
+.control-table-models .control-table-id { font-weight: 400; }
+.control-table-sub { display: block; color: var(--muted-strong); }
+.control-table-sub span { white-space: nowrap; }
+.control-table .control-table-role { width: 42%; padding-right: 16px; color: var(--heading); font-weight: 600; }
+.control-table .control-table-phase th {
+  padding: 14px 0 4px; color: var(--muted-strong);
+  font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+}
+.control-table tbody:first-of-type .control-table-phase th { padding-top: 10px; }
+.control-table .control-table-phase + tr > * { border-top: 0; }
+.control-table tfoot > tr > * { border-top: 1px solid var(--border); color: var(--heading); font-weight: 600; }
+.control-table tfoot .control-table-sub { font-weight: 400; }
 .control-actions, .control-danger { display: flex; align-items: center; flex-wrap: wrap; gap: 14px 8px; }
 .control-script-icon { flex: none; margin-inline-end: 6px; vertical-align: -2px; }
 .control-status-now { display: grid; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
@@ -282,7 +302,6 @@ a.control-task-title:hover { text-decoration: underline; }
 @media (max-width: 700px) {
   .control-center { padding-bottom: 56px; }
   .control-center .wf { padding-inline: 12px; }
-  .control-model-list li { grid-template-columns: 1fr; gap: 2px; }
 }
 @media (forced-colors: active) {
   .control-status-options label:has(input:checked) { border-color: Highlight; }

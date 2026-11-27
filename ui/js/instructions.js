@@ -4,6 +4,7 @@
 
 import { $, esc, announce, relativeStamp } from './core.js';
 import { harnessMark } from './agent-marks.js';
+import { readSessionDraft, saveSessionDraft } from './session-draft.js';
 
 const API = '/api/instructions';
 const PANEL_ID = 'settings-panel-instructions';
@@ -42,9 +43,14 @@ let busy = '';
 // {variant: 'green' | 'yellow' | 'red' | 'muted', text}.
 let status = { main: null, accounts: null };
 // The editor's text while it differs from the saved main copy, else null,
-// and the digest of the main copy it was started from.
-let draft = null;
-let editorBase = null;
+// and the digest of the main copy it was started from. Unsaved edits come
+// back after a reload (ui/js/session-draft.js), still built on that copy, so
+// saving them over a copy changed meanwhile is held back as a conflict.
+const DRAFT_KEY = 'orcInstructionsDraft';
+const savedDraft = readSessionDraft(DRAFT_KEY);
+let draft = typeof savedDraft?.text === 'string' ? savedDraft.text : null;
+let editorBase = draft === null ? null : savedDraft.base ?? null;
+const keepDraft = () => saveSessionDraft(DRAFT_KEY, draft === null ? null : { text: draft, base: editorBase });
 // One inline confirm at a time: {kind: 'replace-all'} or {kind, target}.
 let confirming = null;
 // The open comparison: {id, text} once loaded, {id, loading} before.
@@ -428,6 +434,7 @@ function renderAccounts() {
 // The editor is drawn once per main copy so typing never loses the caret;
 // everything around it redraws from the snapshot.
 function renderBody({ editor = false } = {}) {
+  keepDraft();
   const panel = panelEl();
   if (!panel) return;
   if (!snapshot) {
@@ -680,6 +687,7 @@ function onInput(event) {
   const wasDirty = draft !== null;
   const value = event.target.value;
   draft = value === (snapshot?.main?.text ?? '') ? null : value;
+  keepDraft();
   if (status.main?.variant === 'green') status.main = null;
   const statusEl = $('ins-main-status');
   if (statusEl) statusEl.outerHTML = mainStatusHtml();

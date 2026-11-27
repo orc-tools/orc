@@ -184,7 +184,9 @@ def build_catalog(runtime):
         'Start an Orc conversation in a configured project. Returns launchId and reserved run identity. '
         'With orchestration enabled, agent and model must match the lead of orchestrationPreset, '
         'or of the first preset when omitted; a preset with only lead and no task roles skips '
-        'Orchestrate for change runs. Ship additionally requires orc:deliver.')
+        'Orchestrate for change runs. A plan (orc-plan or orc-plan-session) naming orchestrationPreset '
+        'also sends the lead, and launches on the preset\'s planner when it has one that can run here; '
+        'its build then starts on that lead. Ship additionally requires orc:deliver.')
     add('launches.get', 'GET', '/api/new-conversation/{launchId}')
     add('runs.update', 'PATCH', '/api/runs/{runId}',
         dict(title={'type': 'string', 'minLength': 1, 'maxLength': 60},
@@ -262,14 +264,17 @@ def build_catalog(runtime):
         'review-action': (dict(reviewAction=enum('close'), resultDigest=STRING), ()),
         'link': (dict(op=enum('add', 'remove'), targetRunId=IDENTITY, type=STRING), ('op', 'targetRunId')),
         'pr-body': (dict(path=STRING, text=STRING), ('path', 'text')),
+        'pr-body-update': (dict(digest={'type': 'string', 'pattern': '^[0-9a-f]{64}$'}), ('digest',)),
         'pr-replies': (dict(card=STRING, body=STRING), ('card', 'body')),
         'pr-review': (dict(target=STRING, body=STRING, kept=BOOLEAN, digest=STRING), ('target',)),
         'pr-review-post': (dict(event=enum('REQUEST_CHANGES', 'COMMENT', 'APPROVE'),
                                 digest={'type': 'string', 'pattern': '^[0-9a-f]{64}$'}), ('event', 'digest')),
+        'reviewer-request': ({}, ()),
         'focus': (dict(action=enum('prioritise', 'start')), ('action',)),
         'start-now': ({}, ()),
         'merge-queue': (dict(receiptDigest=STRING, authorityDigest=STRING, action=enum('enqueue-merge'), pushAfterMerge=BOOLEAN, closePaneAfterMerge=BOOLEAN, shipAction=enum('merge', 'merge-and-push', 'yeet')), ()),
         'merge-queue-retry': ({}, ()),
+        'merge-queue-resolve': ({}, ()),
         'merge-participant': (dict(participantId=STRING, receiptDigest=STRING, authorityDigest=STRING), ('participantId',)),
         'delivery-groups': (dict(sourceDigest=STRING, tickets=array(schema(dict(ticketId=STRING, groupId=STRING, branch=STRING, baseBranch=STRING), ('ticketId', 'groupId', 'branch', 'baseBranch')))), ('sourceDigest', 'tickets')),
         'artifact-feedback-draft': (dict(action=enum('create', 'delete'), draft=OBJECT, draftId=STRING, id=STRING), ()),
@@ -277,8 +282,8 @@ def build_catalog(runtime):
         'artifact-feedback-thread': (dict(action=enum('resolve', 'reopen'), threadId=STRING), ()),
         'worktree-app': (dict(action=enum('start', 'stop', 'restart', 'cleanup')), ('action',)),
     }
-    delivery = {'send-answers', 'push-main', 'deploy-retry', 'merge-queue', 'merge-queue-retry', 'merge-participant',
-                'delivery-groups', 'send-review', 'pr-review-post'}
+    delivery = {'send-answers', 'push-main', 'deploy-retry', 'merge-queue', 'merge-queue-retry', 'merge-queue-resolve', 'merge-participant',
+                'delivery-groups', 'send-review', 'pr-review-post', 'pr-body-update', 'reviewer-request'}
     admin = {'run-script', 'needs-you-run', 'worktree-app', 'worktree-launch'}
     native = {'open-session', 'open-terminal', 'open-in', 'needs-you-open'}
     for action, (props, required) in actions.items():
@@ -391,6 +396,7 @@ def build_catalog(runtime):
         ('config.update', '/api/config', dict(config=OBJECT, baseMtime={'type': ['number', 'null']}), 'orc:admin'),
         ('servers.main', '/api/servers/main', dict(project=STRING, action=enum('start', 'stop', 'restart')), 'orc:admin'),
         ('servers.visibility', '/api/servers/visibility', dict(project=STRING, hidden=BOOLEAN), 'orc:write'),
+        ('servers.agent', '/api/servers/agent', dict(kind=enum('setup', 'fix'), project=STRING, path=STRING, agent=STRING, claudeAccount=STRING), 'orc:admin'),
         ('servers.stop', '/api/dev-servers/stop', dict(run=IDENTITY, serverToken=STRING), 'orc:admin'),
         ('app.navigate', '/api/navigate', dict(fragment=STRING, auto=BOOLEAN, force=BOOLEAN, foreground=BOOLEAN), 'orc:write'),
         ('sidebar.update', '/api/sidebar-settled', {'runId': IDENTITY, 'settled': BOOLEAN, 'import': OBJECT}, 'orc:write'),

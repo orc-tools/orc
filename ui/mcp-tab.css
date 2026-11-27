@@ -134,7 +134,7 @@
 .mcp .mcp-filter:focus-visible, #mcp-client-view .mcp-filter:focus-visible { outline: 0; }
 .mcp-filter::-webkit-search-cancel-button { display: none; }
 .mcp-search button {
-  padding: 4px 8px; border: 0; border-radius: 5px; background: transparent;
+  padding: 4px 8px; border: 0; border-radius: 6px; background: transparent;
   color: var(--accent-text); font: inherit; font-size: 12px; cursor: var(--orc-cursor-pointer, pointer);
 }
 .mcp-search button:hover { background: var(--chip); }
@@ -150,6 +150,7 @@
   font: inherit; text-align: left; cursor: var(--orc-cursor-pointer, pointer);
 }
 .mcp-item:hover { background: color-mix(in srgb, var(--heading) 6%, transparent); }
+/* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
 .mcp-item[aria-current="true"] {
   background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 3px 0 var(--accent);
 }

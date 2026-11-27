@@ -1,6 +1,7 @@
 {
   "apiVersion": 2,
   "id": "synthwave",
+  "icon": "icon.png",
   "name": "Synthwave",
   "version": "1.0.0",
   "description": "Neon grids, retro sunsets and palm trees.",
@@ -11,7 +12,7 @@
       "label": "Synthwave",
       "description": "Neon grids and palms, rad~",
       "css": "theme.css",
-      "icon": "icon.png",
+      "icon": "dock-icon.png",
       "gary": "gary.png",
       "sheila": "sheila.png",
       "scene": "scene.bundle.js",

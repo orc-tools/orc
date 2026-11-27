@@ -782,7 +782,7 @@
   100% { translate: 0 -210%; opacity: 0; }
 }
 
-/* Typing heat (see index.html's --typing-heat): fast typing polishes the
+/* Typing heat (see project-home.css's --typing-heat): fast typing polishes the
    composer's outline from ink to brass. It holds steady, with no beat. The
    shell rests a cold composer on --control-border rather than on the
    composer's own border token, so that is ink here too. */

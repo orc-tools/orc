@@ -47,16 +47,24 @@ export function desktopUpdateRowHtml(row) {
 // TESTABLE: release banner model
 const CLOSE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4.5 4.5l7 7m0-7l-7 7"/></svg>';
 
+function releaseStatus(offer, posting, postError) {
+  const install = offer.install || {};
+  return {
+    running: posting || install.state === 'running',
+    reason: postError || (install.state === 'failed' ? install.reason || 'The update did not finish.' : ''),
+  };
+}
+
+const ignoredReleaseKey = version => `${version}:ignored`;
+
 // What the banner shows for /api/desktop-update's `release` offer. `dismissed`
 // is the key the reader last closed: a failed update has a key of its own, so
 // closing the offer never hides the failure that follows it.
 export function releaseBannerModel(offer, dismissed, posting = false, postError = '') {
   if (!offer?.version) return null;
-  const install = offer.install || {};
-  const running = posting || install.state === 'running';
-  const reason = postError || (install.state === 'failed' ? install.reason || 'The update did not finish.' : '');
+  const { running, reason } = releaseStatus(offer, posting, postError);
   const key = reason ? `${offer.version}:failed` : offer.version;
-  if (!running && dismissed === key) return null;
+  if (!running && (dismissed === key || dismissed === ignoredReleaseKey(offer.version))) return null;
   if (running) {
     return { key, text: `Updating Orc to ${offer.version}. Orc restarts by itself when it is done.`,
       action: { label: 'Updating…', busy: true }, notes: offer.url, dismissible: false };
@@ -89,9 +97,69 @@ const DISMISSED_KEY = 'orc.releaseUpdate.dismissed';
 let release = null;
 let posting = false;
 let postError = '';
+let installAttempt = 0;
 let shownBanner = '';
 let dismissed = '';
 try { dismissed = localStorage.getItem(DISMISSED_KEY) || ''; } catch { /* closes for this page only */ }
+
+export function releaseUpdateBadgeHtml() {
+  return `<button type="button" class="settings-update" data-release-badge aria-haspopup="dialog"${release?.version ? '' : ' hidden'}>New version ready</button>`;
+}
+
+const dialog = $('release-update-dialog');
+const apply = $('release-update-apply');
+const cancel = $('release-update-cancel');
+const ignore = $('release-update-ignore');
+const progress = $('release-update-progress');
+let opener = null;
+
+function renderReleaseDialog() {
+  if (!release?.version) {
+    dialog.close();
+    return;
+  }
+  const { running, reason } = releaseStatus(release, posting, postError);
+  const downloads = !release.canInstall;
+  const title = `${downloads ? 'Download' : 'Update Orc to'} ${release.version}`;
+  const nextAction = running ? 'Updating…' : downloads ? 'Download' : reason ? 'Try again' : 'Update';
+  const notes = $('release-update-notes');
+  const error = $('release-update-error');
+  const hadProgress = !progress.hidden;
+  const focusWasOnProgress = document.activeElement === progress;
+  const failure = !running && reason ? `Orc couldn't update to ${release.version}. ${reason}` : '';
+  dialog.setAttribute('heading', title);
+  dialog.toggleAttribute('no-close', running);
+  $('release-update-installed').textContent = release.installed;
+  $('release-update-instructions').textContent = downloads
+    ? "This copy can't update itself. Download the new installer to update Orc."
+    : 'Orc downloads the new version and restarts by itself when it is done.';
+  notes.href = release.url;
+  notes.textContent = `What's new in ${release.version}`;
+  $('release-update-description').hidden = running;
+  $('release-update-hint').hidden = running;
+  progress.hidden = !running;
+  if (error.textContent !== failure) error.textContent = failure;
+  cancel.hidden = ignore.hidden = running;
+  apply.toggleAttribute('disabled', running);
+  apply.textContent = nextAction;
+  if (dialog.open && running && !hadProgress) progress.focus();
+  if (dialog.open && !running && focusWasOnProgress) apply.button?.focus();
+}
+
+function openReleaseDialog(trigger) {
+  if (!release?.version || dialog.open) return;
+  opener = trigger;
+  renderReleaseDialog();
+  dialog.show();
+  if (progress.hidden) cancel.button?.focus();
+  else progress.focus();
+}
+
+function renderRelease() {
+  renderReleaseBanner();
+  document.querySelectorAll('[data-release-badge]').forEach(badge => { badge.hidden = !release?.version; });
+  if (dialog.open) renderReleaseDialog();
+}
 
 function renderReleaseBanner() {
   const banner = $('release-update');
@@ -108,38 +176,77 @@ function renderReleaseBanner() {
 }
 
 async function installRelease() {
+  if (!release?.canInstall || releaseStatus(release, posting, postError).running) return;
+  const version = release.version;
+  installAttempt += 1;
   posting = true;
   postError = '';
-  renderReleaseBanner();
+  renderRelease();
   try {
-    const response = await fetch('/api/desktop-update/install-release', { method: 'POST' });
+    const response = await fetch('/api/desktop-update/install-release', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version }),
+    });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) postError = body.error || 'Orc couldn\'t start the update.';
-    else release = body.release ?? release;
+    else if (Object.hasOwn(body, 'release')) release = body.release;
   } catch {
     postError = 'Orc couldn\'t reach its server to start the update.';
   }
   posting = false;
+  renderRelease();
+  if (postError) refreshDesktopUpdate();
+}
+
+function dismissRelease(key) {
+  dismissed = key;
+  try { localStorage.setItem(DISMISSED_KEY, dismissed); } catch { /* closes for this page only */ }
   renderReleaseBanner();
 }
+
+document.addEventListener('click', event => {
+  const badge = event.target.closest('[data-release-badge]');
+  if (badge) openReleaseDialog(badge);
+});
+
+cancel.addEventListener('click', () => dialog.close());
+ignore.addEventListener('click', () => {
+  dismissRelease(ignoredReleaseKey(release.version));
+  dialog.close();
+});
+apply.addEventListener('click', () => {
+  if (release?.canInstall) installRelease();
+  else if (release?.url) window.open(release.url, '_blank', 'noopener');
+});
+dialog.addEventListener('cancel', event => {
+  if (release && releaseStatus(release, posting, postError).running) event.preventDefault();
+});
+dialog.addEventListener('close', () => {
+  const target = opener?.matches('[data-release-badge]')
+    ? document.querySelector('#settings-view:not([hidden]) .settings-update:not([hidden]), #settings-view:not([hidden]) #settings-version:not([hidden])')
+    : document.querySelector('#release-update:not([hidden]) [data-release-install]:not([disabled])');
+  const restore = opener?.getClientRects().length ? opener : target;
+  (restore?.button || restore)?.focus();
+  opener = null;
+});
 
 $('release-update')?.addEventListener('click', event => {
   const banner = event.currentTarget;
   const open = event.target.closest('[data-release-open]');
   // Orc.app hands a script-opened window to the default browser.
   if (open) window.open(open.dataset.releaseOpen, '_blank', 'noopener');
-  if (event.target.closest('[data-release-install]:not([disabled])')) installRelease();
-  if (event.target.closest('[data-release-dismiss]')) {
-    dismissed = banner.dataset.key;
-    try { localStorage.setItem(DISMISSED_KEY, dismissed); } catch { /* closes for this page only */ }
-    renderReleaseBanner();
-  }
+  const confirm = event.target.closest('[data-release-install]:not([disabled])');
+  if (confirm) openReleaseDialog(confirm);
+  if (event.target.closest('[data-release-dismiss]')) dismissRelease(banner.dataset.key);
 });
 
 let current = null;
 export const desktopUpdateStatuses = () => current ? [current] : [];
 
 async function refreshDesktopUpdate() {
+  const attempt = installAttempt;
+  const startedWhilePosting = posting;
   let update;
   try {
     const response = await fetch('/api/desktop-update', { cache: 'no-store' });
@@ -149,11 +256,11 @@ async function refreshDesktopUpdate() {
     // Keep the last known state through the daemon restart that an install causes.
     return;
   }
-  if (!posting && JSON.stringify(update.release ?? null) !== JSON.stringify(release)) {
+  if (!startedWhilePosting && attempt === installAttempt && JSON.stringify(update.release ?? null) !== JSON.stringify(release)) {
     release = update.release ?? null;
     postError = '';
   }
-  renderReleaseBanner();
+  renderRelease();
   const row = desktopUpdateModel(update);
   const next = row ? { ...row, html: desktopUpdateRowHtml(row) } : null;
   if (JSON.stringify(next) === JSON.stringify(current)) return;

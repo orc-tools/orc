@@ -32,6 +32,8 @@ export const ACTION_ICONS = {
   enable: INSTALL_ICON,
   remove: `<svg ${ICON_ATTRS}><path d="M4 7h16"/><path d="M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2"/><path d="M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.5h6.4a1.5 1.5 0 0 0 1.5-1.5l.8-12"/><path d="M10 11v5.5M14 11v5.5"/></svg>`,
   apply: `<svg ${ICON_ATTRS}><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4.5V11h-6.5"/></svg>`,
+  // A square with an arrow leaving its top-right corner: the plugin goes out of Orc as a zip.
+  export: `<svg ${ICON_ATTRS}><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>`,
 };
 export const HUB_ICONS = {
   search: '<svg class="app-plugin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
@@ -158,6 +160,105 @@ function pluginZipDialog() {
   return dialog;
 }
 
+// A plugin installed from Git remembers its repository, branch and commit. The
+// card says so, checks the branch from a refresh icon after the status, and
+// lets the person stay on this commit or follow the branch.
+const shortSha = sha => String(sha || '').slice(0, 7);
+function checkedAgo(iso) {
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return 'Not checked yet.';
+  const minutes = Math.max(0, Math.floor((Date.now() - at) / 60000));
+  const unit = (count, word) => `${count} ${word}${count === 1 ? '' : 's'} ago`;
+  if (minutes < 1) return 'Checked just now.';
+  if (minutes < 60) return `Checked ${unit(minutes, 'minute')}.`;
+  if (minutes < 1440) return `Checked ${unit(Math.floor(minutes / 60), 'hour')}.`;
+  return `Checked ${unit(Math.floor(minutes / 1440), 'day')}.`;
+}
+
+function gitSourceHtml(plugin, canManage) {
+  const git = plugin.gitSource;
+  const where = `<code>${esc(git.repo || git.url)}</code>${git.subdir ? ` · folder <code>${esc(git.subdir)}</code>` : ''}`;
+  const meta = `${where} · branch <code>${esc(git.branch)}</code> · ${git.follow ? 'at' : 'pinned at'} <code>${esc(shortSha(git.commit))}</code>`;
+  const behind = Number.isFinite(git.behind) ? git.behind : null;
+  let status;
+  if (git.follow) status = `Updates itself when the branch moves. ${checkedAgo(git.checkedAt)}`;
+  else if (behind > 0) {
+    status = `${behind} newer commit${behind === 1 ? '' : 's'} on the branch.${git.compareUrl
+      ? ` <a href="${esc(git.compareUrl)}" target="_blank" rel="noopener">See what changed</a>` : ''}`;
+  } else if (behind === 0) status = `Up to date with the branch. ${checkedAgo(git.checkedAt)}`;
+  else status = checkedAgo(git.checkedAt);
+  const button = (action, label, title = '') => `<button type="button" class="settings-btn-inline" data-plugin-git="${action}"${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</button>`;
+  // The same words as the Install from Git form; the tooltip names the commit.
+  const buttons = !canManage ? ''
+    : git.follow ? button('git-pin', 'Stay on this commit', `Stay on ${shortSha(git.commit)} and stop following the branch`)
+    : behind > 0 && git.latest ? button('git-update', `Update to ${shortSha(git.latest)}`) + button('git-follow', 'Follow the branch')
+    : button('git-follow', 'Follow the branch');
+  const check = canManage ? ` <button type="button" class="settings-btn-inline app-plugin-git-check" data-plugin-git="git-check" aria-label="Check now" title="Check the branch for new commits">${ACTION_ICONS.apply}</button>` : '';
+  return `<p class="app-plugin-meta app-plugin-git-meta">${meta}</p>
+      <p class="app-plugin-meta app-plugin-git-status">${status}${check}</p>
+      ${git.error ? `<p class="settings-note error app-plugin-git-error" role="status">Last check failed: ${esc(git.error.replace(/[.\s]*$/, '.'))} The installed copy keeps working.</p>` : ''}
+      ${buttons ? `<div class="app-plugin-git-actions">${buttons}</div>` : ''}`;
+}
+
+// What a pasted address fills in the Install from Git form. A GitHub page
+// (`https://github.com/owner/repo/tree/<branch>`) becomes its clone URL and
+// branch; any other text is taken as the repository. A branch with slashes
+// reads the same as a branch and folder, so the whole rest is the branch and
+// the form lets you move part of it to the folder.
+export function pluginGitFields(text) {
+  const raw = String(text || '').trim();
+  const page = raw.match(/^https?:\/\/(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/([^?#]+?))?\/?(?:[?#].*)?$/i);
+  if (!page) return { url: raw, branch: '', subdir: '' };
+  let branch = page[3] || '';
+  try { branch = decodeURIComponent(branch); } catch { /* keep it as typed */ }
+  return { url: `https://github.com/${page[1]}/${page[2]}.git`, branch, subdir: '' };
+}
+
+// A request from outside the hub (the command palette) to open Install from
+// Git with some fields filled in. A hub already showing takes it at once;
+// otherwise it opens Settings → Plugins and the hub takes it once plugins have
+// loaded. A request nobody took within a minute is dropped, so a later visit
+// to Settings never pops up a form asked for long ago.
+let gitInstallRequest = null;
+let gitInstallOpener = null;
+export function requestPluginGitInstall(fields = {}) {
+  gitInstallRequest = { fields, at: Date.now() };
+  if (settingsTabFromHash() === 'plugins' && gitInstallOpener?.()) return;
+  location.hash = 'settings/plugins';
+}
+const takeRequestedGitFields = () => {
+  const request = gitInstallRequest;
+  gitInstallRequest = null;
+  return request && Date.now() - request.at < 60000 ? request.fields : null;
+};
+
+function pluginGitDialog() {
+  let dialog = document.getElementById('plugin-git-dialog');
+  if (!dialog) {
+    dialog = document.createElement('orc-dialog');
+    dialog.id = 'plugin-git-dialog';
+    dialog.className = 'plugin-zip-dialog plugin-git-dialog';
+    dialog.setAttribute('heading', 'Install from Git');
+    document.body.append(dialog);
+  }
+  return dialog;
+}
+
+const GIT_FOLLOW_HINTS = {
+  pin: 'Update only when you choose.',
+  follow: 'Installs each new commit, checked when Orc starts and about hourly.',
+};
+const pluginGitFormHtml = values => `<form class="plugin-git" data-plugin-git-form novalidate>
+    <orc-input type="text" label="Repository" placeholder="git@github.com:owner/repo.git" data-git-url></orc-input>
+    <orc-input type="text" label="Branch" placeholder="main" data-git-branch></orc-input>
+    <orc-input type="text" label="Folder in the repository (optional)" placeholder="Leave empty if the plugin is at the top" data-git-subdir></orc-input>
+    <div class="plugin-git-follow"><span class="settings-label" id="plugin-git-follow-label">After installing</span>
+      <orc-segmented label="After installing" data-git-follow value="${values.follow ? 'follow' : 'pin'}"><button type="button" value="pin">Stay on this commit</button><button type="button" value="follow">Follow the branch</button></orc-segmented>
+      <p class="settings-hint" data-git-follow-hint>${GIT_FOLLOW_HINTS[values.follow ? 'follow' : 'pin']}</p></div>
+    <p class="plugin-zip-warn">A plugin from Git can run its own code with your permissions on this Mac. Install only from a repository you trust. Orc uses the Git sign-in this Mac already has.</p>
+    <p class="plugin-zip-error" role="alert" data-plugin-git-error hidden></p>
+  </form>`;
+
 const PLUGIN_TABS = [
   { id: 'public', label: 'Public', subtitle: 'Bundled with Orc', icon: HUB_ICONS.globe },
   { id: 'private', label: 'Private', subtitle: 'Your own and locally installed plugins', icon: HUB_ICONS.lock },
@@ -175,10 +276,12 @@ function pluginRowHtml(plugin, state, zippable) {
     // Only a package installed by hand can really be deleted; Orc keeps its own.
     state.canManage && manageable && plugin.installed && !plugin.bundled ? iconButtonHtml('remove', 'Remove', nameId, 'settings-btn-inline app-plugin-remove') : '',
     state.canManage && ['stopping', 'error'].includes(plugin.state) ? iconButtonHtml('apply', 'Apply again', nameId) : '',
-    zippable.some(item => item.id === plugin.id) ? `<button type="button" class="settings-btn-inline app-plugin-icon-btn" data-private-zip="${esc(plugin.id)}" aria-label="Download ${esc(plugin.name)}" title="Zip ${esc(plugin.name)} from Orc's source checkout into Downloads">${INSTALL_ICON}</button>` : '',
+    // Export zips a plugin from Orc's own private folder. A plugin installed
+    // from Git already lives in its repository, so it has nothing to export.
+    !plugin.gitSource && zippable.some(item => item.id === plugin.id) ? `<button type="button" class="settings-btn-inline app-plugin-icon-btn" data-private-zip="${esc(plugin.id)}" aria-label="Export ${esc(plugin.name)}" title="Export ${esc(plugin.name)} as a zip into Downloads">${ACTION_ICONS.export}</button>` : '',
   ].join('');
   const source = plugin.required ? 'Built in' : plugin.bundled && !plugin.private ? 'Bundled with Orc'
-    : plugin.linked ? 'Linked folder' : 'Private package';
+    : plugin.linked ? 'Linked folder' : plugin.gitSource ? 'From Git' : 'Private package';
   const needs = (plugin.requires || []).map(id => state.plugins.find(other => other.id === id)?.name || id).join(', ');
   const stateLabel = `<span class="app-plugin-state">${esc(plugin.state[0].toUpperCase() + plugin.state.slice(1))}</span> · `;
   const details = `${plugin.required ? 'Required · ' : ''}${source}${plugin.version ? ` · v${esc(plugin.version)}` : ''}${needs ? ` · Needs ${esc(needs)}` : ''}`;
@@ -191,6 +294,7 @@ function pluginRowHtml(plugin, state, zippable) {
     <div class="app-plugin-main">
       <p class="settings-hint app-plugin-desc">${esc(plugin.description)}</p>
       <p class="app-plugin-meta">${stateLabel}${details}</p>
+      ${plugin.gitSource ? gitSourceHtml(plugin, state.canManage) : ''}
       ${plugin.linked ? `<p class="settings-note app-plugin-linked">Orc reads <code>${esc(plugin.linked)}</code> directly, so saved edits show within a few seconds.</p>` : ''}
       ${plugin.message ? `<p class="settings-note">${esc(plugin.message)}</p>` : ''}
       ${plugin.error ? `<orc-accordion label="Error details"><pre>${esc(plugin.error)}</pre></orc-accordion>` : ''}
@@ -351,7 +455,7 @@ export async function mountPluginSettings(focusPlugin = null) {
       </div>
       ${bodyHtml}
       <div class="app-plugin-foot"><button type="button" class="settings-btn-inline app-plugin-refresh-btn" data-action="refresh">${ACTION_ICONS.apply}<span>Refresh plugins</span></button>${state.canManage
-        ? `<button type="button" class="settings-btn-inline app-plugin-refresh-btn" data-plugin-zip-pick>${INSTALL_ICON}<span>Install from zip…</span></button><span class="settings-hint app-plugin-zip-hint">or drag a plugin zip onto this list</span>` : ''}<p class="settings-note" role="status" data-plugin-message></p></div></fieldset>`;
+        ? `<button type="button" class="settings-btn-inline app-plugin-refresh-btn" data-plugin-zip-pick>${INSTALL_ICON}<span>Install from zip…</span></button><button type="button" class="settings-btn-inline app-plugin-refresh-btn" data-plugin-git-open>${INSTALL_ICON}<span>Install from Git…</span></button><span class="settings-hint app-plugin-zip-hint">or drag a plugin zip onto this list</span>` : ''}<p class="settings-note" role="status" data-plugin-message></p></div></fieldset>`;
     card.querySelector('[data-plugin-search]').value = query;
     applyFilter();
   };
@@ -359,6 +463,20 @@ export async function mountPluginSettings(focusPlugin = null) {
     card.innerHTML = `<fieldset class="settings-fieldset"><legend id="${id('title')}" class="settings-label">Plugin hub</legend>
       <p class="settings-note error" role="status" data-plugin-message>${esc(message)}</p>
       <div><button type="button" class="settings-btn-inline app-plugin-refresh-btn" data-action="refresh">${ACTION_ICONS.apply}<span>Refresh plugins</span></button></div></fieldset>`;
+  };
+  // A re-render nobody asked for (a late reply) rebuilds the hub's markup, so
+  // focus would fall to the page: find the same control again and put it back.
+  const renderKeepingFocus = () => {
+    const focused = card.contains(document.activeElement) ? document.activeElement : null;
+    const row = focused?.closest('[data-app-plugin]')?.dataset.appPlugin;
+    const control = !focused ? null
+      : focused.id ? `#${CSS.escape(focused.id)}`
+      : focused.dataset.pluginTab ? `[data-plugin-tab="${CSS.escape(focused.dataset.pluginTab)}"]`
+      : ['.app-plugin-cog', 'orc-switch', '[data-private-zip]'].find(selector => focused.matches(selector));
+    render();
+    if (!control) return;
+    const scope = row ? card.querySelector(`[data-app-plugin="${CSS.escape(row)}"]`) : card;
+    scope?.querySelector(control)?.focus({ preventScroll: true });
   };
   card.addEventListener('error', event => {
     if (!event.target.matches?.('img.app-plugin-icon')) return;
@@ -472,7 +590,7 @@ export async function mountPluginSettings(focusPlugin = null) {
         return;
       }
       if (installed && hasTabs) selectTab(tabOf(installed));
-      hubMessage(`Installed ${name}.`);
+      hubMessage(result.message || `Installed ${name}.`);
       card.querySelector(`[data-app-plugin="${CSS.escape(result.installedId)}"]:not([hidden]) orc-switch`)?.focus();
     } catch (failure) {
       error.textContent = failure.message;
@@ -483,6 +601,67 @@ export async function mountPluginSettings(focusPlugin = null) {
       try { state = await refreshAppPlugins(); if (!signal.aborted) render(); } catch { /* the hub keeps its last state */ }
     }
   };
+  // Install from Git: one form. Errors stay in the dialog with the inputs.
+  const openGitInstall = (fields = {}) => {
+    hubMessage('');
+    const dialog = pluginGitDialog();
+    dialog.innerHTML = `<div class="plugin-zip">${pluginGitFormHtml({ follow: false })}</div><div slot="footer" class="plugin-zip-actions"><orc-button variant="secondary" data-plugin-git-close>Cancel</orc-button><orc-button variant="primary" data-plugin-git-install>Install</orc-button></div>`;
+    const field = name => dialog.querySelector(`[data-git-${name}]`);
+    field('url').value = fields.url || '';
+    field('branch').value = fields.branch || 'main';
+    field('subdir').value = fields.subdir || '';
+    const mode = field('follow');
+    mode.addEventListener('change', () => {
+      dialog.querySelector('[data-git-follow-hint]').textContent = GIT_FOLLOW_HINTS[mode.value === 'follow' ? 'follow' : 'pin'];
+    });
+    const error = dialog.querySelector('[data-plugin-git-error]');
+    const install = dialog.querySelector('[data-plugin-git-install]');
+    dialog.querySelector('[data-plugin-git-close]').onclick = () => dialog.close();
+    const submit = async () => {
+      const url = String(field('url').value || '').trim();
+      const show = text => { error.textContent = text; error.hidden = false; };
+      if (!url) { show('Enter the repository to install from.'); field('url').focus(); return; }
+      error.hidden = true;
+      install.toggleAttribute('disabled', true);
+      install.textContent = 'Installing…';
+      try {
+        const result = await mutatePlugins(state, 'install-git', {
+          url, branch: String(field('branch').value || '').trim() || 'main',
+          subdir: String(field('subdir').value || '').trim(), follow: mode.value === 'follow',
+        });
+        dialog.close();
+        if (signal.aborted) return;
+        state = result;
+        render();
+        const installed = state.plugins.find(plugin => plugin.id === result.installedId);
+        if (installed && hasTabs) selectTab(tabOf(installed));
+        hubMessage(result.message || `${installed?.name || result.installedId} installed from Git.`);
+      } catch (failure) {
+        show(failure.message);
+        install.toggleAttribute('disabled', false);
+        install.textContent = 'Install';
+        // A refusal for a stale revision passes once the hub holds the new one.
+        try { state = await refreshAppPlugins(); if (!signal.aborted) render(); } catch { /* the hub keeps its last state */ }
+      }
+    };
+    install.onclick = submit;
+    dialog.querySelector('form').addEventListener('submit', event => { event.preventDefault(); submit(); });
+    dialog.show();
+    // A filled-in repository leaves the branch, the part most likely to need a look.
+    field(fields.url ? 'branch' : 'url').focus();
+  };
+  // Takes a waiting palette request once plugins have loaded. A paired browser
+  // cannot install, so it says why instead of opening a form that would fail.
+  const takeGitInstallRequest = () => {
+    if (!gitInstallRequest || !state || signal.aborted || !card.isConnected || settingsTabFromHash() !== 'plugins') return false;
+    const fields = takeRequestedGitFields();
+    if (!fields) return false;
+    if (!state.canManage) { hubMessage('Install plugins from Orc on the host computer.'); return true; }
+    openGitInstall(fields);
+    return true;
+  };
+  gitInstallOpener = takeGitInstallRequest;
+  signal.addEventListener('abort', () => { if (gitInstallOpener === takeGitInstallRequest) gitInstallOpener = null; });
   const takeFiles = files => {
     if (files.length !== 1) { hubMessage('Drop one plugin zip at a time.'); return; }
     if (!isZipFile(files[0])) { hubMessage(`${files[0].name} is not a zip. Drop a plugin's .zip file.`); return; }
@@ -527,6 +706,20 @@ export async function mountPluginSettings(focusPlugin = null) {
     takeFiles([...event.dataTransfer.files]);
   }, { signal });
   card.addEventListener('click', event => {
+    const git = event.target.closest('button[data-plugin-git]');
+    if (git && !git.disabled) {
+      event.stopPropagation();
+      // The refresh icon spins while the check runs; perform disables it, and its re-render replaces it.
+      if (git.dataset.pluginGit === 'git-check') git.setAttribute('aria-busy', 'true');
+      perform(git.dataset.pluginGit, git.closest('[data-app-plugin]')?.dataset.appPlugin);
+      return;
+    }
+    const gitOpen = event.target.closest('button[data-plugin-git-open]');
+    if (gitOpen && !gitOpen.disabled) {
+      event.stopPropagation();
+      openGitInstall();
+      return;
+    }
     const pick = event.target.closest('button[data-plugin-zip-pick]');
     if (pick && !pick.disabled) {
       event.stopPropagation();
@@ -568,6 +761,7 @@ export async function mountPluginSettings(focusPlugin = null) {
     const entered = onPlugins && !wasPluginsTab;
     wasPluginsTab = onPlugins;
     if (!onPlugins || !state) return;
+    if (takeGitInstallRequest()) return;
     const anchor = settingsAnchorFromHash();
     if (anchor) {
       const target = shownPlugins().find(plugin => plugin.id === pluginIdFromAnchor(anchor));
@@ -584,7 +778,7 @@ export async function mountPluginSettings(focusPlugin = null) {
     .then(res => (res.ok ? res.json() : {}))
     .then(body => {
       zippable = Array.isArray(body.privatePlugins) ? body.privatePlugins : [];
-      if (zippable.length && state && card.isConnected && card.querySelector('[data-plugin-search]')) render();
+      if (zippable.length && state && card.isConnected && card.querySelector('[data-plugin-search]')) renderKeepingFocus();
     })
     .catch(() => {});
   try {
@@ -601,6 +795,7 @@ export async function mountPluginSettings(focusPlugin = null) {
     } else if (anchor && !card.closest('[hidden]')) {
       revealSettingsAnchor();
     }
+    takeGitInstallRequest();
   }
   catch (error) { if (!signal.aborted) renderLoadError(error.message); }
 }

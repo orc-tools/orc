@@ -21,7 +21,9 @@ named stays in the `routes` shape above. Orc saved presets under `profiles`
 before they were renamed; that key is still read when `presets` is absent.
 `icon` is optional: an agent's logo, or a small PNG, JPEG or WebP image.
 
-`lead` is the run's own agent, which plans and integrates. The other jobs are
+`planner` is the agent a plan run starts on when a launch on the preset
+writes a plan; with none, the plan runs on the lead. `lead` is the run's own
+agent, which builds the plan and integrates. The other jobs are
 the task roles a coordinator delegates. A job with no route stays the
 coordinator's call. `provider` is an agent core launches (`claude`, `codex`)
 or a harness package's id, and `model` is that agent's own id for it. `fast` is
@@ -38,9 +40,11 @@ stdlib-only: core imports this file from the server and from orc-routes.
 import re
 
 CONFIG_KEY = "orchestrate"
+PLANNER = "planner"
 LEAD = "lead"
 TASK_ROLES = ("implementation", "research", "review", "design", "test", "general")
-JOBS = (LEAD, *TASK_ROLES)
+# The planner and the lead run a run themselves; only TASK_ROLES are delegated.
+JOBS = (PLANNER, LEAD, *TASK_ROLES)
 EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
 PROVIDER = re.compile(r"[a-z][a-z0-9-]{0,31}")
 MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,127}")
@@ -232,7 +236,7 @@ def effort_words(found):
 
 
 def lines(rules):
-    """One line per routed job, the lead first: `test: claude-haiku-5-5 on
+    """One line per routed job, the planner and lead first: `test: claude-haiku-5-5 on
     claude, effort low`, with a speed tier when configured."""
     out = []
     for job in JOBS:
@@ -254,7 +258,8 @@ def has_task_routes(rules):
 def policy(rules):
     """What a coordinator is told about who does its delegated work, or None
     when no task role is routed and core's own wording stands."""
-    routed = [line for line in lines(rules) if not line.startswith(LEAD + ":")]
+    routed = [line for line in lines(rules)
+              if not line.startswith((PLANNER + ":", LEAD + ":"))]
     if not routed:
         return None
     unrouted = [role for role in TASK_ROLES if role not in rules["routes"]]

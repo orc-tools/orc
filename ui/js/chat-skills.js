@@ -1,6 +1,6 @@
 // The composer's `/` skill and `@` run pickers, and the pills that mark a
 // skill or a run named in the draft.
-import { esc, presentRun } from './core.js';
+import { esc, presentRun, stateText } from './core.js';
 import { runProject } from './filters.js';
 import { bindHoverCard, hideHoverCard, showHoverCard } from './hover-card.js';
 import { MENTION_PAD, RUN_REF, mentionAt, onRunsChange, padRunRefs, runCardHtml, runMentionsIn, runRefIn, searchRuns, unpadRunRefs } from './run-refs.js';
@@ -188,7 +188,7 @@ function runOptionHtml(run, id) {
   const state = presentRun(run).state;
   const title = run.meta?.title || run.id;
   return `<li id="${id}" role="option" aria-selected="false" data-run="${esc(run.id)}">
-      <strong>${esc(title)}</strong><span class="chat-skills-run" title="${esc(run.id)}"><span class="chat-run-card-dot" style="background:${esc(state.color)}"></span><span>${esc([state.label, run.id, runProject(run).label].filter(Boolean).join(' · '))}</span></span></li>`;
+      <strong>${esc(title)}</strong><span class="chat-skills-run" title="${esc(run.id)}"><span class="chat-run-card-dot" style="background:${esc(state.color)}"></span><span>${esc([stateText(state), run.id, runProject(run).label].filter(Boolean).join(' · '))}</span></span></li>`;
 }
 
 // `/` opens the skills and `@` the runs; either inside a word is a path or an

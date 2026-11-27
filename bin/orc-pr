@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Open a PR or push an approved commit for a single-repository Orc run."""
+"""Open a PR, push an approved commit, or update an open PR's body for a
+single-repository Orc run."""
 
 import argparse
 import hashlib
@@ -9,13 +10,17 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "ui"))
-from delivery_record import DeliveryError, meta_lock, now, read_meta, settle, write_meta
+from delivery_record import DeliveryError, meta_lock, now, read_meta, settle
+from run_lifecycle import write_meta
 from delivery_status import github_repo
 from linked_pr import cli_delivery_supported, linked_pr_url, query_open_pr
 from pr_body_images import local_paths
+import pr_body_sync
+import pr_updates
 from review_context import HOOK_GIT_ENV, PR_URL
 from run_relationships import valid_run_id
 
@@ -70,6 +75,8 @@ def pr_body(run_dir, repo):
 
 
 def create_pr(repo, slug, base, branch, title, body, images):
+    """Open the PR. Returns its URL and whether its body is pr-body.md whole:
+    an old gh leaves the Screenshots section out."""
     args = ["gh", "pr", "create", "--repo", slug, "--base", base, "--head", branch,
             "--title", title]
     if images and "--attach" not in command(["gh", "pr", "create", "--help"], repo):
@@ -78,10 +85,20 @@ def create_pr(repo, slug, base, branch, title, body, images):
         if local_paths(text, body):
             raise DeliveryError("GitHub CLI 2.99 or newer is required for images outside Screenshots")
         print("Screenshots skipped (gh < 2.99).", file=sys.stderr)
-        return command([*args, "--body-file", "-"], repo, stdin=text + "\n")
+        return command([*args, "--body-file", "-"], repo, stdin=text + "\n"), False
     for image in images:
         args.extend(["--attach", image])
-    return command([*args, "--body-file", body], repo)
+    return command([*args, "--body-file", body], repo), True
+
+
+def edit_body(repo, url, body, images):
+    """Replace the PR's body with pr-body.md, uploading its screenshots."""
+    args = ["gh", "pr", "edit", url, "--body-file", body]
+    if images and "--attach" not in command(["gh", "pr", "edit", "--help"], repo):
+        raise DeliveryError("GitHub CLI 2.99 or newer is required to update a PR body with screenshots")
+    for image in images:
+        args.extend(["--attach", image])
+    command(args, repo)
 
 
 def contains(repo, ancestor, descendant):
@@ -98,14 +115,26 @@ def remote_contains(repo, branch, head):
     return contains(repo, head, tracking)
 
 
+# GitHub can report a PR's old head for a few seconds after a push lands, so
+# the check asks again at these gaps (about 10 seconds in all) before failing.
+VERIFY_RETRY_SECONDS = (0.5, 1, 2, 3, 4)
+
+
 def verify_delivery(repo, url, branch, head, body=None, *, pushed_elsewhere=False):
     fields = "state,headRefName,headRefOid" + (",body" if body else "")
-    published = json.loads(command(["gh", "pr", "view", url, "--json", fields], repo))
-    shown = published.get("headRefOid")
-    if (published.get("state") != "OPEN" or published.get("headRefName") != branch
-            or not isinstance(shown, str)
-            or (shown != head and not (pushed_elsewhere and contains(repo, head, shown)))):
-        raise DeliveryError(f"{url} does not show the approved commit on the run branch")
+    for wait in (*VERIFY_RETRY_SECONDS, None):
+        published = json.loads(command(["gh", "pr", "view", url, "--json", fields], repo))
+        if published.get("state") != "OPEN" or published.get("headRefName") != branch:
+            raise DeliveryError(f"{url} is no longer an open PR on {branch}")
+        shown = published.get("headRefOid")
+        if isinstance(shown, str) and (
+                shown == head or (pushed_elsewhere and contains(repo, head, shown))):
+            break
+        if wait is None:
+            raise DeliveryError(
+                f"GitHub does not show commit {head[:7]} on {url} yet, so Orc stopped "
+                "before recording it. Wait a moment and click again.")
+        time.sleep(wait)
     # GitHub CLI can create the PR even when an attachment upload fails.
     if body and local_paths(published["body"], body):
         raise DeliveryError(f"{url} still references a local screenshot; repair the PR before retrying")
@@ -159,41 +188,65 @@ def pr_target(repo, branch, meta, linked):
     return slug, base, existing
 
 
+class AlreadyDelivered(Exception):
+    """The approved round already went out; carries its PR link."""
+
+
 def push_commit(repo, branch, head):
     # A checkout can advance outside Orc's lock. Push only the reviewed object.
     command(["git", "-c", "push.followTags=false", "-c", "remote.origin.mirror=false",
              "push", "origin", f"{head}:refs/heads/{branch}"], repo)
 
 
+# Exit status for a click that arrives after its round already went out: a
+# second click, another window, or a retry after a slow reply. The round's
+# card refreshes and says it is pushed instead of showing a gate error.
+ALREADY_DELIVERED = 3
+
+
+def replies_pending(run_dir, feedback):
+    return (feedback.get("repliesFile") == "pr-replies.json"
+            and (run_dir / "pr-replies.json").is_file() and not feedback.get("repliesPostedAt"))
+
+
+def feedback_delivered(run_dir, meta, expected, action, post_replies):
+    """True when this round's approval already did everything it asks for."""
+    feedback = meta.get("prFeedback") or {}
+    if feedback.get("commit") != expected or feedback.get("state") != "pushed":
+        return False
+    return not ((post_replies or action == "pr-replies") and replies_pending(run_dir, feedback))
+
+
 def deliver_feedback(run_dir, meta, expected, action, post_replies):
     feedback = meta.get("prFeedback") or {}
     if meta.get("phase") != "done" or feedback.get("commit") != expected:
-        raise DeliveryError("the reviewed feedback commit changed")
+        raise DeliveryError("The round's commit changed since you reviewed it, so nothing was pushed.")
     url = linked_pr_url(meta)
     if not url:
-        raise DeliveryError("feedback requires a linked PR")
-    has_replies = (feedback.get("repliesFile") == "pr-replies.json"
-                   and (run_dir / "pr-replies.json").is_file() and not feedback.get("repliesPostedAt"))
+        raise DeliveryError("This run has no linked PR to push to.")
+    has_replies = replies_pending(run_dir, feedback)
     if post_replies and not has_replies:
-        raise DeliveryError("this round has no pending replies")
+        raise DeliveryError("This round has no replies left to post.")
     if action == "pr-replies":
         if not post_replies or feedback.get("state") != "pushed":
-            raise DeliveryError("posting replies requires a pushed round and approval")
+            raise DeliveryError("Push the round's commit before posting its replies.")
     else:
+        if feedback.get("state") == "pushed":
+            raise DeliveryError("This round's commit is already pushed. Push comments posts its replies.")
         if feedback.get("state") != "awaiting-push":
-            raise DeliveryError("a feedback round waiting to push is required")
+            raise DeliveryError("This round is not waiting to push, so nothing was pushed.")
         repo = Path(meta["repoPath"]).expanduser().resolve()
         branch = meta["branch"]
         if any(command(["git", "rev-parse", "--verify", ref], repo) != expected
                for ref in ("HEAD", f"refs/heads/{branch}")):
-            raise DeliveryError("the branch or checkout moved past the reviewed feedback commit")
+            raise DeliveryError("The branch moved past the reviewed commit, so nothing was pushed.")
         pr_target(repo, branch, meta, url)
         push_commit(repo, branch, expected)
         verify_delivery(repo, url, branch, expected)
         feedback.update(state="pushed", pushedAt=now())
         meta["prUrl"] = url
         meta["status"] = "awaiting-gate" if has_replies else "complete"
-        write_meta(run_dir / "meta.json", meta)
+        write_meta(run_dir / "meta.json", meta, caller="orc-pr")
     if has_replies:
         args = [BIN / "orc-pr-replies", "--run-dir", run_dir]
         if not post_replies:
@@ -202,12 +255,48 @@ def deliver_feedback(run_dir, meta, expected, action, post_replies):
     return url
 
 
+def update_body(run_dir, expected):
+    """Put the run's current pr-body.md and screenshots on its open PR. The
+    click names the digest its bar showed, so a body that changed since is
+    never published unseen."""
+    path = run_dir / "meta.json"
+    with meta_lock(run_dir.parent, read_meta(path)):
+        meta = read_meta(path)
+        if (meta.get("runId") != run_dir.name or meta.get("phase") != "done"
+                or not pr_body_sync.offers_update(meta)):
+            raise DeliveryError("Only a finished run with an open PR can update its body.")
+        url = linked_pr_url(meta)
+        current = pr_body_sync.digest(run_dir)
+        if current is not None and pr_body_sync.published(run_dir) == current:
+            raise AlreadyDelivered(url)
+        if current != expected:
+            raise DeliveryError("pr-body.md changed since you clicked, so nothing was updated.")
+        repo = Path(meta["repoPath"]).expanduser().resolve()
+        pr_target(repo, meta["branch"], meta, url)
+        body, images = pr_body(run_dir, repo)
+        edit_body(repo, url, body, images)
+        # GitHub CLI updates the body even when an attachment upload fails.
+        shown = json.loads(command(["gh", "pr", "view", url, "--json", "body"], repo)).get("body") or ""
+        if local_paths(shown, body):
+            raise DeliveryError(f"{url} still references a local screenshot; update the body again")
+        if pr_body_sync.digest(run_dir) != current:
+            raise DeliveryError("pr-body.md changed while the PR was updating; update it again.")
+        pr_body_sync.record(run_dir, current)
+        pr_updates.note(str(run_dir), "body-updated", url)
+        return url
+
+
 def deliver(run_dir, args):
     path = run_dir / "meta.json"
     with meta_lock(run_dir.parent, read_meta(path)):
         meta = read_meta(path)
+        if (args.feedback_commit and meta.get("runId") == run_dir.name
+                and feedback_delivered(run_dir, meta, args.feedback_commit, args.action, args.post_replies)):
+            raise AlreadyDelivered(linked_pr_url(meta) or meta.get("prUrl") or "")
         if (meta.get("runId") != run_dir.name or not cli_delivery_supported(meta)
                 or meta.get("status") != "awaiting-gate" or meta.get("outcome")):
+            if args.feedback_commit:
+                raise DeliveryError("This round is no longer waiting for your approval, so nothing was pushed.")
             raise DeliveryError("a single-repository v4 run waiting at its approval gate is required")
         if args.feedback_commit:
             return deliver_feedback(run_dir, meta, args.feedback_commit, args.action, args.post_replies)
@@ -228,14 +317,21 @@ def deliver(run_dir, args):
             push_commit(repo, branch, head)
         created = not existing
         if created:
-            existing = check_pr(create_pr(repo, slug, base, branch, meta["title"], body, images), slug)
+            url, whole = create_pr(repo, slug, base, branch, meta["title"], body, images)
+            existing = check_pr(url, slug)
         verify_delivery(repo, existing, branch, head, body if not linked and images else None,
                         pushed_elsewhere=pushed_elsewhere)
-        settled = settle(read_meta(path), [existing], False)
+        # A body opened without its screenshots is not up to date, so its
+        # baseline matches nothing and the done bar offers Update PR body.
+        if created:
+            digest = pr_body_sync.digest(run_dir)
+            if digest:
+                pr_body_sync.record(run_dir, digest if whole else "screenshots-left-out")
+        settled = settle(meta, [existing], False)
         if created and base == meta.get("parentBranch"):
             # Orc moves this PR to the default branch once its parent lands.
             settled["prBase"] = base
-        write_meta(path, settled)
+        write_meta(path, settled, caller="orc-pr")
         return existing
 
 
@@ -245,12 +341,17 @@ def main():
     approval = parser.add_mutually_exclusive_group(required=True)
     approval.add_argument("--feedback-commit", help="full SHA of the approved PR feedback round")
     approval.add_argument("--authority", help="SHA-256 of the approved delivery-authority.json")
+    approval.add_argument("--update-body", metavar="DIGEST",
+                          help="put pr-body.md on the open PR; the digest Orc's done bar showed")
     parser.add_argument("--action", choices=["pr", "pr-push", "pr-replies"], help="action shown at Ship")
     parser.add_argument("--post-replies", action="store_true", help="post the approved feedback replies")
     args = parser.parse_args()
     if not valid_run_id(args.run_id):
         parser.error("invalid run ID")
-    if args.feedback_commit:
+    if args.update_body is not None:
+        if not re.fullmatch("[0-9a-f]{64}", args.update_body) or args.action or args.post_replies:
+            parser.error("expected only the PR body digest the done bar showed")
+    elif args.feedback_commit:
         if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", args.feedback_commit) or args.action == "pr":
             parser.error("expected the reviewed feedback commit and a feedback action")
     elif not re.fullmatch("[0-9a-f]{64}", args.authority) or args.post_replies or args.action == "pr-replies":
@@ -263,7 +364,13 @@ def main():
     try:
         if run_dir.is_symlink():
             raise DeliveryError("invalid run directory")
-        print(deliver(run_dir, args))
+        print(update_body(run_dir, args.update_body) if args.update_body is not None
+              else deliver(run_dir, args))
+    except AlreadyDelivered as done:
+        print(done)
+        print("orc-pr: the PR already shows this body; nothing to do" if args.update_body is not None
+              else "orc-pr: this round is already pushed; nothing to do", file=sys.stderr)
+        return ALREADY_DELIVERED
     except (DeliveryError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         detail = exc.stderr if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
         print(f"orc-pr: {detail.strip()}", file=sys.stderr)

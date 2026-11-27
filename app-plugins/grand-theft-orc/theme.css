@@ -147,7 +147,8 @@
 :root[data-grand-theft-orc] .run [data-part="run-meta"] > :last-child { font-variant-numeric: tabular-nums; }
 :root[data-grand-theft-orc] .run :is(.state-tag, .run-age) { font-size: 10.5px; line-height: 15px; }
 /* The status starts the line, whatever tags come with it. */
-:root[data-grand-theft-orc] .run .state-tag { order: -1; display: inline-flex; align-items: center; gap: 5px; }
+:root[data-grand-theft-orc] .run .state-tag { order: -1; display: inline-flex; align-items: center; gap: 0; }
+:root[data-grand-theft-orc] .run .state-want { white-space: pre; }
 /* The tags and age share one 15px line, and Unread fits on it. A PR badge or
    fork button is a taller target, so its row keeps the taller line. */
 :root[data-grand-theft-orc] .run [data-part="run-meta"]:not(:has(a, button)) > :is(:first-child, :last-child) {
@@ -158,7 +159,7 @@
    into the mask itself, as a blurred copy of the palm under the sharp one,
    because a drop shadow on the palm would be masked away with the rest. */
 :root[data-grand-theft-orc] .run .state-tag[data-state]::before {
-  content: ""; flex: none; width: 16px; height: 16px; margin: -2px -3px -2px -2px;
+  content: ""; flex: none; width: 16px; height: 16px; margin: -2px 2px -2px -2px;
   background: var(--grand-theft-orc-palm-lit, currentColor);
   -webkit-mask: var(--grand-theft-orc-palm) center / contain no-repeat; mask: var(--grand-theft-orc-palm) center / contain no-repeat;
 }

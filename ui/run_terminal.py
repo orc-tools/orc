@@ -332,6 +332,17 @@ class Shell:
     def send(self, text):
         self.write(text.encode())
 
+    def busy(self):
+        """Whether a command, not the shell's prompt, holds the terminal. The
+        shell leads its own session, so its pid is its process group."""
+        with self.lock:
+            if self.master < 0:
+                return False
+            try:
+                return os.tcgetpgrp(self.master) != self.proc.pid
+            except OSError:
+                return True
+
     def close(self):
         with self.lock:
             if self.closed:
@@ -377,6 +388,12 @@ def new_shell(run_id, cwd, command=None, env=None, enter=True):
 def shell_by_id(identity):
     with _SHELL_LOCK:
         return next((shell for shell in _SHELLS.values() if shell.id == identity), None)
+
+
+def shell_busy(run_id, index):
+    with _SHELL_LOCK:
+        shell = _SHELLS.get((run_id, index))
+    return bool(shell and shell.proc.poll() is None and shell.busy())
 
 
 def close_terminal(run_id, index=1):

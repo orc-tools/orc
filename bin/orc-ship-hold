@@ -25,7 +25,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "ui"))
 # The flock orc-ui's run_mutation_lock, orc-merge-main and orc-record-delivery
 # take, so a hold never races a gate answer or a queued merge on the same repo.
-from delivery_record import DeliveryError, meta_lock, now, read_meta, write_meta  # noqa: E402
+from delivery_record import DeliveryError, meta_lock, now, read_meta  # noqa: E402
+from run_lifecycle import write_meta
 
 
 MAX_REASON = 300
@@ -90,8 +91,8 @@ def main(argv=None):
             meta = read_meta(meta_path)
             changed = hold(meta, reason)
             if changed:
-                write_meta(meta_path, meta)
-    except (HoldError, DeliveryError) as exc:
+                write_meta(meta_path, meta, caller="orc-ship-hold")
+    except (HoldError, DeliveryError, OSError, ValueError) as exc:
         print("orc-ship-hold: %s" % exc, file=sys.stderr)
         return 1
 

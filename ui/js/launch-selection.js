@@ -2,7 +2,7 @@ import { syncModelCatalog } from './model-catalog.js';
 import { announce } from './core.js';
 import { mountEvalsCandidates } from './evals-candidates.js';
 import { cliCompatLaunchNotice, cliCompatStatus } from './cli-compat.js';
-import { cloudHarness, enabledHarnesses, harnessEffortLevels, harnessFixedEffort, harnessFor, harnessRunsIn, knownHarness, pluginEnabled } from './harnesses.js';
+import { cloudHarness, enabledHarnesses, harnessEffortLevels, harnessFixedEffort, harnessFor, harnessRunsIn, knownHarness } from './harnesses.js';
 import { currentLaunchPreset, launchPreset, launchPresets, pickLaunchPreset, subscribeLaunchPresets } from './launch-presets.js';
 import { browserLaunchStorage, effortLabel, fastLabel, isFastChoice, launchFastChoice, launchPermissionMode, launchTakesEffort, launchTakesFast, launchTakesPermissions, ncAgents, NC_DEFAULT_EFFORT, NC_EFFORT_OPTIONS, ncSavedAgent, ncSavedClaudeAccount, ncSupportsUltra, permissionDefaultSkips, rememberClaudeAccount, rememberLaunchAgent } from './launch-options.js';
 
@@ -577,7 +577,8 @@ export function createLaunchSelection({ storage = browserLaunchStorage, capabili
         selection.choose({ [key]: value }, { remember: false });
       }
       if (ownPreset && typeof options.preset === 'string') {
-        // A plan keeps the launch's model, effort and speed even if its preset's lead changes.
+        // A plan keeps the launch's model and speed even if its preset's lead changes;
+        // plan-builds.js reverts effort to the preset lead's default when set.
         restoredPreset = options.preset;
         orchestration = true;
       }
@@ -845,7 +846,7 @@ export function mountLaunchSelection(root, { capabilities = {}, presetAgent, acc
     cliNotice.hidden = !notice;
   }
   function syncPackageToggles(state) {
-    if (autoMergeSlot) autoMergeSlot.hidden = !pluginEnabled('auto-merge') || !autoMergeSlot.querySelector('#nc-auto-merge') || state.evals;
+    if (autoMergeSlot) autoMergeSlot.hidden = globalThis.ORC_OFFER_SHIP_WHEN_DONE === false || !autoMergeSlot.querySelector('#nc-auto-merge') || state.evals;
   }
   picker.addEventListener('change', () => {
     const { agent, model, preset } = picker.choice;
@@ -887,6 +888,14 @@ export function mountLaunchSelection(root, { capabilities = {}, presetAgent, acc
       }
     };
     window.addEventListener('orc-plugins-changed', onPluginsChanged);
+    const onConfigChanged = () => {
+      if (picker.isConnected === false) {
+        window.removeEventListener('orc-config-changed', onConfigChanged);
+        return;
+      }
+      syncPackageToggles(selection.value);
+    };
+    window.addEventListener('orc-config-changed', onConfigChanged);
     const stopPresets = subscribeLaunchPresets(() => {
       if (picker.isConnected === false) {
         stopPresets();

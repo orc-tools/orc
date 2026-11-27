@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import app_plugins
+import integrations
 import cloud_account
 import cloud_worker
 
@@ -61,6 +62,7 @@ def _gh(*args, data=None):
     if not gh:
         raise BackupError('The gh CLI is not installed. Install it from https://cli.github.com.')
     env = dict(os.environ, GH_PROMPT_DISABLED='1', GH_NO_UPDATE_NOTIFIER='1')
+    integrations.note('backup')
     try:
         result = subprocess.run([gh, *args], input=data, capture_output=True, text=True,
                                 env=env, timeout=GH_TIMEOUT)

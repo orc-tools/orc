@@ -84,8 +84,8 @@
 @media (max-width: 700px) {
   [data-usage-summary]:has(> .usage-row:nth-child(4)) > .usage-row:nth-child(2n) .usage-tooltip { left: auto; right: 0; --usage-tip-room: min(100cqw, calc(200% + var(--usage-column-gap))); }
 }
-.usage-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 3px; }
-.usage-tooltip { display: none; position: absolute; bottom: 100%; left: 0; width: max-content; min-width: min(220px, var(--usage-tip-room, 100cqw)); max-width: min(440px, calc(100vw - 32px), var(--usage-tip-room, 100vw)); box-sizing: border-box; max-height: min(480px, 65dvh); overflow-y: auto; padding: 10px 12px; z-index: var(--z-tooltip); border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--heading); box-shadow: 0 8px 24px #0004; font-size: 12px; font-weight: 400; line-height: 1.45; overflow-wrap: anywhere; cursor: default; }
+.usage-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+.usage-tooltip { display: none; position: absolute; bottom: 100%; left: 0; width: max-content; min-width: min(220px, var(--usage-tip-room, 100cqw)); max-width: min(440px, calc(100vw - 32px), var(--usage-tip-room, 100vw)); box-sizing: border-box; max-height: min(480px, 65dvh); overflow-y: auto; padding: 10px 12px; z-index: var(--z-tooltip); border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--heading); box-shadow: var(--float-shadow); font-size: 12px; font-weight: 400; line-height: 1.45; overflow-wrap: anywhere; cursor: default; }
 .usage-tooltip > strong, .usage-tooltip-email { display: block; }
 .usage-tooltip-email { color: var(--muted-strong); font-size: 11px; }
 .usage-tip-windows { clear: both; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 4px 8px; margin-top: 8px; font-variant-numeric: tabular-nums; }
@@ -145,7 +145,7 @@
    default, so the wrapper draws the battery and the meter stays for
    assistive tech. Five cells of 4px with 1px gaps; the trailing gap is
    why the right padding is a pixel short. */
-.usage-battery { --usage-edge: color-mix(in srgb, var(--muted-strong) 70%, transparent); position: relative; display: grid; grid-template-rows: 100%; box-sizing: content-box; width: 25px; height: 6px; padding: 2px 1px 2px 2px; margin-right: 3px; border: 1px solid var(--usage-edge); border-radius: 3px; }
+.usage-battery { --usage-edge: color-mix(in srgb, var(--muted-strong) 70%, transparent); position: relative; display: grid; grid-template-rows: 100%; box-sizing: content-box; width: 25px; height: 6px; padding: 2px 1px 2px 2px; margin-right: 3px; border: 1px solid var(--usage-edge); border-radius: 4px; }
 .usage-battery::after { content: ""; position: absolute; top: 2px; right: -4px; width: 2px; height: 6px; border-radius: 0 1px 1px 0; background: var(--usage-edge); }
 .usage-battery::before { content: ""; grid-area: 1 / 1; border-radius: 1px;
   background: linear-gradient(var(--usage-bar), var(--usage-bar)) 0 0 / calc(var(--usage-cells) * 20%) 100% no-repeat, color-mix(in srgb, var(--muted-strong) 22%, transparent);

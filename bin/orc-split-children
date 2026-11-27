@@ -24,6 +24,9 @@ import uuid
 
 
 BIN = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN.parent / "ui"))
+
+from run_lifecycle import Snapshot, write_meta
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\Z")
 SHIP_PHASES = {"build", "ship"}
 COPIED_META = ("source", "sourceRef", "harness", "sessionBackend", "host", "machineId", "launchedBy",
@@ -52,7 +55,7 @@ def write_json(path: Path, value) -> None:
 
 
 def eligible_parent(run_dir: Path) -> dict:
-    meta = read_json(run_dir / "meta.json")
+    meta = Snapshot(read_json(run_dir / "meta.json"))
     if meta.get("splitChildren"):
         return meta
     if meta.get("lifecycleVersion") != 4 or meta.get("route") != "minimal-shell":
@@ -127,10 +130,14 @@ def prepare_child(parent_dir: Path, parent: dict, authority: dict, entry: dict) 
     if not RUN_ID.fullmatch(child_id):
         raise SplitError(f"child run id is too long: {child_id}")
     child_dir = parent_dir.parent / child_id
-    if (child_dir / "meta.json").is_file():
-        existing = read_json(child_dir / "meta.json")
+    meta_path = child_dir / "meta.json"
+    existing = {}
+    if meta_path.is_file():
+        existing = read_json(meta_path)
         if existing.get("splitFrom", {}).get("runId") != parent["runId"]:
             raise SplitError(f"{child_id} already exists and is not this run's child")
+        if existing.get("phase") != "ship" or existing.get("status") != "running":
+            raise SplitError(f"{child_id} has already moved past split setup")
     base, repo = entry.get("buildBaseCommit"), entry.get("repoPath")
     if not base or not repo:
         raise SplitError(f"repository {participant} has no build base or checkout")
@@ -172,7 +179,7 @@ def prepare_child(parent_dir: Path, parent: dict, authority: dict, entry: dict) 
     if parent.get("harness", "claude") == "claude" and parent.get("sessionId"):
         meta["sessionId"] = str(uuid.uuid4())
         meta["forkSessionFrom"] = parent["sessionId"]
-    write_json(child_dir / "meta.json", meta)
+    write_meta(meta_path, {**existing, **meta}, caller="orc-split-children", expected=existing)
     # Leave .headless/launch.json unset so the child's first turn materializes
     # child-scoped orchestration and devd MCP flags instead of inheriting the parent's.
 
@@ -211,12 +218,11 @@ def split(run_dir: Path) -> list[dict]:
     children = [{"participantId": entry["id"],
                  "runId": prepare_child(run_dir, parent, authority, entry)}
                 for entry in parent["repositories"]]
-    current = read_json(run_dir / "meta.json")
     # The children own the worktrees now; a finished parent that kept one
     # would have it torn down under them.
-    current.pop("worktree", None)
-    current.update(splitChildren=children, phase="done", status="complete")
-    write_json(run_dir / "meta.json", current)
+    parent.pop("worktree", None)
+    parent.update(splitChildren=children, phase="done", status="complete")
+    write_meta(run_dir / "meta.json", parent, caller="orc-split-children")
     return children
 
 
@@ -226,7 +232,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         children = split(args.run_dir.expanduser().resolve())
-    except SplitError as exc:
+    except (SplitError, OSError, ValueError) as exc:
         print(f"ERROR {exc}", file=sys.stderr)
         return 1
     print(json.dumps({"ok": True, "children": children}))

@@ -1018,7 +1018,7 @@
   100% { translate: -100% calc(-100% - 10px); opacity: 0; }
 }
 
-/* Typing heat (see index.html's --typing-heat): the rim warms from the
+/* Typing heat (see project-home.css's --typing-heat): the rim warms from the
    accent to lava, and on a fast run it flickers like the crater. */
 @keyframes dino-heat-flicker {
   0%, 40%, 100% { --typing-pulse: 0; }

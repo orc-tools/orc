@@ -12,4 +12,5 @@ fi
 if [ -n "${ORC_TEST_REAL_HOME:-}" ] && [ "$HOME" = "$ORC_TEST_REAL_HOME" ] && [ -z "${ORC_HOME:-}" ]; then exit 0; fi
 # A sync holding the merge lock installs once it lets go.
 [ -n "${ORC_DEFER_RUNTIME_CHECK:-}" ] && exit 0
-exec python3 "$root/ui/runtime_updates.py" check --repo "$root" --old "${1:-}"
+# -B: bytecode written here would make the checkout look edited.
+exec python3 -B "$root/ui/runtime_updates.py" check --repo "$root" --old "${1:-}"

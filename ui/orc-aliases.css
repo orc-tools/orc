@@ -70,6 +70,11 @@
   --placeholder: light-dark(
     color-mix(in srgb, var(--muted) 70%, var(--text)),
     color-mix(in srgb, var(--muted) 82%, var(--text)));
+  /* The one drop shadow in Orc, for a layer that floats above the page: a
+     menu, popover, tooltip, toast, drawer or something being dragged
+     (DESIGN.md, the Floating Layer Rule). One layer with no spread, so it also
+     works inside `filter: drop-shadow()`. A theme may set its own. */
+  --float-shadow: 0 8px 24px light-dark(rgb(0 0 0 / .2), rgb(0 0 0 / .36));
 }
 /* Every text box takes its placeholder colour from here, so a new one needs no
    rule. The ::part selectors reach the fields inside <orc-input>,

@@ -1,7 +1,7 @@
 // orc-ui: the sidebar's bottom row. Plugins add their buttons to it, and the
 // ones that do not fit move into the More menu.
 
-import { orcRegisterOverlayCloser } from './activity.js';
+import { orcRegisterOverlayCloser } from './panel-navigation.js';
 import { $ } from './core.js';
 
 const footer = $('sidebar-footer');

@@ -496,7 +496,7 @@
   100% { translate: 0 -160%; opacity: 0; }
 }
 
-/* Typing heat (see index.html's --typing-heat): fast typing turns the
+/* Typing heat (see project-home.css's --typing-heat): fast typing turns the
    backlight up, the composer's edge running from rest through the
    handheld's purple to white. It holds steady, with no beat. */
 :root[data-pocket] .newconv-prompt[data-typing-hot] { animation: none; }

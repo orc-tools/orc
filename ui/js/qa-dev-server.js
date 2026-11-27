@@ -36,7 +36,9 @@ export function compactSetupNotice(project = '', esc = value => String(value ?? 
   return `<button type="button" class="qa-link" data-act="setup-server"${project ? ` data-setup-project="${esc(project)}"` : ''}>Set up dev server</button>`;
 }
 
-async function saveServer(project, values) {
+// Saves a project's Live dev server through config.json, as Settings does,
+// and refuses to replace one saved meanwhile.
+export async function saveProjectDevServer(project, values) {
   const response = await fetch('/api/config', { cache: 'no-store' });
   if (!response.ok) throw new Error('Could not read the project settings.');
   const { config, configMtime } = await response.json();
@@ -79,7 +81,7 @@ function wireSetupForm(form, project, { onSaved, onAskAgent, extraDisable = [] }
     setDisabled(true);
     if (errorLine) errorLine.textContent = '';
     try {
-      await saveServer(project, values);
+      await saveProjectDevServer(project, values);
       onSaved?.();
     } catch (error) {
       if (errorLine) errorLine.textContent = error.message;

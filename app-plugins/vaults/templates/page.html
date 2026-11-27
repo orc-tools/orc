@@ -8,29 +8,10 @@
 <style>
 {shared_style}
 {page_style}
-{art_style}
 </style>
 </head>
 <body>
 {body}
-<aside class="chat" aria-label="Vault chat">
-  <div class="chat-inner">
-    <div class="chat-heading">
-      <label for="chat-draft"><span class="chat-mark" aria-hidden="true">✳</span> Vault chat</label>
-      <button type="button" id="chat-history" aria-controls="conversation" aria-expanded="false">Conversation <span id="turn-count"></span></button>
-    </div>
-    <section id="conversation" aria-label="Conversation" hidden>
-      <p id="chat-empty">Your conversation will appear here.</p>
-      <ol id="chat-turns"></ol>
-    </section>
-    <div class="composer">
-      <textarea id="chat-draft" rows="1" maxlength="8000" aria-label="Message to your vault" placeholder="What would you like to change?"></textarea>
-      <button type="button" id="chat-send" disabled>Send <span aria-hidden="true">↑</span></button>
-      <button type="button" id="chat-stop" hidden>Stop</button>
-    </div>
-    <p id="chat-status" role="status"></p>
-  </div>
-</aside>
 <script>
 {chat_script}
 </script>

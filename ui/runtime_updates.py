@@ -161,6 +161,12 @@ def status(repo):
     return result
 
 
+def ignore_local_clutter(repo):
+    """Python's __pycache__ and Finder's .DS_Store are not edits (local_clutter.py)."""
+    import local_clutter
+    local_clutter.ignore(repo)
+
+
 def uncommitted(repo):
     """The paths ``git status`` lists, untracked folders as one entry."""
     # git() strips the output, and with it the first line's blank status column
@@ -235,6 +241,7 @@ def check(repo, old='', retry=False):
         needs_update = current['state'] in ('pending', 'installing', 'failed', 'blocked')
         if not needs_update and (retry or not inputs_differ(repo, old, desired)):
             return 0
+        ignore_local_clutter(repo)
         reason = eligible(repo, desired)
         if reason:
             # The block lasts until an update gets through, however far main
@@ -436,7 +443,8 @@ def pull(repo):
         return sig_error
     if git(repo, 'symbolic-ref', '-q', 'HEAD') != ref:
         return f'{name} has new commits, but {repo} is not on {branch}'
-    if git(repo, 'status', '--porcelain', '--untracked-files=normal'):
+    ignore_local_clutter(repo)
+    if uncommitted(repo):
         return f'{name} has new commits, but {repo} has uncommitted changes'
     # post-merge runs the reinstall hook, which promotes the new head itself.
     merged = subprocess.run(['git', '-C', str(repo), 'merge', '--ff-only', '--quiet', upstream],

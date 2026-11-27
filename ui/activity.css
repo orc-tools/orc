@@ -28,7 +28,7 @@
 }
 .act-chip:hover { border-color: var(--accent); }
 .act-chip-facet { color: var(--muted-strong); }
-.act-chip-x { color: var(--muted-strong); font-size: 10px; }
+.act-chip-x { color: var(--muted-strong); font-size: 11px; }
 .act-sub .linkish { font-size: 12px; }
 
 /* One band, four figures, hairlines between: the page's only numerals at display size. */

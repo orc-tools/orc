@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
-"""Check or synchronize Orc's embedded theme declarations."""
+"""Check or synchronize Orc's embedded theme declarations.
+
+`app-plugins/swamp/tokens.json` is the palette. This writes it into the theme
+stylesheet, the reference page, the deck and `DESIGN.md`, then rebuilds the
+design sidecar, `.impeccable/design.json`, from `DESIGN.md`, so a token lookup
+gives one answer.
+
+The sidecar's colours, type names and narrative are derived and must not be
+edited by hand. Its `components`, `shadows`, `motion` and `breakpoints` cannot
+be read out of `DESIGN.md`: they are kept as written, apart from the fallback
+colours in the components' CSS, which follow the night palette.
+"""
 
 import argparse
+from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import re
 import subprocess
@@ -17,9 +30,16 @@ TARGETS = {
     CANONICAL: ("day", "night", "night", "day"),
     ROOT / "docs" / "deck" / "index.html": ("night",),
 }
+DESIGN = ROOT / "DESIGN.md"
+SIDECAR = ROOT / ".impeccable" / "design.json"
 RAW_TARGETS = tuple(TARGETS) + (
-    ROOT / "DESIGN.md",
+    DESIGN,
 )
+# DESIGN.md's colour sections, which are also the sidecar's colour roles.
+COLOR_ROLES = ("primary", "neutral", "tertiary")
+# Lightness and share of the colour's own chroma for each step of a tonal
+# ramp, dark to light: chroma falls away near black and white.
+RAMP_STEPS = ((20, .6), (30, .8), (40, .95), (50, 1), (60, 1), (70, .8), (82, .5), (94, .2))
 
 
 def previous_palettes(current):
@@ -92,6 +112,175 @@ def replace_design_register(source, palettes):
     return source
 
 
+def frontmatter_block(design, key):
+    """The lines indented under a top-level `key:` of DESIGN.md's frontmatter."""
+    frontmatter = design.split("---", 2)[1]
+    match = re.search(r"^%s:\n((?:[ \t]+.*\n)*)" % re.escape(key), frontmatter, re.MULTILINE)
+    if not match:
+        raise ValueError("DESIGN.md frontmatter has no %s" % key)
+    return match.group(1)
+
+
+def section(design, heading, level):
+    """The body under a heading whose text starts with `heading`, up to the next
+    heading of that level or above."""
+    match = re.search(r"^#{%d} (?:\d+\. )?%s.*\n" % (level, re.escape(heading)),
+                      design, re.MULTILINE)
+    if not match:
+        raise ValueError("DESIGN.md has no %s section" % heading)
+    rest = design[match.end():]
+    end = re.search(r"^#{1,%d} " % level, rest, re.MULTILINE)
+    return rest[:end.start()] if end else rest
+
+
+def bullets(body):
+    return [match.group(1).strip() for match in re.finditer(r"^- (.+)$", body, re.MULTILINE)]
+
+
+def oklch(value):
+    """A hex colour as OKLCH lightness (0-1), chroma and hue in degrees."""
+    channels = [int(value[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+    r, g, b = [channel / 12.92 if channel <= .04045 else ((channel + .055) / 1.055) ** 2.4
+               for channel in channels]
+    l = (.4122214708 * r + .5363325363 * g + .0514459929 * b) ** (1 / 3)
+    m = (.2119034982 * r + .6806995451 * g + .1073969566 * b) ** (1 / 3)
+    s = (.0883024619 * r + .2817188376 * g + .6299787005 * b) ** (1 / 3)
+    lightness = .2104542553 * l + .7936177850 * m - .0040720468 * s
+    a = 1.9779984951 * l - 2.4285922050 * m + .4505937099 * s
+    b = .0259040371 * l + .7827717662 * m - .8086757660 * s
+    return lightness, math.hypot(a, b), math.degrees(math.atan2(b, a)) % 360
+
+
+def tonal_ramp(value):
+    _, chroma, hue = oklch(value)
+    return ["oklch(%d%% %.3f %d)" % (lightness, chroma * share, round(hue) % 360)
+            for lightness, share in RAMP_STEPS]
+
+
+def color_names(design):
+    """Map each hex in the Colors section to its (display name, role).
+
+    A bullet reads `**Name** (#day / #night)`; one that names two colours reads
+    `**First / Second** (#day / #night, #day / #night)`.
+    """
+    colors = section(design, "Colors", 2)
+    names = {}
+    for role in COLOR_ROLES:
+        for bullet in bullets(section(colors, role.capitalize(), 3)):
+            match = re.match(r"\*\*(.+?)\*\* \(([^)]*)\)", bullet)
+            if not match:
+                continue
+            labels = match.group(1).split(" / ")
+            pairs = match.group(2).split(", ")
+            if len(labels) != len(pairs):
+                labels = [match.group(1)] * len(pairs)
+            for label, pair in zip(labels, pairs):
+                for value in re.findall(r"#[0-9a-fA-F]{6}", pair):
+                    names.setdefault(value.lower(), (label, role))
+    return names
+
+
+def color_meta(design):
+    names = color_names(design)
+    meta = {}
+    for token, value in re.findall(r'^\s+([\w-]+):\s*"(#[0-9a-fA-F]{6})"',
+                                   frontmatter_block(design, "colors"), re.MULTILINE):
+        if value.lower() not in names:
+            raise ValueError("DESIGN.md names no colour for %s (%s) under ## 2. Colors"
+                             % (token, value))
+        label, role = names[value.lower()]
+        theme = token.rsplit("-", 1)[-1]
+        meta[token] = {
+            "role": role,
+            "displayName": "%s (%s)" % (label, theme),
+            "canonical": value.lower(),
+            "tonalRamp": tonal_ramp(value),
+        }
+    return meta
+
+
+def typography_meta(design):
+    purposes = {}
+    for bullet in bullets(section(section(design, "Typography", 2), "Hierarchy", 3)):
+        match = re.match(r"\*\*(.+?)\*\*[^:]*:\s*(.+)", bullet)
+        if match:
+            purposes[match.group(1).lower()] = (match.group(1), match.group(2))
+    meta = {}
+    for token in re.findall(r"^  ([\w-]+):\s*$", frontmatter_block(design, "typography"),
+                            re.MULTILINE):
+        if token not in purposes:
+            raise ValueError("DESIGN.md's Hierarchy list has no entry for %s" % token)
+        label, purpose = purposes[token]
+        meta[token] = {"displayName": label, "purpose": purpose}
+    return meta
+
+
+def narrative(design):
+    overview = section(design, "Overview", 2)
+    north_star = re.search(r'\*\*Creative North Star: "(.+?)"\*\*', overview)
+    if not north_star:
+        raise ValueError("DESIGN.md's Overview has no Creative North Star line")
+    philosophy, _, characteristics = overview[north_star.end():].partition(
+        "**Key Characteristics:**")
+    rules = []
+    for match in re.finditer(r"^## \d+\. (.+)\n", design, re.MULTILINE):
+        name = match.group(1)
+        for rule in re.finditer(r"^\*\*(The .+? Rule)\.\*\* (.+)$", section(design, name, 2),
+                                re.MULTILINE):
+            rules.append({"name": rule.group(1), "body": rule.group(2).strip(),
+                          "section": name.lower()})
+    guidance = section(design, "Do's and Don'ts", 2)
+    plain = lambda items: [re.sub(r"^\*\*(.+?)\*\*", r"\1", item) for item in items]
+    return {
+        "northStar": north_star.group(1),
+        "overview": "\n\n".join(part.strip() for part in philosophy.split("\n\n")
+                                if part.strip()),
+        "keyCharacteristics": bullets(characteristics),
+        "rules": rules,
+        "dos": plain(bullets(section(guidance, "Do:", 3))),
+        "donts": plain(bullets(section(guidance, "Don't:", 3))),
+    }
+
+
+def replace_fallback_colors(css, palette):
+    """Point each `var(--token, #hex)` fallback at the palette's own value."""
+    return re.sub(
+        r"(var\(--([\w-]+),\s*)#[0-9a-fA-F]{3,8}(\))",
+        lambda match: match.group(1) + palette.get(match.group(2), match.group(0)[
+            len(match.group(1)):-1]) + match.group(3),
+        css,
+    )
+
+
+def sidecar_document(design, existing, palettes):
+    title = re.search(r"^# (.+)$", design, re.MULTILINE)
+    extensions = dict(existing.get("extensions") or {})
+    extensions["colorMeta"] = color_meta(design)
+    extensions["typographyMeta"] = typography_meta(design)
+    for kept in ("shadows", "motion", "breakpoints"):
+        extensions.setdefault(kept, [])
+    components = [dict(component, css=replace_fallback_colors(component["css"], palettes["night"]))
+                  for component in existing.get("components") or []]
+    return {
+        "schemaVersion": 2,
+        "generatedAt": existing.get("generatedAt", ""),
+        "title": title.group(1) if title else "",
+        "extensions": extensions,
+        "components": components,
+        "narrative": narrative(design),
+    }
+
+
+def render_sidecar(design, source, palettes):
+    """The sidecar's text for this DESIGN.md. `generatedAt` moves only when
+    something else in the file does."""
+    existing = json.loads(source) if source.strip() else {}
+    document = sidecar_document(design, existing, palettes)
+    if document != existing:
+        document["generatedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+
+
 def desired_files():
     palettes = json.loads(SOURCE.read_text())
     previous = previous_palettes(palettes)
@@ -99,8 +288,9 @@ def desired_files():
              for path in RAW_TARGETS}
     for path, themes in TARGETS.items():
         files[path] = replace_css_blocks(files[path], palettes, themes)
-    design = ROOT / "DESIGN.md"
-    files[design] = replace_design_register(files[design], palettes)
+    files[DESIGN] = replace_design_register(files[DESIGN], palettes)
+    source = SIDECAR.read_text() if SIDECAR.is_file() else ""
+    files[SIDECAR] = render_sidecar(files[DESIGN], source, palettes)
     return files
 
 
@@ -109,15 +299,22 @@ def main():
     parser.add_argument("--write", action="store_true", help="synchronize embedded declarations")
     args = parser.parse_args()
     drift = []
-    for path, desired in desired_files().items():
-        if path.read_text() == desired:
+    try:
+        files = desired_files()
+    except ValueError as error:
+        print("orc-theme: %s" % error, file=sys.stderr)
+        return 1
+    for path, desired in files.items():
+        if path.is_file() and path.read_text() == desired:
             continue
         drift.append(path)
         if args.write:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(desired)
     if drift and not args.write:
         for path in drift:
             print(path.relative_to(ROOT))
+        print("stale: run bin/orc-theme --write and commit the result", file=sys.stderr)
         return 1
     if args.write:
         print("synchronized %d file(s)" % len(drift))

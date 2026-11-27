@@ -101,28 +101,6 @@ def settings(config):
             "effort": saved["effort"] if saved.get("effort") in EFFORTS else DEFAULT["effort"]}
 
 
-def model_label(model, rows=()):
-    """A model's name as the chat's badge shows it: Sonnet 5.5."""
-    for row in rows:
-        if row.get("id") == model and isinstance(row.get("label"), str) and row["label"].strip():
-            return re.sub(r"^Claude\s+", "", row["label"].strip())
-    match = re.fullmatch(r"claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?", model)
-    if not match:
-        return model
-    return "%s %s" % (match[1].capitalize(), match[2] + ("." + match[3] if match[3] else ""))
-
-
-def models(chosen, default, rows=None):
-    """The models the badge offers: the ones Claude Code listed when Orc's
-    model picker last asked, with the default and the window's own choice
-    always among them. Asking takes seconds, so the chat never does."""
-    rows = model_catalog.models_for(AGENT, discover=False) if rows is None else rows
-    # Before the picker has asked, the models Orc ships with.
-    listed = [row["id"] for row in rows if _model(row.get("id"))] or sorted(model_defaults.SHIPPED[AGENT])
-    ids = list(dict.fromkeys([*listed, default, chosen]))
-    return [{"id": model, "label": model_label(model, rows)} for model in ids]
-
-
 # ---------- The record ----------
 
 def _read(store, run_id):
@@ -349,7 +327,7 @@ def view(record, defaults, *, working=None, rows=None):
     return {"messages": [{key: message[key] for key in ("role", "text", "error", "stopped", "at") if key in message}
                          for message in record.get("messages") or []],
             "working": working, "model": model, "effort": effort,
-            "models": models(model, defaults["model"], rows), "efforts": list(EFFORTS),
+            "models": model_defaults.claude_choices(model, defaults["model"], rows), "efforts": list(EFFORTS),
             "knowsDiff": bool(record.get("diff")),
             "unavailable": None if shutil.which(binary) else
             "Claude Code is not installed on this computer, so Greg cannot answer."}

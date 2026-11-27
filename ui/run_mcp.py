@@ -163,6 +163,17 @@ def view(run_id: str, meta: dict) -> dict:
     return {"servers": [_public(run_id, server) for server in listed], "setups": found, "more": more}
 
 
+def sign_in(run_id: str) -> tuple[int, dict]:
+    """Starts the sign-in the run's server takes its login from, and answers
+    the page to finish it on. orc-devd holds that login and adds it to each
+    request, so Orc keeps no token: the tab connects again once it lands."""
+    try:
+        url = devd_launch.begin_login(run_id)
+    except devd_launch.LoginError as exc:
+        return 502, {"error": str(exc)}
+    return 200, {"ok": True, "url": url}
+
+
 def act(run_id: str, meta: dict, data: dict, client_info: dict | None = None) -> tuple[int, dict]:
     """POST /runs/<id>/mcp: one inspector action (mcp_inspect.act) on one of
     the run's servers. A suggestion also reads the run's title, so the
@@ -170,6 +181,8 @@ def act(run_id: str, meta: dict, data: dict, client_info: dict | None = None) ->
     server = next((item for item in servers(run_id, meta) if item["id"] == data.get("server")), None)
     if server is None:
         return 404, {"error": "This run has no MCP server with that id."}
+    if data.get("action") == "sign-in":
+        return sign_in(run_id)
     title = meta.get("title")
     context = ["The server belongs to a coding run: %s" % title] if isinstance(title, str) and title else []
     return mcp_inspect.act((run_id, server["id"]), server, data, client_info=client_info, context=context)

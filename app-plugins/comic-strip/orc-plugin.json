@@ -1,6 +1,7 @@
 {
   "apiVersion": 2,
   "id": "comic-strip",
+  "icon": "icon.png",
   "name": "Comic Strip",
   "version": "1.0.0",
   "description": "Follow a paper-plane courier across three inked panels, from warm newsprint to midnight blue.",
@@ -10,7 +11,7 @@
       "id": "comic-strip",
       "label": "Comic Strip",
       "css": "theme.css",
-      "icon": "icon.png",
+      "icon": "dock-icon.png",
       "favicon": "favicon.png",
       "gary": "gary.png",
       "sheila": "sheila.png",

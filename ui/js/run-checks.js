@@ -132,7 +132,7 @@ function checkRowHtml(runId, check) {
   const pictures = checkPictures(runId, check);
   const isLog = !pictures.length && typeof check.artifact === 'string' && check.artifact.endsWith('.log');
   const open = check.artifact
-    ? `<a class="run-check-open" href="${esc(fileUrl(runId, check.artifact))}" target="_blank" rel="noopener" data-focus-key="open:${esc(check.id)}"${pictures.length ? ` data-pictures="${esc(JSON.stringify(pictures))}"` : ''} aria-label="${pictures.length ? 'View the pictures' : isLog ? 'Open the log' : 'Open the file'} for: ${esc(check.label)}">${isLog ? 'View log' : 'Open'}</a>` : '';
+    ? `<a class="run-check-open" href="${esc(fileUrl(runId, check.artifact))}" target="_blank" rel="noopener" data-focus-key="open:${esc(check.id)}"${pictures.length ? ` data-pictures="${esc(JSON.stringify(pictures))}"` : ` data-text-stage data-text-title="${esc(check.label)}" data-text-path="${esc(check.artifact)}" data-copy-label="${isLog ? 'Copy log' : 'Copy file'}"`} aria-label="${pictures.length ? 'View the pictures' : isLog ? 'Open the log' : 'Open the file'} for: ${esc(check.label)}">${isLog ? 'View log' : 'Open'}</a>` : '';
   // A failure on main too says so first, in the card's amber; one a run is
   // fixing names that run first, linked. When another build in the same repo
   // looks like it is already fixing an on-main failure, flag it beside the mark.

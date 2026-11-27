@@ -3,7 +3,7 @@
   "id": "vaults",
   "name": "Vaults",
   "version": "2.1.0",
-  "description": "Start with a fullscreen moodboard, goals planner or listening journal, or describe a page of your own. They can rebuild themselves, and agents read their notes and propose additions.",
+  "description": "Start with a page of the good things you did, your next action or a prep card for your next meeting, or describe a page of your own. They can rebuild themselves, and agents read their notes and propose additions.",
   "icon": "icon.png",
   "contributes": {
     "frontend": "frontend.js",

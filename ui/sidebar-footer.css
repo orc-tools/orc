@@ -1,0 +1,36 @@
+/* App destinations sit under the run list, each icon over its name.
+   Nothing in the row shrinks: sidebar-footer.js moves what does not fit
+   into the More menu, and it measures the buttons at full size. */
+#sidebar-footer { display: flex; align-items: center; justify-content: space-between; gap: 0; padding: 2px 3px; border-top: 1px solid var(--border); }
+#sidebar-footer > * { flex-shrink: 0; }
+#sidebar-footer > [data-overflowed] { display: none; }
+#sidebar-footer > orc-icon-button::part(button), #sidebar-more::part(trigger) {
+  flex-direction: column; gap: 1px; inline-size: auto; min-inline-size: 30px; block-size: auto; min-block-size: 36px; padding: 3px 2px;
+}
+#sidebar-more::part(trigger) { display: flex; align-items: center; justify-content: center; }
+#sidebar-footer .footer-caption { font-size: 11px; font-weight: 500; line-height: 12px; letter-spacing: 0.01em; white-space: nowrap; }
+[data-sidebar-collapsed] #sidebar-footer .footer-caption { display: none; }
+[data-sidebar-collapsed] #sidebar-footer > orc-icon-button::part(button) { inline-size: 1.875rem; min-block-size: 0; block-size: 1.875rem; padding: 0; }
+/* Plugin toggles (Stay awake, Usage) are plain buttons, sized like the
+   compact orc-icon-buttons beside them. */
+#sidebar-footer > :where(button[aria-pressed]) {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  min-width: 30px; min-height: 36px; padding: 3px 2px;
+  border: 1px solid transparent; border-radius: 8px; background: none; color: var(--muted-strong); font: inherit;
+  cursor: var(--orc-cursor-pointer, pointer); transition: background-color 120ms ease, color 120ms ease;
+}
+#sidebar-footer > :where(button[aria-pressed]):hover { background: var(--button-hover); color: var(--heading); }
+#sidebar-footer > :where(button[aria-pressed]):focus-visible { outline: 1px solid var(--focus); outline-offset: 3px; color: var(--heading); }
+@media (pointer: coarse) {
+  #sidebar-footer > :where(button[aria-pressed]) { min-width: 44px; min-height: 44px; }
+  #sidebar-footer > orc-icon-button::part(button), #sidebar-more::part(trigger) { min-inline-size: 44px; min-block-size: 44px; }
+}
+#sidebar-more { --orc-menu-min-width: 172px; }
+#sidebar-more[hidden] { display: none; }
+#sidebar-more svg { flex: none; color: var(--muted-strong); }
+#new-btn {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px;
+  border: 0; background: none; color: var(--muted-strong); text-decoration: none; cursor: var(--orc-cursor-pointer, pointer);
+}
+#new-btn:hover { background: color-mix(in srgb, var(--heading) 8%, transparent); color: var(--heading); }

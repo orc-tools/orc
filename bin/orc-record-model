@@ -6,7 +6,11 @@ See skills/_shared/handoff.md for the resolution ladder this feeds."""
 import json
 import os
 import sys
-import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+from run_lifecycle import Snapshot, write_meta
 
 SOURCES = {"self-report", "requested", "inherited"}
 
@@ -32,7 +36,10 @@ def main() -> int:
     meta_path = os.path.join(run_dir, "meta.json")
     try:
         with open(meta_path) as handle:
-            meta = json.load(handle)
+            value = json.load(handle)
+        if not isinstance(value, dict):
+            raise ValueError("expected a JSON object")
+        meta = Snapshot(value)
     except (OSError, ValueError) as exc:
         print(f"orc-record-model: cannot read {meta_path}: {exc}", file=sys.stderr)
         return 1
@@ -41,18 +48,11 @@ def main() -> int:
     subagent_models.setdefault(phase, []).append(
         {"role": role, "model": model, "source": source})
 
-    fd, tmp = tempfile.mkstemp(dir=run_dir, prefix=".meta.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as handle:
-            json.dump(meta, handle, indent=2)
-            handle.write("\n")
-        os.replace(tmp, meta_path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+        write_meta(meta_path, meta, caller="orc-record-model")
+    except (OSError, ValueError) as exc:
+        print(f"orc-record-model: {exc}", file=sys.stderr)
+        return 1
 
     print(f"recorded: {phase}/{role} -> {model} ({source})")
     return 0

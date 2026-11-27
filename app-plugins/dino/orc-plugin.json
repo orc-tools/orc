@@ -1,6 +1,7 @@
 {
   "apiVersion": 2,
   "id": "dino",
+  "icon": "icon.png",
   "name": "Dino",
   "version": "1.0.0",
   "description": "A fern valley under a smoking volcano by day, the volcano awake by night.",
@@ -11,7 +12,7 @@
       "label": "Dino",
       "description": "Dinosaurs and volcanoes, rawr~",
       "css": "theme.css",
-      "icon": "icon.png",
+      "icon": "dock-icon.png",
       "gary": "gary.png",
       "sheila": "sheila.png",
       "scene": "scene.bundle.js",

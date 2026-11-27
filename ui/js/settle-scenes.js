@@ -34,7 +34,7 @@ const ROW_STYLE = `
   .orc-settle-row, .orc-settle-lift { position:absolute; }
   .orc-settle-row { will-change:transform,opacity; }
   .orc-settle-lift { inset:0; opacity:0; border-radius:inherit; will-change:opacity;
-    box-shadow:0 1px 2px rgb(0 0 0 / .12),0 6px 18px rgb(0 0 0 / .2); }`;
+    box-shadow:var(--float-shadow); }`;
 
 // The copies are taken before the request, since the page and the list have
 // moved on by the time it answers. Returns whether settle() did.
@@ -408,7 +408,7 @@ function pageScene({ box, copy, still }, shelf, leaving) {
     .orc-settle-shade { background:#000; opacity:0; }
     .orc-settle-sheet { inset:0; transform-origin:${cx}px ${cy}px; will-change:transform,opacity,filter; }
     .orc-settle-card { border-radius:12px; opacity:0; will-change:opacity; }
-    .orc-settle-shadow { box-shadow:0 1px 2px rgb(0 0 0 / .14),0 10px 28px rgb(0 0 0 / .22),0 28px 72px rgb(0 0 0 / .26); }
+    .orc-settle-shadow { box-shadow:var(--float-shadow); }
     .orc-settle-edge { box-shadow:inset 0 0 0 1px light-dark(rgb(0 0 0 / .1),rgb(255 255 255 / .1)),
       inset 0 1px 0 light-dark(rgb(255 255 255 / .55),rgb(255 255 255 / .07)); }
     .orc-settle-page { overflow:hidden; border-radius:12px; background:var(--bg,#191d20); contain:layout paint; }

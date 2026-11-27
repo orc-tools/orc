@@ -44,6 +44,11 @@ MAX_BODY_BYTES = 1024 * 1024
 DEFAULT_TIMEOUT = 10.0
 SECRET_AUTH_METHODS = ("client_secret_post", "client_secret_basic")
 USABLE_AUTH_METHODS = (None, "none", *SECRET_AUTH_METHODS)
+# The ``ok: false`` refusals (Slack's way) that mean the sign-in itself is no
+# longer good, as opposed to a rate limit or an outage.
+AUTH_REFUSALS = frozenset(("invalid_grant", "invalid_refresh_token", "token_revoked", "token_expired",
+                           "invalid_client", "invalid_client_id", "bad_client_secret", "invalid_auth",
+                           "account_inactive", "unauthorized_client"))
 NO_REGISTRATION = ("This server's sign-in does not let Orc register itself. "
                    "Add a client ID for Orc from the server's developer settings.")
 
@@ -370,12 +375,17 @@ def _token_request(discovery: dict, client: dict, form: dict, opener, timeout: f
     return _send(request, opener, timeout)
 
 
-def _tokens(body: bytes, now: float | None) -> dict:
+def _tokens(body: bytes, now: float | None, token_types=("bearer",), *, sign_in: bool = False) -> dict:
+    """The tokens in a token endpoint's answer. ``token_types`` are the lowercased types the caller
+    sends as a Bearer token: Slack's user tokens say "user". A 200 with ``ok: false``, Slack's way of
+    refusing, is a refusal."""
     data = _json(body) or {}
+    if data.get("ok") is False:
+        raise OAuthError(_refusal(200, body), sign_in=sign_in and data.get("error") in AUTH_REFUSALS)
     access, token_type = data.get("access_token"), data.get("token_type", "Bearer")
     if not isinstance(access, str) or not access:
         raise OAuthError("The server finished the sign-in but sent no access token.")
-    if not isinstance(token_type, str) or token_type.lower() != "bearer":
+    if not isinstance(token_type, str) or token_type.lower() not in token_types:
         raise OAuthError(f"The server sent a {token_type} token, but MCP needs a Bearer token.")
     expires_in = data.get("expires_in")
     try:
@@ -390,7 +400,8 @@ def _tokens(body: bytes, now: float | None) -> dict:
 
 
 def finish(discovery: dict, client: dict, pending: dict, *, code: str, state: str, iss: str | None = None,
-           opener=None, now: float | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
+           opener=None, now: float | None = None, timeout: float = DEFAULT_TIMEOUT,
+           token_types=("bearer",)) -> dict:
     """Check the browser's answer and exchange its code for tokens."""
     expected_state = pending.get("state")
     if not (isinstance(state, str) and isinstance(expected_state, str) and expected_state
@@ -410,14 +421,14 @@ def finish(discovery: dict, client: dict, pending: dict, *, code: str, state: st
     status, body = _token_request(discovery, client, form, opener, timeout)
     if status not in (200, 201):
         raise OAuthError(_refusal(status, body))
-    tokens = _tokens(body, now)
+    tokens = _tokens(body, now, token_types)
     if "scope" not in tokens and pending.get("scope"):
         tokens["scope"] = pending["scope"]  # RFC 6749 §5.1: omitted means what was requested
     return tokens
 
 
 def refresh(discovery: dict, client: dict, tokens: dict, *, opener=None, now: float | None = None,
-            timeout: float = DEFAULT_TIMEOUT) -> dict:
+            timeout: float = DEFAULT_TIMEOUT, token_types=("bearer",)) -> dict:
     """Trade the refresh token for a new access token."""
     old = (tokens or {}).get("refresh_token")
     if not old:
@@ -426,7 +437,7 @@ def refresh(discovery: dict, client: dict, tokens: dict, *, opener=None, now: fl
                                   opener, timeout)
     if status != 200:
         raise OAuthError(_refusal(status, body), sign_in=status in (400, 401))
-    fresh = _tokens(body, now)
+    fresh = _tokens(body, now, token_types, sign_in=True)
     fresh.setdefault("refresh_token", old)  # RFC 6749 §6: the server may keep the same refresh token
     if "scope" not in fresh and tokens.get("scope"):
         fresh["scope"] = tokens["scope"]

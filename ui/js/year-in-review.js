@@ -6,6 +6,7 @@
 import { $, announce, esc, runs } from './core.js';
 import { isOrchestrationWorker, isQuestionRun, modelLabel } from './run-presentation.js';
 import { runProject } from './filters.js';
+import { formatWholeCostNow } from './currency.js';
 
 // TESTABLE: year in review figures
 const YIR_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -524,7 +525,8 @@ export function yearInReviewCompact(n) {
   }
   return String(n);
 }
-const yirUsd = n => `$${Math.round(n).toLocaleString('en-US')}`;
+// A dollar total in the currency Settings picks (currency.js).
+const yirUsd = n => formatWholeCostNow(n);
 // War and Peace runs to about 780,000 tokens.
 const YIR_NOVEL_TOKENS = 780000;
 function yirModelValue(m) {

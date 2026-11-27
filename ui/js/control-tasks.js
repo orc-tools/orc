@@ -27,7 +27,7 @@ export function controlTaskRowsHtml(runId, tasks, readOnly = false) {
       ? `<a class="control-task-title" href="#${encodeURIComponent(task.childRunId)}" title="${esc(taskText)}">${esc(title)}</a>`
       : `<span class="control-task-title" title="${esc(taskText)}">${esc(title)}</span>`;
     const result = task.result?.path && task.childRunId
-      ? `<a href="${esc(fileUrl(task.childRunId, task.result.path))}">${esc(task.result.path)}</a>${task.result.sha256 ? ` <span translate="no" title="${esc(task.result.sha256)}">${esc(task.result.sha256.slice(0, 12))}</span>` : ''}`
+      ? `<a href="${esc(fileUrl(task.childRunId, task.result.path))}" target="_blank" rel="noopener" data-text-stage data-text-title="${esc(title)}" data-text-path="${esc(task.result.path)}" data-copy-label="Copy result">${esc(task.result.path)}</a>${task.result.sha256 ? ` <span translate="no" title="${esc(task.result.sha256)}">${esc(task.result.sha256.slice(0, 12))}</span>` : ''}`
       : '';
     const delivery = typeof task.delivery === 'object' ? task.delivery?.state : task.delivery;
     const pendingDelivery = task.state === 'completed' && ['pending', 'sending', 'ambiguous'].includes(delivery);

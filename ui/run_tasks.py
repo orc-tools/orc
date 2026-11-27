@@ -22,11 +22,51 @@ from pathlib import Path
 
 from run_relationships import valid_run_id
 from stat_cache import keep_recent
+from state_transitions import advance, refuse
 
 
-STATES = frozenset({"queued", "launching", "running", "waiting", "completed", "failed", "cancelled", "interrupted"})
+TASK_TRANSITIONS = {
+    "queued": {"prepare": "launching", "bind": "queued", "observe_running": "running",
+               "observe_waiting": "waiting", "observe_failure": "failed",
+               "legacy_complete": "completed", "legacy_interrupt": "interrupted",
+               "cancel": "cancelled"},
+    "launching": {"claim_launch": "launching", "bind": "launching",
+                  "save_workspace": "launching",
+                  "launch_unknown": "launching", "launch_accepted": "running",
+                  "launch_rejected": "failed", "observe_running": "running",
+                  "observe_waiting": "waiting", "observe_failure": "failed",
+                  "publish_success": "completed", "publish_failure": "failed",
+                  "legacy_complete": "completed", "legacy_interrupt": "interrupted",
+                  "cancel": "cancelled"},
+    "running": {"bind": "running", "observe_running": "running", "observe_waiting": "waiting",
+                "observe_failure": "failed", "publish_success": "completed",
+                "publish_failure": "failed", "legacy_complete": "completed",
+                "legacy_interrupt": "interrupted", "cancel": "cancelled"},
+    "waiting": {"bind": "waiting", "observe_running": "running", "observe_waiting": "waiting",
+                "observe_failure": "failed", "publish_success": "completed",
+                "publish_failure": "failed", "legacy_complete": "completed",
+                "legacy_interrupt": "interrupted", "cancel": "cancelled"},
+    "completed": {"cancel": "completed"},
+    "failed": {"cancel": "failed"},
+    "cancelled": {"cancel": "cancelled", "bind_for_cleanup": "cancelled", "cancel_cleanup": "cancelled"},
+    "interrupted": {"cancel": "interrupted"},
+}
 TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
-DELIVERY_STATES = frozenset({"pending", "sending", "acknowledged", "ambiguous", "unread", "cancelled"})
+DELIVERY_TRANSITIONS = {
+    "unread": {"schedule": "pending", "read": "acknowledged", "cancel": "cancelled"},
+    "pending": {"claim": "sending", "defer": "unread", "read": "acknowledged", "cancel": "cancelled"},
+    "sending": {"accepted": "acknowledged", "uncertain": "ambiguous",
+                "sender_lost": "ambiguous", "cancel": "cancelled"},
+    "acknowledged": {"cancel": "cancelled"},
+    "ambiguous": {"cancel": "cancelled"},
+    "cancelled": {"cancel": "cancelled"},
+}
+LEGACY_EVENTS = {
+    "launching": "prepare", "running": "observe_running", "waiting": "observe_waiting",
+    "failed": "observe_failure", "completed": "legacy_complete",
+    "interrupted": "legacy_interrupt", "cancelled": "cancel",
+}
+LAUNCH_EVENTS = {"launching": "launch_unknown", "running": "launch_accepted", "failed": "launch_rejected"}
 ARCHIVE_DIR = "tasks-archive"
 # Which parent's archive holds each child, request and send, so a lookup that
 # misses tasks.json reads at most one archive. Not a valid run id, so it never
@@ -262,17 +302,21 @@ def _find(rows, parent_id, task_id):
                  if row.get("parentRunId") == parent_id and row.get("taskId") == task_id), None)
 
 
-def _task(store, parent_id, task_id, config_dir):
-    """The task to change, brought back from its parent's archive when it was
-    filed there; the next prune files it again."""
+@contextlib.contextmanager
+def _locked_task(config_dir, parent_id, task_id):
     _parent(parent_id)
-    row = _find(store["tasks"], parent_id, task_id)
-    if row is None:
-        row = copy.deepcopy(_find(_archived(config_dir, parent_id)["tasks"], parent_id, task_id))
-        if row is None:
+    with _locked(config_dir) as store:
+        live = _find(store["tasks"], parent_id, task_id)
+        if live is not None:
+            yield store, live
+            return
+        archived = _find(_archived(config_dir, parent_id)["tasks"], parent_id, task_id)
+        if archived is None:
             raise ValueError("task not found")
-        store["tasks"].append(row)
-    return row
+        row = copy.deepcopy(archived)
+        yield store, row
+        if row != archived:
+            store["tasks"].append(row)
 
 
 def _child_task(rows, config_dir, child_id, locked):
@@ -364,74 +408,191 @@ def reserve(config_dir, parent_id, request_id, request, selection):
         return copy.deepcopy(row), True
 
 
-def update_task(config_dir, parent_id, task_id, *, if_active=False, **changes):
-    if set(changes) - {"state", "childRunId", "result", "delivery", "error", "workspace", "manifest", "cancelError", "cancellationPending"}:
-        raise ValueError("task identity cannot be changed")
-    if "state" in changes and changes["state"] not in STATES:
-        raise ValueError("invalid task state")
-    if changes.get("childRunId") is not None and not valid_run_id(changes["childRunId"]):
+def _task_event(row, event, caller):
+    return advance(TASK_TRANSITIONS, row["state"], event, machine="task",
+                   owner=row["taskId"], caller=caller)
+
+
+def _delivery_state(row):
+    return (row.get("delivery") or {}).get("state", "unread")
+
+
+def _delivery_event(row, event, caller, **details):
+    state = advance(DELIVERY_TRANSITIONS, _delivery_state(row), event, machine="task delivery",
+                    owner=row["taskId"], caller=caller)
+    row["delivery"] = {"state": state, **details}
+
+
+def _bind_child(row, child_id, caller):
+    if not valid_run_id(child_id):
         raise ValueError("invalid child run id")
-    if "delivery" in changes and (not isinstance(changes["delivery"], dict)
-            or changes["delivery"].get("state") not in DELIVERY_STATES):
-        raise ValueError("invalid delivery state")
-    with _locked(config_dir) as store:
-        row = _task(store, parent_id, task_id, config_dir)
-        if if_active and row['state'] in TERMINAL:
-            return copy.deepcopy(row)
-        next_state = changes.get("state", row["state"])
-        if row["state"] in TERMINAL and next_state != row["state"]:
-            raise ValueError("task state is terminal")
-        if (row.get("childRunId") and "childRunId" in changes
-                and changes["childRunId"] != row["childRunId"]):
-            raise ValueError("accepted child identity cannot be changed")
-        if row.get('workspace') and 'workspace' in changes and changes['workspace'] != row['workspace']:
-            raise ValueError('accepted workspace authority cannot be changed')
-        if row.get('manifest') and 'manifest' in changes and changes['manifest'] != row['manifest']:
-            raise ValueError('published result manifest is immutable')
-        row.update(copy.deepcopy(changes))
-        if row["state"] == "cancelled":
-            row.update(delivery={"state": "cancelled"})
-        row["updatedAt"] = _now()
+    if row.get("childRunId") == child_id:
+        return
+    if row.get("childRunId"):
+        refuse("task", row["taskId"], caller, row["state"], "replace accepted child identity")
+    event = "bind"
+    if row["state"] == "cancelled" and row.get("cancellationPending"):
+        event = "bind_for_cleanup"
+    _task_event(row, event, caller)
+    row["childRunId"] = child_id
+
+
+def _settle_observation(store, row, event, caller):
+    state = _task_event(row, event, caller)
+    if state in {"completed", "failed", "interrupted"} and row.get("childRunId") \
+            and _has_live_descendants(store, row["childRunId"]):
+        refuse("task", row["taskId"], caller, row["state"], f"{event} with live delegated children")
+    row["state"] = state
+
+
+def prepare_launch(config_dir, parent_id, task_id):
+    with _locked_task(config_dir, parent_id, task_id) as (_, row):
+        if row["state"] not in TERMINAL:
+            row.update(state=_task_event(row, "prepare", "prepare_launch"), updatedAt=_now())
         return copy.deepcopy(row)
 
 
+def update_task(config_dir, parent_id, task_id, *, if_active=False, **changes):
+    """Compatibility entry point for legacy question launches and their watch tick."""
+    allowed = {"state", "childRunId", "result", "delivery", "error", "workspace", "cancellationPending"}
+    if set(changes) - allowed:
+        raise ValueError("task identity cannot be changed")
+    with _locked_task(config_dir, parent_id, task_id) as (store, row):
+        original = row.copy()
+        before = row["state"]
+        if if_active and before in TERMINAL:
+            return copy.deepcopy(row)
+        state = changes.pop("state", before)
+        if not isinstance(state, str) or state not in TASK_TRANSITIONS:
+            refuse("task", task_id, "update_task", before, "set invalid task state")
+        has_child_change = "childRunId" in changes
+        child_id = changes.pop("childRunId", None)
+        has_delivery_change = "delivery" in changes
+        delivery = changes.pop("delivery", None)
+        if "result" in changes and (before in TERMINAL or state != "completed" or row.get("result")):
+            if changes.pop("result") != row.get("result"):
+                refuse("task", task_id, "update_task", before, "replace immutable result")
+        if child_id is not None:
+            _bind_child(row, child_id, "update_task")
+        elif has_child_change and row.get("childRunId"):
+            refuse("task", task_id, "update_task", before, "clear accepted child identity")
+        launch = row.get("launch") or {}
+        settling_legacy = launch.get("legacy") and launch.get("state") == "starting" and (
+            state in {"running", "failed"} or "error" in changes)
+        if settling_legacy:
+            row["launch"] = {**launch, "state": "settled"}
+            if before in TERMINAL:
+                row["updatedAt"] = _now()
+                return copy.deepcopy(row)
+            event = LAUNCH_EVENTS.get(state, "launch_unknown")
+            _settle_observation(store, row, event, "update_task")
+        elif state != before:
+            if before in TERMINAL:
+                refuse("task", task_id, "update_task", before, "replace terminal state")
+            if state == "cancelled":
+                _cancel_tree(store, row, "update_task")
+            else:
+                _settle_observation(store, row, LEGACY_EVENTS.get(state), "update_task")
+                if state == "launching":
+                    row["launch"] = {"state": "starting", "pid": os.getpid(), "legacy": True}
+        if "workspace" in changes and changes["workspace"] != row.get("workspace"):
+            if row.get("workspace"):
+                refuse("task", task_id, "update_task", before, "replace workspace authority")
+            _task_event(row, "save_workspace", "update_task")
+        if "cancellationPending" in changes or (before in TERMINAL and "error" in changes):
+            _task_event(row, "cancel_cleanup", "update_task")
+        row.update(copy.deepcopy(changes))
+        if has_delivery_change:
+            _legacy_delivery(row, delivery, "update_task", newly_terminal=before not in TERMINAL)
+        if row != original:
+            row["updatedAt"] = _now()
+        return copy.deepcopy(row)
+
+
+def _legacy_delivery(row, delivery, caller, *, newly_terminal):
+    if not isinstance(delivery, dict):
+        raise ValueError("invalid delivery")
+    target = delivery.get("state")
+    before = _delivery_state(row)
+    if target == "unread":
+        if before != "pending":
+            return
+        _delivery_event(row, "defer", caller, **{k: v for k, v in delivery.items() if k != "state"})
+    elif target == "pending" and newly_terminal and _can_deliver(row):
+        _delivery_event(row, "schedule", caller)
+    elif delivery != row.get("delivery"):
+        refuse("task delivery", row["taskId"], caller, before, f"set {target}")
+
+
 def begin_launch(config_dir, parent_id, task_id):
-    with _locked(config_dir) as store:
-        row = _task(store, parent_id, task_id, config_dir)
-        if row['state'] in TERMINAL or row.get('launch'):
+    with _locked_task(config_dir, parent_id, task_id) as (_, row):
+        if row["state"] in TERMINAL or row.get("launch"):
             return copy.deepcopy(row), False
-        row.update(launch={'state': 'starting', 'pid': os.getpid()}, updatedAt=_now())
+        _task_event(row, "claim_launch", "begin_launch")
+        row.update(launch={"state": "starting", "pid": os.getpid()}, updatedAt=_now())
         return copy.deepcopy(row), True
 
 
 def finish_launch(config_dir, parent_id, task_id, state, error=None):
-    with _locked(config_dir) as store:
-        row = _task(store, parent_id, task_id, config_dir)
-        if row.get('launch'):
-            row['launch']['state'] = 'settled'
-        if row['state'] not in TERMINAL:
-            row.update(state=state, error=error)
-        row['updatedAt'] = _now()
+    event = LAUNCH_EVENTS.get(state)
+    if event is None:
+        raise ValueError("invalid launch outcome")
+    with _locked_task(config_dir, parent_id, task_id) as (store, row):
+        launch = row.get("launch")
+        if launch:
+            if launch.get("state") != "starting":
+                return copy.deepcopy(row)
+            launch["state"] = "settled"
+        elif event != "launch_rejected" or row["state"] != "launching":
+            return copy.deepcopy(row)
+        if row["state"] == "launching":
+            if event == "launch_accepted" and not row.get("childRunId"):
+                refuse("task", task_id, "finish_launch", row["state"], "accept unbound child")
+            child_id = row.get("childRunId")
+            if event != "launch_rejected" or not child_id or not _has_live_descendants(store, child_id):
+                _settle_observation(store, row, event, "finish_launch")
+            row["error"] = error
+        row["updatedAt"] = _now()
         return copy.deepcopy(row)
 
 
-def cancel_task(config_dir, parent_id, task_id):
-    with _locked(config_dir) as store:
-        root = _task(store, parent_id, task_id, config_dir)
-        pending, cancelled = [root], []
-        while pending:
-            row = pending.pop()
-            row.update(delivery={"state": "cancelled"}, updatedAt=_now())
-            if row['state'] in TERMINAL and row['state'] != 'cancelled':
-                continue
-            if row['state'] != 'cancelled':
-                row.update(state='cancelled', cancellationPending=bool(row.get('childRunId') or launch_pending(row)))
-            if row.get('cancellationPending') or row.get('error'):
+def _cancel_tree(store, root, caller):
+    pending, cancelled, seen = [root], [], set()
+    by_parent = _by_parent(store)
+    while pending:
+        row = pending.pop()
+        if row["taskId"] in seen:
+            continue
+        seen.add(row["taskId"])
+        before = row["state"]
+        row["state"] = _task_event(row, "cancel", caller)
+        if _delivery_state(row) != "cancelled":
+            _delivery_event(row, "cancel", caller)
+            row["updatedAt"] = _now()
+        if row["state"] == "cancelled":
+            if before != "cancelled":
+                launching = (row.get("launch") or {}).get("state") == "starting"
+                row.update(cancellationPending=bool(row.get("childRunId") or launching),
+                           updatedAt=_now())
+            if row.get("cancellationPending") or row.get("error"):
                 cancelled.append(row)
-            if row.get('childRunId'):
-                pending.extend(child for child in store['tasks']
-                               if child.get('parentRunId') == row['childRunId'])
+        if row.get("childRunId"):
+            pending.extend(by_parent.get(row["childRunId"], ()))
+    return cancelled
+
+
+def cancel_task(config_dir, parent_id, task_id):
+    with _locked_task(config_dir, parent_id, task_id) as (store, root):
+        cancelled = _cancel_tree(store, root, "cancel_task")
         return copy.deepcopy(root), copy.deepcopy(cancelled)
+
+
+def record_cancel_cleanup(config_dir, parent_id, task_id, *, error=None):
+    with _locked_task(config_dir, parent_id, task_id) as (_, row):
+        _task_event(row, "cancel_cleanup", "record_cancel_cleanup")
+        if not launch_pending(row) and (row.get("cancellationPending") or row.get("error")):
+            row.update(cancellationPending=error is not None, error=error, updatedAt=_now())
+        return copy.deepcopy(row)
 
 
 def _alive(pid):
@@ -452,7 +613,8 @@ def launch_pending(row):
 
 
 def has_live_work(row):
-    return row['state'] not in TERMINAL or launch_pending(row) or bool(row.get('cancellationPending'))
+    return (row["state"] not in TERMINAL or launch_pending(row) or bool(row.get("cancellationPending"))
+            or (row["state"] == "cancelled" and bool(row.get("error"))))
 
 
 def _by_parent(store):
@@ -510,48 +672,66 @@ def reconcile(config_dir, runs_dir, valid_question, child_lookup, turn_lookup=No
     with _locked(config_dir) as store:
         for row in store["tasks"]:
             delivery = row.get("delivery") or {}
-            if delivery.get("state") == "sending" and not _alive(delivery.get("pid")):
-                delivery.update(state="ambiguous", error="delivery acceptance is unknown after interruption")
-                row["delivery"] = delivery
-            if row.get("state") in {"cancelled", "failed", "completed"}:
-                continue
-            child_id = row.get("childRunId")
-            if not child_id:
-                child = child_lookup(row["launchToken"])
-                child_id = child.get("childRunId") if isinstance(child, dict) else None
-                if valid_run_id(child_id):
-                    row["childRunId"] = child_id
-            if not valid_run_id(child_id):
-                continue
-            run_dir = Path(runs_dir) / child_id
-            if run_dir.is_symlink():
+            if _delivery_state(row) == "sending" and not _alive(delivery.get("pid")):
+                details = {key: value for key, value in delivery.items() if key != "state"}
+                details["error"] = "delivery acceptance is unknown after interruption"
+                _delivery_event(row, "sender_lost", "reconcile", **details)
+                row["updatedAt"] = _now()
+            cleanup = row["state"] == "cancelled" and row.get("cancellationPending")
+            if launch_pending(row) or (row["state"] in TERMINAL and not cleanup):
                 continue
             try:
+                child_id = row.get("childRunId")
+                if not child_id:
+                    child = child_lookup(row["launchToken"])
+                    child_id = child.get("childRunId") if isinstance(child, dict) else None
+                    if not valid_run_id(child_id):
+                        continue
+                    _bind_child(row, child_id, "reconcile")
+                    row["updatedAt"] = _now()
+                if cleanup:
+                    continue
+                run_dir = Path(runs_dir) / child_id
+                if run_dir.is_symlink():
+                    continue
                 meta = json.loads((run_dir / "meta.json").read_text())
                 if not isinstance(meta, dict):
                     continue
-                if meta.get("status") == "cancelled":
-                    row.update(state="cancelled", result=None, delivery={"state": "cancelled"})
-                elif valid_question(meta, run_dir=str(run_dir)):
-                    result = answer_result(run_dir)
-                    row.update(state="completed", result=result, delivery={"state": "pending"}, error=None)
-                elif meta.get("status") in {"failed", "escalated"}:
-                    row.update(state="failed", error="child run failed", delivery={"state": "unread"})
-                elif (turn_lookup and meta.get("sessionBackend") == "headless"
-                      and meta.get("status") != "complete"
-                      and (turn := turn_lookup(str(run_dir)) or {}).get("state") == "idle"
-                      and turn.get("outcome") == "failed"):
-                    row.update(state="failed", error=turn.get("error") or "turn failed",
-                               delivery={"state": "pending"})
-                elif meta.get("status") == "awaiting-gate" or meta.get("phase") == "ship":
-                    row["state"] = "waiting"
-                else:
-                    row["state"] = "running"
-                row["updatedAt"] = _now()
+                _observe_child(store, row, meta, run_dir, valid_question, turn_lookup)
             except (OSError, ValueError, TypeError):
                 continue
         _prune(config_dir, store)
         return copy.deepcopy(store["tasks"])
+
+
+def _observe_child(store, row, meta, run_dir, valid_question, turn_lookup):
+    if meta.get("status") == "cancelled":
+        _cancel_tree(store, row, "reconcile")
+        return
+    result, error, notification = None, None, False
+    if valid_question(meta, run_dir=str(run_dir)):
+        event, result, notification = "legacy_complete", answer_result(run_dir), True
+    elif meta.get("status") in {"failed", "escalated"}:
+        event, error = "observe_failure", "child run failed"
+    elif (turn_lookup and meta.get("sessionBackend") == "headless"
+          and meta.get("status") != "complete"
+          and (turn := turn_lookup(str(run_dir)) or {}).get("state") == "idle"
+          and turn.get("outcome") == "failed"):
+        event, error, notification = "observe_failure", turn.get("error") or "turn failed", True
+    elif meta.get("status") == "awaiting-gate" or meta.get("phase") == "ship":
+        event = "observe_waiting"
+    else:
+        event = "observe_running"
+    observed = row.copy()
+    _settle_observation(store, observed, event, "reconcile")
+    if notification:
+        _delivery_event(observed, "schedule", "reconcile")
+    if observed["state"] in TERMINAL:
+        if row.get("result") is not None or row.get("manifest") is not None:
+            refuse("task", row["taskId"], "reconcile", row["state"], "replace immutable published result")
+        observed.update(result=result, error=error)
+    if observed != row:
+        row.update(observed, updatedAt=_now())
 
 
 def _settled(row, store, by_parent):
@@ -620,29 +800,33 @@ def _prune(config_dir, store):
         store['sendReceipts'] = [row for row in store['sendReceipts'] if id(row) not in moved]
 
 
+def _can_deliver(row):
+    return row["state"] == "failed" or (row["state"] in {"completed", "interrupted"} and bool(row.get("result")))
+
+
 def begin_delivery(config_dir, parent_id, task_id):
-    with _locked(config_dir) as store:
-        row = _task(store, parent_id, task_id, config_dir)
-        # A failed task may have no result: its notification carries the error.
-        if row["state"] not in {"completed", "failed", "interrupted"} \
-                or not (row.get("result") or row["state"] == "failed") \
-                or row.get("delivery", {}).get("state") != "pending":
-            raise ValueError("task has no pending result delivery")
-        row["delivery"] = {"state": "sending", "attemptId": secrets.token_hex(12),
-                           "pid": os.getpid(), "startedAt": _now()}
+    with _locked_task(config_dir, parent_id, task_id) as (_, row):
+        if not _can_deliver(row):
+            refuse("task delivery", task_id, "begin_delivery", _delivery_state(row),
+                   "claim without a terminal result")
+        _delivery_event(row, "claim", "begin_delivery", attemptId=secrets.token_hex(12),
+                        pid=os.getpid(), startedAt=_now())
         row["updatedAt"] = _now()
         return copy.deepcopy(row)
 
 
 def finish_delivery(config_dir, parent_id, task_id, attempt_id, error=None):
-    with _locked(config_dir) as store:
-        row = _task(store, parent_id, task_id, config_dir)
+    with _locked_task(config_dir, parent_id, task_id) as (_, row):
         delivery = row.get("delivery") or {}
-        if delivery.get("state") != "sending" or delivery.get("attemptId") != attempt_id:
-            raise ValueError("delivery attempt is no longer current")
-        delivery.update(state="ambiguous" if error is not None else "acknowledged", finishedAt=_now())
+        if not attempt_id or delivery.get("attemptId") != attempt_id:
+            refuse("task delivery", task_id, "finish_delivery", _delivery_state(row),
+                   "finish stale delivery attempt")
+        details = {key: value for key, value in delivery.items() if key != "state"}
+        details["finishedAt"] = _now()
         if error is not None:
-            delivery["error"] = str(error)
+            details["error"] = str(error)
+        _delivery_event(row, "uncertain" if error is not None else "accepted",
+                        "finish_delivery", **details)
         row["updatedAt"] = _now()
         return copy.deepcopy(row)
 
@@ -655,7 +839,8 @@ def task_by_child(config_dir, child_id):
     return copy.deepcopy(_child_task(_shared(config_dir)['tasks'], config_dir, child_id, False))
 
 
-def complete_task(config_dir, parent_id, task_id, child_id, result, manifest, status='completed'):
+def complete_task(config_dir, parent_id, task_id, child_id, result, manifest, status="completed",
+                  *, write_result=None):
     if status not in {'completed', 'failed'}:
         raise ValueError('invalid completion status')
     if not isinstance(result, dict) or result.get('path') != 'task-result.md' \
@@ -663,20 +848,24 @@ def complete_task(config_dir, parent_id, task_id, child_id, result, manifest, st
         raise ValueError('invalid task result')
     if not isinstance(manifest, dict) or not manifest:
         raise ValueError('missing task completion manifest')
-    with _locked(config_dir) as store:
-        row = _task(store, parent_id, task_id, config_dir)
-        if row.get('childRunId') != child_id:
-            raise ValueError('completion does not belong to the accepted child')
+    with _locked_task(config_dir, parent_id, task_id) as (store, row):
+        if not valid_run_id(child_id) or row.get("childRunId") != child_id:
+            refuse("task", task_id, "complete_task", row["state"], "publish without accepted child")
         if row['state'] in {'completed', 'failed'}:
-            if row.get('result') == result and row.get('manifest') == manifest:
+            if row['state'] == status and row.get('result') == result and row.get('manifest') == manifest:
                 return copy.deepcopy(row)
-            raise ValueError('published task result is immutable')
+            refuse("task", task_id, "complete_task", row["state"], "replace immutable published result")
         if row['state'] in {'cancelled', 'interrupted'}:
-            raise ValueError('task has been stopped')
-        if _has_live_descendants(store, child_id):
-            raise ValueError('task is waiting for its delegated children')
-        row.update(state=status, result=copy.deepcopy(result), manifest=copy.deepcopy(manifest),
-                   delivery={'state': 'pending'}, error=None, updatedAt=_now())
+            refuse("task", task_id, "complete_task", row["state"], "publish after task stopped")
+        if row.get("result") is not None or row.get("manifest") is not None:
+            refuse("task", task_id, "complete_task", row["state"], "replace immutable published result")
+        event = "publish_success" if status == "completed" else "publish_failure"
+        _settle_observation(store, row, event, "complete_task")
+        _delivery_event(row, "schedule", "complete_task")
+        if write_result is not None:
+            write_result()
+        row.update(result=copy.deepcopy(result), manifest=copy.deepcopy(manifest),
+                   error=None, updatedAt=_now())
         return copy.deepcopy(row)
 
 
@@ -687,8 +876,8 @@ def acknowledge_result(config_dir, parent_id, task_id):
         if row is None:
             # Only a settled task is archived, so it has nothing to acknowledge.
             return get_task(config_dir, parent_id, task_id)
-        if row.get('result') and row.get('delivery', {}).get('state') in {'pending', 'unread'}:
-            row['delivery'] = {'state': 'acknowledged', 'source': 'task_status', 'finishedAt': _now()}
+        if row["state"] in TERMINAL and row.get("result") and _delivery_state(row) in {"pending", "unread"}:
+            _delivery_event(row, "read", "acknowledge_result", source="task_status", finishedAt=_now())
             row['updatedAt'] = _now()
         return copy.deepcopy(row)
 

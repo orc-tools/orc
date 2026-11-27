@@ -1,0 +1,86 @@
+/* ---- command palette ---- */
+/* An <orc-dialog> in bare mode: no heading and no-close, so the component's
+   chrome row collapses and the palette keeps its spotlight shape. Every
+   value below is the same one the hand-rolled <dialog> used, expressed
+   through the component's custom properties — placement included, since
+   margin inside the top layer replaces the old fixed/transform pair.
+   Surface, border, radius and overflow all come from the component. */
+#cmdk {
+  --cmdk-min-height: min(260px, calc(100vh - 32px));
+  --cmdk-max-height: min(60vh, 520px);
+  --cmdk-banner-height: 32px;
+  --orc-dialog-margin: 12vh auto auto;
+  --orc-dialog-max-width: 560px;
+  --orc-dialog-min-height: var(--cmdk-min-height);
+  --orc-dialog-max-height: var(--cmdk-max-height);
+  --orc-dialog-body-padding: 0;
+  --dialog-border-width: 1px;
+  --orc-radius-md: 12px;
+}
+#cmdk-layout {
+  display: flex; flex-direction: column;
+  min-height: calc(var(--cmdk-min-height) - 2px);
+  max-height: calc(var(--cmdk-max-height) - 2px);
+}
+/* A theme's banner across the top of the palette. The theme picker paints
+   each theme as the pointer crosses its row, so every banner fills the same
+   slot or the rows would move under the pointer. A theme with no banner
+   leaves the slot empty, which reads as a fault, so in the picker the shell
+   names that theme there instead. :where() lets any theme's banner win. */
+#cmdk-layout::before {
+  display: flex; align-items: center; justify-content: center;
+  flex: none; box-sizing: border-box; block-size: var(--cmdk-banner-height);
+  white-space: pre; overflow: hidden;
+}
+:where(#cmdk[theme-picker]) #cmdk-layout::before {
+  content: attr(data-theme-banner); content: attr(data-theme-banner) / "";
+  font-size: 12px; font-weight: 600; color: var(--muted-strong);
+  background: var(--accent-soft);
+}
+#cmdk-crumb {
+  padding: 8px 14px 0; font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted-strong);
+}
+/* <orc-combobox> is the palette's input, listbox, group labels, active-option
+   highlight, disabled rows and empty state. It grows as the flex child and is
+   a flex column itself: the dialog's height comes from its content, so a
+   percentage height inside the host resolves to nothing, and only a flex
+   chain hands the results list a height to scroll in. A column, because a
+   row would shrink the palette to the width of its content. */
+#cmdk-combobox { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; overflow: hidden; }
+#cmdk-combobox[hidden], #cmdk-pairing[hidden] { display: none; }
+#cmdk-pairing { flex: 1; overflow: auto; }
+#cmdk-pairing-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+#cmdk-pairing-header h2 { margin: 0; font-size: 15px; }
+#cmdk-pairing-back, #cmdk-pairing-copy {
+  font: inherit; color: var(--text); background: var(--chip);
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px;
+  cursor: var(--orc-cursor-pointer, pointer);
+}
+#cmdk-pairing-back:hover, #cmdk-pairing-copy:hover { background: var(--accent-soft); }
+#cmdk-pairing-back:focus-visible, #cmdk-pairing-copy:focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 2px;
+}
+#cmdk-pairing-copy:disabled { opacity: .5; cursor: default; }
+#cmdk-pairing-body { padding: 24px 16px; text-align: center; }
+#cmdk-pairing-code {
+  display: block; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: clamp(32px, 8vw, 56px);
+  font-weight: 600; letter-spacing: .12em; color: var(--heading);
+  user-select: text; overflow-wrap: anywhere;
+}
+#cmdk-pairing-status { margin: 12px 0 20px; color: var(--muted-strong); font-size: 13px; }
+#cmdk-hints {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  flex-shrink: 0; padding: 7px 14px; border-top: 1px solid var(--border);
+  font-size: 11px; line-height: 18px; color: var(--muted-strong);
+}
+#cmdk-footer { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#cmdk-preview-hint { flex-shrink: 0; margin-left: auto; text-align: right; }
+@media (max-width: 600px) {
+  #cmdk-footer { flex-basis: 100%; }
+}
+#cmdk { animation: cmdk-in .12s ease-out; }
+@keyframes cmdk-in { from { opacity: 0; transform: translateX(-50%) translateY(-4px); } }

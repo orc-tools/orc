@@ -6,6 +6,8 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import rails_helpers
@@ -87,6 +89,39 @@ def run_server(run_id: str | None, path: str | None,
     if not run_id or not name or not is_devd_repo(path, config):
         return None
     return name, server(run_id, http_port())
+
+
+class LoginError(Exception):
+    """orc-devd could not start its sign-in; the message says why."""
+
+
+def begin_login(run_id: str, timeout: float = 20.0) -> str | None:
+    """Starts orc-devd's shared sign-in, the one it lends to every run's MCP
+    requests, and returns the page to finish it on. `runId` lets orc-devd
+    sign in through that run's own app, which is up when the main checkout's
+    may not be. None means it signed in without needing a page."""
+    request = urllib.request.Request(
+        "http://127.0.0.1:%d/mcp-auth/login" % control_port(),
+        data=json.dumps({"runId": run_id}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as res:
+            reply = json.loads(res.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            said = json.loads(exc.read()).get("error")
+        except (OSError, ValueError, AttributeError):
+            said = None
+        raise LoginError(said if isinstance(said, str) and said
+                         else "orc-devd answered %d." % exc.code) from exc
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise LoginError("orc-devd is not answering, so Orc could not start the sign-in.") from exc
+    url = reply.get("url") if isinstance(reply, dict) else None
+    if url is None:
+        return None
+    if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+        raise LoginError("orc-devd answered with a sign-in page Orc cannot open.")
+    return url
 
 
 def with_run_mcp(args: list[str] | None, cwd: str | None, agent: str,

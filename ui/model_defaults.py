@@ -52,3 +52,26 @@ def launch_default(agent):
     """The model a launch with none chosen runs on, or None for an agent
     that picks its own."""
     return current(agent, LAUNCH[agent]) if agent in LAUNCH else None
+
+
+def claude_label(model, rows=()):
+    """A Claude model's short name, as a picker shows it: Sonnet 5.5."""
+    for row in rows:
+        if row.get("id") == model and isinstance(row.get("label"), str) and row["label"].strip():
+            return re.sub(r"^Claude\s+", "", row["label"].strip())
+    match = re.fullmatch(r"claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?", model)
+    if not match:
+        return model
+    return "%s %s" % (match[1].capitalize(), match[2] + ("." + match[3] if match[3] else ""))
+
+
+def claude_choices(chosen, default, rows=None):
+    """The Claude models a small picker offers: the ones Claude Code listed
+    when Orc's model picker last asked, with the default and the current
+    choice always among them. Asking takes seconds, so a picker never does."""
+    rows = model_catalog.models_for("claude", discover=False) if rows is None else rows
+    valid = lambda value: isinstance(value, str) and bool(model_catalog.MODEL_ID.fullmatch(value))  # noqa: E731
+    # Before the picker has asked, the models Orc ships with.
+    listed = [row["id"] for row in rows if valid(row.get("id"))] or sorted(SHIPPED["claude"])
+    ids = list(dict.fromkeys(model for model in (*listed, default, chosen) if valid(model)))
+    return [{"id": model, "label": claude_label(model, rows)} for model in ids]

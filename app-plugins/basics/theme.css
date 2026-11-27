@@ -42,10 +42,14 @@
    dark colour so it stays readable on the dark panel. */
 :root[data-basics][data-basics-accent^="#"] {
   --accent: light-dark(var(--basics-custom, #2b7a45), color-mix(in srgb, var(--basics-custom, #2b7a45) 55%, white));
+  --accent-strong: light-dark(color-mix(in srgb, var(--accent) 35%, var(--heading)), var(--accent));
+  --accent-text: var(--accent-strong);
+  --focus: var(--accent-strong);
 }
 @supports (color: oklch(from red l c h)) {
   :root[data-basics][data-basics-accent^="#"] {
     --accent: light-dark(var(--basics-custom, #2b7a45), oklch(from var(--basics-custom, #2b7a45) max(l, 0.78) c h));
+    --accent-strong: light-dark(oklch(from var(--accent) min(l, 0.48) c h), var(--accent));
   }
 }
 

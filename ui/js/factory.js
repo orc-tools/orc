@@ -21,11 +21,12 @@ import { knownHarness } from './harnesses.js';
 import { effortLabel } from './launch-options.js';
 import { modelLabel } from './run-presentation.js';
 import { formatElapsed } from './chat-timeline.js';
+import { costUsd } from './waterfall-model.js';
 import { paintedFunMode } from './fun-modes.js';
 import { onReducedMotionChange, reducedMotion } from './motion.js';
 import { themeAllowsCharacterMotion } from './character-motion.js';
 import { preloadScenes } from './theme-scenes.js';
-import { factoryBytesText, factoryLabelSlots } from './factory-labels.js';
+import { factoryLabelSlots } from './factory-labels.js';
 import { createFactoryChart } from './factory-chart.js';
 
 import { FACTORY_KEY } from './secondary-screens.js';
@@ -208,7 +209,7 @@ export function factoryCrew(run, payload, allRuns = []) {
       startedAt: factoryTime(agent.startedAt), endedAt: factoryTime(agent.endedAt),
       durationMs: Number.isFinite(agent.durationMs) ? agent.durationMs : null,
       brief: factoryText(agent.brief), tokens: factoryCount(agent.tokens), updatedAt: factoryTime(agent.updatedAt),
-      ...factoryTraffic(agent),
+      cost: factoryCount(agent.cost), ...factoryTraffic(agent),
     });
   }
   const children = new Map(allRuns
@@ -235,7 +236,7 @@ export function factoryCrew(run, payload, allRuns = []) {
       endedAt: ['ready', 'done', 'failed', 'stopped'].includes(state) ? factoryTime(task.updatedAt) : null,
       runId: task.childRunId || null, error: typeof task.error === 'string' ? task.error : '',
       brief: factoryText(task.text), updatedAt: factoryTime(task.updatedAt),
-      ...factoryTraffic(task),
+      cost: factoryCount(task.cost), ...factoryTraffic(task),
     });
   }
   for (const child of children.values()) {
@@ -412,15 +413,8 @@ export function factoryAdvisorTicketHtml(crew, { now = Date.now() } = {}) {
   if (!current) fact('Asks', esc(String(advisor.total)));
   const earlier = advisor.asks.filter(ask => ask !== current).reverse().slice(0, FACTORY_ADVISOR_ASKS_SHOWN);
   const name = factoryModelText(advisor.model) || 'Advisor';
-  return `<header class="factory-ticket-head">
-      ${factoryAdvisorAvatarHtml(advisor)}
-      <div class="factory-ticket-title">
-        <span class="factory-ticket-kind">Advisor</span>
-        <strong class="factory-ticket-name">${esc(name)}</strong>
-      </div>
-      <span class="factory-state is-${esc(advisor.state)}">${FACTORY_ADVISOR_LABELS[advisor.state]}</span>
-      <button type="button" class="factory-ticket-close" data-factory-close aria-label="Close details" title="Close (Esc)">${FACTORY_CLOSE_ICON}</button>
-    </header>
+  return `${factoryTicketHeadHtml({ avatar: factoryAdvisorAvatarHtml(advisor), name, kind: 'Advisor',
+    state: advisor.state, stateText: FACTORY_ADVISOR_LABELS[advisor.state] })}
     ${asked?.before ? `<p class="factory-ticket-brief">Asked after: ${factoryQuote(asked.before)}</p>` : ''}
     <dl class="factory-ticket-facts">${facts.join('')}${earlier.map(ask => factoryAskHtml(ask, now)).join('')}</dl>`;
 }
@@ -434,52 +428,55 @@ export function factoryAdvisorLabelHtml(advisor) {
 
 const factoryPhaseText = phase => (typeof phase === 'string' && phase ? phase.charAt(0).toUpperCase() + phase.slice(1) : '');
 
+// A ticket's head: the avatar, the name with the kind of agent tagged under
+// it (and its agent type beside the tag), its state and the close button.
+function factoryTicketHeadHtml({ avatar, name, kind, type = '', cloud = '', state, stateText }) {
+  return `<header class="factory-ticket-head">
+      ${avatar}
+      <strong class="factory-ticket-name">${esc(name)}</strong>
+      <span class="factory-state is-${esc(state)}">${stateText}</span>
+      <button type="button" class="factory-ticket-close" data-factory-close aria-label="Close details" title="Close (Esc)">${FACTORY_CLOSE_ICON}</button>
+      <span class="factory-ticket-type"><span class="factory-kind-tag">${esc(kind)}</span>${cloud}${type ? `<span class="factory-ticket-role">${esc(type)}</span>` : ''}</span>
+    </header>`;
+}
+
 // The job ticket for one pick: the hall's (`main`) or a station's. `run` is
 // the run that agent works in, when the run list has it: this run for the
 // hall, a worker's own run for its station. Null when the agent is gone.
-export function factoryTicketHtml(crew, id, { run = null, now = Date.now(), delivered = 0, retired = false } = {}) {
+// A station's ticket keeps to one row of facts: the model at its effort, the
+// time, the tokens and the estimated cost, plus anything that needs you and,
+// for a worker, where its own run has got to.
+export function factoryTicketHtml(crew, id, { run = null, now = Date.now(), delivered = 0 } = {}) {
   if (id === 'advisor') return factoryAdvisorTicketHtml(crew, { now });
   const isMain = id === 'main';
   const agent = isMain ? crew.main : crew.agents.find(entry => entry.id === id);
   if (!agent) return '';
   const meta = run?.meta || {};
   const cloud = factoryCloudInfo(agent, meta.harness);
-  const name = isMain ? 'Main agent' : agent.name;
-  const stateText = factoryStatusText(agent.state, isMain);
   const facts = [];
   const fact = (term, html) => { if (html) facts.push(`<div><dt>${term}</dt><dd>${html}</dd></div>`); };
-  if (cloud.cloud) fact('Cloud', esc(cloud.cloudLabel));
-  fact('Model', esc(factoryModelText(agent.model)));
-  fact('Effort', esc(effortLabel(agent.effort)));
+  const since = at => `<span data-factory-since="${at}">${esc(formatElapsed(now - at))}</span>`;
+  fact('Model', esc([factoryModelText(agent.model), effortLabel(agent.effort)].filter(Boolean).join(' · ')));
   if (isMain) {
+    if (cloud.cloud) fact('Cloud', esc(cloud.cloudLabel));
     fact('Crew', esc(factorySummary(crew.agents)));
     if (delivered) fact('Back at the hall', esc(factoryDeliveredText(delivered)));
   } else {
-    if (agent.phase) fact('Phase', esc(agent.phase));
-    if (agent.role && agent.role !== agent.phase) fact('Role', esc(agent.role));
-    const since = agent.state === 'running' || agent.state === 'queued' ? agent.startedAt : null;
+    const ticking = agent.state === 'running' || agent.state === 'queued' ? agent.startedAt : null;
     fact(FACTORY_TIME_LABELS[agent.state] || FACTORY_TIME_LABELS.unknown,
-      since !== null ? `<span data-factory-since="${since}">${esc(formatElapsed(now - since))}</span>` : esc(factoryElapsed(agent, now)));
-    if (agent.tokens !== null && agent.tokens !== undefined) {
-      fact('Tokens', esc(new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(agent.tokens)));
-    }
+      ticking !== null ? since(ticking) : esc(factoryElapsed(agent, now)));
+    if (agent.tokens !== null && agent.tokens !== undefined) fact('Tokens', esc(new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(agent.tokens)));
+    if (agent.cost !== null && agent.cost !== undefined) fact('Cost', esc(costUsd(agent.cost)));
     // A task row's time is its last change of state, not the worker's last word.
     if (agent.kind !== 'worker' && agent.state === 'running' && agent.updatedAt !== null && agent.updatedAt !== undefined) {
-      fact('Last heard from', `<span data-factory-since="${agent.updatedAt}">${esc(formatElapsed(now - agent.updatedAt))}</span> ago`);
+      fact('Last heard from', `${since(agent.updatedAt)} ago`);
     }
-    const { sent, returned } = agent;
-    if (sent) {
-      const followUps = sent.messages ? `${sent.messages === 1 ? '1 follow-up' : `${sent.messages} follow-ups`}` : '';
-      fact('Instructions', esc([factoryBytesText(sent.bytes), followUps].filter(Boolean).join(' · ')));
-    }
-    if (agent.state === 'ready') {
-      fact('Result', esc([factoryBytesText(returned?.bytes), 'the main agent has not taken it yet'].filter(Boolean).join(' · ')));
-    } else if (agent.state === 'done') fact('Result', esc(factoryBytesText(returned?.bytes)));
-    if (retired && FACTORY_CLOSED.has(agent.state)) fact('Station', 'Decommissioned');
-    // A worker's own run says more than its task row: where it is and
-    // whether it has stopped to ask.
+    // A worker's own run says more than its task row: whether it has stopped to ask.
     if (run && factoryMainState(meta) === 'waiting') fact('Its run', 'Waiting on you');
+    // The tag row names an agent's role, or its phase when it has no role.
+    if (agent.phase && agent.role && agent.role !== agent.phase) fact('Phase', esc(agent.phase));
   }
+  // Where the hall's run, or a worker's own run, has got to.
   if (isMain || !agent.phase) fact('Phase', esc(factoryPhaseText(meta.phase)));
   fact('Branch', meta.branch ? `<code>${esc(meta.branch)}</code>` : '');
   const brief = !isMain && agent.brief && agent.brief !== agent.name ? agent.brief : '';
@@ -490,15 +487,13 @@ export function factoryTicketHtml(crew, id, { run = null, now = Date.now(), deli
     threadLink ? `<a class="factory-ticket-open" href="${esc(threadLink.url)}" target="_blank" rel="noopener">Open ${esc(threadBrand)} thread${FACTORY_OPEN_ARROW}</a>` : '',
   ].filter(Boolean);
   const actionsHtml = links.length > 1 ? `<div class="factory-ticket-links">${links.join('')}</div>` : (links[0] || '');
-  return `<header class="factory-ticket-head">
-      ${factoryAvatarHtml(agent)}
-      <div class="factory-ticket-title">
-        <span class="factory-ticket-kind">${isMain ? 'This run' : FACTORY_KIND_LABELS[agent.kind] || 'Agent'}${cloud.cloud ? ` ${factoryCloudTagHtml(cloud)}` : ''}</span>
-        <strong class="factory-ticket-name">${esc(name)}</strong>
-      </div>
-      <span class="factory-state is-${esc(agent.state)}">${stateText}</span>
-      <button type="button" class="factory-ticket-close" data-factory-close aria-label="Close details" title="Close (Esc)">${FACTORY_CLOSE_ICON}</button>
-    </header>
+  const head = factoryTicketHeadHtml({
+    avatar: factoryAvatarHtml(agent), name: isMain ? 'Main agent' : agent.name,
+    kind: isMain ? 'This run' : FACTORY_KIND_LABELS[agent.kind] || 'Agent',
+    type: isMain ? '' : agent.role || factoryPhaseText(agent.phase), cloud: factoryCloudTagHtml(cloud),
+    state: agent.state, stateText: factoryStatusText(agent.state, isMain),
+  });
+  return `${head}
     ${brief ? `<p class="factory-ticket-brief">${esc(brief)}</p>` : ''}
     ${agent.error ? `<p class="factory-ticket-error">${esc(agent.error)}</p>` : ''}
     ${facts.length ? `<dl class="factory-ticket-facts">${facts.join('')}</dl>` : ''}
@@ -839,7 +834,7 @@ function factoryPaintTicket(state) {
   const agent = id === 'advisor' ? state.crew.advisor
     : id && id !== 'main' ? state.crew.agents.find(entry => entry.id === id) : null;
   const run = id === 'main' ? state.run : agent?.runId ? runs.find(other => other.id === agent.runId) || null : null;
-  const html = id ? factoryTicketHtml(state.crew, id, { run, delivered: state.scene?.delivered || 0, retired: !!state.scene?.retired.has(id) }) : '';
+  const html = id ? factoryTicketHtml(state.crew, id, { run, delivered: state.scene?.delivered || 0 }) : '';
   if (id && !html) {
     factorySelect(state, null);
     return;

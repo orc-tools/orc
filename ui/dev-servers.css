@@ -1,0 +1,139 @@
+#servers-btn { flex-shrink: 0; }
+#servers-view { --servers-line: color-mix(in srgb, var(--border) 55%, transparent); flex: 1; min-height: 0; overflow-y: auto; padding: 28px 30px 60px; }
+.servers-wrap { max-width: 960px; margin: 0 auto; }
+.servers-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 20px; flex-wrap: wrap; }
+.servers-header h2 { color: var(--heading); margin: 0; font-size: 24px; line-height: 1.25; }
+.servers-header h2:focus { outline: none; }
+.servers-note { color: var(--muted-strong); font-size: 12px; line-height: 1.6; margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.servers-note b { color: var(--heading); font-weight: 600; }
+.servers-header-actions { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; justify-content: flex-end; }
+#servers-show-hidden[hidden], #servers-search-wrap[hidden] { display: none; }
+#servers-status { margin-top: 10px; }
+#servers-status:empty { display: none; }
+#servers-status[data-error="true"] { color: var(--red-text); }
+
+/* The search field: a label wrapping the input, so the whole box takes a click. */
+.servers-search {
+  display: flex; align-items: center; gap: 8px; width: 300px; max-width: 100%; height: 32px; box-sizing: border-box;
+  padding: 0 8px 0 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--muted-strong); cursor: text;
+}
+.servers-search:focus-within { border-color: var(--accent); }
+.servers-search input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); padding: 0;
+  font: inherit; font-size: 13px; line-height: 1.4; appearance: none; -webkit-appearance: none;
+}
+.servers-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.servers-search kbd {
+  font-family: var(--orc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; line-height: 16px;
+  color: var(--muted-strong); background: var(--chip); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px;
+}
+.servers-search:focus-within kbd { visibility: hidden; }
+
+.servers-section { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 14px 16px 4px; margin-top: 16px; min-width: 0; }
+.servers-section h3 { margin: 0; font-size: 16px; color: var(--heading); display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; min-width: 0; overflow-wrap: anywhere; }
+.servers-section-head { display: flex; align-items: center; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; }
+.servers-count { font-size: 11px; font-weight: 600; color: var(--muted-strong); background: var(--chip); border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums; align-self: center; }
+.servers-total { color: var(--muted-strong); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.servers-path { flex-basis: 100%; order: 3; color: var(--muted-strong); font-size: 11px; font-family: var(--orc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); overflow-wrap: anywhere; }
+.servers-visibility { margin-left: auto; color: var(--muted-strong); }
+.servers-need .servers-visibility { margin-left: 0; }
+.servers-rows { list-style: none; margin: 10px 0 0; padding: 0; }
+
+/* Needs you: the one panel in the gate colour, since everything in it waits on you. */
+.servers-needs { border-color: color-mix(in srgb, var(--orange) 40%, transparent); background: color-mix(in srgb, var(--orange) 5%, var(--panel)); }
+.servers-needs .servers-count { color: var(--orange-text, var(--orange)); background: color-mix(in srgb, var(--orange) 13%, transparent); }
+.servers-need { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; column-gap: 12px; row-gap: 8px; padding: 14px 0; border-top: 1px solid var(--servers-line); }
+.servers-need > orc-status-dot, .servers-need-dot { align-self: start; margin-top: 6px; }
+.servers-need-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--orange); }
+.servers-need .servers-row-title { font-weight: 600; }
+.servers-need-error {
+  display: block; color: var(--red-text); font-family: var(--orc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.5em; overflow: hidden;
+}
+.servers-found { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 12px; line-height: 1.5; color: var(--muted-strong); }
+.servers-found code {
+  font-family: var(--orc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; color: var(--heading);
+  background: var(--code, var(--chip)); border-radius: 4px; padding: 1px 6px; overflow-wrap: anywhere;
+}
+.servers-agent { margin: 2px 0 0; font-size: 12px; color: var(--muted-strong); }
+.servers-agent a { color: var(--accent-text); }
+
+/* One block per project: running rows first, then stopped ones with Start. */
+.servers-project .servers-rows { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; column-gap: 14px; }
+.servers-project .servers-rows > .servers-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
+.servers-project-name { font-weight: 600; }
+.servers-project.is-hidden > :not(.servers-section-head), .servers-project.is-hidden .servers-section-head > :not(.servers-visibility) { opacity: .6; }
+.servers-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 12px; row-gap: 4px; padding: 12px 0; border-top: 1px solid var(--servers-line); }
+.servers-row-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.servers-row-title { color: var(--heading); font-size: 14px; font-weight: 500; line-height: 1.4; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; overflow-wrap: anywhere; }
+.servers-row-title a { color: var(--heading); text-decoration: none; }
+.servers-row-title a:hover { color: var(--accent-text); text-decoration: underline; }
+.servers-row-meta { color: var(--muted-strong); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.servers-row-meta a { color: var(--accent-text); }
+.servers-branch { font-family: var(--orc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11.5px; }
+.servers-memory { display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--muted-strong); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.servers-bar { width: 56px; height: 4px; border-radius: 999px; background: var(--chip); overflow: hidden; flex: none; }
+.servers-bar i { display: block; height: 100%; border-radius: inherit; background: var(--muted-strong); }
+.servers-open { justify-self: end; min-width: 0; max-width: 100%; }
+.servers-address {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; box-sizing: border-box;
+  padding: 3px 10px; border-radius: 12px; background: var(--chip); border: 1px solid var(--border);
+  color: var(--heading); text-decoration: none; font-family: var(--orc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; line-height: 18px;
+}
+.servers-address span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.servers-address svg { flex-shrink: 0; color: var(--accent); }
+.servers-address:hover { background: var(--button-hover-chip); border-color: var(--accent); }
+.servers-state { justify-self: end; color: var(--muted-strong); font-size: 12px; white-space: nowrap; }
+.servers-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: flex-end; }
+.servers-actions .settings-btn-inline { display: inline-flex; align-items: center; min-height: 28px; box-sizing: border-box; padding: 2px 10px; border-radius: 6px; text-decoration: none; white-space: nowrap; }
+.servers-need .servers-actions .settings-btn-inline, .servers-empty-lead .settings-btn-inline { min-height: 32px; padding: 4px 12px; font-size: 13px; border-radius: 6px; }
+.settings-btn-inline.servers-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.settings-btn-inline.servers-primary:not([aria-disabled="true"]):hover { background: color-mix(in srgb, var(--accent) 86%, var(--heading)); border-color: color-mix(in srgb, var(--accent) 86%, var(--heading)); color: var(--bg); }
+#servers-view .settings-btn-inline[aria-disabled="true"] { opacity: .5; cursor: default; }
+#servers-view .settings-btn-inline[aria-disabled="true"]:hover { background: var(--chip); border-color: var(--border); }
+#servers-view .settings-btn-inline.servers-primary[aria-disabled="true"]:hover { background: var(--accent); border-color: var(--accent); }
+.servers-chip { font-size: 11px; font-weight: 600; line-height: 16px; color: var(--muted-strong); background: var(--chip); border: 1px solid transparent; border-radius: 999px; padding: 0 7px; }
+.servers-chip[data-tone="warn"] { color: var(--yellow-text); background: color-mix(in srgb, var(--yellow) 12%, transparent); border-color: color-mix(in srgb, var(--yellow) 40%, transparent); }
+.servers-row-error { grid-column: 2 / -1; margin: 0; color: var(--red-text); font-size: 12px; overflow-wrap: anywhere; }
+.servers-idle { display: block; border-top: 1px solid var(--servers-line); }
+.servers-idle::part(summary) { padding: 10px 0; font-size: 12px; color: var(--muted-strong); }
+.servers-idle::part(summary):hover { color: var(--heading); }
+.servers-idle .servers-rows { display: block; margin: 0 0 4px; }
+.servers-idle .servers-rows > .servers-row { grid-template-columns: auto minmax(0, 1fr); padding: 7px 0; }
+.servers-idle .servers-row-body { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 10px; }
+.servers-idle .servers-row-title { font-size: 12.5px; font-family: var(--orc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-weight: 400; }
+
+/* Nothing set up yet: what a dev server is, then every project that could have one. */
+.servers-empty-state { padding: 18px 20px 6px; }
+.servers-empty-lead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px 24px; flex-wrap: wrap; }
+.servers-empty-lead p { margin: 8px 0 0; max-width: 62ch; color: var(--text); font-size: 13.5px; line-height: 1.6; }
+.servers-empty-state .servers-rows { margin-top: 16px; }
+.servers-empty-state .servers-need .servers-row-title { font-weight: 500; }
+.servers-foot { margin-top: 12px; }
+.servers-empty { color: var(--muted-strong); font-size: 13px; padding: 24px; margin: 16px 0 0; text-align: center; border: 1px dashed var(--border); border-radius: 10px; }
+#servers-view :is(button, a):focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+@media (max-width: 600px) {
+  #servers-view { padding: 18px 16px 40px; }
+  .servers-header h2 { font-size: 20px; }
+  .servers-header > div:first-child, .servers-header-actions { flex-basis: 100%; }
+  .servers-header-actions { flex-wrap: nowrap; }
+  .servers-search { flex: 1; width: auto; height: 44px; }
+  .servers-search kbd { display: none; }
+  .servers-section { padding: 12px 12px 4px; }
+  .servers-need { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .servers-need .servers-actions { grid-column: 2 / -1; grid-row: 2; justify-content: flex-start; }
+  .servers-need .servers-visibility { grid-column: 3; grid-row: 1; align-self: start; }
+  .servers-project .servers-rows { display: block; }
+  .servers-project .servers-rows > .servers-row { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 8px; }
+  .servers-project .servers-row-body { grid-column: 2 / -1; }
+  .servers-project .servers-row.is-idle .servers-row-body { grid-column: 2; }
+  .servers-project .servers-memory, .servers-project .servers-state { display: none; }
+  .servers-project .servers-open { grid-column: 2; justify-self: start; }
+  .servers-project .servers-actions { grid-column: 3; }
+  .servers-project .servers-row.is-idle .servers-actions { grid-row: 1; grid-column: 3; }
+  .servers-actions .settings-btn-inline, .servers-need .servers-actions .settings-btn-inline, .servers-empty-lead .settings-btn-inline, #servers-refresh { min-height: 44px; }
+  .servers-address { min-height: 32px; }
+  .servers-idle::part(summary) { padding: 11px 0; }
+  .servers-empty-state { padding: 14px 12px 4px; }
+}

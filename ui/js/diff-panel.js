@@ -1,33 +1,34 @@
+import { bindSidePanelNavigation } from './panel-navigation.js';
+export { revealDiffPanel } from './panel-navigation.js';
 import { DIFF_PREVIEW_BYTES } from './text-preview.js';
-import { $, announce, isQuestionRun, reviewsForRun, runs } from './core.js';
+import { $, announce, esc, isQuestionRun, reviewsForRun, runs } from './core.js';
 import { clearDiffViews, loadDiffsModule, renderDiffPanel } from './diff.js';
 import { filesPanelAvailable, hideFilesPanel, showFilesPanel } from './files-panel.js';
 import { showReviewPanel } from './review-panel.js';
 import { showAnswerPanel } from './answer-panel.js';
 import { hasDiagram, hasTechDoc, showDiagramPanel, showTechDocPanel } from './markdown-panel.js';
-import { hasAssets, onRunDiffFiles, showAssetsPanel } from './assets-panel.js';
-import { prPanelAvailable, retirePrPanelUnlessRun, showPrPanel } from './pr-panel.js';
+import { hasAssets, onRunDiffFiles, runDiffFiles, showAssetsPanel } from './assets-panel.js';
+import { prBodyPaths, prPanelAvailable, retirePrPanelUnlessRun, showPrPanel } from './pr-panel.js';
 import { hasEvals, showEvalsPanel } from './evals-panel.js';
 import { shortcutMatches } from './shortcuts.js';
 import { isFinalReady, isFlashcardRun, isPlanningComplete } from './run-presentation.js';
 
-// panel-right, stroked like the other Run tools chips beside it.
-export const DIFF_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>';
+// panel-right, stroked like the other Run tools chips beside it. Its right
+// half fills in while the panel is open.
+export const DIFF_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="side-panel-fill" d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4z" fill="currentColor" stroke="none"/><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>';
+// The arrow after the button's label, saying it opens something.
+const SIDE_PANEL_GO = '<svg class="side-panel-chip-go" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
 
 // The panel's state and wiring live in one closure, as the terminal's do: the
 // module test reads every top-level name as app-wide.
 let diffPanelOpen = false;
 let diffPanelSync = () => {};
 let diffPanelToggle = () => {};
-let diffPanelReveal = () => {};
 const SIDE_PANEL_VIEWS = ['diff', 'files', 'pr', 'review', 'answer', 'diagram', 'techdoc', 'assets', 'evals'];
 export function isDiffPanelOpen() { return diffPanelOpen; }
 // Called on every openRun pass so route and poll updates reach whichever tab is open.
 export function syncDiffPanel() { diffPanelSync(); }
 export function toggleDiffPanel() { diffPanelToggle(); }
-// Opens on a tab without moving focus: an old #<run>/diff.patch or
-// #<run>/pr-body.md link lands here.
-export function revealDiffPanel(view = 'diff', options) { diffPanelReveal(view, options); }
 // A planning session whose questions are all answered (Plan ready, Start work)
 // has nothing for the panel to show, so it gets neither the panel nor its chip.
 export function sidePanelAvailable(run) { return !!run && !isPlanningComplete(run.meta); }
@@ -47,12 +48,81 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
 }
 // END TESTABLE: diff panel width
 
+// BEGIN TESTABLE: side panel chip
+// The header button reads what the panel holds. A branch with changes gives
+// its file count, and the button adds the lines added and removed; a run with
+// none names up to three of its results and a count of the rest.
+function sidePanelChipText(files, results, shown = 3) {
+  if (files > 0) return [`${files} ${files === 1 ? 'file' : 'files'}`];
+  const parts = results.slice(0, shown);
+  if (results.length > shown) parts.push(`+${results.length - shown}`);
+  return parts;
+}
+// The run's whole diff, summed as Chat's changed-files card sums it.
+function diffLineTotals(files) {
+  return (files || []).reduce((sum, file) => ({
+    additions: sum.additions + (file.additions || 0), deletions: sum.deletions + (file.deletions || 0),
+  }), { additions: 0, deletions: 0 });
+}
+// END TESTABLE: side panel chip
+
+// BEGIN TESTABLE: PR body reveal
+// Whether the panel opens on Pull request by itself. `body` names the PR
+// bodies as they stand ('' before one is written); `seen` is the body this
+// browser last showed, `live` while the turn that showed it still runs. A body
+// opens the panel as soon as it exists, but a sheet waits for Ship so it never
+// covers a working Chat. Revisions within that turn update in place, and only
+// a later turn's new or changed body opens a closed panel again.
+function prBodyReveal(seen, { body, running, ready, sheet, showing }) {
+  if (!body) return { open: false, seen };
+  if (showing || seen?.live) return { open: false, seen: { body, live: running } };
+  if (seen?.body === body || (sheet && !ready)) return { open: false, seen };
+  return { open: true, seen: { body, live: running } };
+}
+// END TESTABLE: PR body reveal
+
+// BEGIN TESTABLE: side panel run memory
+// Panel state is kept for the most recently opened runs only, newest last, as
+// the terminal keeps its open runs: one key per run would otherwise grow with
+// every run this machine has ever made.
+function rememberSidePanelRun(ids, id, max = 100) {
+  const kept = ids.filter(other => other !== id);
+  kept.push(id);
+  return kept.slice(-max);
+}
+// END TESTABLE: side panel run memory
+
+// BEGIN TESTABLE: side panel tab strip
+// Keeps a selected tab inside the phone's single-row scrolling strip without
+// moving the page. When another tab sits to its right, leave room for the
+// right-edge fade so the selected label stays legible.
+function panelTabScrollDelta({ stripLeft, stripRight, tabLeft, tabRight, padStart = 3, padEnd = 3 }) {
+  if (tabLeft < stripLeft + padStart) return Math.floor(tabLeft - (stripLeft + padStart));
+  if (tabRight > stripRight - padEnd) {
+    return Math.min(Math.ceil(tabRight - (stripRight - padEnd)), Math.floor(tabLeft - (stripLeft + padStart)));
+  }
+  return 0;
+}
+function panelTabsHaveEndFade({ scrollWidth, clientWidth, scrollLeft }) {
+  return scrollWidth - clientWidth - scrollLeft > 1;
+}
+// END TESTABLE: side panel tab strip
+
 (() => {
   const OPEN_KEY = 'orcDiffPanelOpen:';
   const READY_KEY = 'orcSidePanelResultSeen:';
   const WIDTH_KEY = 'orcDiffPanelWidth';
+  const RUNS_KEY = 'orcSidePanelRuns';
+  const MAX_REMEMBERED_RUNS = 100;
+  // Under this width the panel is a sheet over the run (ui/index.html).
+  const sheetQuery = matchMedia('(max-width: 900px)');
+  const phoneQuery = matchMedia('(max-width: 700px)');
+  const backdrop = $('run-diff-backdrop');
   const MIN_WIDTH = 360;
+  const TAB_PAD = 3;
+  const TAB_FADE_CLEARANCE = 36;
   const panel = $('run-diff');
+  const tabStrip = $('run-panel-tabs');
   const handle = $('run-diff-resize');
   const body = $('run-diff-body');
   const scopeSelect = $('run-diff-scope');
@@ -64,6 +134,8 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
   let loadSeq = 0;
   let loadController = null;
   let returnFocus = null;
+  let revealedTabKey = null;
+  let userScrolledTabs = false;
   // Deliberately not persisted: a tab picked on one run, or in an earlier
   // session, would otherwise hide the next run's PR body.
   let chosenView = 'diff';
@@ -91,6 +163,7 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
       : hasEvals(run) ? 'evals'
       : prPanelAvailable(run) ? 'pr' : 'diff';
     returnFocus = null;
+    if (id) rememberRun(id);
     if (id && !openByRun.has(id)) {
       // An eval has no diff of its own: its panel is the comparison, so it
       // starts open until the user closes it.
@@ -99,6 +172,29 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
       openByRun.set(id, open);
     }
     diffPanelOpen = openByRun.get(id) || false;
+  }
+
+  // Moves a run to the newest end of the remembered list and drops the keys
+  // of the runs that fall off it. The first pass after Orc starts also clears
+  // keys left by runs the list no longer holds, such as every run's from
+  // before the list existed.
+  let swept = false;
+  function rememberRun(id) {
+    let ids = null;
+    try { ids = JSON.parse(localStorage.getItem(RUNS_KEY)); } catch {}
+    if (!Array.isArray(ids)) {
+      ids = runs.filter(run => run.id !== id).sort((a, b) => (a.mtime || 0) - (b.mtime || 0)).map(run => run.id);
+    } else if (swept && ids[ids.length - 1] === id) return;
+    const kept = rememberSidePanelRun(ids, id, MAX_REMEMBERED_RUNS);
+    try {
+      localStorage.setItem(RUNS_KEY, JSON.stringify(kept));
+      const keep = new Set(kept);
+      const stale = swept ? ids.filter(other => !keep.has(other)).flatMap(other => [OPEN_KEY + other, READY_KEY + other])
+        : Object.keys(localStorage).filter(key => [OPEN_KEY, READY_KEY].some(prefix =>
+          key.startsWith(prefix) && !keep.has(key.slice(prefix.length))));
+      stale.forEach(key => localStorage.removeItem(key));
+    } catch {}
+    swept = true;
   }
 
   function currentRun() {
@@ -140,8 +236,70 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     button.querySelector('[data-icon="restore"]').hidden = !on;
   }
 
-  function syncChip() {
-    $('links').querySelector('.side-panel-chip')?.setAttribute('aria-expanded', String(diffPanelOpen));
+  // Every tab the panel shows for a run, in the tab strip's order, with the
+  // short name the header button gives a result.
+  function panelTabs(run) {
+    const card = isFinishedCard(run);
+    return [
+      { view: 'diff', label: 'Diff', shown: !card },
+      { view: 'files', label: 'Files', shown: filesPanelAvailable() },
+      { view: 'pr', label: 'Pull request', short: 'PR', shown: !isFlashcardRun(run), result: prPanelAvailable(run) },
+      { view: 'answer', label: card ? 'Flashcard' : 'Answer', shown: isQuestionRun(run), result: true },
+      { view: 'diagram', label: 'Diagram', shown: hasDiagram(run), result: true },
+      { view: 'techdoc', label: 'Tech doc', shown: hasTechDoc(run), result: true },
+      { view: 'evals', label: 'Evals', shown: hasEvals(run), result: true },
+      { view: 'assets', label: 'Assets', shown: hasAssets(run), result: true },
+      { view: 'review', label: 'Review', shown: !!run && reviewsForRun(run.id).length > 0, result: true },
+    ];
+  }
+
+  // The results lead in the order a person comes to the panel for them.
+  const RESULT_ORDER = ['pr', 'answer', 'review', 'evals', 'diagram', 'techdoc', 'assets'];
+
+  function syncChip(run, tabs) {
+    const chip = $('links').querySelector('.side-panel-chip');
+    if (!chip) return;
+    chip.setAttribute('aria-expanded', String(diffPanelOpen));
+    const shown = tabs.filter(tab => tab.shown);
+    const changed = shown.some(tab => tab.view === 'diff') ? runDiffFiles(run) || [] : [];
+    const files = changed.length;
+    const { additions, deletions } = diffLineTotals(changed);
+    const results = shown.filter(tab => tab.result)
+      .sort((a, b) => RESULT_ORDER.indexOf(a.view) - RESULT_ORDER.indexOf(b.view))
+      .map(tab => tab.short || tab.label);
+    const parts = sidePanelChipText(files, results);
+    const names = shown.map(tab => (tab.view === 'diff' && files
+      ? `Diff (${files} ${files === 1 ? 'file' : 'files'}, ${additions} added, ${deletions} removed)` : tab.label));
+    const title = `Side panel (⌘B)${names.length ? `: ${names.join(', ')}` : ''}`;
+    const key = JSON.stringify([parts, files, title]);
+    if (chip.dataset.contents === key) return;
+    chip.dataset.contents = key;
+    chip.title = title;
+    chip.classList.toggle('labelled', parts.length > 0);
+    chip.innerHTML = DIFF_ICON + (parts.length
+      ? `<span class="side-panel-chip-label" aria-hidden="true">${parts.map(esc).join(' <i>·</i> ')}</span>` : '')
+      + (files ? `<span class="side-panel-chip-stat" aria-hidden="true"><span class="side-panel-chip-plus">+${additions}</span>`
+        + `<span class="side-panel-chip-minus">−${deletions}</span></span>` : '')
+      + (parts.length ? SIDE_PANEL_GO : '')
+      + (files ? `<span class="side-panel-chip-count" aria-hidden="true">${files}</span>` : '');
+  }
+
+  // The sheet dims the run beside it, and a click there or Escape closes it.
+  // A phone's sheet covers the whole width, so only Escape is left.
+  const isSheet = () => !panel.hidden && !maximized && sheetQuery.matches;
+  function syncBackdrop() {
+    const on = !panel.hidden && !maximized;
+    backdrop.hidden = !on;
+    if (on) {
+      const left = sidebarWidth() ? $('run-sidebar').getBoundingClientRect().right : 0;
+      backdrop.style.setProperty('--run-diff-backdrop-left', `${Math.round(left)}px`);
+    }
+  }
+  function closeSheet() {
+    setOpen(false);
+    diffPanelSync();
+    returnFocus = null;
+    $('links').querySelector('.side-panel-chip')?.focus();
   }
 
   // A finished flashcard run's output is its card: it has no PR, and its
@@ -158,6 +316,29 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     if (chosenView === 'assets' && !hasAssets(run)) return 'diff';
     if (chosenView === 'review' && !reviewsForRun(run?.id).length) return 'diff';
     return chosenView;
+  }
+
+  function syncTabsFade() {
+    const more = !panel.hidden && phoneQuery.matches && panelTabsHaveEndFade(tabStrip);
+    tabStrip.toggleAttribute('data-fade-end', more);
+  }
+
+  function revealPanelTab(tab) {
+    if (!tab || !phoneQuery.matches || tabStrip.scrollWidth <= tabStrip.clientWidth + 1) return;
+    const strip = tabStrip.getBoundingClientRect();
+    const box = tab.getBoundingClientRect();
+    if (!strip.width || !box.width) return;
+    const visible = [...tabStrip.querySelectorAll('[role="tab"]')].filter(item => !item.hidden);
+    const hasAfter = visible.indexOf(tab) < visible.length - 1;
+    const delta = panelTabScrollDelta({
+      stripLeft: strip.left,
+      stripRight: strip.right,
+      tabLeft: box.left,
+      tabRight: box.right,
+      padStart: TAB_PAD,
+      padEnd: hasAfter ? TAB_FADE_CLEARANCE : TAB_PAD,
+    });
+    if (delta) tabStrip.scrollLeft += delta;
   }
 
   function paintTabs(view) {
@@ -253,6 +434,60 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     }
   }
 
+  function storeSeen(run, value) {
+    if (value === resultSeenByRun.get(run.id)) return;
+    resultSeenByRun.set(run.id, value);
+    try {
+      if (value) localStorage.setItem(READY_KEY + run.id, value);
+      else localStorage.removeItem(READY_KEY + run.id);
+    } catch {}
+  }
+
+  // An answer is read in the Chat, where the reply already holds it, so it
+  // only picks the tab; a flashcard opens the panel, once it is final.
+  function revealAnswer(run, ready) {
+    if (ready && resultSeenByRun.get(run.id) !== '1') {
+      storeSeen(run, '1');
+      chosenView = 'answer';
+      if (isFinishedCard(run)) setOpen(true);
+    } else if (!ready && run.meta.status === 'running') storeSeen(run, null);
+  }
+
+  const resultReady = run => isFinalReady(run.meta)
+    || ['complete', 'merged', 'merged-to-parent'].includes(run.meta.status);
+
+  // Names the PR bodies as they stand, so a rewrite reads as a new body.
+  function prBodySignature(run, ready) {
+    const paths = prBodyPaths(run);
+    if (!paths.length) return ready && run.meta.prUrl ? `pr:${run.meta.prUrl}` : '';
+    return paths.map(path => {
+      const file = run.files.find(entry => entry.path === path);
+      return `${path}:${file?.mtime ?? ''}:${file?.size ?? ''}`;
+    }).join('|');
+  }
+
+  // The result as it stands now counts as seen.
+  function markResultSeen(run) {
+    if (isQuestionRun(run)) { storeSeen(run, '1'); return; }
+    const body = prBodySignature(run, resultReady(run));
+    storeSeen(run, body ? JSON.stringify({ body, live: isLiveRun(run) }) : null);
+  }
+
+  function revealPrBody(run, ready) {
+    const body = prBodySignature(run, ready);
+    const stored = resultSeenByRun.get(run.id);
+    let seen = null;
+    // '1' is a result shown at Ship before the body itself was remembered.
+    if (stored === '1') seen = { body, live: false };
+    else if (stored) { try { seen = JSON.parse(stored); } catch {} }
+    const showing = diffPanelOpen && sidePanelAvailable(run) && viewFor(run) === 'pr';
+    const next = prBodyReveal(seen, { body, running: isLiveRun(run), ready, sheet: sheetQuery.matches, showing });
+    storeSeen(run, next.seen ? JSON.stringify(next.seen) : null);
+    if (!next.open) return;
+    chosenView = 'pr';
+    setOpen(true);
+  }
+
   diffPanelSync = () => {
     const run = currentRun();
     retirePrPanelUnlessRun(run?.id);
@@ -264,40 +499,20 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
       note('');
     }
     syncOpen(run);
-    const card = isFinishedCard(run);
+    const tabs = panelTabs(run);
+    for (const tab of tabs) $(`run-panel-tab-${tab.view}`).hidden = !tab.shown;
     const answerTab = $('run-panel-tab-answer');
-    answerTab.hidden = !isQuestionRun(run);
-    const answerLabel = card ? 'Flashcard' : 'Answer';
+    const answerLabel = tabs.find(tab => tab.view === 'answer').label;
     if (answerTab.textContent !== answerLabel) answerTab.textContent = answerLabel;
-    $('run-panel-tab-diff').hidden = card;
-    $('run-panel-tab-pr').hidden = isFlashcardRun(run);
-    $('run-panel-tab-files').hidden = !filesPanelAvailable();
-    $('run-panel-tab-diagram').hidden = !hasDiagram(run);
-    $('run-panel-tab-techdoc').hidden = !hasTechDoc(run);
-    $('run-panel-tab-evals').hidden = !hasEvals(run);
-    $('run-panel-tab-assets').hidden = !hasAssets(run);
-    $('run-panel-tab-review').hidden = !reviewsForRun(run?.id).length;
     if (run) {
       if (!resultSeenByRun.has(run.id)) {
-        let seen = false;
-        try { seen = localStorage.getItem(READY_KEY + run.id) === '1'; } catch {}
-        resultSeenByRun.set(run.id, seen);
+        let stored = null;
+        try { stored = localStorage.getItem(READY_KEY + run.id); } catch {}
+        resultSeenByRun.set(run.id, stored);
       }
-      const ready = isFinalReady(run.meta)
-        || ['complete', 'merged', 'merged-to-parent'].includes(run.meta.status);
-      const answered = isQuestionRun(run);
-      const hasResult = answered || run.meta.prUrl || run.files.some(file => file.path === 'pr-body.md');
-      if (ready && hasResult && !resultSeenByRun.get(run.id)) {
-        resultSeenByRun.set(run.id, true);
-        try { localStorage.setItem(READY_KEY + run.id, '1'); } catch {}
-        chosenView = answered ? 'answer' : 'pr';
-        // An answer is read in the Chat, where the reply already holds it, so
-        // only a PR body or a flashcard opens the panel on its own.
-        if (!answered || card) setOpen(true);
-      } else if (!ready && run.meta.status === 'running') {
-        resultSeenByRun.set(run.id, false);
-        try { localStorage.removeItem(READY_KEY + run.id); } catch {}
-      }
+      const ready = resultReady(run);
+      if (isQuestionRun(run)) revealAnswer(run, ready);
+      else revealPrBody(run, ready);
     }
     const show = diffPanelOpen && sidePanelAvailable(run);
     const moved = panel.hidden === show;
@@ -306,11 +521,27 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     if (moved) document.dispatchEvent(new CustomEvent('orc:side-panel', { detail: { open: show } }));
     if (!show) maximized = false;
     syncMaximized();
-    syncChip();
-    if (!show) { cancelLoad(); hideFilesPanel(); return; }
+    syncBackdrop();
+    syncChip(run, tabs);
+    if (!show) {
+      cancelLoad();
+      hideFilesPanel();
+      revealedTabKey = null;
+      userScrolledTabs = false;
+      tabStrip.removeAttribute('data-fade-end');
+      return;
+    }
     setWidth(storedWidth(), false);
     const view = viewFor(run);
     paintTabs(view);
+    const visibleTabKey = tabs.filter(tab => tab.shown).map(tab => tab.view).join(',');
+    const tabKey = `${run?.id || ''}:${view}:${visibleTabKey}`;
+    if (tabKey !== revealedTabKey) {
+      revealedTabKey = tabKey;
+      userScrolledTabs = false;
+      revealPanelTab(tabStrip.querySelector('[aria-selected="true"]'));
+    }
+    syncTabsFade();
     if (view !== 'diff') cancelLoad();
     if (view === 'files') { showFilesPanel(run); return; }
     hideFilesPanel();
@@ -336,6 +567,8 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     const tab = document.querySelector(`#run-panel-tabs [data-view="${view}"]`);
     if (!run || !SIDE_PANEL_VIEWS.includes(view)) return;
     chosenView = view;
+    revealedTabKey = null;
+    userScrolledTabs = false;
     diffPanelSync();
     if (focus) tab.focus();
   }
@@ -379,13 +612,12 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     diffPanelSync();
   }
 
-  diffPanelReveal = (view, options) => {
+  bindSidePanelNavigation((view, options) => {
     const run = currentRun();
     syncOpen(run);
     // A link to one view outranks the one-time jump to the run's result.
     if (run) {
-      resultSeenByRun.set(run.id, true);
-      try { localStorage.setItem(READY_KEY + run.id, '1'); } catch {}
+      markResultSeen(run);
       if (options?.scope === 'turn' || options?.scope === 'branch') {
         scopeByRun.set(run.id, options.scope);
         loadedKey = null;
@@ -395,7 +627,7 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     returnFocus = document.activeElement;
     setOpen(true);
     selectView(view, { focus: false });
-  };
+  });
 
   // Stable entry point for Orc.app's View menu, same as ⌘J's terminal toggle.
   window.orcToggleDiff = toggleDiffPanel;
@@ -415,15 +647,14 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
   document.addEventListener('click', event => {
     if (event.target.closest?.('#links .side-panel-chip')) toggleDiffPanel();
   });
-  const tabs = $('run-panel-tabs');
-  tabs.addEventListener('click', event => {
+  tabStrip.addEventListener('click', event => {
     const tab = event.target.closest('[role="tab"]');
     if (tab) selectView(tab.dataset.view);
   });
   // Arrow keys move between the tabs, as a tablist's do.
-  tabs.addEventListener('keydown', event => {
+  tabStrip.addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    const all = [...tabs.querySelectorAll('[role="tab"]')].filter(tab => !tab.hidden && tab.getAttribute('aria-disabled') !== 'true');
+    const all = [...tabStrip.querySelectorAll('[role="tab"]')].filter(tab => !tab.hidden && tab.getAttribute('aria-disabled') !== 'true');
     const at = all.indexOf(document.activeElement);
     const next = event.key === 'Home' ? all[0]
       : event.key === 'End' ? all[all.length - 1]
@@ -431,13 +662,38 @@ function diffPanelClampWidth(width, windowWidth, sidebar, min = 360, minRun = 36
     event.preventDefault();
     if (next) selectView(next.dataset.view);
   });
+  tabStrip.addEventListener('scroll', syncTabsFade, { passive: true });
+  for (const type of ['pointerdown', 'touchstart', 'wheel']) {
+    tabStrip.addEventListener(type, () => { userScrolledTabs = true; }, { passive: true });
+  }
+  document.fonts?.ready.then(() => {
+    if (panel.hidden || userScrolledTabs) return;
+    revealPanelTab(tabStrip.querySelector('[aria-selected="true"]'));
+    syncTabsFade();
+  });
+  new ResizeObserver(syncTabsFade).observe(tabStrip);
+  phoneQuery.addEventListener('change', () => {
+    if (phoneQuery.matches) revealPanelTab(tabStrip.querySelector('[aria-selected="true"]'));
+    syncTabsFade();
+  });
   $('run-diff-close').addEventListener('click', () => toggleDiffPanel());
+  backdrop.addEventListener('click', () => { if (isSheet()) closeSheet(); });
+  // Escape belongs to whatever handled it first: a menu, a dialog, the
+  // composer, or the terminal's own programs.
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || !isSheet()) return;
+    if (document.body.classList.contains('sidebar-open') || $('run-terminal').contains(document.activeElement)) return;
+    if (document.querySelector('orc-dialog[open], dialog[open], #lightbox.open')) return;
+    event.preventDefault();
+    closeSheet();
+  });
   $('run-diff-maximize').addEventListener('click', () => {
     maximized = !maximized;
     syncMaximized();
+    syncBackdrop();
     announce(maximized ? 'Side panel maximized.' : 'Side panel restored.');
   });
-  new ResizeObserver(() => syncMaximized()).observe($('run-sidebar'));
+  new ResizeObserver(() => { syncMaximized(); syncBackdrop(); }).observe($('run-sidebar'));
   scopeSelect.addEventListener('change', () => setScope(scopeSelect.value));
   body.addEventListener('click', event => {
     if (!event.target.closest('[data-diff-retry]')) return;

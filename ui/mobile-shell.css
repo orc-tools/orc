@@ -1,0 +1,84 @@
+@media (max-width: 700px) {
+  html, body { overscroll-behavior-x: none; }
+  main { position: relative; padding-top: 52px; }
+  /* Painted from main's content box, the glow would start in a hard edge
+     under the Runs toggle. This layer runs it up past main's top padding
+     and the Home Screen app's status bar inset to the top of the screen;
+     z-index -1 keeps it under the banners and the header. */
+  main:has(#head:not([hidden])) { background-image: none; }
+  main:has(#head:not([hidden]))::before {
+    content: ""; position: absolute; left: 0; right: 0; z-index: -1; pointer-events: none;
+    top: calc(-1 * var(--orc-safe-top, 0px));
+    height: calc(var(--orc-safe-top, 0px) + 52px + 84px);
+    background: var(--head-glow, none) no-repeat;
+  }
+  #head { padding: 4px 16px 0; --run-tool: 44px; --run-tool-gap: 2px; }
+  #head h2 { margin-bottom: 6px; font-size: 16px; line-height: 1.35; }
+  #head h2::before { content: none; }
+  #links { gap: 12px 6px; margin-bottom: 10px; }
+  /* The header's links stay chip-sized but take a 44px fingertip: each hit
+     area reaches 10px above and below, within the row gap and the margin
+     under the row, and halfway into the gap beside it. */
+  #links :is(a[href], button):not(.run-tools *) { position: relative; }
+  #links :is(a[href], button):not(.run-tools *)::after { content: ""; position: absolute; inset: -10px -3px; }
+  #links .run-group-line a[href]::after { inset: -2px 0; }
+  /* A run whose only tab is the one open has nothing to switch to; the bar
+     keeps its border as the header's edge. */
+  #tabs:has(> button.active:only-of-type) { display: none; }
+  #links .run-tools { position: fixed; top: calc(7px + var(--orc-safe-top)); right: max(14px, env(safe-area-inset-right)); z-index: var(--z-sticky); }
+  #head #links .side-panel-chip.labelled { position: relative; width: var(--run-tool); padding: 0; }
+  #head #links .side-panel-chip :is(span.side-panel-chip-label, span.side-panel-chip-stat) { display: none; }
+  #head #links .side-panel-chip span.side-panel-chip-count {
+    position: absolute; top: 5px; right: 3px; display: block; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+    border-radius: 999px; background: var(--chip); color: var(--heading);
+    font-size: 11px; font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
+  }
+  #tabbar { padding: 0 16px; }
+  #run-times { display: none; }
+  #tabs button { min-height: 44px; }
+  #content { padding: 16px 16px max(48px, env(safe-area-inset-bottom)); }
+  /* A saved desktop height would swallow a phone screen; the terminal gets
+     at most half of it. */
+  #run-terminal { max-height: 50dvh; }
+  /* A phone has no room for a frame. Each theme's frame rule also names
+     the theme, which out-ranks this one but for !important. */
+  #run-terminal.terminal-staged, .text-stage[open] { inset: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+  /* A phone's terminal keeps its full width; each page still opens its own workspace. */
+  #run-terminal-tree { display: none; }
+  #run-sidebar {
+    position: fixed; inset: 0; z-index: var(--z-sidebar); width: 100%;
+    visibility: hidden; transform: translateX(-100%); border-right: 0;
+  }
+  body.sidebar-open #run-sidebar { visibility: visible; transform: translateX(0); }
+  /* The sheet hides the page in every theme, even one whose sidebar is glass
+     or only pictures. ::before is a solid floor, and ::after repaints the
+     theme's own background and inset shadow over it, so an opaque theme
+     looks exactly as before. Both sit under the sheet's content. */
+  #run-sidebar::before, #run-sidebar::after {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  }
+  #run-sidebar::before { background: var(--bg); }
+  #run-sidebar::after { background: inherit; box-shadow: inherit; }
+  #sidebar-collapse { display: none; }
+  #sidebar-close { display: grid; place-items: center; flex: none; margin-left: auto; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: var(--heading); font: inherit; font-size: 20px; cursor: var(--orc-cursor-pointer, pointer); }
+  #sidebar-close:hover { background: var(--button-hover); }
+  #search-wrap { gap: 4px; padding-inline: 16px; }
+  #search-clear { right: 2px; width: 32px; height: 32px; }
+  #new-btn { width: 44px; height: 44px; }
+  :is(#filter-menu, #sidebar-more)::part(trigger) { min-width: 44px; min-height: 44px; }
+  :is(#filter-menu, #sidebar-more) :is(button, a) { min-height: 44px; }
+  #list { overscroll-behavior: contain; }
+  #shell-nav { position: absolute; top: 7px; left: 14px; z-index: var(--z-sticky); display: flex; gap: 2px; }
+  #sidebar-toggle, #new-shortcut {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px;
+    background: none; color: var(--muted-strong); line-height: 1; text-decoration: none; cursor: var(--orc-cursor-pointer, pointer); touch-action: manipulation;
+  }
+  #sidebar-toggle:hover, #new-shortcut:hover { background: color-mix(in srgb, var(--heading) 8%, transparent); color: var(--heading); }
+  #sidebar-backdrop {
+    position: fixed; inset: 0; z-index: var(--z-sidebar-backdrop); display: block; width: 100%; height: 100%;
+    padding: 0; border: 0; background: color-mix(in srgb, var(--heading) 38%, transparent); cursor: var(--orc-cursor-pointer, pointer);
+  }
+  #run-sidebar { transition: transform .2s cubic-bezier(.22, 1, .36, 1), visibility .2s; }
+  body.sidebar-open #run-sidebar { transition-property: transform; }
+}

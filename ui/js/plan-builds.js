@@ -1,21 +1,44 @@
 // The launch choices for one run started outside the composer: the build a
 // plan starts, and the Set up verification card's setup run.
 import { cachedConfigData, fetchConfigData } from './config-data.js';
-import { isFastChoice, launchPermissionMode, launchTakesPermissions, ncAgents, permissionDefaultSkips } from './launch-options.js';
-import { subscribeLaunchPresets } from './launch-presets.js';
+import { harnessEffortLevels } from './harnesses.js';
+import { isFastChoice, launchPermissionMode, launchTakesEffort, launchTakesPermissions, ncAgents, ncSupportsUltra, permissionDefaultSkips } from './launch-options.js';
+import { launchPresets, subscribeLaunchPresets } from './launch-presets.js';
 import { syncModelCatalog } from './model-catalog.js';
-import { createLaunchSelection, effortControlState, launchModelFor } from './launch-selection.js';
+import { createLaunchSelection, effortControlState, launchModelFor, launchModelSelection } from './launch-selection.js';
+
+// The saved default effort for `presetId`'s lead route when `(agent, model)`
+// accepts it, else null (presets not loaded, preset deleted, lead saves no
+// effort, or level unavailable here).
+function validPresetLeadEffort(presetId, agent, model, capabilities = {}) {
+  if (!presetId) return null;
+  const found = launchPresets().find(preset => preset.id === presetId);
+  const effort = found?.lead?.effort;
+  if (!effort || !launchTakesEffort({ agent, model })) return null;
+  const selected = launchModelSelection({ agent, model });
+  const ultra = ncSupportsUltra(capabilities, selected.agent, selected.model);
+  const { options } = effortControlState(effort, ultra, harnessEffortLevels(agent, model));
+  return options.some(([key]) => key === effort) ? effort : null;
+}
 
 // The launch settings a run records, as the choices a launch selection takes.
-export function planRunChoices(meta, accounts = []) {
-  const agent = ncAgents().includes(meta?.harness) ? meta.harness : 'claude';
-  const model = launchModelFor(agent, meta?.launchModel ?? (meta?.orchestratorModel || meta?.model));
-  const account = accounts.includes(meta?.claudeAccount) ? meta.claudeAccount : null;
+// A plan written on its preset's Planner builds on the Lead it recorded; a plan
+// under an Orchestrate preset starts at the preset lead's default effort.
+export function planRunChoices(meta, accounts = [], { capabilities = {}, presetLeadEffort = true } = {}) {
+  const lead = meta?.planBuildLead && typeof meta.planBuildLead === 'object' ? meta.planBuildLead : null;
+  const recorded = lead ? { harness: lead.agent, launchModel: lead.model, launchEffort: lead.effort,
+    launchFast: lead.fast, claudeAccount: lead.claudeAccount } : meta;
+  const agent = ncAgents().includes(recorded?.harness) ? recorded.harness : 'claude';
+  const model = launchModelFor(agent, recorded?.launchModel ?? (recorded?.orchestratorModel || recorded?.model));
+  const account = accounts.includes(recorded?.claudeAccount) ? recorded.claudeAccount : null;
+  const preset = meta?.orchestrationPreset || meta?.orchestrationProfile;
+  const leadEffort = presetLeadEffort ? validPresetLeadEffort(preset, agent, model, capabilities) : null;
+  const effort = leadEffort || recorded?.launchEffort;
   return {
-    agent, ...model && { model }, ...meta?.launchEffort && { effort: meta.launchEffort },
-    ...isFastChoice(meta?.launchFast) && { fast: meta.launchFast },
+    agent, ...model && { model }, ...effort && { effort },
+    ...isFastChoice(recorded?.launchFast) && { fast: recorded.launchFast },
     ...account && { claudeAccount: account },
-    preset: meta?.orchestrationPreset || meta?.orchestrationProfile,
+    preset,
   };
 }
 
@@ -48,13 +71,18 @@ const ROW_HTML = `
 // row has loaded, which starts from the settings `meta` recorded. With
 // `labelHidden` the label names the row for a screen reader only, where the
 // row's place already says what it is for.
-export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with', labelHidden = false }) {
+export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with', labelHidden = false, presetLeadEffort = true }) {
   let alive = true;
   let selection = null;
   let skipPermissions = null;
+  let capabilities = {};
+  let userPickedEffort = false;
+  const presetId = meta?.orchestrationPreset || meta?.orchestrationProfile;
   const permissionFor = agent => {
     if (skipPermissions !== null && launchTakesPermissions(agent)) return launchPermissionMode(agent, skipPermissions);
-    if (agent === meta?.harness && meta.launchPermissionMode) return meta.launchPermissionMode;
+    const lead = meta?.planBuildLead;
+    if (lead?.permissionMode && agent === lead.agent) return lead.permissionMode;
+    if (!lead && agent === meta?.harness && meta.launchPermissionMode) return meta.launchPermissionMode;
     return launchTakesPermissions(agent) ? launchPermissionMode(agent, permissionDefaultSkips()) : null;
   };
   let efforts = '';
@@ -104,15 +132,16 @@ export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with', la
 
   async function open(config) {
     if (!alive || selection) return;
+    capabilities = config?.launchEffort || {};
     const accounts = Array.isArray(config?.claudeAccounts) ? config.claudeAccounts : [];
-    let started = planRunChoices(meta, accounts);
+    let started = planRunChoices(meta, accounts, { capabilities, presetLeadEffort });
     if (!started.model && (meta?.launchModel || meta?.orchestratorModel || meta?.model)) {
       await syncModelCatalog();
       if (!alive || selection) return;
-      started = planRunChoices(meta, accounts);
+      started = planRunChoices(meta, accounts, { capabilities, presetLeadEffort });
     }
     selection = createLaunchSelection({
-      storage: null, capabilities: config?.launchEffort || {}, presetAgent: started.agent, accounts, ownPreset: true });
+      storage: null, capabilities, presetAgent: started.agent, accounts, ownPreset: true });
     selection.restore(started);
     host.hidden = false;
     render();
@@ -124,7 +153,15 @@ export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with', la
     selection.choose(choice, { remember: false });
     render();
   };
+  const applyPresetLeadEffort = () => {
+    if (!selection || !presetLeadEffort || !presetId || userPickedEffort) return;
+    const { agent, model } = selection.value;
+    const defaultEffort = validPresetLeadEffort(presetId, agent, model, capabilities);
+    if (!defaultEffort || selection.value.effort === defaultEffort) return;
+    selection.choose({ effort: defaultEffort }, { remember: false });
+  };
   picker.addEventListener('change', () => {
+    userPickedEffort = true;
     const { agent, model, preset } = picker.choice;
     // A preset turns Orchestrate on, on its lead; a model picked by hand
     // builds without it.
@@ -132,7 +169,10 @@ export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with', la
     if (agent) pick({ agent });
     if (model) pick({ model });
   });
-  effort.addEventListener('change', () => pick({ effort: effort.value }));
+  effort.addEventListener('change', () => {
+    userPickedEffort = true;
+    pick({ effort: effort.value });
+  });
   flags.addEventListener('change', event => {
     const name = event.target.dataset?.flag;
     if (name === 'fast') pick({ fast: event.target.speed });
@@ -143,7 +183,12 @@ export function mountPlanBuilds(host, { meta, labelId, label = 'Builds with', la
   // that load or change set what a preset's lead builds on.
   const onPlugins = () => render();
   window.addEventListener('orc-plugins-changed', onPlugins);
-  const stopPresets = subscribeLaunchPresets(() => { if (selection) { selection.lead(); render(); } });
+  const stopPresets = subscribeLaunchPresets(() => {
+    if (!selection) return;
+    selection.lead();
+    applyPresetLeadEffort();
+    render();
+  });
 
   if (cachedConfigData()) open(cachedConfigData());
   else fetchConfigData().then(open).catch(() => {});

@@ -765,6 +765,9 @@ if [ "$MODE" = install ] && git -C "$REPO_DIR" rev-parse --is-inside-work-tree >
     echo "ERROR: refusing desktop promotion: HEAD is not $canonical_ref ($canonical_commit)" >&2
     exit 1
   fi
+  # Python's __pycache__ and Finder's .DS_Store are not edits. A public clone
+  # has no .gitignore, so without this they block every update.
+  python3 -B "$REPO_DIR/ui/local_clutter.py" "$REPO_DIR"
   if [ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=normal)" ]; then
     echo "ERROR: refusing desktop promotion from a dirty primary checkout" >&2
     exit 1

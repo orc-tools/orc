@@ -24,7 +24,8 @@ import sys
 
 BIN = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "ui"))
-from delivery_record import DeliveryError, meta_lock, now, read_meta, write_meta  # noqa: E402
+from delivery_record import DeliveryError, meta_lock, now, read_meta  # noqa: E402
+from run_lifecycle import write_meta
 
 
 MAX_REASON = 300
@@ -106,8 +107,8 @@ def main(argv=None):
             meta = read_meta(meta_path)
             changed = clear(meta) if args.clear else escalate(meta, reason)
             if changed:
-                write_meta(meta_path, meta)
-    except (EscalateError, DeliveryError) as exc:
+                write_meta(meta_path, meta, caller="orc-escalate")
+    except (EscalateError, DeliveryError, OSError, ValueError) as exc:
         print("orc-escalate: %s" % exc, file=sys.stderr)
         return 1
 

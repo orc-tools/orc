@@ -1,0 +1,540 @@
+/* Diff panel (⌘B): diff.patch docked on the right of the run, as T3 Code
+   docks a thread's diff. The bar holds the count and the controls; the
+   files scroll beneath it edge to edge, each header pinned while its rows
+   pass. The width is a custom property so the overlay below can ignore it. */
+#run-diff {
+  position: relative; flex: none; display: flex; flex-direction: column;
+  width: var(--run-diff-width, 540px); min-width: 0; min-height: 0;
+  border-left: 1px solid var(--border); background: var(--bg);
+}
+#run-diff[hidden] { display: none; }
+#run-diff.resizing { user-select: none; }
+#run-diff-resize {
+  position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 6;
+  cursor: ew-resize; touch-action: none;
+}
+#run-diff-resize:hover, #run-diff.resizing #run-diff-resize { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+#run-diff-resize:focus-visible { outline: 2px solid var(--focus); outline-offset: -3px; }
+#run-diff-bar {
+  position: relative; z-index: 5; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
+  min-height: 44px; padding: 6px 8px 6px 14px; box-sizing: border-box;
+  border-bottom: 1px solid var(--border); background: var(--panel);
+}
+#run-diff-scope { flex-shrink: 0; }
+#run-diff-scope::part(trigger) { min-height: 28px; }
+/* Trimmed to its capitals, the value already sits on the middle, so it
+   skips the theme font's nudge. The equal padding keeps that and leaves
+   room for descenders, which the value's own clipping would cut. */
+#run-diff-scope::part(value) { min-block-size: 0; top: 0; padding-block: .3em; text-box: trim-both cap alphabetic; }
+#run-diff-summary {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--muted-strong);
+}
+#run-diff-tools { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+#run-diff-tools:empty { display: none; }
+#run-diff-maximize { flex-shrink: 0; margin-left: auto; }
+#run-diff-close { flex-shrink: 0; }
+#run-diff-body { flex: 1; min-height: 0; overflow: auto; }
+/* The tab strip over the panel's views, like T3 Code's right panel tabs. */
+#run-panel-head {
+  display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 8px;
+  box-sizing: border-box; border-bottom: 1px solid var(--border); background: var(--panel);
+}
+#run-panel-tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+#run-panel-tabs [role="tab"] {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  border: 0; border-radius: 8px; background: none; color: var(--muted-strong);
+  font: inherit; font-size: 12.5px; font-weight: 500; cursor: var(--orc-cursor-pointer, pointer);
+}
+#run-panel-tabs [role="tab"]:hover { background: color-mix(in srgb, var(--heading) 8%, transparent); color: var(--heading); }
+#run-panel-tabs [role="tab"][aria-selected="true"] { background: color-mix(in srgb, var(--heading) 11%, transparent); color: var(--heading); }
+#run-panel-tabs [role="tab"][aria-disabled="true"] { opacity: .45; cursor: default; background: none; color: var(--muted-strong); }
+#run-panel-tabs [role="tab"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.run-panel-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.run-panel-view[hidden] { display: none; }
+#run-answer-body { flex: 1; min-height: 0; overflow: auto; padding: 20px; }
+#run-answer-body .md { padding: 0; border: 0; min-width: 0; }
+.flashcard-head { margin-bottom: 14px; }
+.flashcard-meta { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; color: var(--muted-strong); }
+.flashcard-state { flex: none; border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; color: var(--text); }
+.flashcard-state[data-updating] { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.flashcard-title { margin: 12px 0 4px; font-size: 20px; color: var(--heading); }
+.flashcard-hint { margin: 0; font-size: 13px; color: var(--muted-strong); }
+#run-answer-body .md.flashcard-card { border: 1px solid var(--border); border-radius: var(--card-radius, 10px); padding: 16px 20px; background: var(--panel); }
+#run-answer-body .flashcard-card > :first-child { margin-top: 0; }
+#run-answer-body .flashcard-card h1 { font-size: 17px; margin: 0 0 6px; padding: 0; border: 0; }
+#run-answer-body .flashcard-card h2 { font-size: 14px; margin: 14px 0 4px; padding: 0; border: 0; }
+.answer-view-controls { display: flex; gap: 6px; margin-bottom: 24px; }
+.answer-view-controls button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: var(--orc-cursor-pointer, pointer); }
+.answer-view-controls button[aria-pressed="true"] { background: var(--chip); }
+.structured-answer { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.structured-answer h2 { font-size: 24px; line-height: 1.25; margin: 0 0 20px; }
+.structured-answer h3 { font-size: 16px; margin: 0 0 12px; }
+.answer-stack { display: grid; gap: 24px; min-width: 0; }
+.answer-table { min-width: 0; }
+.answer-table label { display: grid; gap: 6px; margin-bottom: 14px; }
+.answer-table input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: inherit; background: transparent; font: inherit; }
+.answer-table-scroll { overflow-x: auto; }
+.answer-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.answer-table caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.answer-table th, .answer-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.answer-table th:first-child, .answer-table td:first-child { padding-left: 0; }
+.answer-table [role="status"] { color: var(--muted-strong); font-size: 12px; margin: 10px 0 0; }
+.answer-evidence { border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.answer-evidence summary { cursor: var(--orc-cursor-pointer, pointer); font-weight: 600; }
+.answer-source { display: inline-block; }
+#run-answer-body svg { max-width: 100%; min-width: 0 !important; height: auto; }
+#run-diagram-body, #run-techdoc-body, #run-evals-body { flex: 1; min-height: 0; overflow: auto; padding: 20px; }
+#run-diagram-body .md, #run-techdoc-body .md, #run-evals-body .md { padding: 0; border: 0; min-width: 0; }
+#run-techdoc-bar { flex: none; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 12px; }
+#run-techdoc-bar[hidden] { display: none; }
+/* Assets: the player stays at the top while the list scrolls under it. */
+#run-assets-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#run-assets-body > .run-diff-note { padding: 16px; color: var(--muted-strong); }
+.assets-player { flex: none; padding: 12px 14px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.assets-stage {
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--code);
+}
+.assets-stage:is([data-kind="video"], [data-kind="image"]) { aspect-ratio: 16 / 9; max-height: 40vh; }
+/* A mockup beside the screen built to match it. */
+.assets-stage[data-kind="pair"] { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; align-items: stretch; height: 40vh; background: var(--border); }
+.assets-pair-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0; background: var(--code); }
+.assets-pair-pane .assets-zoom { flex: 1; min-height: 0; }
+/* A picture opens full screen in the picture viewer. */
+.assets-zoom {
+  display: block; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 0;
+  background: none; color: inherit; font: inherit; cursor: zoom-in;
+}
+.assets-zoom:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.assets-pair-pane figcaption { flex: none; padding: 4px 8px; color: var(--muted-strong); font-size: 11px; }
+.assets-stage :is(video, img) { display: block; width: 100%; height: 100%; object-fit: contain; }
+.assets-stage-audio {
+  display: flex; align-items: center; gap: 10px; min-width: 0; padding: 22px 16px;
+  color: var(--muted-strong); font-size: 13px;
+}
+.assets-stage-audio svg { flex: none; width: 22px; height: 22px; color: var(--accent); }
+.assets-stage-audio span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assets-transport { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+.assets-transport .diff-tool:disabled { opacity: .45; cursor: default; background: none; }
+/* An image has no clock; hiding it keeps the controls where they were. */
+.assets-transport[data-kind="image"] :is(.assets-time, .assets-scrubber, .assets-duration) { visibility: hidden; }
+.assets-toggle { color: var(--accent-text); }
+.assets-time, .assets-duration {
+  flex: none; min-width: 34px; color: var(--muted-strong); font-size: 11.5px; font-variant-numeric: tabular-nums;
+}
+.assets-time { margin-left: 6px; text-align: right; }
+.assets-scrubber {
+  flex: 1; min-width: 60px; height: 20px; margin: 0; background: none;
+  appearance: none; -webkit-appearance: none; cursor: var(--orc-cursor-pointer, pointer);
+}
+.assets-scrubber::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(to right, var(--accent) var(--progress, 0%), color-mix(in srgb, var(--muted) 35%, transparent) var(--progress, 0%));
+}
+.assets-scrubber::-moz-range-track { height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 35%, transparent); }
+.assets-scrubber::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--accent); }
+.assets-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border: 0; border-radius: 50%; background: var(--accent);
+}
+.assets-scrubber::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--accent); }
+.assets-scrubber:disabled { opacity: .45; cursor: default; }
+.assets-scrubber:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.assets-now { display: flex; align-items: baseline; gap: 8px; min-width: 0; margin: 6px 0 0; font-size: 12px; }
+.assets-now-name { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--heading); font-weight: 600; }
+.assets-now-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-strong); font-size: 11px; }
+.assets-now-open { flex: none; margin-left: auto; color: var(--accent-text); font-size: 12px; }
+.assets-list { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 6px 8px; list-style: none; }
+.assets-item {
+  display: grid; grid-template-columns: 18px minmax(0, auto) minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--text);
+  font: inherit; font-size: 12.5px; text-align: left; cursor: var(--orc-cursor-pointer, pointer);
+}
+.assets-item:hover { background: color-mix(in srgb, var(--heading) 6%, transparent); }
+.assets-item[aria-current="true"] { background: color-mix(in srgb, var(--heading) 11%, transparent); color: var(--heading); }
+.assets-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.assets-item-icon { display: flex; color: var(--muted-strong); }
+.assets-item[aria-current="true"] .assets-item-icon { color: var(--accent-text); }
+.assets-item-icon svg { width: 15px; height: 15px; }
+.assets-item-name, .assets-item-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assets-item-name { font-weight: 500; }
+.assets-item-path { color: var(--muted-strong); font-size: 11px; }
+.assets-item-meta { color: var(--muted-strong); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.assets-item.is-removed .assets-item-name { text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+#run-review-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+#run-review-controls orc-select { min-width: 0; max-width: 100%; }
+#run-review-status { flex: 1; }
+#run-review-report { flex: 1; display: flex; min-height: 0; }
+#run-review-report iframe { width: 100%; flex: 1; border: 0; background: var(--bg); }
+#run-review-report .run-diff-note { padding: 16px; }
+
+.text-preview { min-width: 0; padding: 12px 14px; }
+.text-preview-message { color: var(--muted-strong); font-size: 12px; }
+.text-preview-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.text-preview-controls input { width: 7ch; }
+.text-preview-controls button, .text-preview-controls input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
+.text-preview-controls button:disabled { opacity: 0.5; }
+.text-preview :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.text-preview pre { overflow: auto; white-space: pre; font: 12px/1.55 ui-monospace, monospace; tab-size: 4; }
+
+/* Pull request: T3 Code's PR surface. Section headings stay pinned so a
+   long description can be collapsed from wherever it was read to. */
+#run-pr-body { flex: 1; min-height: 0; overflow: auto; }
+.pr-head { padding: 14px 16px 12px; }
+.pr-crumb { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--muted-strong); }
+.pr-number { display: inline-flex; align-items: center; gap: 2px; font-weight: 600; text-decoration: none; }
+.pr-number:hover { text-decoration: underline; text-underline-offset: 2px; }
+.pr-number:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.pr-ticket { flex: none; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: inherit; text-decoration: none; white-space: nowrap; }
+a.pr-ticket:hover { text-decoration: underline; text-underline-offset: 2px; }
+a.pr-ticket:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.pr-state {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: auto; padding: 2px 8px;
+  border: 1px solid var(--border); border-radius: 999px; font-size: 11.5px; font-weight: 500; white-space: nowrap;
+  min-height: 24px;
+}
+/* The font's ascender space sits the label high in its line box; trim to the caps so flex centring lines them up with the icon. */
+.pr-state-label { text-box: trim-both cap alphabetic; }
+.pr-tone-open { color: var(--green-text); }
+.pr-tone-draft { color: var(--muted-strong); }
+.pr-tone-merged { color: var(--purple-text); }
+.pr-tone-closed { color: var(--red-text); }
+.pr-title { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.35; color: var(--heading); overflow-wrap: anywhere; }
+.pr-crumb + .pr-title { margin-top: 8px; }
+.pr-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 12px; color: var(--muted-strong); }
+.pr-branches { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted-strong); }
+.pr-branch-names { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.pr-branch-names code {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px;
+}
+.pr-branch-names svg { flex-shrink: 0; opacity: .6; }
+/* The count is a button: it opens the diff those files are in. */
+.pr-stat {
+  display: inline-flex; gap: 8px; flex-shrink: 0; margin: 0; padding: 2px 4px; border: 0; border-radius: 4px;
+  background: none; color: inherit; font: inherit; font-variant-numeric: tabular-nums; cursor: var(--orc-cursor-pointer, pointer);
+}
+.pr-stat-files { text-decoration: underline; text-underline-offset: 2px; }
+.pr-stat:hover .pr-stat-files { color: var(--accent-text); }
+.pr-stat:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.pr-add { color: var(--green-text); }
+.pr-del { color: var(--red-text); }
+.pr-meta-rows { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; padding: 12px 16px 4px; font-size: 12px; }
+.pr-meta-rows dt { color: var(--muted-strong); }
+.pr-meta-rows dd { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; }
+.pr-chip { padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 11.5px; }
+/* A link chip is a filled button: blue on hover, never underlined (DESIGN.md, Chips). */
+a.pr-chip { display: inline-flex; align-items: center; gap: 4px; color: inherit; text-decoration: none;
+  background: var(--chip); cursor: var(--orc-cursor-pointer, pointer); transition: background-color .12s, border-color .12s, color .12s; }
+a.pr-chip:hover { background: var(--button-hover-chip); border-color: var(--accent); color: var(--accent-text); }
+a.pr-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.pr-chip[data-outcome="approved"] { border-color: color-mix(in srgb, var(--green) 55%, var(--border)); }
+.pr-reviewer[data-outcome="approved"], .pr-reviewer[data-outcome="picked-up"] { display: inline-flex; align-items: center; gap: 4px; }
+.pr-reviewer[data-outcome="approved"] { color: var(--green-text); }
+.pr-chip-mark { font-size: 11px; line-height: 1; }
+.pr-chip[data-outcome="changes_requested"] { border-color: color-mix(in srgb, var(--orange) 55%, var(--border)); }
+.pr-chip[data-outcome="requested"], .pr-chip[data-outcome="waiting"] { color: var(--muted-strong); }
+/* Zerohands' review: a spinning ring while it runs, the tick once it passes. */
+.pr-zerohands { display: inline-flex; align-items: center; gap: 4px; }
+.pr-zerohands svg { flex-shrink: 0; }
+.pr-zerohands[data-outcome="approved"] { color: var(--green-text); }
+.pr-zerohands[data-outcome="running"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); color: var(--accent-text); }
+.pr-zerohands[data-outcome="running"]::before {
+  content: ''; width: 8px; height: 8px; border: 1.5px solid var(--border); border-top-color: var(--accent); border-radius: 50%;
+  animation: merge-plan-spin .9s linear infinite;
+}
+.pr-zerohands[data-outcome="failed"] { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); color: var(--red-text); }
+.pr-zerohands-running { align-self: center; margin-left: 4px; color: var(--muted-strong); font-size: 11.5px; }
+.pr-zerohands-running b { font-weight: 500; color: var(--text); }
+.pr-none { color: var(--muted-strong); font-size: 12px; }
+.pr-section-head {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
+  padding-right: 12px; background: var(--bg);
+}
+.pr-section-toggle {
+  display: flex; align-items: center; gap: 6px; flex: 1 1 auto; padding: 12px 16px;
+  border: 0; background: none; color: var(--muted-strong); font: inherit; font-size: 12px; font-weight: 500;
+  text-align: left; cursor: var(--orc-cursor-pointer, pointer);
+}
+.pr-section-toggle:hover { color: var(--heading); }
+.pr-section-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.pr-section-chevron { opacity: .6; transition: transform .12s ease; }
+.pr-section-toggle[aria-expanded="true"] .pr-section-chevron { transform: rotate(90deg); }
+.pr-section-body { padding: 0 16px 16px; }
+.pr-section-body[hidden] { display: none; }
+#run-pr-body .md { padding: 0; border: 0; max-width: none; font-size: 13px; }
+#run-pr-body .pr-body-host > .md { padding: 16px; }
+#run-pr-body .pr-content img { cursor: zoom-in; }
+/* Crepe paints an opaque square background that would cover the box's bottom corners.
+   The min-height is the mounted editor's own floor (.milkdown and .ProseMirror
+   below), held while the editor loads so the box does not grow when it arrives. */
+#run-pr-body .pr-body-editor { min-height: max(250px, 24vh); border-radius: 0 0 8px 8px; }
+#run-pr-body .pr-body-editor .milkdown { min-height: 24vh; }
+#run-pr-body .pr-body-editor .milkdown .ProseMirror { padding: 16px; }
+.pr-error { margin: 12px 16px 0; font-size: 12px; color: var(--red-text); }
+.pr-error button { font: inherit; color: inherit; text-decoration: underline; background: none; border: 0; padding: 0; cursor: var(--orc-cursor-pointer, pointer); }
+.pr-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 12.5px; }
+.pr-check { display: flex; gap: 8px; align-items: baseline; }
+.pr-check a { color: var(--accent); }
+.pr-check a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.pr-check-outcome { min-width: 56px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.pr-check-pass .pr-check-outcome { color: var(--green-text); }
+.pr-check-fail .pr-check-outcome { color: var(--red-text); }
+.pr-check-pending .pr-check-outcome, .pr-check-skipped .pr-check-outcome { color: var(--muted-strong); }
+
+.run-diff-note { padding: 32px 20px; text-align: center; color: var(--muted-strong); font-size: 12.5px; }
+.run-diff-note p { margin: 0 0 10px; }
+.diff-tool {
+  width: 28px; height: 28px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+}
+.diff-tool:hover { background: var(--button-hover); color: var(--heading); }
+.diff-tool[aria-pressed="true"] { background: var(--chip); color: var(--heading); }
+.diff-tool:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.diff-tool-group { display: inline-flex; gap: 1px; padding: 1px; border: 1px solid var(--border); border-radius: 8px; }
+.diff-tool-group .diff-tool { width: 26px; height: 24px; border-radius: 6px; }
+/* A run with several PRs picks the one the Pull request tab shows. */
+.pr-switch { display: flex; padding: 12px 16px 0; }
+.pr-switch .diff-tool-group { max-width: 100%; overflow-x: auto; }
+.pr-switch .diff-tool-group .diff-tool {
+  width: auto; height: 26px; gap: 6px; padding: 0 10px; white-space: nowrap;
+  font: inherit; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
+}
+/* Below this the run column is too narrow to share: the panel becomes a
+   sheet over the run, and its saved width waits for a wider window. It sits
+   under the phone sidebar's backdrop, so opening the run list covers it. */
+@media (max-width: 900px) {
+  #run-diff {
+    position: fixed; inset: 0 0 auto auto; z-index: calc(var(--z-sidebar-backdrop) - 1);
+    width: min(540px, 100vw); height: 100dvh; box-sizing: border-box;
+    padding: var(--orc-safe-top, env(safe-area-inset-top)) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    box-shadow: var(--float-shadow);
+  }
+  #run-panel-head { flex-shrink: 0; }
+  #run-diff-resize { display: none; }
+  /* The run the sheet leaves showing is dimmed, as the phone run list dims
+     the page; a docked run list stays as it is. A click there closes it. */
+  #run-diff-backdrop:not([hidden]) {
+    position: fixed; inset: 0 min(540px, 100vw) 0 var(--run-diff-backdrop-left, 0px);
+    z-index: calc(var(--z-sidebar-backdrop) - 2); display: block;
+    padding: 0; border: 0; background: color-mix(in srgb, var(--heading) 38%, transparent);
+    cursor: var(--orc-cursor-pointer, pointer);
+  }
+}
+#run-diff-backdrop { display: none; }
+/* Maximized: the panel lies over the whole run column, chat included,
+   and stops at the run list's right edge (--run-diff-left), so the list
+   stays open beside it. The chat keeps its layout underneath. */
+#run-diff.maximized {
+  position: fixed; inset: 0 0 0 var(--run-diff-left, 0px); z-index: calc(var(--z-sidebar-backdrop) - 1);
+  width: auto; box-shadow: none;
+}
+#run-diff.maximized #run-diff-resize { display: none; }
+.diff-files { display: flex; flex-direction: column; }
+.diff-file { position: relative; border-bottom: 1px solid var(--border); }
+.diff-file-head {
+  display: flex; align-items: center; gap: 8px; cursor: var(--orc-cursor-pointer, pointer); list-style: none;
+  padding: 7px 12px; font-size: 12px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--panel);
+  position: sticky; top: 0; z-index: 2;
+}
+.diff-file-head::-webkit-details-marker { display: none; }
+.diff-file-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+details[open] > .diff-file-head { border-bottom: 1px solid var(--border); }
+.diff-chevron { flex-shrink: 0; color: var(--muted-strong); }
+.diff-chevron { transition: transform .15s ease; }
+details[open] > .diff-file-head .diff-chevron { transform: rotate(90deg); }
+/* Preserve filename suffixes when the header cannot fit the full path. */
+.diff-path { flex: 1; min-width: 0; display: flex; overflow: hidden; white-space: nowrap; }
+.diff-path-part { display: flex; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.diff-dir { flex: 0 10000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted-strong); }
+.diff-base { min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; color: var(--heading); font-weight: 600; }
+.diff-rename-arrow { flex-shrink: 0; white-space: pre; color: var(--muted-strong); }
+/* Find's count of matches inside a folded or unloaded file, tinted like the
+   matches themselves (palette.js) and kept whole beside a long path */
+.diff-path[data-find-hidden]::after {
+  content: attr(data-find-hidden); flex-shrink: 0; margin-left: 8px; padding: 0 6px;
+  border-radius: 4px; background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--heading); font: 500 11px/18px "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+/* colour, padding and radius are <orc-chip>'s now; the row only needs the
+   chip to keep its width against a long path */
+.diff-chip { flex-shrink: 0; }
+.diff-stat-add { flex-shrink: 0; color: var(--green-text); font-variant-numeric: tabular-nums; }
+.diff-stat-del { flex-shrink: 0; color: var(--red-text); font-variant-numeric: tabular-nums; }
+/* The strip lives inside the sticky <summary>, which is a positioned
+   element and so is its containing block: top/bottom 0 span exactly the
+   header, whatever height the path and chip give it, and align-items
+   centres the icons in it. */
+.diff-file-meta {
+  position: absolute; z-index: 3; top: 0; bottom: 0; right: 12px;
+  display: flex; align-items: center; gap: 4px;
+  font: 12.5px/1 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.diff-file-action {
+  position: relative; width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+}
+.diff-file-action::after { content: ""; position: absolute; inset: -4px; }
+.diff-file-action:hover:not(:disabled) { background: var(--button-hover); color: var(--heading); }
+.diff-file-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+/* no opacity here: it would fight the hover-reveal rules below */
+.diff-file-action:disabled { cursor: default; color: var(--muted-strong); }
+.diff-file-action svg { width: 14px; height: 14px; }
+/* The copied state is announced too — colour confirms it, never carries it.
+   :hover is listed because the pointer is still on the button that was just
+   clicked, and the hover rule would otherwise repaint the confirmation.
+   Borderless removed the green border that used to carry this, and a 14px
+   glyph is too thin for its colour to read on its own, so the swap to a
+   check and the announcement are the real signal; green and the fill just
+   agree with them. */
+.diff-file-copy.is-copied,
+.diff-file-copy.is-copied:hover {
+  color: var(--green-text); background: var(--button-hover);
+}
+@media (hover: hover) {
+  .diff-file-action { opacity: 0; }
+  .diff-file:has(.diff-file-head:hover) .diff-file-action,
+  .diff-file-meta:hover .diff-file-action,
+  .diff-file-action:focus-visible,
+  .diff-file-copy.is-copied { opacity: 1; }
+}
+.diff-file-head { padding-right: 150px; }
+.diff-file-comment-composer { padding: 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.diff-file-comment-composer .diff-comment-composer { max-width: none; }
+.diff-file-body { overflow-x: auto; overflow-y: hidden; }
+.diff-binary { padding: 10px 14px; color: var(--muted-strong); font-size: 12.5px; }
+.diff-binary a { color: var(--accent-text); }
+.diff-binary a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.diff-media { display: flex; flex-wrap: wrap; gap: 10px 16px; padding: 10px 14px; }
+.diff-media-side { flex: 1 1 220px; min-width: 0; max-width: 480px; margin: 0; }
+.diff-media-side figcaption { margin-bottom: 4px; color: var(--muted-strong); font-size: 11.5px; }
+.diff-media-side audio { display: block; width: 100%; height: 36px; }
+.diff-media-side img, .diff-media-side video { display: block; max-width: 100%; max-height: 320px; border-radius: 6px; }
+.diff-media-missing { margin: 0; color: var(--muted-strong); font-size: 12.5px; }
+.diff-deferred {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+  padding: 10px 14px; color: var(--muted-strong); font-size: 12.5px;
+}
+.diff-deferred p { margin: 0; }
+.diff-deferred-size { font-variant-numeric: tabular-nums; }
+.diff-truncated { margin: 0; padding: 8px 14px; border-bottom: 1px solid var(--border); color: var(--muted-strong); font-size: 12px; }
+.diff-truncated a { color: var(--accent-text); }
+.diff-truncated a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* The rows are @pierre/diffs' own, painted into each card's shadow root and
+   themed through the --diffs-* custom properties it reads off the host.
+   Line tints, word emphasis, the hover "+" and the selected-range paint all
+   come from the library's stylesheet; only the surface and type are ours. */
+.diff-host {
+  display: block;
+  --diffs-font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --diffs-font-size: 12.5px;
+  --diffs-line-height: 20px;
+  --diffs-light-bg: var(--bg);
+  --diffs-dark-bg: var(--bg);
+  /* T3 Code's hunk bands: the UI face, one quiet step off the code surface */
+  --diffs-header-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --diffs-bg-separator-override: color-mix(in srgb, var(--bg) 96%, var(--text));
+}
+.diff-host:not([data-painted]) { min-height: var(--diff-estimate, 0px); }
+/* the composer the library renders under a commented range, in light DOM */
+.diff-line-comment-composer { padding: 10px 12px; background: var(--panel); border-block: 1px solid var(--border); }
+.diff-selection-trigger {
+  position: fixed; z-index: 40; display: flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border: 1px solid var(--accent-strong); border-radius: 6px;
+  background: var(--accent-strong); color: var(--bg); cursor: var(--orc-cursor-pointer, pointer);
+  font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  box-shadow: var(--float-shadow);
+}
+.diff-selection-trigger[hidden] { display: none; }
+.diff-selection-trigger svg { width: 13px; height: 13px; display: block; }
+/* the quote is code, so it takes the code surface and code text colour —
+   --muted-strong made it read as greyed-out prose */
+.diff-comment-quote {
+  /* impeccable-disable-next-line side-tab: the quoted code marker in DESIGN.md */
+  margin: 0; padding: 7px 11px; border-left: 3px solid var(--accent);
+  background: var(--code); color: var(--text); border-radius: 0 4px 4px 0;
+  font: 12px/1.5 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow-y: auto;
+}
+.diff-comment-composer { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
+.diff-comment-heading { color: var(--heading); font: 600 12.5px/1.4 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.diff-comment-path {
+  margin-left: 8px; color: var(--muted-strong); font-weight: 400;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+.diff-comment-composer textarea, .diff-review-body {
+  width: 100%; min-height: 72px; resize: vertical; box-sizing: border-box;
+  border: 1px solid var(--control-border); border-radius: 6px; padding: 8px 10px;
+  background: var(--bg); color: var(--text); font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.diff-comment-actions, .diff-review-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+/* not positioned: the popover hangs from the whole panel bar, so it can
+   take the panel's width rather than overflow its left edge */
+.diff-review-anchor { display: inline-flex; margin-left: 4px; }
+/* `font: inherit` inside the diff table picks up JetBrains Mono — these are
+   app buttons, so they take the UI stack like every other control */
+.diff-comment-actions button, .diff-review-actions button, .diff-review-toggle, .diff-review-remove, .run-diff-note button, .diff-load {
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 11px; background: transparent;
+  color: var(--text); cursor: var(--orc-cursor-pointer, pointer);
+  font: 500 12.5px/1.4 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.diff-comment-actions button:hover, .diff-review-actions button:hover, .diff-review-toggle:hover, .diff-review-remove:hover, .run-diff-note button:hover, .diff-load:hover {
+  background: var(--button-hover); color: var(--heading); border-color: var(--accent);
+}
+.diff-comment-actions button:focus-visible, .diff-review-actions button:focus-visible,
+.diff-review-toggle:focus-visible, .diff-review-remove:focus-visible, .run-diff-note button:focus-visible, .diff-load:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.diff-comment-actions button:disabled, .diff-review-actions button:disabled { opacity: .55; cursor: wait; }
+.diff-comment-error { color: var(--red-text); font-size: 12px; min-height: 1.4em; }
+.diff-review-toggle {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px; border-radius: 6px; white-space: nowrap;
+  background: var(--accent-text); border-color: var(--accent-text); color: var(--bg); font-weight: 400;
+}
+.diff-review-toggle:hover { background: var(--accent-text); border-color: var(--heading); color: var(--bg); }
+.diff-review-count { font-variant-numeric: tabular-nums; }
+/* floating popover under the panel bar, GitHub-style — overlays the diff
+   instead of pushing it down, and never wider than the panel. */
+.diff-review-panel {
+  position: absolute; top: calc(100% + 6px); right: 8px; z-index: 30;
+  width: min(440px, calc(100% - 16px)); box-sizing: border-box; text-align: left;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 14px;
+  box-shadow: var(--float-shadow);
+}
+.diff-review-panel[hidden] { display: none; }
+.diff-review-panel h3 { margin: 0; color: var(--heading); font-size: 14px; }
+.diff-review-copy { margin: 3px 0 10px; color: var(--muted-strong); font-size: 12px; }
+.diff-review-comments { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.diff-review-item { display: flex; align-items: start; gap: 8px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.diff-review-item-text { flex: 1; min-width: 0; }
+.diff-review-item-loc { display: block; color: var(--accent-text); font: 600 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.diff-review-item-body { display: block; color: var(--text); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-review-remove { flex: none; padding: 2px 7px; color: var(--muted-strong); }
+/* On a phone the side panel fills the screen, so its bars and rows take
+   the page's 16px gutter instead of the narrower docked insets. */
+@media (max-width: 700px) {
+  #run-panel-tabs {
+    flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; align-items: center;
+    overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+    padding: 3px; margin: -3px;
+  }
+  #run-panel-tabs::-webkit-scrollbar { display: none; }
+  #run-panel-tabs [role="tab"] { flex: none; white-space: nowrap; }
+  #run-panel-tabs[data-fade-end] {
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
+    mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
+  }
+  .diff-comment-actions, .diff-review-actions { flex-wrap: wrap; }
+  #run-diff-bar, #run-review-controls, .diff-binary, .diff-deferred, .diff-media { padding-inline: 16px; }
+  .diff-file-head { padding-left: 16px; }
+  .diff-file-meta { right: 16px; }
+  .files-row { padding-inline: calc(16px + var(--files-depth, 0) * 14px) 16px; }
+}
+@media (pointer: coarse) {
+  .diff-tool, .diff-review-toggle { min-height: 44px; }
+  .diff-tool { min-width: 44px; }
+  #run-diff-scope::part(trigger) { min-height: 44px; font-size: 16px; }
+}

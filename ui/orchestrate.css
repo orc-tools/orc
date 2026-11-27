@@ -247,7 +247,7 @@
 .orch-presets-list.reordering, .orch-presets-list.reordering .orch-preset { cursor: grabbing; }
 .orch-preset.dragging {
   position: relative; z-index: 1; border-color: color-mix(in srgb, var(--yellow) 60%, transparent);
-  box-shadow: 0 10px 24px rgb(0 0 0 / .3); transition: none;
+  box-shadow: var(--float-shadow); transition: none;
 }
 .orch-preset-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .orch-preset input {

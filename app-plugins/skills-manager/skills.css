@@ -57,7 +57,7 @@ a.settings-btn-inline { text-decoration: none; }
 .skills-select { min-width: 0; max-width: 100%; }
 .skills-add-hint { margin: 7px 2px 0; font-size: 11.5px; line-height: 1.6; color: var(--muted-strong); }
 .skills-detected { color: var(--accent-text); font-weight: 500; }
-.skills-kbd { display: inline-block; padding: 0 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--heading); font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.skills-kbd { display: inline-block; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--heading); font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 
 .skills-list { display: grid; gap: 12px; align-content: start; min-width: 0; }
 .skills-list > :empty, #skills-r-list-status:not(:has(.skills-status:not(:empty))) { display: none; }
@@ -165,7 +165,7 @@ a.settings-btn-inline { text-decoration: none; }
    headings and every strip alike. */
 .is-strip .skills-cells { grid-template-columns: repeat(auto-fill, clamp(52px, calc(100% / var(--skills-cols)), 72px)); row-gap: 6px; }
 
-.skills-slug { padding: 1px 6px; border-radius: 5px; background: var(--code); color: var(--muted-strong); font-size: 11px; }
+.skills-slug { padding: 1px 6px; border-radius: 6px; background: var(--code); color: var(--muted-strong); font-size: 11px; }
 .skills-tag { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--chip, var(--bg)); color: var(--muted-strong); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .skills-tag.is-ok { color: var(--green-text); border-color: color-mix(in srgb, var(--green) 42%, var(--border)); background: color-mix(in srgb, var(--green) 11%, transparent); }
 .skills-tag.is-warn { color: var(--gate); border-color: color-mix(in srgb, var(--orange) 45%, var(--border)); background: color-mix(in srgb, var(--orange) 12%, transparent); }
@@ -312,7 +312,7 @@ a.settings-btn-inline { text-decoration: none; }
 @container skills (max-width: 600px) {
   .skills-notice { grid-template-columns: minmax(0, 1fr); }
   .skills-notice-actions { justify-content: flex-start; }
-  .skills-top h2, .skills-hero h2 { font-size: 22px; }
+  .skills-top h2, .skills-hero h2 { font-size: 20px; }
   .skills-hero, .skills-panel { padding: 13px; }
   .skills-crest.is-large { width: 64px; height: 64px; }
   .skills-search { min-height: 44px; font-size: 16px; }

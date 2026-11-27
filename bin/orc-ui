@@ -414,25 +414,27 @@ preview_command() {
 # The caller turns warnings into a "gate NOT opened" report, so a rejected
 # state change cannot claim the gate is ready.
 mark_gate_awaiting() {
-  python3 - "$1" "$SCRIPT_ROOT/bin/orc-delivery-authority" "$SCRIPT_ROOT/ui" "${2:-}" <<'PY' 2>/dev/null || true
+  python3 - "$1" "$SCRIPT_ROOT/bin/orc-delivery-authority" "$SCRIPT_ROOT/ui" "${2:-}" <<'PY'
 import json, os, subprocess, sys
 sys.path.insert(0, sys.argv[3])
+from run_lifecycle import Snapshot, write_meta
 from run_relationships import retired_lifecycle
 frag = sys.argv[1]
 authority_helper = sys.argv[2]
 clean_title = sys.argv[4].strip() if len(sys.argv) > 4 else ""
 run_id = frag.split("/", 1)[0]
 if not run_id or run_id.startswith("."):
-    sys.exit(0)
+    sys.exit("WARN: invalid run ID")
 runs_root = os.environ.get("ORC_RUNS_DIR") or os.path.expanduser("~/.orc/runs")
 path = os.path.join(runs_root, run_id, "meta.json")
 try:
     with open(path) as f:
         meta = json.load(f)
-except (OSError, ValueError):
-    sys.exit(0)
+except (OSError, ValueError) as exc:
+    sys.exit("WARN: cannot read %s: %s" % (path, exc))
 if not isinstance(meta, dict):
-    sys.exit(0)
+    sys.exit("WARN: %s must contain a JSON object" % path)
+meta = Snapshot(meta)
 if retired_lifecycle(meta):
     print("WARN: %s is read-only history — gate not opened; start a fresh run" % run_id)
     sys.exit(0)
@@ -452,14 +454,10 @@ if clean_title:
 
 
 def save():
-    tmp = path + ".tmp"
     try:
-        with open(tmp, "w") as f:
-            json.dump(meta, f, indent=2)
-            f.write("\n")
-        os.replace(tmp, path)
-    except OSError:
-        pass
+        write_meta(path, meta, caller="orc-ui open --gate")
+    except (OSError, ValueError) as exc:
+        sys.exit("WARN: %s" % exc)
 
 
 # The gate path names the final phase, so derive it instead of trusting a
@@ -514,7 +512,6 @@ if (landing_phase and meta.get("phase") != landing_phase
         and (landing_phase != "mvp"
              or meta.get("status") in ("running", "awaiting-gate"))):
     meta["phase"] = landing_phase
-    save()
 st = meta.get("status")
 # The PR feedback round is the one gate that opens on a *finished* run: its
 # Push comments & commits button (fixes unpushed), or its Push comments retry
@@ -522,9 +519,10 @@ st = meta.get("status")
 # prFeedback is its authority, not phase -- so this never rewrites phase or
 # gatedPhases, because the run really is done (skills/orc-pr, "PR feedback
 # round").
-# The round's questions, one Answer mode step per new comment, open the same
-# way before it changes anything: `prFeedback.state` is `awaiting-answers` and
-# the questions file is on disk.
+# The round's questions, one Answer mode step per new comment and laid out
+# together as the PR comments tab's plan, open the same way before it changes
+# anything: `prFeedback.state` is `awaiting-answers` and the questions file is
+# on disk.
 if os.path.basename(frag) in ("pr-comments.html", "pr-review-questions.json"):
     feedback = meta.get("prFeedback")
     feedback = feedback if isinstance(feedback, dict) else {}
@@ -534,8 +532,9 @@ if os.path.basename(frag) in ("pr-comments.html", "pr-review-questions.json"):
                        and feedback.get("repliesFile") == "pr-replies.json"
                        and not feedback.get("repliesPostedAt")
                        and os.path.isfile(os.path.join(run_dir, "pr-replies.json")))
-    asking = (os.path.basename(frag) == "pr-review-questions.json"
-              and state == "awaiting-answers"
+    # The PR comments tab is the round's plan while it asks, so either name
+    # opens the questions.
+    asking = (state == "awaiting-answers"
               and os.path.isfile(os.path.join(run_dir, "pr-review-questions.json")))
     if os.path.basename(frag) == "pr-review-questions.json" and not asking:
         print("WARN: %s has no review questions waiting (prFeedback.state is "
@@ -543,9 +542,7 @@ if os.path.basename(frag) in ("pr-comments.html", "pr-review-questions.json"):
     elif not asking and state != "awaiting-push" and not replies_pending:
         print("WARN: %s has no unpushed fixes or unposted replies in its PR "
               "feedback round — not flipped to awaiting-gate" % run_id)
-    elif st == "awaiting-gate":
-        pass  # already at the round's gate = idempotent no-op
-    elif st in ("running", "complete"):
+    elif st in ("running", "complete", "awaiting-gate"):
         meta["status"] = "awaiting-gate"
         save()
     else:
@@ -575,10 +572,9 @@ if st != "running":
     elif st != "awaiting-gate":  # already at a gate = legit idempotent no-op
         print("WARN: %s is status=%s — not flipped to awaiting-gate; "
               "recap actions will not render" % (run_id, st))
-    elif ship and "shipHold" in meta:
-        meta.pop("shipHold")
-        save()
-    elif clean_title:
+    else:
+        if ship:
+            meta.pop("shipHold", None)
         save()
     sys.exit(0)
 if os.path.basename(frag) == "clarification.html" and not review:
@@ -771,14 +767,14 @@ case "${1:-open}" in
           exit 1
         fi
       fi
-      warn=""
-      [ -n "$frag" ] && warn="$(mark_gate_awaiting "$frag" "$gate_title")"
-      if [ -n "$warn" ]; then
-        echo "$warn" >&2
-        echo "link (gate NOT opened): $URL${frag:+#$frag}"
-      else
-        echo "gate ready — open: $URL${frag:+#$frag}"
+      if [ -n "$frag" ]; then
+        if ! warn="$(mark_gate_awaiting "$frag" "$gate_title" 2>&1)" || [ -n "$warn" ]; then
+          [ -z "$warn" ] || echo "$warn" >&2
+          echo "link (gate NOT opened): $URL${frag:+#$frag}"
+          exit 1
+        fi
       fi
+      echo "gate ready — open: $URL${frag:+#$frag}"
       exit 0
     fi
     if [ "$DEFAULT_INSTANCE" = 1 ]; then refresh_default_runtime; fi

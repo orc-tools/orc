@@ -1742,16 +1742,23 @@ def _active(meta):
     return meta.get("status") not in ("complete", "cancelled", "merged", "merged-to-parent")
 
 
-def _subagents(meta, harness, path, reader):
+def _subagents(meta, harness, path, reader, billed=None):
     """The subagents ``reader``'s transcript started. A settled run's agent is
-    gone, so none of them still counts as running."""
-    return run_subagents.snapshot(harness, path, reader.summary, summary_reader, locate, active=_active(meta))
+    gone, so none of them still counts as running. ``billed`` collects each
+    one's own model calls by its id, without those its parent bills."""
+    rows = run_subagents.snapshot(harness, path, reader.summary, summary_reader, locate,
+                                  active=_active(meta), billed=billed)
+    if billed is not None:
+        seen = {key for key, _ in reader.summary.calls_billed()}
+        for ident, calls in billed.items():
+            billed[ident] = [(key, entry) for key, entry in calls if key not in seen]
+    return rows
 
 
-def crew(meta):
+def crew(meta, billed=None):
     """The Factory tab's view of a run's own conversation: the model and
     effort it runs on and the subagents it started, read without building
-    chat items."""
+    chat items. ``billed`` collects each subagent's model calls, for its cost."""
     harness, path = session_transcript(meta)
     if path is None:
         return {"harness": harness, "model": None, "effort": _effort(meta), "subagents": [],
@@ -1761,7 +1768,7 @@ def crew(meta):
         reader.poll()
         advisor = reader.summary.advisor
         return {"harness": harness, "model": reader.summary.model, "effort": _effort(meta, reader),
-                "subagents": _subagents(meta, harness, path, reader),
+                "subagents": _subagents(meta, harness, path, reader, billed),
                 "advisor": advisor.snapshot(active=_active(meta)) if advisor else None, "more": reader.behind}
 
 

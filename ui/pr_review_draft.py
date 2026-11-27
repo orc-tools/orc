@@ -59,6 +59,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
+import integrations
+import run_lifecycle
 import staged_images
 
 DRAFT_FILE = "pr-review-draft.json"
@@ -473,6 +475,7 @@ def gh(args, stdin=""):
     executable = shutil.which("gh")
     if not executable:
         raise DraftError("gh is not installed")
+    integrations.note("actions")
     result = subprocess.run([executable, *args], input=stdin, capture_output=True, text=True)
     if result.returncode != 0:
         lines = (result.stderr or result.stdout).strip().splitlines()
@@ -664,7 +667,7 @@ def post(run_dir, meta_path, event, digest, run: Callable[..., str] = gh,
         raw.pop("lastError", None)
         _save(run_dir, raw)
         with open(meta_path) as handle:
-            meta = json.load(handle)
+            meta = run_lifecycle.Snapshot(json.load(handle))
         meta.setdefault("review", {})["posted"] = {key: record[key] for key in ("event", "url", "at")}
-        _write_atomic(meta_path, json.dumps(meta, indent=2) + "\n")
+        run_lifecycle.write_meta(meta_path, meta, caller="post PR review")
         return record

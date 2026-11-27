@@ -1,0 +1,198 @@
+/* Run terminal (⌘T): docked under the run's content, the height set by its
+   top edge. xterm.js paints the screen; only the chrome is styled here. */
+#run-terminal {
+  flex-shrink: 0; display: flex; flex-direction: column; position: relative;
+  height: 50vh; min-height: 120px; border-top: 1px solid var(--border); background: var(--panel);
+}
+#run-terminal-resize {
+  position: absolute; top: -4px; left: 0; right: 0; height: 8px; z-index: 1; cursor: ns-resize;
+}
+#run-terminal-resize:focus-visible { outline: 2px solid var(--focus); outline-offset: -3px; }
+#run-terminal-bar {
+  display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 8px 4px 16px;
+  font-size: 12px; color: var(--muted-strong);
+}
+/* Tabs: the agent session first, then numbered shells. Each tab is a select
+   button plus its own close button, so both stay native and focusable. */
+#run-terminal-tabs { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 0 auto; max-width: 40%; overflow-x: auto; scrollbar-width: none; }
+.terminal-tab {
+  display: flex; align-items: center; flex-shrink: 0; border-radius: 6px; color: var(--muted-strong);
+}
+.terminal-tab:hover { background: var(--chip); }
+.terminal-tab.active { background: var(--chip); color: var(--heading); box-shadow: inset 0 -2px 0 var(--accent); }
+.terminal-tab button {
+  display: flex; align-items: center; gap: 6px; border: 0; background: none; color: inherit;
+  font: inherit; font-size: 12px; cursor: var(--orc-cursor-pointer, pointer); border-radius: 6px;
+}
+.terminal-tab-select { padding: 3px 4px 3px 8px; font-weight: 600; white-space: nowrap; }
+.terminal-tab-close { padding: 3px 5px; opacity: .7; }
+.terminal-tab-close:hover { opacity: 1; }
+.terminal-tab-rename {
+  width: 14ch; margin: 1px 2px; padding: 2px 6px; font: inherit; font-weight: 600; color: var(--heading);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+}
+.terminal-tab-rename:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+.terminal-tab button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.terminal-tab-live { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.terminal-tab-live.off { background: var(--muted); }
+.terminal-pane { height: 100%; }
+.terminal-pane[hidden] { display: none; }
+/* Truncates from the left so the folder name stays; the page wraps the
+   path in LRM marks so RTL flow cannot move its leading slash. */
+#run-terminal-cwd {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+}
+#run-terminal-status { flex: 0 1 28ch; max-width: 35%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+#run-terminal-status:empty { display: none; }
+#run-terminal-bar orc-icon-button { flex-shrink: 0; }
+#run-terminal-body { flex: 1; min-height: 0; display: flex; }
+#run-terminal-screen { flex: 1; min-width: 0; min-height: 0; padding: 0 0 4px 12px; }
+#run-terminal-screen .xterm { height: 100%; transform: translate(var(--snap-x, 0px), calc(var(--snap-y, 0px) - var(--herdr-row, 0px))); }
+#run-terminal-screen .xterm-viewport { background: var(--panel) !important; }
+/* herdr draws its own tab row on the PTY's top line; Orc's strip replaces
+   it, so the pane is one row shorter than the PTY and hides that row. */
+.terminal-pane.herdr { overflow: hidden; }
+.terminal-tab-number { font-variant-numeric: tabular-nums; color: var(--muted-strong); }
+.terminal-tab.active .terminal-tab-number { color: inherit; }
+.terminal-tab-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--muted); }
+.terminal-tab-dot[data-status="working"] { background: var(--accent); animation: dot-pulse 1.6s ease-in-out infinite; }
+.terminal-tab-dot[data-status="blocked"] { background: var(--orange); animation: dot-pulse 1.6s ease-in-out infinite; }
+.terminal-tab-dot[data-status="done"] { background: var(--purple); }
+/* The maximised stage: the same panel, lifted out of the run's column
+   into a frame over a blurred app. Each theme restyles the frame in its own
+   stylesheet; it comes and goes with the screen change below. */
+#run-terminal-scrim {
+  position: fixed; inset: 0; z-index: 69;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+#run-terminal-scrim[hidden] { display: none; }
+#run-terminal.terminal-stage-pending { visibility: hidden; pointer-events: none; }
+#run-terminal.terminal-staged {
+  --stage-radius: 14px;
+  position: fixed; inset: 24px; z-index: 70; height: auto !important; max-height: none; min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--green) 40%, var(--border)); border-radius: var(--stage-radius); overflow: hidden;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 12%, transparent), var(--float-shadow);
+}
+.terminal-staged #run-terminal-resize { display: none; }
+.terminal-staged #run-terminal-bar {
+  padding: 8px 10px 8px 18px; gap: 10px; border-bottom: 1px solid var(--border);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--green) 10%, var(--panel)), var(--panel));
+}
+/* Full-screen modal text viewer (ui/js/text-stage.js). */
+.text-stage[open] {
+  position: fixed; inset: 24px; z-index: 70; display: flex; flex-direction: column;
+  width: auto; height: auto; max-width: none; max-height: none; min-height: 0; margin: 0; padding: 0;
+  border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+  background: var(--panel); color: var(--text);
+}
+.text-stage::backdrop {
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.text-stage-bar {
+  display: flex; align-items: center; flex: none; gap: 10px;
+  padding: 10px 12px 10px 18px; border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.text-stage-heading { display: flex; align-items: baseline; flex: 1; min-width: 0; gap: 10px; }
+.text-stage-title {
+  flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--heading);
+}
+.text-stage-path {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--orc-font-mono); font-size: 12px; line-height: 1.4; color: var(--muted-strong);
+}
+.text-stage-actions { display: flex; align-items: center; flex: none; gap: 4px; }
+.text-stage-text {
+  flex: 1; min-height: 0; margin: 0; padding: 18px 22px; overflow: auto; background: var(--code); color: var(--text);
+  font: 400 13px/1.65 var(--orc-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; outline: none;
+}
+.text-stage[data-state="loading"] .text-stage-text,
+.text-stage[data-state="empty"] .text-stage-text {
+  color: var(--muted-strong); font-family: var(--orc-font-sans);
+}
+.text-stage[data-state="error"] .text-stage-text {
+  color: var(--red-text); font-family: var(--orc-font-sans);
+}
+.terminal-staged #run-terminal-tabs { max-width: 55%; }
+.terminal-staged #run-terminal-screen { padding: 10px 6px 8px 16px; }
+#run-terminal-title {
+  margin: 0; flex: 0 1 auto; min-width: 0; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 650; color: var(--heading);
+}
+#run-terminal-title[hidden] { display: none; }
+/* The maximised stage's sidebar with herdr: project roots, their runs and
+   those runs' children, each a workspace of Orc's herdr session. */
+#run-terminal-tree {
+  --tree-step: 14px; --tree-wire: color-mix(in srgb, var(--muted) 45%, var(--border));
+  flex: 0 0 232px; min-height: 0; overflow-y: auto; padding: 6px 6px 6px 0; border-right: 1px solid var(--border);
+  font-size: 12px; color: var(--muted-strong);
+}
+#run-terminal-tree[hidden] { display: none; }
+#run-terminal-tree ul { list-style: none; margin: 0; padding: 0; }
+#run-terminal-tree li { position: relative; }
+.terminal-tree-row {
+  position: relative; display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; border: 0;
+  border-radius: 0 6px 6px 0; padding: 4px 8px 4px calc(10px + var(--depth, 0) * var(--tree-step));
+  background: none; color: inherit; font: inherit; text-align: left; cursor: var(--orc-cursor-pointer, pointer);
+}
+.terminal-tree-row:hover { background: linear-gradient(to right, var(--chip), transparent); }
+.terminal-tree-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.terminal-tree-row[aria-current="true"] {
+  background: linear-gradient(to right, color-mix(in srgb, var(--accent) 26%, transparent), transparent 92%);
+  color: var(--heading);
+}
+/* The wire into the terminal on show is lit. A root has no parent to
+   wire from, so its lit mark is a stub from the sidebar's edge. */
+ul ul > li:not(:last-child)::before, ul ul .terminal-tree-row::before, .terminal-tree-row[aria-current="true"]::before {
+  content: ""; position: absolute; z-index: 1; pointer-events: none;
+  left: calc(13px + (var(--depth, 1) - 1) * var(--tree-step));
+}
+ul ul > li:not(:last-child)::before { top: 0; bottom: 0; border-left: 1px solid var(--tree-wire); }
+ul ul .terminal-tree-row::before {
+  top: 0; height: 50%; width: 7px; border: solid var(--tree-wire); border-width: 0 0 1px 1px; border-bottom-left-radius: 6px;
+}
+.terminal-tree-row[aria-current="true"]::before {
+  left: 0; top: 50%; width: 6px; border-bottom: 2px solid var(--accent);
+  filter: drop-shadow(0 0 4px var(--accent));
+}
+ul ul .terminal-tree-row[aria-current="true"]::before {
+  left: calc(13px + (var(--depth, 1) - 1) * var(--tree-step)); top: 0; border-color: var(--accent); border-width: 0 0 2px 2px;
+}
+.terminal-tree-project { font-weight: 650; color: var(--heading); }
+.terminal-tree-row.closed { color: var(--muted-strong); font-weight: 400; }
+.terminal-tree-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-tree-count { flex-shrink: 0; font-variant-numeric: tabular-nums; color: var(--muted-strong); }
+.terminal-tree-group {
+  display: block; padding: 10px 10px 2px; font-size: 11px; font-weight: 650; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted-strong);
+}
+li + li > .terminal-tree-project { margin-top: 4px; }
+#content-shell:has(> #content[hidden]) { display: none; }
+main:has(> #content-find), .run-panel-view:has(> #content-find) { position: relative; }
+#content-find {
+  position: absolute; z-index: var(--z-sticky); top: 10px; right: 32px;
+  display: flex; align-items: center; gap: 2px;
+  width: min(324px, calc(100% - 64px)); padding: 2px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--panel); color: var(--text);
+}
+/* <orc-input> owns the field's own chrome; only its share of the row is ours */
+#content-find-input { flex: 1 1 190px; min-width: 0; }
+#content-find-count {
+  min-width: 52px; padding: 0 2px; color: var(--muted-strong); font-size: 11px;
+  text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* the three find actions are <orc-icon-button>; it owns their box, hover,
+   disabled state and the coarse-pointer target size */
+@media (pointer: coarse) {
+  #content-find { width: min(366px, calc(100% - 64px)); padding: 3px; }
+}
+@media (max-width: 640px) {
+  #content-find { right: 10px; width: calc(100% - 20px); }
+  #content-find-count {
+    position: absolute; width: 1px; height: 1px; min-width: 0; padding: 0;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+  }
+}

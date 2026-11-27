@@ -41,7 +41,7 @@ import json
 import os
 import signal
 import subprocess
-import tempfile
+import run_lifecycle
 import time
 
 import fcntl
@@ -318,21 +318,13 @@ def _file_update(runs_dir):
                 value = json.load(handle)
         except (OSError, ValueError):
             return None
-        return value if isinstance(value, dict) else None
+        return run_lifecycle.Snapshot(value) if isinstance(value, dict) else None
 
     def write(run_id, meta):
         path = os.path.join(runs_dir, run_id, "meta.json")
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".meta.", suffix=".tmp")
         try:
-            with os.fdopen(fd, "w") as handle:
-                json.dump(meta, handle, indent=2)
-                handle.write("\n")
-            os.replace(tmp, path)
-        except OSError:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+            run_lifecycle.write_meta(path, meta, caller="deployment")
+        except (OSError, ValueError):
             return False
         return True
     return read, write

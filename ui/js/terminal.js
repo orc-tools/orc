@@ -1,10 +1,10 @@
 
+import { chatComposerReady, focusChatComposer } from './panel-navigation.js';
 import { $, runs, announce, holdInert, toast } from './core.js';
 import { canChangeScreen, changeScreen } from './screen-change.js';
 import { bindContextMenu, placeContextMenu } from './context-menu.js';
 import { terminalTree, terminalTreeRows } from './terminal-tree.js';
 import { SHORTCUT_IS_MAC, shortcutMatches } from './shortcuts.js';
-import { chatComposerReady, focusChatComposer } from './chat.js';
 
 // Phosphor terminal-window, light weight — the header chip's glyph.
 export const TERMINAL_ICON = '<svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M126,128a6,6,0,0,1-2.25,4.69l-40,32a6,6,0,0,1-7.5-9.38L110.4,128,76.25,100.69a6,6,0,1,1,7.5-9.38l40,32A6,6,0,0,1,126,128Zm50,26H136a6,6,0,0,0,0,12h40a6,6,0,0,0,0-12Zm54-98V200a14,14,0,0,1-14,14H40a14,14,0,0,1-14-14V56A14,14,0,0,1,40,42H216A14,14,0,0,1,230,56Zm-12,0a2,2,0,0,0-2-2H40a2,2,0,0,0-2,2V200a2,2,0,0,0,2,2H216a2,2,0,0,0,2-2Z"/></svg>';
@@ -928,14 +928,18 @@ export function toggleTerminal() { terminalToggle(); }
 
   // `target` is the scope whose workspace the action opens; the tab actions
   // reach whichever workspace herdr shows.
+  function postTabAction(body, target) {
+    return fetch(target.kind === 'run' ? `/runs/${encodeURIComponent(target.runId)}/terminal-tab` : '/terminal-tab', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(target.kind === 'run' ? body : { ...body, project: target.path }),
+    });
+  }
+
   async function herdrAction(body, target = scope) {
     const built = generation;
     let res = null;
     try {
-      res = await fetch(target.kind === 'run' ? `/runs/${encodeURIComponent(target.runId)}/terminal-tab` : '/terminal-tab', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(target.kind === 'run' ? body : { ...body, project: target.path }),
-      });
+      res = await postTabAction(body, target);
     } catch {}
     const data = res ? await res.json().catch(() => ({})) : {};
     if (built !== generation) return null;
@@ -986,13 +990,43 @@ export function toggleTerminal() { terminalToggle(); }
     return tabs.every(tab => tab.kind === 'herdr' && !tab.socket && !herdrTabs.length);
   }
 
+  // Whether closing would stop a command or agent. When Orc cannot tell, it
+  // says yes, so the close still asks.
+  async function stillRunning(body, target = scope) {
+    try {
+      const res = await postTabAction({ action: 'busy', ...body }, target);
+      const data = res.ok ? await res.json() : null;
+      return data?.busy !== false;
+    } catch {
+      return true;
+    }
+  }
+
+  // Orc's own dialog rather than the system's; resolves true on Close.
+  function askToClose(heading, text, verb = 'Close') {
+    const dialog = $('terminal-close-dialog');
+    dialog.setAttribute('heading', heading);
+    $('terminal-close-desc').textContent = text;
+    $('terminal-close-ok').textContent = verb;
+    return new Promise(resolve => {
+      let confirmed = false;
+      $('terminal-close-ok').onclick = () => { confirmed = true; dialog.close(); };
+      $('terminal-close-cancel').onclick = () => dialog.close();
+      dialog.addEventListener('close', () => resolve(confirmed), { once: true });
+      dialog.show();
+    });
+  }
+
   async function closeHerdrTab(item) {
     if (!item) return;
     const last = herdrSessionTabs <= 1;
     const name = herdrTabName(item).split(',')[0];
-    const why = last ? 'It is the herdr session\'s last tab, so the session ends and anything'
-      : herdrTabs.length <= 1 ? 'It is this workspace\'s last tab, so the workspace closes and anything' : 'Anything';
-    if (!confirm(`Close ${name}? ${why} still running in it stops.`)) return;
+    const also = last ? ' It is the herdr session\'s last tab, so the session ends too.'
+      : herdrTabs.length <= 1 ? ' It is this workspace\'s last tab, so the workspace closes too.' : '';
+    const built = generation;
+    if (await stillRunning({ tabId: item.id })
+      && !await askToClose(`Close ${name}?`, `Something is still running in it, and closing the tab stops it.${also}`)) return;
+    if (built !== generation) return;
     return afterHerdrClose(herdrAction({ action: 'close', tabId: item.id }));
   }
 
@@ -1030,7 +1064,9 @@ export function toggleTerminal() { terminalToggle(); }
   async function closeTab(tab) {
     if (tab.kind === 'herdr') return closeHerdrTab(herdrTabs.find(item => item.focused) || herdrTabs[0]);
     if (tab.kind === 'shell' && (tab.socket || tab.live)) {
-      if (!confirm(`End ${tabLabel(tab)}? Anything still running in it stops.`)) return;
+      if (await stillRunning({ shell: tab.index })
+        && !await askToClose(`End ${tabLabel(tab)}?`, 'Something is still running in it, and ending the tab stops it.', 'End')) return;
+      if (!tabs.includes(tab)) return;
     }
     const owner = scope;
     const at = tabs.indexOf(tab);
@@ -1286,12 +1322,16 @@ export function toggleTerminal() { terminalToggle(); }
 
   // Closes the workspace and every tab in it; the last workspace with tabs
   // takes herdr's session with it, as its last tab does.
-  function closeWorkspace(node) {
+  async function closeWorkspace(node) {
     const workspace = node?.workspace;
     if (!workspace) return;
     const last = herdrWorkspaces.every(item => item.id === workspace.id || !item.tabCount);
-    const why = last ? 'It is the herdr session\'s last workspace, so the session ends and anything' : 'Anything';
-    if (!confirm(`Close the terminal for ${node.label}? ${why} still running in it stops.`)) return;
+    const also = last ? ' It is the herdr session\'s last workspace, so the session ends too.' : '';
+    const built = generation;
+    if (await stillRunning({ workspaceId: workspace.id })
+      && !await askToClose(`Close the terminal for ${node.label}?`,
+        `Something is still running in it, and closing the terminal stops it.${also}`)) return;
+    if (built !== generation) return;
     return afterHerdrClose(herdrAction({ action: 'close-workspace', workspaceId: workspace.id }));
   }
 
@@ -1339,11 +1379,13 @@ export function toggleTerminal() { terminalToggle(); }
 
   // A modal stage: everything outside it leaves the tab order and the
   // accessibility tree until it closes.
+  // The close dialog opens over the stage, so it stays live with it.
+  const STAGE_UNCOVERED = new Set(['toast-region', 'announcer', 'terminal-close-dialog']);
   function setStageInert(on) {
     const covered = [];
     for (let node = $('run-terminal'); on && node && node !== document.body; node = node.parentElement) {
       for (const sibling of node.parentElement?.children || []) {
-        if (sibling !== node && sibling.id !== 'toast-region' && sibling.id !== 'announcer') covered.push(sibling);
+        if (sibling !== node && !STAGE_UNCOVERED.has(sibling.id)) covered.push(sibling);
       }
     }
     holdInert('terminal-stage', covered);

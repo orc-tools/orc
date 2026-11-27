@@ -1,8 +1,8 @@
 // orc-ui: "Turn on Queue mode" modal opened from Settings or Cmd+K so the user
 // can leave existing runs going or queue everything immediately.
 
+import { refresh, syncSettingsPowerMode } from './panel-navigation.js';
 import { $, RUN_MODE_LABEL, announce, isBuildRun, isQuestionRun, isReadOnlyRun, queueBuildsOnly, runs, runState, setPowerMode } from './core.js';
-import { refresh, syncSettingsPowerMode } from './activity.js';
 
 const SCOPES = ['new-only', 'all'];
 const ACTIVE_STATUSES = new Set(['running', 'awaiting-gate', 'escalated']);

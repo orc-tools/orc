@@ -6,8 +6,8 @@
 // (planStartingSince in run-presentation.js, planStepStates in
 // plan-page.js). The hold ends when the build run is listed, when the launch
 // fails, or a while after the host accepted it, if its run never shows.
+import { reflectRunChange } from './panel-navigation.js';
 import { runs, setRuns } from './core.js';
-import { reflectRunChange } from './dialogs.js';
 
 // After the host answered with its run, and while it has not answered.
 const PLAN_START_LISTED_MS = 20000;

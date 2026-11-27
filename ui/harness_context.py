@@ -14,6 +14,7 @@ import harnesses
 import orc_context
 import orchestration_launch
 import power_mode
+import project_settings
 import run_chat
 import run_relationships
 import skill_commands
@@ -86,7 +87,8 @@ def turn_policy(meta, *, run_dir=None, config_dir=None):
     parts = [delegation_context(meta, cfg),
              code_ownership.hook_context(meta, cfg),
              power_mode.hook_context(meta.get("runId") if isinstance(meta, dict) else None, meta),
-             chat_settings.hook_context(meta)]
+             chat_settings.hook_context(meta),
+             project_settings.pr_push_hook_context(meta, cfg)]
     return "\n\n".join(part for part in parts if part) + agent_browser.hook_context(meta)
 
 
@@ -170,16 +172,21 @@ def launch_prompt(meta, run_dir, entry, arguments, policy=None, *, config_dir=No
                 "<orc-prompt-file>\n%s\n</orc-prompt-file>\n"
                 % (raw_prompt.strip(), json.dumps(marked_body, ensure_ascii=False).replace("<", "\\u003c"))
             )
+        # A plan's step run opens under its step's name, which lists it under
+        # the plan, so its agent passes that name on rather than a new one.
+        seeded = ("its plan step's name, so pass that same title %r" % meta.get("title")
+                  if meta.get("titleFromStep") is True and meta.get("title") else
+                  "a raw echo of the prompt")
         binding = (
             "[orc hook] Run `%s` already exists at %s — adopt it instead of creating a new run-id. "
             "Continue writing artifacts into this dir. orc-ui created this run when you launched "
             "it, so its harness, prompt and seeded title are already recorded.%s Record a real "
-            "`title` (<=60 chars, says what this run does — the seeded one is a raw echo of the "
-            "prompt) through your route's command (`orc-publish-question --title`, "
+            "`title` (<=60 chars, says what this run does — the seeded one is %s) through your "
+            "route's command (`orc-publish-question --title`, "
             "`orc-worktree start-minimal --title`, `orc-local-review init`, or "
             "`orc-ui open --gate --title`) instead of hand-editing `meta.json`. "
             "Leave `branch` unset through planning. Do not rewrite `harness` or `sessionBackend`."
-            % (meta.get("runId"), run_dir, prompt_note))
+            % (meta.get("runId"), run_dir, prompt_note, seeded))
     if embed_skill:
         instruction = "Follow the supplied skill as `%s %s`.\n\n%s" % (
             entry, arguments, embedded_skill(_skill(entry)))

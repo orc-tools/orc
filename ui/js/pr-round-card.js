@@ -1,18 +1,20 @@
 import { esc } from './core.js';
-import { rememberReviewCard, replyEditorHtml, repaintWithEmoji, roundCards, wireReplyEditor } from './pr-review-card.js';
-import { emojiReady, emojifyHtml } from './github-emoji.js';
+import { rememberReviewCard, roundCards } from './pr-review-card.js';
 import { prPushButton, prPushPending, prRepliesPending } from './run-presentation.js';
 
 // A PR feedback round finishes in Chat. Once the agent has acted on the
-// user's answers (skills/orc-pr, "PR feedback round"), this card lists each
-// review comment with what happened to it and the reply that will answer it,
-// editable until it posts, and holds the round's one GitHub write: Push
-// comments & commits (or Push commits, when Settings say so). The PR comments tab keeps the same threads as the record.
+// user's answers (skills/orc-pr, "PR feedback round"), this card sums the
+// round up in two rows (how many comments, a count per outcome, who left
+// them) and holds the round's one GitHub write: Push comments & commits (or
+// Push commits, when Settings say so). After the push it shrinks to one line.
+// The threads and their replies, editable until they post, live in the PR
+// comments tab, which the card links to rather than repeating.
 // The card shares the chat's question slot (#answer-card) with Answer mode's
 // invitation, which never shows at the same time: a round asks first, then
 // acts, then waits here.
 
 const REPLIES_FILE = 'pr-replies.json';
+const PR_COMMENTS = 'pr-comments.html';
 const STATUS = {
   fixed: { label: 'Fixed', tone: 'ok' },
   left: { label: 'Left as is', tone: 'warn' },
@@ -22,12 +24,45 @@ const STATUS = {
 
 // The round waits at its gate for the click. While the agent is still writing
 // the round (running before it opens the gate) there is nothing to click yet;
-// once the click sent the push, the card stays to show it under way.
+// once the click sent the push, the card stays to show it under way, and then
+// stays to say it went.
 export function prRoundCardPending(run) {
   const meta = run?.meta;
-  return !!meta && (prPushPending(meta) || prRepliesPending(meta))
-    && (run.files || []).some(file => file.path === REPLIES_FILE)
-    && (meta.status === 'awaiting-gate' || (meta.status === 'running' && !!roundCards.get(run.id)?.sent));
+  if (!meta || !(run.files || []).some(file => file.path === REPLIES_FILE)) return false;
+  const entry = roundCards.get(run.id);
+  if (entry?.pushing || prRoundCardPushed(run)) return true;
+  return (prPushPending(meta) || prRepliesPending(meta))
+    && (meta.status === 'awaiting-gate' || (meta.status === 'running' && !!entry?.sent));
+}
+
+// The round this page pushed: its card says Pushed in place of the button,
+// and has nothing left to click.
+export function prRoundCardPushed(run) {
+  const pushed = roundCards.get(run?.id)?.pushed;
+  return !!pushed && pushed.commit === (run.meta?.prFeedback?.commit ?? null);
+}
+
+// Chat sends the click's request and reports it here, so the button reads
+// Pushing… (dimmed, ignoring clicks) while it is out, and the card says
+// Pushed once it lands. `state` is 'sending', then 'done' or 'failed';
+// `already` says an earlier click had already pushed the round.
+export function notePrRoundPush(run, state, { already = false } = {}) {
+  const entry = roundCards.get(run.id);
+  if (!entry) return;
+  if (state === 'sending') {
+    const { action, postReplies } = actionFor(run.meta);
+    const threads = entry.round?.threads || [];
+    entry.pushing = { action, postReplies, commit: run.meta.prFeedback?.commit ?? null,
+      short: entry.round?.commit || String(run.meta.prFeedback?.commit || '').slice(0, 7),
+      replies: postReplies ? threads.filter(thread => thread.reply && !thread.reply.posted).length : 0 };
+  } else {
+    // Push commits leaves the replies for Push comments, so that card comes back.
+    if (state === 'done' && entry.pushing?.postReplies) {
+      entry.pushed = { ...entry.pushing, already };
+    }
+    entry.pushing = null;
+  }
+  entry.repaint?.();
 }
 
 function roundKey(run) {
@@ -52,15 +87,16 @@ export function syncPrRoundCard(host, run, isCurrent) {
   if (!entry || entry.key !== key) {
     const previous = entry;
     // A refetch of the same round (a status flip, a saved reply) keeps the
-    // reply being edited and the click already sent.
+    // click already sent.
     const same = previous && JSON.parse(previous.key)[1] === (run.meta.prFeedback?.round ?? null);
-    entry = { key, round: same ? previous.round : null, error: '', editing: same ? previous.editing : null,
-      saving: false, saveError: '', sent: same && previous.sent };
+    entry = { key, round: same ? previous.round : null, error: '', sent: same && previous.sent,
+      pushing: same ? previous.pushing : null, pushed: same ? previous.pushed : null };
     fetchRound(run.id).then(round => { entry.round = round; entry.error = ''; }, error => { if (!entry.round) entry.error = error.message; })
       .then(() => { if (entry.isCurrent() && roundCards.get(run.id) === entry) paint(host, run, entry); });
   }
   rememberReviewCard(roundCards, run.id, entry);
   entry.isCurrent = isCurrent;
+  entry.repaint = () => { if (entry.isCurrent() && roundCards.get(run.id) === entry) paint(host, run, entry); };
   paint(host, run, entry);
 }
 
@@ -72,127 +108,89 @@ function actionFor(meta) {
   return { action: 'post-replies', label: 'Push comments', postReplies: true };
 }
 
+function repliesText(count) {
+  return count === 1 ? 'the reply' : `${count === 2 ? 'both' : `all ${count}`} replies`;
+}
+
+// The foot while the click's request is out, and once it has landed.
+function progressFoot(entry) {
+  const { action, short, replies } = entry.pushing;
+  const commit = short ? `<code>${esc(short)}</code>` : 'the fixes';
+  const say = action === 'push'
+    ? `Pushing ${commit}${replies ? ` and posting ${repliesText(replies)}` : ''}`
+    : `Posting ${repliesText(replies)}`;
+  return `<orc-button variant="primary" size="compact" disabled><span class="status-spinner" aria-hidden="true"></span>${action === 'push' ? 'Pushing…' : 'Posting…'}</orc-button><span role="status">${say}</span>`;
+}
+
 function authorsText(threads) {
   const names = [...new Set(threads.map(thread => thread.author).filter(Boolean))];
   if (!names.length) return '';
   return `from ${names.length > 2 ? `${names.slice(0, 2).join(', ')} and ${names.length - 2} more` : names.join(' and ')}`;
 }
 
-function replyHtml(thread, entry) {
-  const reply = thread.reply;
-  if (!reply) return '';
-  if (entry.editing === thread.card) {
-    return replyEditorHtml(thread.card, 'Your reply', reply.body, entry, 'Save reply');
-  }
-  const state = reply.posted
-    ? (reply.postedUrl ? `<a class="prr-link" href="${esc(reply.postedUrl)}" target="_blank" rel="noopener">Posted</a>` : '<span class="prr-posted">Posted</span>')
-    : reply.editable ? `<button type="button" class="prr-link" data-prr-edit="${esc(thread.card)}">Edit<span class="sr-only"> the reply to ${esc(thread.header || thread.author || 'this comment')}</span></button>` : '';
-  return `<div class="prr-reply"><span class="prr-reply-label">Your reply</span><p>${emojifyHtml(reply.body)}</p>${state}</div>`;
+// One chip per outcome, in STATUS order: "5 fixed", "2 left as is".
+function outcomeChips(threads) {
+  return Object.entries(STATUS).map(([key, status]) => {
+    const count = threads.filter(thread => thread.status === key).length;
+    return count ? `<span class="prr-chip" data-tone="${status.tone}">${count} ${status.label.toLowerCase()}</span>` : '';
+  }).join('');
 }
 
-function threadHtml(thread, entry) {
-  const status = STATUS[thread.status];
-  const where = thread.path
-    ? `<code>${esc(thread.path)}</code>${thread.line ? ` <span class="prr-line">line ${thread.line}</span>` : ''}`
-    : '<span class="prr-line">review comment</span>';
-  const title = thread.header || thread.author || 'Comment';
-  return `<li class="prr-thread">
-    <p class="prr-head">${status ? `<span class="prr-chip" data-tone="${status.tone}">${status.label}</span>` : ''}<strong>${esc(title)}</strong><span class="prr-sep" aria-hidden="true">·</span>${where}</p>
-    ${thread.verdict ? `<p class="prr-verdict">${esc(thread.verdict)}</p>` : ''}
-    ${replyHtml(thread, entry)}
-  </li>`;
+function commentsText(count) {
+  return count === 1 ? '1 review comment' : `${count} review comments`;
+}
+
+function threadsLink(run, label) {
+  return `<a class="prr-link prr-threads" href="#${esc(run.id)}/${PR_COMMENTS}">${label}</a>`;
+}
+
+// After the push the card is one line: what went, and where the threads are.
+function pushedLine(run, entry, count) {
+  const { action, short, replies, already } = entry.pushed;
+  const done = action === 'push' ? (already ? 'Already pushed' : 'Pushed') : (already ? 'Already posted' : 'Posted');
+  const heading = count ? `${commentsText(count)} answered` : 'Review fixes pushed';
+  const said = [action === 'push' && short ? `<code>${esc(short)}</code>` : '',
+    replies ? `${repliesText(replies)} posted` : ''].filter(Boolean);
+  return `<div class="prr is-pushed" role="region" aria-label="Review comments">
+    <span class="prr-done">✓ ${done}</span><strong>${heading}</strong>${said.length ? `<span role="status">${said.map(part => `<span class="prr-sep" aria-hidden="true">·</span> ${part}`).join(' ')}</span>` : ''}${threadsLink(run, 'PR comments')}
+  </div>`;
 }
 
 function cardHtml(run, entry) {
   const meta = run.meta;
   const round = entry.round;
   const threads = round?.threads || [];
+  const count = threads.length;
+  if (prRoundCardPushed(run)) return pushedLine(run, entry, count);
   const { action, label, postReplies } = actionFor(meta);
   const pushing = meta.status === 'running' && entry.sent;
   const replies = threads.filter(thread => thread.reply && !thread.reply.posted).length;
-  const count = threads.length;
-  const heading = count
-    ? `${count === 1 ? '1 review comment' : `${count} review comments`} ready to ${action === 'push' ? 'push' : 'answer'}`
-    : 'Review fixes ready to push';
+  const heading = count ? `${commentsText(count)} ready to ${action === 'push' ? 'push' : 'answer'}` : 'Review fixes ready to push';
   const commit = round?.commit || String(meta.prFeedback?.commit || '').slice(0, 7);
   const detail = action === 'push'
-    ? [`Pushes ${commit ? `<code>${esc(commit)}</code>` : 'the fixes'}${replies && postReplies ? ` and posts ${replies === 1 ? 'the reply' : `${replies === 2 ? 'both' : `all ${replies}`} replies`}` : replies ? `; ${replies === 1 ? 'the reply waits' : 'the replies wait'} for Push comments` : ''}`,
-      round?.verification ? esc(round.verification) : ''].filter(Boolean).join(' · ')
+    ? `Pushes ${commit ? `<code>${esc(commit)}</code>` : 'the fixes'}${replies && postReplies ? ` and posts ${repliesText(replies)}` : replies ? `; ${replies === 1 ? 'the reply waits' : 'the replies wait'} for Push comments` : ''}`
     : `Posts ${replies === 1 ? 'the reply' : `${replies} replies`} still waiting`;
-  return `<div class="prr" role="region" aria-label="Review comments ready">
-    <div class="prr-top"><span class="prr-dot" aria-hidden="true"></span><strong>${heading}</strong><span>${esc(authorsText(threads))}</span></div>
-    ${count ? `<ol class="prr-list">${threads.map(thread => threadHtml(thread, entry)).join('')}</ol>` : entry.error ? `<p class="prr-note">${esc(entry.error)} The PR comments tab has the details.</p>` : ''}
-    <div class="prr-foot"><orc-button variant="primary" size="compact" data-chat-action="${action}"${pushing ? ' disabled' : ''}>${pushing ? (action === 'push' ? 'Pushing…' : 'Posting…') : label}</orc-button><span>${detail}</span></div>
+  const who = authorsText(threads);
+  return `<div class="prr" role="region" aria-label="Review comments">
+    <div class="prr-top"><span class="prr-dot" aria-hidden="true"></span><strong>${heading}</strong>${outcomeChips(threads)}${who ? `<span class="prr-who">${esc(who)}</span>` : ''}</div>
+    ${!count && entry.error ? `<p class="prr-note">${esc(entry.error)} The PR comments tab has the details.</p>` : ''}
+    <div class="prr-foot">${entry.pushing ? progressFoot(entry)
+      : `<orc-button variant="primary" size="compact" data-chat-action="${action}"${pushing ? ' disabled' : ''}>${pushing ? (action === 'push' ? 'Pushing…' : 'Posting…') : label}</orc-button><span>${detail}</span>`}${threadsLink(run, replies ? 'Read or edit replies in PR comments' : 'Read the threads in PR comments')}</div>
   </div>`;
 }
 
 function paint(host, run, entry) {
-  // While a reply is open for editing, a change that only moves the run's
-  // status leaves the editor alone: a repaint would move the caret.
-  const signature = JSON.stringify([!entry.editing && emojiReady(), entry.key, !!entry.round, entry.error, entry.editing, entry.saving, entry.saveError,
-    globalThis.ORC_PR_PUSH_ACTION ?? null,
-    entry.editing ? null : [run.meta.status, entry.sent]]);
+  const signature = JSON.stringify([entry.key, !!entry.round, entry.error, globalThis.ORC_PR_PUSH_ACTION ?? null,
+    run.meta.status, entry.sent, entry.pushing, entry.pushed]);
   if (host.dataset.signature === signature && !host.hidden) return;
-  const draft = host.querySelector('#prr-edit')?.value;
-  const draftCard = host.querySelector('[data-prr-save]')?.dataset.prrSave;
   host.dataset.signature = signature;
-  repaintWithEmoji(() => { if (entry.isCurrent?.() && roundCards.get(run.id) === entry) paint(host, run, entry); });
   const scroller = host.closest('.chat-scroll');
   const following = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
   host.hidden = !entry.round && !entry.error;
   host.innerHTML = host.hidden ? '' : cardHtml(run, entry);
   if (following) scroller.scrollTop = scroller.scrollHeight;
-  const editor = host.querySelector('#prr-edit');
-  if (editor) {
-    if (draft != null && draftCard === entry.editing) editor.value = draft;
-    editor.focus({ preventScroll: true });
-  }
-  host.querySelectorAll('[data-prr-edit]').forEach(button => {
-    button.onclick = () => { entry.editing = button.dataset.prrEdit; entry.saveError = ''; paint(host, run, entry); };
-  });
-  const cancel = host.querySelector('[data-prr-cancel]');
-  if (cancel) {
-    cancel.onclick = () => {
-      const card = entry.editing;
-      entry.editing = null;
-      entry.saveError = '';
-      paint(host, run, entry);
-      host.querySelector(`[data-prr-edit="${CSS.escape(card)}"]`)?.focus();
-    };
-  }
   host.querySelectorAll('.prr-foot [data-chat-action]').forEach(button => {
     // Chat's own handler sends the push; the card only notes that it went.
     button.addEventListener('click', () => { entry.sent = true; }, { capture: true });
   });
-  wireReplyEditor(host, form => saveReply(host, run, entry, form));
-}
-
-async function saveReply(host, run, entry, form) {
-  if (entry.saving) return;
-  const card = form.dataset.prrSave;
-  const body = form.querySelector('textarea').value;
-  entry.saving = true;
-  entry.saveError = '';
-  paint(host, run, entry);
-  try {
-    const response = await fetch(`/runs/${encodeURIComponent(run.id)}/pr-replies`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ card, body }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || 'Could not save the reply.');
-    const thread = entry.round.threads.find(item => item.card === card);
-    if (thread?.reply) thread.reply.body = body.trim();
-    entry.editing = null;
-  } catch (error) {
-    entry.saveError = error.message;
-  } finally {
-    entry.saving = false;
-    // The chat may have moved to another run while the save was out; the
-    // card then belongs to no host until that run's chat opens again.
-    if (roundCards.get(run.id) === entry && entry.isCurrent()) {
-      paint(host, run, entry);
-      if (!entry.editing) host.querySelector(`[data-prr-edit="${CSS.escape(card)}"]`)?.focus();
-    }
-  }
 }

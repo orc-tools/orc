@@ -2,7 +2,7 @@
 // reads as its title and describes it on hover. A draft names a run as
 // `@` and its title, which becomes the run's id when it is sent.
 
-import { esc, presentRun, relativeStamp, runCreated, runStarted, runs } from './core.js';
+import { esc, presentRun, relativeStamp, runCreated, runStarted, runs, stateText } from './core.js';
 import { queryRank, runProject } from './filters.js';
 import { bindHoverCard } from './hover-card.js';
 
@@ -116,7 +116,7 @@ export function runCardHtml(run, now = new Date()) {
     Number.isNaN(started.getTime()) ? '' : `Started ${relativeStamp(started, now).replace(/^(Just now|Yesterday)/, word => word.toLowerCase())}`];
   return `<strong class="chat-run-card-title">${esc(meta.title || run.id)}</strong>`
     + (meta.title ? `<span class="chat-run-card-id">${esc(run.id)}</span>` : '')
-    + `<div class="chat-run-card-state"><span class="chat-run-card-dot" style="background:${esc(state.color)}"></span>${esc(state.label)}</div>`
+    + `<div class="chat-run-card-state"><span class="chat-run-card-dot" style="background:${esc(state.color)}"></span>${esc(stateText(state))}</div>`
     + (state.detail ? `<p>${esc(state.detail)}</p>` : '')
     + `<div class="chat-hover-card-foot">${esc(facts.filter(Boolean).join(' · '))}</div>`;
 }

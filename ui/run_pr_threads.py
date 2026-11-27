@@ -38,6 +38,15 @@ def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def card_id(value: Any) -> str:
+    """A card's id as the string the round's files key it by. A round can
+    write `"card": 1` for card "1", so a whole number counts as its digits;
+    anything else that is not a non-empty string has no id ("")."""
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return str(value)
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _link(value: Any) -> str:
     url = _text(value)
     return url if url.startswith(("https://", "http://")) else ""
@@ -49,11 +58,12 @@ def _posted(feedback: dict[str, Any], reply: dict[str, Any]) -> dict[str, Any] |
     posted = feedback.get("replies")
     if not isinstance(posted, dict):
         return None
+    card = card_id(reply.get("card"))
     if reply.get("kind") == "thread":
-        entry = posted.get(reply["card"])
+        entry = posted.get(card)
     else:
         entry = posted.get(REVIEW_KEY)
-        if isinstance(entry, dict) and reply["card"] not in (entry.get("cards") or []):
+        if isinstance(entry, dict) and card not in (entry.get("cards") or []):
             entry = None
     return entry if isinstance(entry, dict) else None
 
@@ -71,16 +81,16 @@ def model(run_dir: str, meta: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(feedback, dict) or plan is None \
             or not isinstance(plan.get("threads"), list):
         return None
-    replies = {reply["card"]: reply for reply in plan.get("replies") or []
-               if isinstance(reply, dict) and isinstance(reply.get("card"), str)
+    replies = {card_id(reply.get("card")): reply for reply in plan.get("replies") or []
+               if isinstance(reply, dict) and card_id(reply.get("card"))
                and _text(reply.get("body"))}
     editable = _round_open(feedback)
     threads = []
     for thread in plan["threads"]:
         if not isinstance(thread, dict):
             continue
-        card, comment = thread.get("card"), _text(thread.get("comment"))
-        if not isinstance(card, str) or not card or not comment:
+        card, comment = card_id(thread.get("card")), _text(thread.get("comment"))
+        if not card or not comment:
             continue
         line = thread.get("line")
         status = thread.get("status")
@@ -146,7 +156,7 @@ def save_reply(run_dir: str, card: Any, body: Any) -> tuple[int, str | None]:
         if plan is None or not _round_open(feedback):
             return 409, "This round's replies are already posted."
         reply = next((reply for reply in plan.get("replies") or []
-                      if isinstance(reply, dict) and reply.get("card") == card), None)
+                      if isinstance(reply, dict) and card_id(reply.get("card")) == card), None)
         if reply is None:
             return 404, "No draft reply for card %s." % card
         if _posted(feedback, reply) is not None:
@@ -168,13 +178,17 @@ def save_reply(run_dir: str, card: Any, body: Any) -> tuple[int, str | None]:
 
 
 def inject(run_dir: str, meta: dict[str, Any], save_url: str,
-           push_both: bool = True) -> bytes | None:
+           push_both: bool = True,
+           review_request: dict[str, Any] | None = None) -> bytes | None:
     """`push_both` says the round's push button also posts its replies
-    (Settings' Push to a PR); otherwise they wait for Push comments."""
+    (Settings' Push to a PR); otherwise they wait for Push comments.
+    `review_request` is the reviewer's Request review button
+    (zerohands_review.request_model), or None to leave it out."""
     data = model(run_dir, meta)
     if data is None:
         return None
     data["saveUrl"] = save_url
+    data["reviewRequest"] = review_request
     data["postLabel"] = ("Push comments & commits"
                          if data["state"] == "awaiting-push" and push_both
                          else "Push comments")
@@ -182,7 +196,9 @@ def inject(run_dir: str, meta: dict[str, Any], save_url: str,
         b"__PR_THREADS__", html.escape(json.dumps(data), quote=True).encode())
 
 
-PAGE_INJECT = rb"""
+# The look and the helpers the review threads share with the round's plan
+# (ui/run_pr_plan.py), which draws the same comments before any fix.
+THREAD_CSS = rb"""
 <style>
   body.pr-threads-on #md-content { display: none; }
   #pr-threads { display: grid; gap: 18px; }
@@ -215,7 +231,7 @@ PAGE_INJECT = rb"""
     background: var(--bg); }
   .prt-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
     padding: 7px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px;
-    color: var(--muted-strong); border-radius: 7px 7px 0 0;
+    color: var(--muted-strong); border-radius: 8px 8px 0 0;
     background: color-mix(in srgb, var(--border) 22%, var(--bg)); }
   .prt-meta strong { color: var(--heading); }
   .prt-meta a { margin-left: auto; font-size: 12px; }
@@ -252,18 +268,37 @@ PAGE_INJECT = rb"""
   .prt-push p { margin: 0; overflow-wrap: anywhere; }
   .prt-push code { background: var(--code); border-radius: 4px; padding: 1px 5px;
     font-size: 12.5px; }
+  .prp-btn { font-family: inherit; font-size: 13.5px; font-weight: 600; line-height: 1;
+    border-radius: 6px;
+    padding: 9px 14px; min-height: 36px; border: 1px solid var(--border);
+    background: var(--chip, var(--panel)); color: var(--heading); cursor: pointer; }
+  .prp-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 12%, var(--chip, var(--panel))); }
+  .prp-btn.prp-primary { background: var(--green); border-color: var(--green); color: var(--bg); }
+  .prp-btn.prp-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--green) 82%, var(--heading)); }
+  .prp-btn:disabled { opacity: .6; cursor: default; }
+  .prp-btn:focus-visible { outline: 2px solid var(--focus, var(--green)); outline-offset: 2px; }
+  .prp-status { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--muted-strong); }
+  .prp-status:empty { display: none; }
+  .prp-status.prp-error { color: var(--red-text); }
+  .prp-review { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+    background: var(--panel); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .prp-review h2 { margin: 0; font-size: 14px; color: var(--heading); }
+  .prp-review p { margin: 0; flex: 1 1 16rem; min-width: 0; font-size: 13px;
+    color: var(--muted-strong); }
+  .prp-review code { background: var(--code); border-radius: 4px; padding: 1px 5px;
+    font-size: 12.5px; }
+  .prp-review .prp-status { flex-basis: 100%; }
   @media (max-width: 560px) {
     .prt-row { grid-template-columns: minmax(0, 1fr); }
     .prt-avatar { display: none; }
     .prt-verdict { margin-left: 14px; }
   }
 </style>
-<script data-pr-threads="__PR_THREADS__">
-(function () {
-  var data = JSON.parse(document.currentScript.dataset.prThreads);
-  var host = document.getElementById('md-content');
-  if (!host || !data.threads.length) return;
+"""
 
+# Helpers for an injected page script, pasted inside its function scope.
+KIT_JS = rb"""
   function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
@@ -322,6 +357,81 @@ PAGE_INJECT = rb"""
     return link;
   }
 
+  function hunkBlock(diffHunk) {
+    var hunk = el('pre', 'prt-hunk');
+    hunk.setAttribute('aria-label', 'Code under review');
+    diffHunk.split('\n').forEach(function (line) {
+      hunk.appendChild(el('span', line.charAt(0) === '+' ? 'prt-add'
+        : line.charAt(0) === '-' ? 'prt-del' : '', line || ' '));
+    });
+    return hunk;
+  }
+
+"""
+
+# The reviewer's Request review panel, on the record page and the plan
+# (ui/run_pr_plan.py); `request.hold` names why it waits (zerohands_review.request_hold),
+# else it is live.
+REVIEW_REQUEST_JS = rb"""
+  function reviewRequest(request) {
+    var hold = request.hold || '';
+    var box = el('section', 'prp-review');
+    box.setAttribute('aria-label', request.name + ' review');
+    box.appendChild(el('h2', '', request.name + ' review'));
+    var line = el('p');
+    function describe(when) {
+      line.textContent = '';
+      if (hold) { line.textContent = hold; return; }
+      line.appendChild(document.createTextNode('Posts '));
+      line.appendChild(el('code', '', request.comment));
+      line.appendChild(document.createTextNode(' on the PR as you'
+        + (when ? '. Last asked ' + when + '.' : ', so ' + request.name + ' reviews what is on GitHub now.')));
+    }
+    function stamp(iso) {
+      var date = new Date(iso);
+      return isNaN(date) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    describe(request.requestedAt ? stamp(request.requestedAt) : '');
+    box.appendChild(line);
+    var button = el('button', 'prp-btn', request.label);
+    button.type = 'button';
+    button.disabled = !!hold;
+    var status = el('p', 'prp-status');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    button.addEventListener('click', function () {
+      button.disabled = true;
+      status.classList.remove('prp-error');
+      status.textContent = 'Posting ' + request.comment + '\u2026';
+      fetch(request.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function (response) {
+          return response.json().catch(function () { return {}; }).then(function (payload) {
+            if (!response.ok) throw new Error(payload.error || 'The request did not post.');
+            status.textContent = 'Asked ' + request.name + ' for a review.';
+            describe(stamp(payload.requestedAt || new Date().toISOString()));
+            setTimeout(function () { button.disabled = false; }, 60000);
+          });
+        })
+        .catch(function (error) {
+          status.classList.add('prp-error');
+          status.textContent = error.message || 'The request did not post.';
+          button.disabled = false;
+        });
+    });
+    box.appendChild(button);
+    box.appendChild(status);
+    return box;
+  }
+"""
+
+PAGE_INJECT = THREAD_CSS + rb"""
+<script data-pr-threads="__PR_THREADS__">
+(function () {
+  var data = JSON.parse(document.currentScript.dataset.prThreads);
+  var host = document.getElementById('md-content');
+  if (!host || !data.threads.length) return;
+
+"""+KIT_JS+REVIEW_REQUEST_JS+rb"""
   var STATUS_LABEL = { fixed: 'Fixed', left: 'Left as is', 'follow-up': 'Follow-up run', decision: 'Needs your decision' };
   var postLabel = data.postLabel;
 
@@ -427,15 +537,7 @@ PAGE_INJECT = rb"""
     if (thread.url) file.appendChild(external('View on GitHub', thread.url));
     card.appendChild(file);
 
-    if (thread.diffHunk) {
-      var hunk = el('pre', 'prt-hunk');
-      hunk.setAttribute('aria-label', 'Code under review');
-      thread.diffHunk.split('\n').forEach(function (line) {
-        hunk.appendChild(el('span', line.charAt(0) === '+' ? 'prt-add'
-          : line.charAt(0) === '-' ? 'prt-del' : '', line || ' '));
-      });
-      card.appendChild(hunk);
-    }
+    if (thread.diffHunk) card.appendChild(hunkBlock(thread.diffHunk));
 
     var author = thread.author || 'Reviewer';
     var comment = row(author.charAt(0));
@@ -476,6 +578,8 @@ PAGE_INJECT = rb"""
     push.appendChild(line);
     section.appendChild(push);
   }
+
+  if (data.reviewRequest) section.appendChild(reviewRequest(data.reviewRequest));
 
   host.parentNode.insertBefore(section, host);
   document.body.classList.add('pr-threads-on');

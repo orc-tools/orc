@@ -135,7 +135,7 @@
 .prs-row-stale { grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; }
 .prs-age { display: grid; justify-items: center; line-height: 1.15; }
 .prs-age b { font-size: 15px; font-weight: 700; color: var(--prs-tone-text); font-variant-numeric: tabular-nums; }
-.prs-age span { font-size: 10px; color: var(--muted-strong); white-space: nowrap; }
+.prs-age span { font-size: 11px; color: var(--muted-strong); white-space: nowrap; }
 .prs-row a.prs-open-slack { display: inline-flex; align-items: center; gap: 6px; margin-right: 6px; padding: 5px 13px; border-radius: 999px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); font-size: 12px; font-weight: 600; line-height: 1.4; white-space: nowrap; text-decoration: none; }
 .prs-row a.prs-open-slack:hover { background: color-mix(in srgb, var(--accent) 86%, var(--heading)); }
 .prs-open-slack svg { width: 14px; height: 14px; }
@@ -149,6 +149,7 @@
 .prs-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; align-self: center; }
 .prs-row-actions .prs-link-btn { white-space: nowrap; border-radius: 999px; }
 .prs-row-actions .prs-cancel-run:hover { color: var(--red-text); border-color: var(--red); }
+/* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
 .prs-group { --prs-rail: var(--accent); margin: 8px -12px; padding: 7px 12px 0 10px; border-left: 2px solid var(--prs-rail); border-radius: 0 14px 14px 0; background: color-mix(in srgb, var(--prs-rail) 6%, transparent); }
 .prs-group[data-kind="linked"] { --prs-rail: var(--gate); border-left-style: dashed; }
 .prs-group-label { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--muted-strong); }
@@ -160,7 +161,7 @@
 .prs-row a.prs-icon-link { color: var(--heading); }
 .prs-icon-link:hover { color: var(--accent-text); background: var(--chip); }
 .prs-tag, .prs-ticket, .prs-label { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; line-height: 1.5; color: var(--muted-strong); background: var(--chip); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; }
-.prs-ticket { display: inline-flex; align-items: center; gap: 4px; border-style: dashed; border-color: color-mix(in srgb, var(--muted) 70%, var(--border)); border-radius: 5px; }
+.prs-ticket { display: inline-flex; align-items: center; gap: 4px; border-style: dashed; border-color: color-mix(in srgb, var(--muted) 70%, var(--border)); border-radius: 6px; }
 .prs-ticket svg { width: 10px; height: 10px; flex-shrink: 0; }
 a.prs-ticket { color: var(--accent-text); text-decoration: none; }
 a.prs-ticket:hover { border-color: var(--accent); }
@@ -186,6 +187,7 @@ a.prs-link-btn { color: var(--heading); text-decoration: none; }
 .prs-detail a.prs-primary { display: inline-block; color: var(--bg); text-decoration: none; }
 .prs-steps-intro { margin: 18px 0 0; font-size: 13px; color: var(--muted-strong); }
 .prs-steps { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; max-width: 760px; }
+/* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
 .prs-step { --prs-step: var(--accent); display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: start; gap: 4px 12px; padding: 13px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--prs-step) 45%, var(--border)); border-left-width: 3px; border-left-color: var(--prs-step); background: var(--panel); }
 .prs-step[data-state="done"] { --prs-step: var(--green); }
 .prs-step:is([data-state="dismissed"], [data-state="off"]) { --prs-step: var(--muted); background: transparent; }
@@ -369,7 +371,7 @@ a.prs-link-btn { color: var(--heading); text-decoration: none; }
   .prs-header-actions { justify-content: flex-start; flex-wrap: wrap; }
   .prs-search { flex: 1 1 100%; min-width: 0; }
   .prs-search input { width: 100%; }
-  .prs-header h2, .prs-detail-head h2 { font-size: 22px; }
+  .prs-header h2, .prs-detail-head h2 { font-size: 20px; }
   /* The tabs outgrow a phone, so they shrink and the strip fades at its end to show there are more. */
   .prs-tabs { gap: 2px; mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
   .prs-tab { font-size: 14px; gap: 7px; padding: 5px 10px 5px 8px; }

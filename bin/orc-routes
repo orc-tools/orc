@@ -11,7 +11,9 @@ Each command takes --preset <name, number or id> when more than one preset
 is saved; without it a command works on the first, which is the one a launch
 gets when it picks none. Settings adds, names and removes presets.
 
-Jobs: lead (the run's own agent, which plans and integrates), implementation,
+Jobs: planner (the model a plan started on that preset is written on; with
+none the lead writes it), lead (the run's own agent, which builds the plan and
+integrates), implementation,
 research, review, design, test, general. A provider is claude, codex,
 gemini or an installed harness plugin's id, and the model is that agent's own
 id for it. --effort takes one level or a lowest:highest range from low,

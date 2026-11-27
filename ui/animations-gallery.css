@@ -1,0 +1,92 @@
+/* ---- animations gallery (#gallery) — a live reference sheet of run statuses
+   and delivery send-offs, reusing the real primitives ---- */
+#gallery-view { position: relative; flex: 1; overflow-y: auto; background: var(--bg); }
+#gallery-close { position: fixed; z-index: 3; top: 16px; right: 16px; }
+#gallery-close svg { width: 20px; height: 20px; }
+#gallery-inner { max-width: 1080px; margin: 0 auto; padding: 30px 24px 72px; }
+.gallery-head { margin-bottom: 34px; max-width: 620px; }
+.gallery-kicker {
+  display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--accent); margin-bottom: 8px;
+}
+.gallery-head h2 { margin: 0 0 8px; font-size: 26px; line-height: 1.15; color: var(--heading); letter-spacing: -.01em; }
+.gallery-head h2:focus-visible { outline: none; }
+.gallery-head p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--muted-strong); }
+.gallery-section { margin-top: 40px; }
+.gallery-section-head { margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+.gallery-section-head h3 { margin: 0 0 3px; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--heading); }
+.gallery-section-head p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted-strong); max-width: 640px; }
+.gallery-section-head a { color: var(--accent); text-decoration: none; }
+.gallery-section-head a:hover { text-decoration: underline; }
+.gallery-theme-group + .gallery-theme-group { margin-top: 28px; }
+.gallery-theme-group h4 { margin: 0 0 12px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-strong); }
+/* status tiles */
+.gallery-status-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(224px, 1fr)); }
+.gallery-status-card {
+  border: 1px solid var(--border); border-radius: 12px; padding: 15px 16px;
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  display: flex; flex-direction: column; gap: 9px;
+}
+.gallery-status-top { display: flex; align-items: center; gap: 9px; }
+.gallery-status-top .dot { width: 10px; height: 10px; }
+.gallery-status-name { font-size: 14px; font-weight: 600; color: var(--heading); flex: 1; }
+.gallery-status-when { font-size: 12.5px; line-height: 1.5; color: var(--muted-strong); margin: 0; }
+/* scene cards */
+.gallery-scene-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+/* The card clips nothing: WebKit cuts the export menu off at the edge of a
+   rounded overflow:hidden ancestor even though the menu is fixed-position.
+   The stage and its canvas round their own top corners instead. */
+.gallery-scene-card { border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.gallery-scene-stage { position: relative; height: 172px; background: var(--bg); border-bottom: 1px solid var(--border); border-radius: 13px 13px 0 0; }
+.gallery-scene-stage canvas { display: block; width: 100%; height: 100%; border-radius: 13px 13px 0 0; }
+.gallery-delivery-stage {
+  background: light-dark(#dce2da, #18201d) radial-gradient(ellipse at 50% 57%, light-dark(#f1f4ec, #34413b) 0%,
+    light-dark(#dce2da, #18201d) 45%, light-dark(#c3ccc4, #0c100f) 100%);
+}
+/* The export menu: an <orc-menu> whose trigger is the corner icon button. */
+.gallery-scene-dl {
+  position: absolute; top: 10px; right: 10px; z-index: 2;
+  --orc-menu-min-width: 150px;
+  opacity: 0; pointer-events: none; transition: opacity .15s ease;
+}
+.gallery-scene-dl::part(trigger) {
+  width: 34px; height: 34px; block-size: 34px; min-block-size: 34px; padding: 0;
+  border-radius: 9px; border: 1px solid var(--border); background: var(--panel); color: var(--heading);
+  cursor: var(--orc-cursor-pointer, pointer); transition: background .15s ease, color .15s ease;
+}
+.gallery-scene-dl svg { width: 16px; height: 16px; display: block; }
+.gallery-scene-stage:hover .gallery-scene-dl,
+.gallery-scene-stage:focus-within .gallery-scene-dl,
+.gallery-scene-dl[open],
+.gallery-scene-dl[data-busy] { opacity: 1; pointer-events: auto; }
+.gallery-scene-dl::part(trigger):hover, .gallery-scene-dl[open]::part(trigger) {
+  background: var(--accent-soft); color: var(--accent);
+}
+.gallery-scene-dl[data-busy]::part(trigger) { cursor: progress; opacity: .7; }
+.gallery-export-sep { height: 1px; margin: 3px 4px; background: var(--border); }
+@media (hover: none) {
+  .gallery-scene-dl { opacity: 1; pointer-events: auto; }
+}
+.gallery-scene-tag {
+  position: absolute; top: 10px; left: 10px; z-index: 1;
+  font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px; color: var(--accent);
+  background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border);
+}
+.gallery-scene-body { padding: 13px 16px 15px; }
+.gallery-scene-title { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--heading); }
+.gallery-scene-when { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted-strong); }
+.gallery-delivery-body { display: flex; align-items: center; gap: 12px; }
+.gallery-delivery-body > div { flex: 1; min-width: 0; }
+.gallery-scene-play {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; min-height: 32px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--heading);
+  font: inherit; font-size: 12.5px; font-weight: 600; cursor: var(--orc-cursor-pointer, pointer);
+  transition: background .15s ease, color .15s ease;
+}
+.gallery-scene-play svg { width: 15px; height: 15px; display: block; }
+.gallery-scene-play:hover, .gallery-scene-play:focus-visible { background: var(--accent-soft); color: var(--accent); }
+@media (max-width: 560px) {
+  #gallery-inner { padding: 24px 16px 60px; }
+  .gallery-scene-grid, .gallery-status-grid { grid-template-columns: 1fr; }
+}

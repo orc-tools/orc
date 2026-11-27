@@ -5,7 +5,7 @@ import '/js/effort-slider.js';
 import qrcode from '/vendor/orc-qr.min.js';
 import {
   VAULT_NOTE_LIMIT, VAULT_SOUL_LIMIT, vaultBuildEndedLine, vaultBuildSource, vaultByteLength, vaultCountLabel, vaultHue, vaultLayout,
-  vaultLink, vaultMeterPercent, vaultNotePath, vaultNoteUrl, vaultPageGesture, vaultPageRequest, vaultPageState, vaultPageUrl, vaultPermalink, vaultPlaceFromPoint, vaultPlaceNudge, vaultPlural, VAULT_PLACE_HOMES,
+  vaultLink, vaultMeterPercent, vaultMode, vaultNotePath, vaultNoteUrl, vaultPageGesture, vaultPageRequest, vaultPageState, vaultPageUrl, vaultPermalink, vaultPlaceFromPoint, vaultPlaceNudge, vaultPlural, VAULT_PLACE_HOMES,
   vaultSizeLabel, vaultToolLabel, vaultTrustsLink, vaultsByNeed,
 } from './vault-helpers.js';
 
@@ -20,6 +20,7 @@ const BUILD_POLL_MS = 1500;
 const IDLE_POLL_MS = 15000;
 const FRAME_SWAP_MS = 4000;
 const ASK_MAX = 8000;
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const COG_ICON = `<svg ${ICON}><circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.2M12 18.800V21M3 12h2.2M18.800 12H21M5.600 5.600l1.600 1.600M16.800 16.800l1.600 1.600M5.600 18.400l1.600-1.600M16.800 7.200l1.600-1.600"/></svg>`;
 // What the frame may do: run the page's own script. It opens no window, so a
 // link in the page is handed to Orc (see onPageMessage). The routes' own
@@ -78,6 +79,8 @@ let viewHash = '';
 let wired = false;
 let pluginSignal = null;
 let listData = null;
+// The model the New vault dialog will build with; the slider holds the effort.
+let newChoice = {};
 let listError = '';
 let listRequest = 0;
 let detailSlug = '';
@@ -124,6 +127,7 @@ let drag = null;
 let dragged = false;
 // What the page was last told, so a poll that changed nothing tells it nothing.
 let pageToldAs = '';
+let modeToldAs = '';
 // When Orc itself last saw a click or key, and when each page window said it
 // had loaded, for vaultPageGesture.
 let orcInputAt = -Infinity;
@@ -265,6 +269,7 @@ function render() {
   view.classList.toggle('is-full', fullPage());
   syncStage();
   tellPages();
+  tellModes();
   // A refetch that changed nothing leaves the page alone, so its animations
   // and the reader's place in it are not reset.
   const html = detailSlug ? detailHtml() : listHtml();
@@ -363,7 +368,7 @@ function syncStage() {
   frame.title = `${detail.vault.name || detailSlug} page`;
   frame.setAttribute('sandbox', FRAME_SANDBOX);
   frame.setAttribute('referrerpolicy', 'no-referrer');
-  frame.src = vaultPageUrl(detailSlug, page.version);
+  frame.src = vaultPageUrl(detailSlug, page.version, orcMode());
   if (!reloading) {
     stage.replaceChildren(frame);
     return;
@@ -398,7 +403,7 @@ function cardHtml(vault, index) {
   const updated = updatedLabel(vault);
   // A still of the page: with no script allowed, it is a picture and nothing more.
   const preview = vault.page?.exists
-    ? `<span class="vault-card-preview" aria-hidden="true"><iframe tabindex="-1" sandbox="" loading="lazy" referrerpolicy="no-referrer" src="${esc(vaultPageUrl(vault.slug, vault.page.version))}"></iframe></span>` : '';
+    ? `<span class="vault-card-preview" aria-hidden="true"><iframe tabindex="-1" sandbox="" loading="lazy" referrerpolicy="no-referrer" src="${esc(vaultPageUrl(vault.slug, vault.page.version, orcMode()))}"></iframe></span>` : '';
   return `<li style="--vault-i:${index}"><a class="vault-card${pending ? ' is-waiting' : ''}${preview ? ' has-preview' : ''}" style="--vault-hue:${vaultHue(vault.slug)}" href="#vaults/${encodeURIComponent(vault.slug)}">
     ${preview}${doorHtml(vault)}
     <span class="vault-card-text">
@@ -474,6 +479,7 @@ function newDialogHtml() {
       <label class="vault-field">Name<input id="vault-new-name" name="name" type="text" maxlength="60" autocomplete="off" required></label>
       <fieldset class="vault-templates" id="vault-new-templates"><legend>Start from</legend></fieldset>
       <label class="vault-field"><span id="vault-prompt-label">What should this page be?</span><textarea id="vault-new-prompt" name="prompt" rows="4" maxlength="${ASK_MAX}" placeholder="Leave empty to make the vault and build its page later."></textarea></label>
+      <div class="vault-new-builds" id="vault-new-builds"></div>
       <p id="vault-new-status" class="vault-status" role="status" aria-live="polite"></p>
       <div class="vault-dialog-actions">
         <button type="button" class="settings-btn-inline" data-vault-new-cancel>Cancel</button>
@@ -481,6 +487,49 @@ function newDialogHtml() {
       </div>
     </form>
   </dialog>`;
+}
+
+// What builds the new vault's page, set before its first build starts.
+function newBuildsHtml() {
+  const accounts = Array.isArray(listData?.accounts) ? listData.accounts : [];
+  return `<div class="vault-model-row">
+      <div class="vault-field"><span id="vault-new-model-label">Model</span><orc-model-picker id="vault-new-model" floating aria-labelledby="vault-new-model-label"></orc-model-picker></div>
+      <div class="vault-field"><span aria-hidden="true">Effort</span><orc-effort-slider id="vault-new-effort"></orc-effort-slider></div>
+    </div>
+    ${accounts.length > 1 ? `<label class="vault-field vault-account" for="vault-new-account">Claude login
+      <select id="vault-new-account" name="account">${accounts.map((name, index) => `<option value="${esc(name)}"${index ? '' : ' selected'}>${esc(name)}</option>`).join('')}</select></label>` : ''}
+    <p class="vault-note">Used for this page’s first build and every build after. Change it later in the vault’s settings.</p>`;
+}
+
+function newDefaults() {
+  return { model: listData?.defaults?.model, effort: listData?.defaults?.effort || 'medium' };
+}
+
+function syncNewBuilds(choice = newDefaults()) {
+  const picker = $('vault-new-model');
+  if (picker) picker.selection = { agent: 'claude', model: choice.model, effort: choice.effort, fast: false };
+  const effort = $('vault-new-effort');
+  if (effort) effort.value = choice.effort;
+}
+
+function pickNewModel(picker) {
+  const choice = picker.choice;
+  const status = $('vault-new-status');
+  if ((choice.agent || 'claude') !== 'claude') {
+    status.textContent = "A vault's page builds with a Claude model.";
+    status.className = 'vault-status is-error';
+    syncNewBuilds({ model: newChoice.model, effort: $('vault-new-effort')?.value || newDefaults().effort });
+    return;
+  }
+  status.textContent = '';
+  status.className = 'vault-status';
+  newChoice.model = choice.model || picker.value || newChoice.model;
+  if (EFFORTS.includes(choice.effort) && $('vault-new-effort')) $('vault-new-effort').value = choice.effort;
+}
+
+function syncNewSubmit() {
+  const submit = $('vault-new-submit');
+  if (submit) submit.textContent = $('vault-new-prompt')?.value.trim() ? 'Create and build' : 'Create vault';
 }
 
 function deleteDialogHtml() {
@@ -509,6 +558,7 @@ function pickTemplate(id) {
     prompt.placeholder = template.readyPage ? 'Leave empty to open the finished template.' : 'Leave empty to build the page later.';
     if (!newPromptTouched) prompt.value = template.starter || '';
   }
+  syncNewSubmit();
   const name = $('vault-new-name');
   if (name && !nameTouched) name.value = template.name || '';
 }
@@ -529,6 +579,9 @@ function openNewDialog(templateId) {
   status.textContent = '';
   status.className = 'vault-status';
   $('vault-new-templates').innerHTML = templatesHtml(templates, picked);
+  $('vault-new-builds').innerHTML = newBuildsHtml();
+  newChoice = newDefaults();
+  syncNewBuilds();
   $('vault-new-submit').disabled = false;
   pickTemplate(picked);
   if (!dialog.open) dialog.showModal();
@@ -553,7 +606,12 @@ async function createVault(form) {
   const submit = $('vault-new-submit');
   submit.disabled = true;
   status.textContent = 'Creating…';
-  const result = await request('/api/vaults', { name, template });
+  const effort = $('vault-new-effort')?.value;
+  const account = data.get('account');
+  const result = await request('/api/vaults', {
+    name, template, ...(newChoice.model ? { model: newChoice.model } : {}),
+    ...(EFFORTS.includes(effort) ? { effort } : {}), ...(account ? { account } : {}),
+  });
   if (!result.ok || !result.data.vault?.slug) {
     submit.disabled = false;
     status.textContent = result.data.error || 'Could not create the vault. Try again.';
@@ -1204,7 +1262,7 @@ function chooseModel(picker) {
   }
   const model = choice.model || picker.value;
   if (!model || model === detail?.settings?.model) return;
-  const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(choice.effort) ? { effort: choice.effort } : {};
+  const effort = EFFORTS.includes(choice.effort) ? { effort: choice.effort } : {};
   saveSettings({ model, ...effort }, 'model', 'Model saved.');
 }
 
@@ -1252,6 +1310,23 @@ function pageWindows() {
   }).filter(Boolean);
 }
 
+// Orc's mode, light or dark. The shell always sets data-theme to it.
+function orcMode() {
+  return vaultMode(document.documentElement.dataset.theme, null, matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+// A page paints in the mode its frame's address names; a switch since is sent.
+function tellMode(target, mode = orcMode()) {
+  try { target.postMessage({ orcVaultMode: mode }, '*'); } catch {}
+}
+
+function tellModes() {
+  const mode = orcMode();
+  if (mode === modeToldAs) return;
+  modeToldAs = mode;
+  for (const target of pageWindows()) tellMode(target, mode);
+}
+
 function tellPage(target, error = '') {
   try { target.postMessage({ orcVaultState: vaultPageState(detail, error) }, '*'); } catch {}
 }
@@ -1274,6 +1349,7 @@ async function answerPage(asked, source) {
   const now = performance.now();
   if (asked.ready) {
     pageShownAt.set(source, now);
+    tellMode(source);
     tellPage(source);
     return;
   }
@@ -1694,6 +1770,7 @@ function onInput(event) {
     growAsk();
   } else if (target.id === 'vault-new-prompt') {
     newPromptTouched = target.value.trim() !== '';
+    syncNewSubmit();
   } else if (target.id === 'vault-soul') {
     if (soulDraft === null) soulBase = detail?.soul?.mtime ?? null;
     soulDraft = target.value;
@@ -1726,6 +1803,7 @@ function onChange(event) {
   const target = event.target;
   if (target.name === 'template' && target.closest('#vault-new-dialog')) pickTemplate(target.value);
   else if (target.id === 'vault-model') chooseModel(target);
+  else if (target.id === 'vault-new-model') pickNewModel(target);
   else if (target.id === 'vault-effort') saveSettings({ effort: target.value }, 'model', 'Effort saved.');
   else if (target.id === 'vault-account') saveSettings({ account: target.value }, 'model', 'Login saved.');
   else if (target.dataset?.vaultAutomationOn) changeAutomation(target.dataset.vaultAutomationOn, { enabled: target.checked }, target.checked ? 'Automation on.' : 'Automation off.');
@@ -2019,6 +2097,11 @@ export async function activate({ signal, base, commands, view: registerView }) {
   window.addEventListener('pageshow', event => {
     if (event.persisted && isVaultHash(location.hash)) showVaults(location.hash);
   }, { signal });
+  // Orc's mode switching, by choice or with the system's: the page on show is
+  // told, and the list's stills load again in the new mode.
+  const modeWatch = new MutationObserver(() => { if (active) render(); });
+  modeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  signal.addEventListener('abort', () => modeWatch.disconnect(), { once: true });
 
   return () => {
     hideVaults();

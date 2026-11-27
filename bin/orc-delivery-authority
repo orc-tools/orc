@@ -19,6 +19,8 @@ import time
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+from run_lifecycle import Snapshot, write_meta
 from linked_pr import branch_pr_to_link, linked_pr_url  # noqa: E402
 import run_checks  # noqa: E402
 import run_diff  # noqa: E402
@@ -514,22 +516,24 @@ def json_argument(raw: str) -> dict[str, Any]:
 
 def link_branch_pr(run_dir: Path) -> str | None:
     """Record the open PR the run's branch already has, so Ship offers Push to
-    PR and a PR link instead of Open PR. Best effort: authority is published
-    either way."""
+    PR and a PR link instead of Open PR."""
     meta_path = run_dir / "meta.json"
     try:
-        url = branch_pr_to_link(read_object(meta_path))
-        if not url:
-            return None
-        meta = read_object(meta_path)
-        with meta_lock(run_dir, meta):
-            meta = read_object(meta_path)
-            if linked_pr_url(meta):
-                return None
-            meta["prUrl"] = url
-            atomic_write(meta_path, (json.dumps(meta, indent=2) + "\n").encode())
+        meta = Snapshot(read_object(meta_path))
+        url = branch_pr_to_link(meta)
     except (OSError, ValueError):
         return None
+    if not url:
+        return None
+    with meta_lock(run_dir, meta):
+        current = read_object(meta_path)
+        if linked_pr_url(current):
+            return None
+        if any(current.get(key) != meta.get(key) for key in
+               ("repoPath", "mainRepoPath", "branch", "repositories")):
+            raise ValueError("run participants changed while finding the branch's PR")
+        meta["prUrl"] = url
+        write_meta(meta_path, meta, caller="orc-delivery-authority")
     return url
 
 
@@ -539,11 +543,11 @@ def publish(args: argparse.Namespace) -> int:
         require_committed_worktrees(payload["participants"])
         validate_payload(args.run_dir, payload)
         atomic_write(args.run_dir / "delivery-authority.json", canonical_json(payload))
+        linked = link_branch_pr(args.run_dir)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         print(f"ERROR {exc}", file=sys.stderr)
         return 1
     print(f"delivery authority: published ({digest(canonical_json(payload))})")
-    linked = link_branch_pr(args.run_dir)
     if linked:
         print(f"linked PR: {linked} (branch already has an open PR; Ship offers Push to PR)")
     return 0
@@ -720,8 +724,8 @@ def ship(args: argparse.Namespace) -> int:
         atomic_write(authority_path, canonical)
         # The branch's open PR is a fact about the branch, not about this
         # Ship, so a lint or gate failure below must not leave it unrecorded.
-        linked = link_branch_pr(args.run_dir)
         try:
+            linked = link_branch_pr(args.run_dir)
             validate_payload(args.run_dir, json.loads(authority_path.read_text("utf-8")))
             bin_dir = Path(__file__).resolve().parent
             lint_cmd = [sys.executable, str(bin_dir / "orc-pr-body-lint"), str(pr_body_dest), "--repo", primary["repoPath"]]

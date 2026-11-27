@@ -249,6 +249,7 @@ const PENDING_NOTES_KEY = 'orcStickyNotesPending';
 
 let host = null;
 let board = null;
+let tools = null;
 let handout = null;
 let offline = null;
 let menu = null;
@@ -437,12 +438,12 @@ function unmountStickyNotes() {
   resizeObserver = null;
   host?.classList.remove('nc-peeling', 'nc-notes-busy');
   host?.querySelector('.newconv-prompt')?.classList.remove('is-note-drop-target');
-  handout?.remove();
+  tools?.remove();
+  tools = null;
   handout = null;
+  offline = null;
   board?.remove();
   board = null;
-  offline?.remove();
-  offline = null;
   menu?.remove();
   menu = null;
   host = null;
@@ -469,21 +470,26 @@ function mountStickyNotes({ view, add, removed, updated }, parentSignal) {
   host = view;
   hooks = { add, removed, updated };
   const scroll = view.querySelector('.nc-scroll');
-  scroll.insertAdjacentHTML('beforebegin', HANDOUT_HTML);
-  handout = view.querySelector('.nc-handout');
-  board = document.createElement('section');
-  board.className = 'nc-notes';
-  board.setAttribute('aria-label', 'Sticky notes');
-  board.innerHTML = `<p class="nc-notes-broken" role="alert" hidden></p>
-    <p id="nc-notes-help" class="sr-only">Enter adds the note to the prompt. Arrow keys move it, Alt with arrow keys resizes it, F2 edits it, paste attaches an image, Delete removes it, and Shift+F10 opens its menu.</p>`;
-  scroll.append(board);
+  // The handout and the offline link share one box ahead of the board. On a
+  // wide screen it takes no room and they pin to the view's corners; at phone
+  // width it is a row above the notes (notes.css).
+  tools = document.createElement('div');
+  tools.className = 'nc-note-tools';
+  tools.innerHTML = HANDOUT_HTML;
+  handout = tools.querySelector('.nc-handout');
   // The offline composer is for a phone that cannot reach this Mac, so the way
   // to it only shows where a phone would look (notes.css).
   offline = document.createElement('a');
   offline.className = 'nc-offline-link';
   offline.href = '/offline.html';
   offline.textContent = 'Write tickets offline';
-  view.append(offline);
+  tools.append(offline);
+  board = document.createElement('section');
+  board.className = 'nc-notes';
+  board.setAttribute('aria-label', 'Sticky notes');
+  board.innerHTML = `<p class="nc-notes-broken" role="alert" hidden></p>
+    <p id="nc-notes-help" class="sr-only">Enter adds the note to the prompt. Arrow keys move it, Alt with arrow keys resizes it, F2 edits it, paste attaches an image, Delete removes it, and Shift+F10 opens its menu.</p>`;
+  scroll.append(tools, board);
   menu = document.createElement('div');
   menu.className = 'note-menu';
   menu.setAttribute('role', 'menu');
@@ -1502,7 +1508,7 @@ async function finishEdit(id, { refocus = false } = {}) {
     delete draft.blockedBody;
     persistPending();
     const saved = await commitDraft(draft, { announceSave: true, keepalive: true });
-    if (refocus && host) (saved ? noteElement(saved) : host.querySelector('.nc-handout'))?.focus();
+    if (refocus && host) (saved ? noteElement(saved) : handout)?.focus({ preventScroll: !saved });
     return;
   }
   const ticket = tickets.find(entry => entry.id === id);
@@ -1602,7 +1608,9 @@ async function commitDelete(id, options = {}) {
   clearTimeout(pending.timer);
   const focused = pending.toast.element?.contains(document.activeElement);
   pending.toast.dismiss();
-  if (focused) host?.querySelector('.nc-handout')?.focus();
+  // The handout's row scrolls with the page at phone width, and taking focus
+  // back must not pull the page up to it.
+  if (focused) handout?.focus({ preventScroll: true });
   if (pending.note.draft) {
     pendingDeletes.delete(id);
     return;
@@ -1844,7 +1852,7 @@ function promptDropTarget(event) {
     && event.clientY >= rect.top && event.clientY <= rect.bottom ? target : null;
 }
 
-// While a note is being dragged, the handout in the corner becomes a
+// While a note is being dragged, the handout becomes a
 // trash drawer; letting go of the note over it deletes the note, with the
 // same Undo as the Delete key. The drawer reaches a little past its edges so
 // a quick drop near it still lands.
@@ -1934,6 +1942,10 @@ function bindBoard(signal) {
     clearTimeout(gesture.press);
     clearTimeout(gesture.settle);
     gesture = null;
+    // Measured while the drawer is still open: at phone width it leaves the
+    // corner for its row the moment it stops being one.
+    const binned = active && mode === 'move' && event.type !== 'pointercancel'
+      && canDeleteNote(noteOf(id)) && Boolean(trashDropTarget(event));
     host.classList.remove('nc-notes-busy');
     host.querySelector('.newconv-prompt')?.classList.remove('is-note-drop-target');
     handout?.classList.remove('is-trash', 'is-trash-hot');
@@ -1942,7 +1954,7 @@ function bindBoard(signal) {
     element.style.removeProperty('--grab');
     if (event.type === 'pointercancel') return layoutNotes();
     const note = noteOf(id);
-    if (active && mode === 'move' && canDeleteNote(note) && trashDropTarget(event)) {
+    if (binned) {
       // The note leaves from where it was dropped, into the drawer.
       deleteNote(id);
     } else if (active && mode === 'move' && note && !note.draft && promptDropTarget(event)) {

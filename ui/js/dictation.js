@@ -1,4 +1,5 @@
-import { shortcutMatches } from './shortcuts.js';
+import { iconButtonTooltip } from './control-tooltip.js';
+import { shortcutHint, shortcutMatches } from './shortcuts.js';
 
 const dictationBindings = new WeakMap();
 let activeDictation = null;
@@ -21,15 +22,13 @@ function browserDictationBridge() {
     const Recognition = browserSpeechRecognition();
     recognition = new Recognition();
     recognition.lang = locale;
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
-    let transcript = '', heard = '';
+    let heard = '';
     const emit = (state, extra = {}) => receiveDictationEvent({ id, state, ...extra });
     recognition.onstart = () => emit('recording');
     recognition.onresult = event => {
-      const results = Array.from(event.results);
-      transcript = results.filter(result => result.isFinal).map(result => result[0].transcript).join(' ');
-      heard = results.map(result => result[0].transcript).join(' ');
+      heard = Array.from(event.results, result => result[0].transcript.trim()).filter(Boolean).join(' ');
       emit('partial', { text: heard });
     };
     recognition.onerror = event => {
@@ -45,7 +44,7 @@ function browserDictationBridge() {
     recognition.onend = () => {
       emit('transcribing');
       // Keep the words already on screen when the browser ends before finalizing them.
-      emit('complete', { text: transcript.trim() ? transcript : heard });
+      emit('complete', { text: heard });
     };
     recognition.start();
   } };
@@ -199,31 +198,43 @@ export function bindDictation(area, { owner = () => location.hash, changed = () 
   button.innerHTML = DICTATION_MICROPHONE_ICON;
   // Keep the caret in the draft: a pointer press would otherwise move focus to the button.
   button.addEventListener('mousedown', event => event.preventDefault());
+  // Errors and notices that stay until you act on them get a row above the bar.
   const panel = document.createElement('div');
   panel.className = 'prompt-dictation-panel';
   panel.hidden = true;
   panel.innerHTML = '<span role="status" aria-live="polite" aria-atomic="true"></span>';
   const status = panel.querySelector('span');
   status.id = area.id + '-dictation-status';
-  button.setAttribute('aria-describedby', status.id);
+  // Preparing, downloading and transcribing sit inside the bar, after the model
+  // label (or before the microphone where the bar has none), so the composer
+  // keeps its height while you dictate.
+  const progress = document.createElement('span');
+  progress.className = 'prompt-dictation-progress';
+  progress.hidden = true;
+  progress.innerHTML = '<span class="status-spinner" aria-hidden="true"></span><span role="status" aria-live="polite" aria-atomic="true"></span>';
+  const progressText = progress.lastElementChild;
+  progressText.id = area.id + '-dictation-progress';
+  button.setAttribute('aria-describedby', `${progressText.id} ${status.id}`);
   surface.insertBefore(panel, surface.querySelector('footer'));
   actions.prepend(button);
-  let revealTimer = null;
+  iconButtonTooltip(button, { detail: () => shortcutHint('dictation') });
+  const info = surface.querySelector('.chat-composer-info');
+  const modelLabel = info?.querySelector(':scope > :not(.chat-status)');
+  if (modelLabel) modelLabel.after(progress);
+  else if (info) info.prepend(progress);
+  else actions.prepend(progress);
   const binding = { area, owner, paint(phase, message) {
     const recording = phase === 'recording';
     const label = phase === 'idle' ? 'Dictate prompt' : 'Finish dictation';
     button.setAttribute('label', label);
-    button.title = `${label} (⌘D)`;
     button.disabled = area.disabled || area.readOnly;
     button.classList.toggle('is-recording', recording);
-    clearTimeout(revealTimer);
-    // Preparing and transcribing usually end within a moment, so showing them at once flashes the row and shifts the composer.
-    if (message && panel.hidden && (phase === 'preparing' || phase === 'transcribing')) {
-      revealTimer = setTimeout(() => { panel.hidden = false; changed(); }, 500);
-    } else {
-      panel.hidden = !message;
-    }
-    status.textContent = message;
+    const working = Boolean(message) && phase !== 'idle';
+    progress.hidden = !working;
+    progress.title = working ? message : '';
+    progressText.textContent = working ? message : '';
+    panel.hidden = working || !message;
+    status.textContent = working ? '' : message;
     changed();
   } };
   dictationBindings.set(area, binding);
@@ -273,7 +284,6 @@ export function bindDictation(area, { owner = () => location.hash, changed = () 
   button.addEventListener('click', binding.toggle);
   return () => {
     cancelDictation(area);
-    clearTimeout(revealTimer);
     availability.disconnect();
     dictationBindings.delete(area);
     button.removeEventListener('click', binding.toggle);

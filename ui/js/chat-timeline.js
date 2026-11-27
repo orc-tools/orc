@@ -1,3 +1,4 @@
+import { knownHarness } from './harnesses.js';
 // orc-ui: Chat timeline rules. Turns the items GET /api/runs/<id>/chat reads
 // out of a run's transcript into the rows the Chat tab draws. It touches no
 // DOM and fetches nothing, so the rules are testable on their own.
@@ -593,7 +594,7 @@ export function chatRows(items, {
   agentName = 'The agent', hasDiff = false, diffFiles = null, folderClips = [], waitingOnYou = false,
   queueStranded = false, queueError = null, answer = null, turnFailure = null,
   permissionFallback = null, detailed = true, now = Date.now(), prUpdates = [], settingChanges = [],
-  autoMergeChanges = [], background = null,
+  autoMergeChanges = [], mergeConfirmation = null, background = null,
   deploy = null, pauses = [], cache = null,
 } = {}) {
   let turns;
@@ -618,6 +619,7 @@ export function chatRows(items, {
     rows.push({ kind: 'user', id: 'start-prompt', item: { id: 'start-prompt', kind: 'user', ...startPrompt, pending: true } });
   }
   const updates = [
+    ...(mergeConfirmation ? [{ kind: 'merge-confirmation', item: mergeConfirmation }] : []),
     ...prUpdates.map(item => ({ kind: 'pr-update', item })),
     ...settingChanges.map(item => ({ kind: 'setting-change', item })),
     ...autoMergeChanges.map(change => ({ kind: 'auto-merge', item: { ...change, kind: 'auto-merge' } })),
@@ -743,6 +745,13 @@ export function chatRows(items, {
     const fromDiff = isLastWorkTurn && !!diffFiles?.length;
     const files = fromDiff ? diffFiles : changedFiles(body);
     const ownClips = isLastWorkTurn ? folderClips : [];
+    if (fromDiff) {
+      const mergeIndex = updates.findIndex(update => update.kind === 'merge-confirmation');
+      if (mergeIndex !== -1) {
+        const [{ kind, item }] = updates.splice(mergeIndex, 1);
+        rows.push({ kind, id: `${kind}:${item.id}`, item });
+      }
+    }
     if (files.length || ownClips.length) {
       rows.push(filesRow(`files:${id}`, files, { expanded, fromDiff, hasDiff, folderClips: ownClips }));
     }
@@ -863,3 +872,16 @@ export function attachmentUrl(path) {
 }
 
 export const isVideoAttachment = path => /\.(mp4|mov|webm)$/i.test(String(path || ''));
+
+// Which runs get a Chat tab: every run whose agent session Orc can name, and
+// every run the composer launched, which has one on the way.
+export function chatTabAvailable(run) {
+  const meta = (run && run.meta) || {};
+  if (run && run.pending) return true;
+  if (meta.launchedBy === 'orc-ui') return true;
+  const harness = meta.harness || (meta.sessionId ? 'claude' : null);
+  if (harness === 'claude') return !!meta.sessionId;
+  if (harness === 'codex') return !!meta.codexThreadId;
+  if (knownHarness(harness)) return meta.sessionBackend === 'headless' || Boolean(meta.sessionRescue);
+  return false;
+}

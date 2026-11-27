@@ -147,11 +147,20 @@ export const tasksWaitingText = meta => {
 // active merge finishes and dispatch_merge_queues sends the resolution turn.
 export const isConflictResolutionPending = meta => meta?.status === 'escalated'
   && meta.mergeConflict?.target === 'main' && meta.mergeConflict?.resolutionPending === true;
-export const conflictResolutionWaitingText = meta => {
+// The reason and the time come from the conflict marker ui/serve.py keeps:
+// resolutionLostAt for a send Orc lost to its own restart, which goes again at
+// once, and resolutionRetryAt for a session that took the steps and stopped.
+export const conflictResolutionWaitingText = (meta, locale) => {
   const title = typeof meta?.mergeWaitingOn?.title === 'string' ? meta.mergeWaitingOn.title.trim() : '';
-  return title
-    ? `Waiting on "${title}" to finish merging. Orc resolves merge conflicts automatically once it lands.`
-    : 'Waiting to resolve merge conflicts. Orc continues automatically when ready.';
+  if (title) return `Waiting on "${title}" to finish merging. Orc resolves merge conflicts automatically once it lands.`;
+  const conflict = meta?.mergeConflict || {};
+  if (conflict.resolutionLostAt) return 'Orc restarted while sending this. Sending again now.';
+  const retryAt = typeof conflict.resolutionRetryAt === 'string' ? new Date(conflict.resolutionRetryAt) : null;
+  if (retryAt && !Number.isNaN(retryAt.getTime())) {
+    const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(retryAt);
+    return `The conflict fix stopped early. Sending again at ${time}.`;
+  }
+  return 'Waiting to resolve merge conflicts. Orc continues automatically when ready.';
 };
 // A v4 run that built a branch and went idle short of Ship has no delivery
 // path: the Yeet and Merge buttons render only at phase=ship,status=awaiting-gate.
@@ -221,9 +230,9 @@ export function planOf(run, list) {
   if (!id || id === run.id || isPlanningRun(run.meta)) return null;
   return list.find(candidate => candidate.id === id) || null;
 }
-export function pairedBuildOf(run, list) {
+export function pairedBuildOf(run, list, byId = null) {
   const id = run?.meta?.planBuildRunId;
-  const build = id ? list.find(candidate => candidate.id === id) : null;
+  const build = id ? (byId ? byId.get(id) : list.find(candidate => candidate.id === id)) : null;
   return build?.meta?.planMerged === true && build.meta.planRunId === run.id ? build : null;
 }
 export const isLocalReviewClosed = meta => isLocalReviewRun(meta) && meta.outcome === 'review'
@@ -266,18 +275,28 @@ export const planStepsUnstarted = meta => {
 // other repositories: `runGroup` from the host (group_view in
 // ui/run_relationships.py), on the group's root and on every member.
 export const runGroupOf = meta => (meta?.runGroup && Array.isArray(meta.runGroup.members) ? meta.runGroup : null);
-// The plan heads a group across repositories, and its runs list beneath it.
+// The plan heads a group, and its runs list beneath it: one run per step,
+// in one repository or across several (plans_nesting_steps in
+// ui/run_relationships.py).
 export const isPlanGroupRoot = (meta, id) => {
   const group = runGroupOf(meta);
-  return !!group && group.plan && group.root === id && group.repos > 1;
+  return !!group && group.plan && group.root === id;
+};
+// The step a run builds in the plan group it lists in, or null.
+export const groupStepOf = (meta, id) => {
+  const group = runGroupOf(meta);
+  const step = group?.plan ? group.members.find(member => member.runId === id)?.step : null;
+  return Number.isInteger(step) ? step : null;
 };
 const GROUP_SHIP_STATUSES = ['merging', 'merged', 'merged-to-parent', 'complete'];
 export const groupMemberAtShip = member => member.state === 'launched'
   && (['ship', 'done'].includes(member.phase) || GROUP_SHIP_STATUSES.includes(member.status));
+const GROUP_DONE_STATUSES = ['merged', 'merged-to-parent', 'complete'];
 export function groupCounts(group) {
-  const counts = { working: 0, waiting: 0, ship: 0, total: group.members.length };
+  const counts = { working: 0, waiting: 0, ship: 0, done: 0, total: group.members.length };
   for (const member of group.members) {
     if (member.state === 'waiting') counts.waiting += 1;
+    else if (member.state === 'launched' && GROUP_DONE_STATUSES.includes(member.status)) counts.done += 1;
     else if (groupMemberAtShip(member)) counts.ship += 1;
     else counts.working += 1;
   }
@@ -285,8 +304,8 @@ export function groupCounts(group) {
 }
 // "2 working · 1 waiting", as the plan's row and steps say it.
 export function groupCountsLabel(group) {
-  const { working, waiting, ship } = groupCounts(group);
-  return [working && `${working} working`, ship && `${ship} at Ship`, waiting && `${waiting} waiting`]
+  const { working, waiting, ship, done } = groupCounts(group);
+  return [working && `${working} working`, ship && `${ship} at Ship`, waiting && `${waiting} waiting`, done && `${done} done`]
     .filter(Boolean).join(' · ');
 }
 const andList = items => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
@@ -358,11 +377,18 @@ export const manualStepsDue = chatChecksReady;
 // membership comes from the queue file via the payload — a recap-ready run is
 // only "in merge queue" once someone actually queued it.
 export const isMergeQueued = meta => meta.mergeQueued === true;
+function ordinal(n) {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+}
 // merge-to-main off (offerMergeToMain === false) -> the delivery path is a PR,
 // so the mergeable label would mislead. Queue membership still wins.
 export const finalReadyLabel = meta => isMergeQueued(meta)
-  ? (meta.mergeQueueConflict ? 'Queued · conflict'
-    : meta.mergeCheckoutWait ? 'Waiting for checkout' : 'In merge queue')
+  ? (meta.mergeQueueConflict ? 'Merge conflict'
+    : meta.mergeCheckoutWait ? 'Waiting for checkout'
+      : Number.isInteger(meta.mergeQueuePosition) && meta.mergeQueuePosition >= 2
+        ? `${ordinal(meta.mergeQueuePosition)} in line to merge` : 'In merge queue')
   : (meta.offerMergeToMain === false ? 'Ready for PR' : 'Ready to merge');
 export const isReadOnlyRun = meta => isMergedToParent(meta) || meta.remote === true
   || Object.prototype.hasOwnProperty.call(meta || {}, 'outcome')
@@ -389,7 +415,7 @@ export const isDone = (meta, files = []) => isQuestionRun(meta, files)
   || meta.status === 'complete' || meta.status === 'merged' || isMergedToParent(meta) || meta.phase === 'done';
 // Opening a PR records the run as complete, but review follow-ups still happen
 // in its chat, so it stays listed until the PR poller sees it merge or close.
-const hasOpenPullRequest = meta => meta.status === 'complete' && meta.prState !== 'closed'
+export const hasOpenPullRequest = meta => meta.status === 'complete' && meta.prState !== 'closed'
   && (typeof meta.prUrl === 'string' || (Array.isArray(meta.prUrls) && meta.prUrls.length > 0));
 // Commits the open PR doesn't have yet: a feedback round waiting on its push,
 // or work committed from chat after the PR opened, such as a merge-conflict
@@ -403,6 +429,10 @@ export function deployHoldsRun(deploy) {
 
 export const prHasUnpushedCommits = meta => prPushPending(meta)
   || (hasOpenPullRequest(meta) && meta.deliveryStatus?.pushed === false);
+// The open PR lacks the run's current pr-body.md or screenshots
+// (ui/pr_body_sync.py): Update PR body puts them on it.
+export const prBodyPending = meta => hasOpenPullRequest(meta) && meta.prBody?.pending === true
+  && typeof meta.prBody.digest === 'string';
 export const isOpenConversation = (meta, files = []) => isQuestionRun(meta, files)
   || hasOpenPullRequest(meta)
   || (meta.status === 'complete' && meta.parentCompletion?.schemaVersion === 1
@@ -592,6 +622,20 @@ export function prPushButton(meta, choice = globalThis.ORC_PR_PUSH_ACTION) {
   const postReplies = hasReplies && knownPrPushAction(choice) === 'comments-and-commits';
   return { postReplies, label: !hasReplies ? 'Push to PR' : prPushActionLabel(postReplies ? 'comments-and-commits' : 'commits') };
 }
+// What the push button asks the session when Orc cannot push the round itself.
+// With no round on record the button reads Push to PR, but Push comments &
+// commits still means answering the review comments the commits fix.
+export function prPushRequest(runId, meta, choice = globalThis.ORC_PR_PUSH_ACTION) {
+  const { postReplies } = prPushButton(meta, choice);
+  if (prPushPending(meta)) {
+    return `PR action (${runId}): push feedback fixes${postReplies ? ' and post replies' : ''}`;
+  }
+  const pr = meta.prUrl || meta.prUrls?.[0];
+  const push = `Push ${meta.branch || 'this run\'s branch'} to its PR${pr ? ` (${pr})` : ''}`;
+  if (postReplies) return `${push}, then post the review round's replies.`;
+  if (prRoundHasReplies(meta) || knownPrPushAction(choice) !== 'comments-and-commits') return `${push}.`;
+  return `${push}, then reply to and react 👍 on the review comments those commits fix (Settings: Push comments & commits).`;
+}
 export const isProjectRedirect = meta => meta?.status === 'cancelled'
   && /^redirected to standalone orc-init: \/\S/.test(meta.cancelReason || '');
 export function runPauseActions(meta) {
@@ -616,46 +660,27 @@ export const STATE_COLORS = {
   working: 'var(--state-working, var(--accent))', queued: 'var(--muted)', paused: 'var(--muted)', idle: 'var(--muted)', blocked: 'var(--orange)', ready: 'var(--green)', started: 'var(--orange)',
   done: 'var(--purple)', cancelled: 'var(--red)', superseded: 'var(--purple)',
 };
-export const DEFAULT_STATUS_ORDER = [
-  'ready', 'blocked', 'working', 'queued', 'paused', 'idle', 'started', 'done', 'superseded', 'cancelled',
-];
-// Saved order first (deduplicated, known keys only), then any new or omitted
-// statuses appended in Orc's built-in order.
-export function normalizeStatusOrder(order) {
-  const known = new Set(DEFAULT_STATUS_ORDER);
-  const seen = new Set();
-  const result = [];
-  for (const raw of Array.isArray(order) ? order : []) {
-    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-    if (known.has(key) && !seen.has(key)) {
-      seen.add(key);
-      result.push(key);
-    }
-  }
-  for (const key of DEFAULT_STATUS_ORDER) {
-    if (!seen.has(key)) result.push(key);
-  }
-  return result;
-}
-export function isDefaultStatusOrder(order) {
-  const normalized = normalizeStatusOrder(order);
-  return normalized.every((key, index) => key === DEFAULT_STATUS_ORDER[index]);
-}
-export function statusOrderFromConfigPayload(data) {
-  return normalizeStatusOrder((((data || {}).config || {}).ui || {}).statusOrder);
-}
-const state = (key, detail = '', label = RUN_STATE_LABELS[key]) => ({ key, label, detail, color: STATE_COLORS[key] });
+const state = (key, detail = '', label = RUN_STATE_LABELS[key], want = '', { join = ' · ' } = {}) => ({
+  key, label, detail, color: STATE_COLORS[key],
+  ...(want ? { want } : {}),
+  ...(want && join !== ' · ' ? { wantJoin: join } : {}),
+});
+export const stateWantText = s => (s?.want ? `${s.wantJoin ?? ' · '}${s.want}` : '');
+export const stateText = s => `${s?.label || ''}${stateWantText(s)}`;
 // The detail adds to the label, so it is left out when it only repeats it.
 const busy = (meta, detail) => {
+  if (isDraftingPlan(meta)) {
+    return state('working', detail === 'Planning' ? '' : detail, RUN_STATE_LABELS.working, 'planning');
+  }
   const label = busyLabel(meta);
   return state('working', detail === label ? '' : detail, label);
 };
 // An accepted merge, from the queue taking it until it lands.
-const merging = detail => ({ ...state('working', detail, 'Merging'), merging: true });
+const merging = (detail, want = '') => ({ ...state('working', detail, 'Merging', want), merging: true });
 // What a run rests at between turns. While its agent works the run reads
 // Working instead, and goes back to this label when the turn ends.
 const RESTING_KEYS = ['ready', 'started', 'blocked', 'idle'];
-const restingDetail = own => (own.label === RUN_STATE_LABELS[own.key] && own.detail) || own.label;
+const restingDetail = own => (own.label === RUN_STATE_LABELS[own.key] && !own.want && own.detail) || stateText(own);
 // The host's read of the reviews on a run's open PR (ui/pr_updates.py).
 export const prReview = meta => meta?.prReview || null;
 export const prNeedsAttention = meta => prReview(meta)?.attention === true;
@@ -671,8 +696,8 @@ export function runState(meta, files = [], now = Date.now(), options = {}) {
   }
   const review = prReview(meta);
   if (!review || !['done', 'idle', 'ready'].includes(own.key)) return own;
-  if (review.attention) return state('blocked', 'Something happened on the pull request. Open Chat to read it.', 'Needs attention');
-  if (review.state === 'approved') return state('ready', 'The pull request is approved and not merged yet.', 'Approved');
+  if (review.attention) return state('blocked', 'Something happened on the pull request. Open Chat to read it.', 'Needs you', 'PR update');
+  if (review.state === 'approved') return state('ready', 'The pull request is approved and not merged yet.', 'Ready', 'PR approved');
   return own;
 }
 function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {}) {
@@ -684,9 +709,11 @@ function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {
       return state('paused', runPauseDetail(meta.runPause));
     }
     // At a gate only a message waiting for the run's turn puts it in the queue.
-    if (['running', 'awaiting-gate', 'escalated'].includes(meta.status) && meta.focusQueue?.paused) {
-      return state('queued', meta.status === 'running' ? 'Orc resumes this run when its turn comes.'
-        : 'Orc sends your message when this run’s turn comes.');
+    if (meta.status === 'running' && meta.focusQueue?.paused) {
+      return state('queued', 'Orc resumes this run when its turn comes.');
+    }
+    if (['awaiting-gate', 'escalated'].includes(meta.status) && meta.focusQueue?.paused) {
+      return state('idle', 'Orc sends your message when this run’s turn comes.', 'Message held');
     }
   }
   if (pending) return busy(meta, 'Starting');
@@ -695,70 +722,70 @@ function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {
     // settles the review whatever its verdict said.
     if (meta.reviewApproved && reviewHasResult(meta)
       && (meta.status === 'awaiting-gate' || isLocalReviewClosed(meta))) {
-      return state('done', 'You approved this pull request on GitHub.', 'Approved');
+      return state('done', 'You approved this pull request on GitHub.', 'Done', 'approved');
     }
     // bin/orc-pr-review records the review you posted from Chat's Your review card.
-    const postedLabel = { APPROVE: 'Approved', REQUEST_CHANGES: 'Changes requested', COMMENT: 'Commented' }[meta.review?.posted?.event];
-    if (postedLabel && reviewHasResult(meta) && (meta.status === 'awaiting-gate' || isLocalReviewClosed(meta))) {
-      return state('done', 'You posted your review on GitHub.', postedLabel);
+    const postedWant = { APPROVE: 'approved', REQUEST_CHANGES: 'changes requested', COMMENT: 'commented' }[meta.review?.posted?.event];
+    if (postedWant && reviewHasResult(meta) && (meta.status === 'awaiting-gate' || isLocalReviewClosed(meta))) {
+      return state('done', 'You posted your review on GitHub.', 'Done', postedWant);
     }
     if (isLocalReviewClosed(meta)) {
       if (!reviewHasResult(meta)) {
-        return state('cancelled', 'Review stopped', 'Review stopped');
+        return state('cancelled', 'Review stopped', 'Cancelled', 'review stopped');
       }
-      if (meta.review?.verdict === 'ship') return state('done', 'Nothing in this PR should stop the merge.', 'Safe to ship');
-      if (meta.review?.verdict === 'hold') return state('done', 'Pass the blocking findings to the PR author.', 'Not safe to ship');
-      return state('done', 'Reviewed', 'Reviewed');
+      if (meta.review?.verdict === 'ship') return state('done', 'Nothing in this PR should stop the merge.', 'Done', 'safe to ship');
+      if (meta.review?.verdict === 'hold') return state('done', 'Pass the blocking findings to the PR author.', 'Done', 'not safe to ship');
+      return state('done', 'Reviewed', 'Done', 'reviewed');
     }
-    if (meta.status === 'escalated') return state('blocked', 'Open the review to resolve the blocker.', 'Needs help');
+    if (meta.status === 'escalated') return state('blocked', 'Open the review to resolve the blocker.', 'Needs you', 'resolve blocker');
     if (meta.status === 'awaiting-gate') {
       if (reviewHasResult(meta) && meta.review?.verdict === 'ship') {
-        return state('ready', 'Nothing in this PR should stop the merge.', 'Safe to ship');
+        return state('ready', 'Nothing in this PR should stop the merge.', 'Ready', 'safe to ship');
       }
       if (reviewHasResult(meta) && meta.review?.verdict === 'hold') {
-        return state('blocked', 'Pass the blocking findings to the PR author.', 'Not safe to ship');
+        return state('blocked', 'Pass the blocking findings to the PR author.', 'Needs you', 'not safe to ship');
       }
       // Read-only fallback for historical local-review runs already on disk.
       const fallback = {
-        clean: ['ready', 'No findings', 'Review finished with no open findings.'],
-        flagged: ['blocked', 'Findings flagged', 'Pass the findings to the PR author.'],
-      }[meta.review?.state] || ['blocked', 'Review record', 'Historical review record.'];
-      return state(fallback[0], fallback[2], fallback[1]);
+        clean: ['ready', 'no findings', 'Review finished with no open findings.', 'Ready'],
+        flagged: ['blocked', 'findings flagged', 'Pass the findings to the PR author.', 'Needs you'],
+      }[meta.review?.state] || ['blocked', 'review record', 'Historical review record.', 'Needs you'];
+      return state(fallback[0], fallback[2], fallback[3], fallback[1]);
     }
     if (meta.sessionAlive === false) {
-      return state('blocked', 'Open the review and resume its agent session.', 'Session offline');
+      return state('blocked', 'Open the review and resume its agent session.', 'Needs you', 'resume review');
     }
-    if (showsWaitingOnYou(meta)) return state('blocked', 'Open the review conversation to respond.', 'Needs input');
-    if (meta.sessionActivity === 'idle') return state('blocked', 'Open the review conversation to continue.', 'Review idle');
-    return state('working', 'Review in progress. Wait for the result.', 'Reviewing');
+    if (showsWaitingOnYou(meta)) return state('blocked', 'Open the review conversation to respond.', 'Needs you', 'reply');
+    if (meta.sessionActivity === 'idle') return state('blocked', 'Open the review conversation to continue.', 'Needs you', 'continue review');
+    return state('working', 'Review in progress. Wait for the result.', 'Working', 'reviewing');
   }
   if (isQaRun(meta)) {
     if (meta.status === 'complete') return state('done', 'QA finished');
     if (meta.status === 'awaiting-gate') {
-      return state('blocked', 'The QA steps are ready. Press QA to walk through them.', 'QA ready');
+      return state('blocked', 'The QA steps are ready. Press QA to walk through them.', 'Needs you', 'walk through QA');
     }
     if (meta.status === 'running') {
-      return state('working', 'Starting the app and writing the QA steps.', 'Writing QA steps');
+      return state('working', 'Starting the app and writing the QA steps.', 'Working', 'writing QA steps');
     }
   }
   if (isQuestionRun(meta, files)) return state(meta.sessionActivity === 'running' ? 'working' : 'idle', 'Answered');
   if (meta.parentCompletion && isOpenConversation(meta, files)) return state('idle', 'Child work completed');
   if (isPlanningClosed(meta)) return state('done', 'Planned');
   // The plan's own row stands in for its build until that run is listed.
-  if (planStartingSince(meta, now) !== null) return state('working', 'Orc is launching a run to build this plan.', 'Starting');
+  if (planStartingSince(meta, now) !== null) return state('working', 'Orc is launching a run to build this plan.', 'Working', 'starting');
   if (planningWorkStarted(meta)) {
     const unstarted = planStepsUnstarted(meta);
-    // A plan whose runs span repositories reads as their group: Plan, then
-    // how many work and wait beside it.
+    // A plan that lists its runs beneath it reads as their group: Plan,
+    // then how many work and wait beside it.
     if (isPlanGroupRoot(meta, meta.runId || meta.runGroup?.root)) {
-      return state('started', `This plan's runs: ${groupCountsLabel(meta.runGroup)}.`, 'Plan');
+      return state('started', `This plan's runs: ${groupCountsLabel(meta.runGroup)}.`, 'Started', 'plan');
     }
     return unstarted
       ? state('started', `${unstarted} of this plan's steps ${unstarted === 1 ? 'has' : 'have'} no run yet. Open the plan to start one.`,
-        `${meta.planProgress.started} of ${meta.planProgress.steps} started`)
+        'Started', `${meta.planProgress.started} of ${meta.planProgress.steps} steps`)
       : state('started', 'Work started');
   }
-  if (isPlanningComplete(meta)) return state('ready', '', 'Plan ready');
+  if (isPlanningComplete(meta)) return state('ready', 'Plan ready', 'Ready', 'start plan');
   if (Object.prototype.hasOwnProperty.call(meta, 'outcome')) return state('done');
   // A live headless turn is still reporting the result, so the run is not done yet.
   // A merged run keeps reading Merging through that report, so it goes straight to Done
@@ -766,13 +793,13 @@ function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {
   const steps = openManualSteps(meta);
   const finished = (detail, reporting = state('working', 'Finishing up')) => isHeadlessRun(meta) && sessionStatus(meta) === 'running'
     ? reporting
-    : steps ? state('blocked', manualStepsText(steps), 'Steps to do') : state('done', detail);
+    : steps ? { ...state('blocked', manualStepsText(steps), 'Needs you', steps === 1 ? '1 step' : `${steps} steps`), countsSteps: true } : state('done', detail);
   if (isMergedToParent(meta)) return finished('Merged to parent', merging('Finishing up'));
   if (isForking(meta, now)) return state('working', 'Forking');
   if (meta.status === 'merging-to-parent') return merging('Merging to parent');
   if (meta.status === 'merging') return merging('Merging');
   if (meta.status === 'awaiting-gate' && !isFinalReady(meta)) {
-    return state('blocked', canonicalPhase(meta.phase, meta.lifecycleVersion) === 'mvp' ? 'MVP ready' : gateNoun(meta), gateAsk(meta));
+    return state('blocked', canonicalPhase(meta.phase, meta.lifecycleVersion) === 'mvp' ? 'MVP ready' : gateNoun(meta), 'Needs you', gateWant(meta));
   }
   if (meta.broughtToMainAt) return finished('On main');
   if (meta.status === 'complete') {
@@ -783,45 +810,50 @@ function ownRunState(meta, files = [], now = Date.now(), { pending = false } = {
   if (meta.status === 'merged') {
     // The project's Deploy after merge (ui/deploys.py) runs once the merge reaches origin.
     const deploy = meta.deploy?.state;
-    if (deployFailed(meta)) return state('blocked', 'The deploy after this merge failed. Open Chat to retry it.', 'Needs attention');
-    if (deploy === 'queued' || deploy === 'running') return state('working', 'Deploying', 'Deploying');
+    if (deployFailed(meta)) return state('blocked', 'The deploy after this merge failed. Open Chat to retry it.', 'Needs you', 'retry deploy');
+    if (deploy === 'queued' || deploy === 'running') return state('working', 'Deploying', 'Working', 'deploying');
     return finished('Merged', reportingSinceMerge(meta) ? merging('Finishing up') : undefined);
   }
   if (isMergeQueued(meta) && (isFinalReady(meta) || meta.status === 'running')) {
     if (meta.mergeQueueConflict) {
       const files = Array.isArray(meta.mergeQueueConflict.files) ? meta.mergeQueueConflict.files : [];
-      return state('blocked', files.length ? `Conflicts with main in ${files.slice(0, 3).join(', ')}` : 'Queued · conflict', 'Queued · conflict');
+      return state('blocked', files.length ? `Conflicts with main in ${files.slice(0, 3).join(', ')}` : 'Merge conflict with main', 'Needs you', 'merge conflict');
     }
-    return merging(finalReadyLabel(meta));
+    const pos = Number.isInteger(meta.mergeQueuePosition) && meta.mergeQueuePosition >= 2 ? meta.mergeQueuePosition : null;
+    const want = meta.mergeCheckoutWait ? 'waiting for checkout' : pos ? `${ordinal(pos)} in line` : '';
+    return merging(finalReadyLabel(meta), want);
   }
-  if (isFinalReady(meta)) return state('ready', finalReadyLabel(meta));
+  if (isFinalReady(meta)) return state('ready', finalReadyLabel(meta), 'Ready', meta.offerMergeToMain === false ? 'open PR' : 'merge');
   if (meta.startAfter?.waiting === true && meta.status === 'running') {
     const targetTitle = meta.startAfter.title || meta.startAfter.runId || 'earlier run';
-    return state('idle', `Starts after ${targetTitle}`, 'Queued after run');
+    return state('paused', `Starts after ${targetTitle}`, 'Waits for', targetTitle, { join: ' ' });
   }
   // orc-ship-hold: a reopened decision took the branch off Ship until it is ready again.
   // While the run is still building or working it is not waiting on you, so it reads like any other working run.
   if (meta.status === 'escalated' && meta.shipHold) {
     const reason = String(meta.shipHold.reason || '');
     if (sessionStatus(meta) === 'running') return state('working', reason);
-    return state('blocked', reason, 'Not ready');
+    return state('blocked', reason, 'Needs you', 'not ready');
   }
   if (isConflictResolutionPending(meta) && !meta.pendingQuestion && !showsWaitingOnYou(meta)) {
-    return state('working', conflictResolutionWaitingText(meta), 'Waiting to merge');
+    return merging(conflictResolutionWaitingText(meta), meta.mergeWaitingOn?.title ? 'waiting' : 'resolving conflict');
   }
   if (meta.status === 'escalated') {
     // bin/orc-escalate records what the run is waiting on.
     const reason = String(meta.escalation?.reason || '').trim();
-    return state('blocked', reason || 'Read the latest reply in Chat, then respond to continue.', 'Needs input');
+    const want = (meta.pendingQuestion || showsWaitingOnYou(meta)) ? waitingWant(meta, questionsAsked(meta))
+      : meta.mergeConflict ? 'merge conflict' : 'reply';
+    return state('blocked', reason || (meta.mergeConflict ? 'Resolve the merge conflict in Chat to continue.' : 'Read the latest reply in Chat, then respond to continue.'), 'Needs you', want);
   }
   if (meta.phase === 'done') return finished();
   if (showsWaitingOnYou(meta)) {
     // The label counts the agent's questions, so the row needs no separate count.
     const asked = questionsAsked(meta);
-    return { ...state('blocked', 'Waiting on you', waitingAsk(meta, asked)), ...asked && { countsQuestions: true } };
+    return { ...state('blocked', 'Waiting on you', 'Needs you', waitingWant(meta, asked)), ...(asked ? { countsQuestions: true } : {}) };
   }
   if (isHeadlessRun(meta) && meta.sessionActivity === 'idle') {
     if (tasksRunning(meta)) return busy(meta, tasksWaitingText(meta));
+    if (meta.messageHeld === true) return state('idle', 'Your message is held. Open Chat to send or edit it.', 'Message held');
     return state('idle', 'Reply in Chat to continue.');
   }
   return busy(meta, meta.status === 'running' && meta.phase ? runningLabel(meta) : '');
@@ -846,21 +878,21 @@ export const gateNoun = meta => {
 };
 // What a run waiting on you needs, as its sidebar row says it. A wait is not a
 // fault, so none of these reads Blocked.
-const GATE_ASKS = {
-  grilling: 'Questions for you', clarification: 'Questions for you', planning: 'Questions for you',
-  plan: 'Plan to approve', mvp: 'MVP to check', review: 'Review to read', qa: 'QA to walk through',
-  recap: 'Recap to read', present: 'Ship to approve', ship: 'Ship to approve',
+const GATE_WANTS = {
+  grilling: 'answer questions', clarification: 'answer questions', planning: 'answer questions',
+  plan: 'approve plan', mvp: 'check MVP', review: 'read review', qa: 'walk through QA',
+  recap: 'read recap', present: 'approve ship', ship: 'approve ship',
 };
-const gateAsk = meta => {
-  if (prPushPending(meta) || prRepliesPending(meta)) return 'PR comments to push';
-  return GATE_ASKS[canonicalPhase(meta.phase, meta.lifecycleVersion)] || 'Waiting on you';
+const gateWant = meta => {
+  if (prPushPending(meta) || prRepliesPending(meta)) return 'push PR comments';
+  return GATE_WANTS[canonicalPhase(meta.phase, meta.lifecycleVersion)] || 'reply';
 };
 const questionsAsked = meta => (meta.questionCount > 0 ? meta.questionCount : meta.pendingQuestion?.questions?.length || 0);
-const waitingAsk = (meta, asked) => {
-  if (asked > 1) return `${asked} questions for you`;
-  if (asked === 1 || meta.pendingQuestion) return 'A question for you';
-  if (meta.secretRequests > 0) return meta.secretRequests > 1 ? `${meta.secretRequests} secrets to add` : 'A secret to add';
-  return 'Needs input';
+const waitingWant = (meta, asked) => {
+  if (asked > 1) return `${asked} questions`;
+  if (asked === 1 || meta.pendingQuestion) return 'question';
+  if (meta.secretRequests > 0) return meta.secretRequests > 1 ? `${meta.secretRequests} secrets` : 'add secret';
+  return 'reply';
 };
 function headerSession(meta, { merging }) {
   if (!isHeadlessRun(meta)) return null;

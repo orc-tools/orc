@@ -1,9 +1,9 @@
 // orc-ui: Run Control: the run gear surface and its sections.
 
-import { prefillNewConversation, refresh } from './activity.js';
-import { openRun, readScroll, worktreeAppHealth } from './artifact.js';
-import { $, ADR_RE, DECISION_FILES, IMG, LABELS, LINK_TYPE_INVERSE_LABELS, LINK_TYPE_LABELS, ORDER, VID, adrLabel, announce, applyStatusPatch, esc, externalAppHref, externalizeLinks, fileUrl, isDone, isLocalReviewClosed, isMergedToParent, isQuestionRun, isReadOnlyRun, runState, runs, statusSetLocked, strandedQuestionKeys } from './core.js';
-import { changeRunPause, deleteRun, openCancel, openWorktreeCleanup, patchRun, postLinkAction, postProjectScript, postWorktreeAction, resumeId } from './dialogs.js';
+import { prefillNewConversation, refresh, openRun } from './panel-navigation.js';
+import { readScroll } from './artifact-load.js';
+import { $, DECISION_FILES, LINK_TYPE_INVERSE_LABELS, LINK_TYPE_LABELS, announce, applyStatusPatch, esc, externalAppHref, externalizeLinks, fileUrl, isDone, isLocalReviewClosed, isMergedToParent, isQuestionRun, isReadOnlyRun, runState, runs, stateWantHtml, statusSetLocked, strandedQuestionKeys, CONTROL_KEY } from './core.js';
+import { changeRunPause, deleteRun, openCancel, patchRun, postLinkAction, postProjectScript, resumeId } from './dialogs.js';
 import { focusControl, renderList } from './filters.js';
 import { markdownHtml } from './diff.js';
 import { waitForPaneClosed } from './session-close.js';
@@ -15,7 +15,6 @@ import { rescueSectionHtml, bindRunRescue } from './run-rescue.js';
 import { mountWaterfall, waterfallSectionHtml } from './waterfall.js';
 import { costTokens, costUsd } from './waterfall-model.js';
 export const STATUS_VALUES = ['running', 'escalated', 'complete', 'merged', 'cancelled'];
-export const CONTROL_KEY = '__control__';
 const controlSessionWarnings = new Map();
 const controlDecisionsCache = new Map();
 const controlCostCache = new Map();
@@ -59,6 +58,14 @@ export function forkDraft(run) {
   const mention = title ? `${MENTION_PAD}@${title}${MENTION_PAD} ` : '';
   return mention && runMentionsIn(mention)[0]?.run.id === run.id ? mention : `${run.id} `;
 }
+// Start/stop drops the probe cache, so started supplies health until the next probe.
+// A generic stop clears the URL; started === false still distinguishes down from unknown.
+export function worktreeAppHealth(wt) {
+  if (wt.appHealth !== undefined) return wt.appHealth;
+  if (wt.started === true) return 'up';
+  return wt.started === false ? 'down' : undefined;
+}
+
 // Start and Stop reach only these adapters' apps (worktree_app_action in
 // ui/serve.py). Any other tree's app, if it has one, is run by hand. A generic
 // tree whose project saved no dev server still offers Start: its config is not
@@ -118,8 +125,9 @@ function controlCopyRow(label, value) {
     + '</div>';
 }
 
+// TESTABLE: provenance tables
 // An unrecorded model is an empty string, so the header can leave it out
-// and the Models list can say Unrecorded.
+// and the Models table can say Unrecorded.
 function parentModel(meta) {
   const orchestrators = Object.values(meta.subagentModels || {}).flatMap(entries => Array.isArray(entries) ? entries : [entries])
     .filter(entry => entry?.role === 'orchestrator');
@@ -128,31 +136,54 @@ function parentModel(meta) {
   return { model, source: meta.modelSource || recorded?.source || (model ? 'run metadata' : 'not recorded') };
 }
 
-function controlModelsHtml(meta) {
-  const groups = [];
+// Models and Cost are tables with real headings. A model id has a line of its
+// own and never breaks: one wider than the line ends in an ellipsis, and the
+// tooltip holds it whole. What it came from, or what it spent, sits beneath.
+const controlIdHtml = id => `<span class="control-table-id" title="${esc(id)}" translate="no">${esc(id)}</span>`;
+const controlModelRowHtml = (role, model, source) => `<tr><th scope="row" class="control-table-role">${esc(role)}</th>`
+  + `<td class="control-table-cell">${model ? controlIdHtml(model) : '<span class="control-table-id">Unrecorded</span>'}`
+  + `<span class="control-table-sub">${esc(source)}</span></td></tr>`;
+// A phase is a label over its rows, not a column.
+const controlModelGroupHtml = (label, rows) =>
+  `<tbody><tr class="control-table-phase"><th scope="rowgroup" colspan="2">${esc(label)}</th></tr>${rows}</tbody>`;
+
+export function controlModelsHtml(meta) {
   const { model, source } = parentModel(meta);
-  groups.push(`<div class="control-model-group"><h6>Parent Agent</h6><ul class="control-model-list"><li>`
-    + `<strong>${esc(agentLabel(parentAgent(meta)))}</strong><span>${esc(model || 'Unrecorded')}</span><span>${esc(source)}</span>`
-    + '</li></ul></div>');
+  const groups = [controlModelGroupHtml('Parent agent', controlModelRowHtml(agentLabel(parentAgent(meta)), model, source))];
   const phases = Object.entries(meta.subagentModels || {});
-  if (!phases.length) {
-    groups.push('<div class="control-model-group"><h6>Subagent Models</h6><p class="control-help">No subagent models were recorded for this run.</p></div>');
-  } else {
-    phases.forEach(([phase, entries]) => {
-      const list = (Array.isArray(entries) ? entries : [entries]).filter(Boolean);
-      groups.push(`<div class="control-model-group"><h6>${esc(phase)}</h6><ul class="control-model-list">${list.map(entry =>
-        `<li><strong>${esc(entry.role || 'subagent')}</strong><span>${esc(entry.model || 'Unrecorded')}</span><span>${esc(entry.source || 'unknown source')}</span></li>`
-      ).join('')}</ul></div>`);
-    });
-  }
-  return groups.join('');
+  phases.forEach(([phase, entries]) => {
+    const list = (Array.isArray(entries) ? entries : [entries]).filter(Boolean);
+    groups.push(controlModelGroupHtml(phase, list.map(entry =>
+      controlModelRowHtml(entry.role || 'subagent', entry.model, entry.source || 'unknown source')).join('')));
+  });
+  return '<table class="control-table control-table-models"><thead><tr><th scope="col">Role</th><th scope="col">Model</th></tr></thead>'
+    + `${groups.join('')}</table>`
+    + (phases.length ? '' : '<p class="control-help">No subagent models were recorded for this run.</p>');
 }
 
-function costRowHtml(label, row) {
-  const tokens = `in ${costTokens(row.input)} · out ${costTokens(row.output)}`
-    + ` · cache ${costTokens(row.cacheRead + row.cache5m + row.cache1h)}`;
-  return `<li><strong>${esc(label)}</strong><span>${esc(tokens)}</span><span>${esc(costUsd(row.cost, true))}</span></li>`;
+// Tokens wrap only between in, out and cache, never inside a count.
+function controlTokensHtml(row) {
+  const parts = [['in', row.input], ['out', row.output], ['cache', (row.cacheRead || 0) + (row.cache5m || 0) + (row.cache1h || 0)]];
+  return `<span class="control-table-sub">${parts.map(([label, n]) => `<span>${label} ${esc(costTokens(n))}</span>`).join(' · ')}</span>`;
 }
+const controlCostRowHtml = (label, row) => `<tr><th scope="row" class="control-table-cell">${label}${controlTokensHtml(row)}</th>`
+  + `<td class="control-table-num">${esc(costUsd(row.cost, true))}</td></tr>`;
+
+export function controlCostTableHtml(data) {
+  const models = data.models || [];
+  const rows = models.map(row => controlCostRowHtml(controlIdHtml(row.model || 'Unknown model'), row)).join('');
+  const total = models.length > 1
+    ? `<tfoot>${controlCostRowHtml(`<span class="control-table-id">${data.unpriced?.length ? 'Priced subtotal' : 'Total'}</span>`, data.total || {})}</tfoot>`
+    : '';
+  const notes = [];
+  if (data.subagents) notes.push(`includes ${data.subagents} subagent transcript${data.subagents === 1 ? '' : 's'}`);
+  if ((data.unpriced || []).length) notes.push(`no verified price for ${data.unpriced.join(', ')}`);
+  if (data.pricingBasis) notes.push(data.pricingBasis);
+  return '<table class="control-table"><thead><tr><th scope="col">Model</th><th scope="col" class="control-table-num">Cost</th></tr></thead>'
+    + `<tbody>${rows}</tbody>${total}</table>`
+    + (notes.length ? `<p class="control-help">${esc(notes.join(' · '))}</p>` : '');
+}
+// END TESTABLE: provenance tables
 
 function controlCostStatus(run) {
   const entry = controlCostCache.get(run.id);
@@ -164,16 +195,7 @@ function controlCostStatus(run) {
 function controlCostHtml(run) {
   const entry = controlCostCache.get(run.id);
   const data = entry?.state === 'loaded' ? entry.data : null;
-  if (!data || data.unavailable) return '';
-  const models = data.models || [];
-  const rows = models.map(row => costRowHtml(row.model, row)).join('')
-    + (models.length > 1 ? costRowHtml(data.unpriced?.length ? 'Priced subtotal' : 'Total', data.total) : '');
-  const notes = [];
-  if (data.subagents) notes.push(`includes ${data.subagents} subagent transcript${data.subagents === 1 ? '' : 's'}`);
-  if ((data.unpriced || []).length) notes.push(`no verified price for ${data.unpriced.join(', ')}`);
-  if (data.pricingBasis) notes.push(data.pricingBasis);
-  return `<ul class="control-model-list">${rows}</ul>`
-    + (notes.length ? `<p class="control-help">${esc(notes.join(' · '))}</p>` : '');
+  return !data || data.unavailable ? '' : controlCostTableHtml(data);
 }
 
 function controlOperationText(operation, noun) {
@@ -289,7 +311,7 @@ export function renderControlCenter(run, scrollTop = readScroll(run.id + '/' + C
     <nav class="cc-menu" aria-label="Run Control sections">
       <div class="cc-menu-left">
         <div class="cc-menu-head"><span class="cp-beacon" aria-hidden="true"></span><h3 id="control-title" class="cc-menu-title" tabindex="-1">Run Control</h3></div>
-        <p class="cc-menu-facts"><span class="cc-menu-state state-${esc(state.key)}"${state.detail ? ` title="${esc(state.detail)}"` : ''}>${esc(state.label)}${state.detail ? `<span class="sr-only">: ${esc(state.detail)}</span>` : ''}</span><span class="cc-menu-agent"><span>${esc(agentLabel(parent))}</span>${model ? `<span class="cc-menu-dot" aria-hidden="true"> · </span><span>${esc(model)}</span>` : ''}</span></p>
+        <p class="cc-menu-facts"><span class="cc-menu-state state-${esc(state.key)}"${state.detail ? ` title="${esc(state.detail)}"` : ''}>${esc(state.label)}${stateWantHtml(state)}${state.detail ? `<span class="sr-only">: ${esc(state.detail)}</span>` : ''}</span><span class="cc-menu-agent"><span>${esc(agentLabel(parent))}</span>${model ? `<span class="cc-menu-dot" aria-hidden="true"> · </span><span>${esc(model)}</span>` : ''}</span></p>
       </div>
       <div class="cc-jump"${menuOpen ? ' data-open' : ''}>
         <button type="button" class="cc-jump-button" aria-expanded="${menuOpen}" aria-controls="control-section-list"><span class="cc-jump-current">${controlSectionKey(CONTROL_SECTIONS[0])}</span><svg class="cc-jump-caret" ${CONTROL_ICON_ATTRS}><path d="m6 9 6 6 6-6"/></svg></button>
@@ -402,8 +424,7 @@ export function renderControlCenter(run, scrollTop = readScroll(run.id + '/' + C
       <div class="control-modules">
     <fieldset class="settings-fieldset control-section">
       <legend class="settings-label"><h5 id="control-models-title">Models</h5></legend>
-      <p class="control-help">Phase · role · model · source</p>
-      <div class="control-model-groups">${controlModelsHtml(meta)}</div>
+      ${controlModelsHtml(meta)}
     </fieldset>
     <fieldset class="settings-fieldset control-section">
       <legend class="settings-label"><h5 id="control-cost-title">Cost</h5></legend>
@@ -448,6 +469,55 @@ export function setControlStatus(id, message, tone = '') {
   if (!el) return;
   el.className = `control-status-line${tone ? ` control-${tone}` : ''}`;
   el.textContent = message;
+}
+
+// ---- worktree app actions (start / stop / cleanup) ----
+const wtCleanupDialog = $('wt-cleanup-dialog');
+let wtCleanupTarget = null;
+
+function openWorktreeCleanup(id) {
+  const run = runs.find(r => r.id === id);
+  const wt = (run && run.meta && run.meta.worktree) || {};
+  wtCleanupTarget = id;
+  $('wt-cleanup-path').textContent = wt.path || '';
+  $('wt-cleanup-branch').textContent = (run && run.meta && run.meta.branch) || '';
+  wtCleanupDialog.show();
+}
+$('wt-cleanup-dismiss').onclick = () => wtCleanupDialog.close();
+$('wt-cleanup-confirm').onclick = async () => {
+  const id = wtCleanupTarget;
+  if (!id) return;
+  wtCleanupDialog.close();
+  postWorktreeAction(id, 'cleanup', 'Cleaning up worktree…');
+};
+
+// Asks the server to start, stop or clean up the run's worktree app. The work
+// runs on the server; the run's worktree.operation says how it went.
+export async function requestWorktreeApp(id, action) {
+  let res;
+  try {
+    res = await fetch(`/runs/${encodeURIComponent(id)}/worktree-app`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action })
+    });
+  } catch { res = null; }
+  if (res?.ok) return { ok: true };
+  const msg = res ? ((await res.json().catch(() => ({}))).error) : null;
+  return { ok: false, error: msg || `Failed to ${action} worktree app.` };
+}
+
+async function postWorktreeAction(id, action, busyMsg) {
+  announce(busyMsg);
+  setControlStatus('control-worktree-status', busyMsg);
+  const result = await requestWorktreeApp(id, action);
+  if (!result.ok) {
+    const detail = result.error;
+    announce(detail);
+    setControlStatus('control-worktree-status', `${detail} Check the worktree state and try again.`, 'error');
+    return;
+  }
+  setControlStatus('control-worktree-status', `${action === 'cleanup' ? 'Cleanup' : action === 'start' ? 'Start' : 'Stop'} requested.`, 'ok');
+  await controlRefresh(id);
 }
 
 // #new/<run-id> presets the composer to the run's agent and project. `task`
@@ -725,7 +795,6 @@ function bindControlCenter(run) {
     const action = button.dataset.worktreeAction;
     if (action === 'cleanup') return openWorktreeCleanup(id);
     button.disabled = true;
-    setControlStatus('control-worktree-status', `${action === 'start' ? 'Starting' : 'Stopping'} worktree app…`);
     postWorktreeAction(id, action, `${action === 'start' ? 'Starting' : 'Stopping'} worktree app…`);
   });
   c.querySelector('[data-control-fork]')?.addEventListener('click', () => forkIntoComposer(id));
@@ -758,15 +827,6 @@ async function postLinkRemove(id, type, targetRunId, button) {
   await controlRefresh(id, 'control-links-title');
 }
 
-// Two homes for a per-repository PR body: the legacy root `pr-body-<slug>.md`
-// and orc-docs' frozen-delivery `delivery/<group-id>/pr-body.md`. Either
-// capture group names the body in the Pull request view.
-export const PR_BODY_RE = /^(?:pr-body-(.+)\.md|delivery\/([^/]+)\/pr-body\.md)$/;
-export const prBodySlug = path => {
-  const match = path.match(PR_BODY_RE);
-  return match ? (match[1] || match[2]) : null;
-};
-
 const SCRIPT_ICON_PATHS = {
   play: '<path d="M231.36,116.19,87.28,28.06a14,14,0,0,0-14.18-.27A13.69,13.69,0,0,0,66,39.87V216.13a13.69,13.69,0,0,0,7.1,12.08,14,14,0,0,0,14.18-.27l144.08-88.13a13.82,13.82,0,0,0,0-23.62Zm-6.26,13.38L81,217.7a2,2,0,0,1-2.06,0,1.78,1.78,0,0,1-1-1.61V39.87a1.78,1.78,0,0,1,1-1.61A2.06,2.06,0,0,1,80,38a2,2,0,0,1,1,.31L225.1,126.43a1.82,1.82,0,0,1,0,3.14Z"/>',
   test: '<path d="M220,200.8,158,97.48V38h10a6,6,0,0,0,0-12H88a6,6,0,0,0,0,12H98V97.48L36,200.8A14,14,0,0,0,48,222H208a14,14,0,0,0,12-21.2ZM109.15,102.23a6,6,0,0,0,.85-3.09V38h36V99.14a6,6,0,0,0,.85,3.09l39.65,66.08c-12.41,3.16-30.86,3-55.79-9.66-16.94-8.58-33-12.8-47.83-12.64ZM209.72,209a2,2,0,0,1-1.74,1H48a2,2,0,0,1-1.71-3l29-48.41c14.89-2.08,31.68,1.55,49.94,10.79C144,178.8,159.67,182,172.42,182A67.89,67.89,0,0,0,192.89,179l16.8,28A2,2,0,0,1,209.72,209Z"/>',
@@ -790,35 +850,3 @@ export function scriptsSectionHtml(meta, readOnly) {
       <p id="control-scripts-status" class="control-status-line" aria-live="polite"></p>
     </fieldset>`;
 }
-
-export function linkedMarkdownTab(run, path) {
-  if (!path || !/\.mdx?$/i.test(path) || ORDER.includes(path) || PR_BODY_RE.test(path)
-    || path.split('/').some(part => !part || part.startsWith('.'))
-    || !run.files.some(file => file.path === path)) return null;
-  return { key: path, label: path.split('/').pop() };
-}
-
-export function tabsFor(run) {
-  const paths = run.files.map(f => f.path);
-  // ultraquick never grills — the run-init stub still drops an empty
-  // grilling.mdx in every run dir, and its synthesized page is the Grilling
-  // loading animation. No tab for it on this mode.
-  const ultraquick = (run.meta || {}).mode === 'ultraquick';
-  // Delivery authority is internal proof; the PR body is the result to read.
-  const minimalShell = (run.meta || {}).route === 'minimal-shell';
-  // PR bodies live in the side panel's Pull request view (pr-panel.js).
-  const hidden = p => (ultraquick && p === 'grilling.html')
-    || (minimalShell && p === 'delivery-authority.json')
-    || p === 'pr-body.md'
-    || p === 'clarification/clarification.html';
-  const tabs = ORDER.filter(p => paths.includes(p) && !hidden(p))
-    .map(p => ({ key: p, label: LABELS[p] }));
-  const adrTabs = paths.filter(p => ADR_RE.test(p)).sort()
-    .map(p => ({ key: p, label: adrLabel(p) }));
-  const recapIdx = tabs.findIndex(t => t.key === 'recap/recap.html');
-  tabs.splice(recapIdx === -1 ? tabs.length : recapIdx + 1, 0, ...adrTabs);
-  if (paths.some(p => (IMG.test(p) || VID.test(p)) && !p.includes('test-results/'))) tabs.push({ key: '__shots__', label: 'Shots' });
-  return tabs;
-}
-
-// when no tab is in the hash, land on the artifact for the run's current phase

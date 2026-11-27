@@ -1,3 +1,4 @@
+import { esc } from './dom-text.js';
 import { enabledHarnesses, harnessEffortLevels, harnessTakesEffort, harnessTakesFast } from './harnesses.js';
 import { modelLabel } from './run-presentation.js';
 
@@ -95,6 +96,10 @@ export function sessionModelBadge(meta, session = {}) {
 // The bolts after a session's model and effort; nothing at standard speed.
 export const sessionSpeedHtml = speedName => (speedName
   ? `<span class="chat-session-speed" role="img" aria-label="${speedName}">${boltIcon().repeat(speedName === 'Ultrafast' ? 2 : 1)}</span>` : '');
+// The badge markup shared by Chat and plan-page composers: text in its own
+// shrinking span so it ellipsizes while any speed bolts stay pinned beside it.
+export const sessionModelBadgeHtml = badge => (badge?.text
+  ? `<span class="chat-session-label">${esc(badge.text)}</span>` : '') + sessionSpeedHtml(badge?.speedName);
 
 // Each core agent's auto mode. Keys only: serve.py's NEW_CONV_PERMISSION_MODES owns the flags.
 const AUTO_PERMISSION_MODES = { claude: 'auto', codex: 'fullAuto' };

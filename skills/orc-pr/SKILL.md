@@ -9,7 +9,7 @@ description: >
 
 Apply `../_shared/plain-language.md` and read `../_shared/delivery-contract.md`. **Every push or PR creation requires explicit user consent** — earlier phases already committed the code.
 
-- Read [references/pr-feedback-and-ci.md](references/pr-feedback-and-ci.md) **only when** invoked as `/orc-pr feedback <run-id>`, addressing PR review comments, handling `PR action (<run-id>): push feedback fixes...` / `post replies` (or `meta.prFeedback`), or asked to check/fix failing CI on the run's open PR.
+- Read [references/pr-feedback-and-ci.md](references/pr-feedback-and-ci.md) **only when** invoked as `/orc-pr feedback <run-id>`, addressing PR review comments ("fix the Zerohands comments"), handling `PR action (<run-id>): push feedback fixes...` / `post replies` (or `meta.prFeedback`), or asked to check/fix failing CI on the run's open PR.
 - Read [references/frozen-manifest-delivery.md](references/frozen-manifest-delivery.md) **only when** `meta.delivery.groups` is present.
 
 ## Single-repository PR delivery
@@ -36,5 +36,5 @@ a merge, or a standalone destination choice, follow
 - Never force-push or push the default branch.
 - **Never push as a side effect.** Every initial push and feedback push waits for its own explicit user action, except a requested CI fix on the run's own open PR under **Fix
   failing CI on the open PR** in [references/pr-feedback-and-ci.md](references/pr-feedback-and-ci.md).
-- **Write to a GitHub conversation only through `orc-pr-replies`** after an approved push (using `--zerohands-only` when only the push was approved, never hand-picking bot replies). Never resolve a thread, approve, request changes, edit/delete comments, or post anything else.
+- **Write to a GitHub conversation only through `orc-pr-replies`** after an approved push (using `--zerohands-only` when only the push was approved and Settings > Push to a PR is **Push commits**, never hand-picking bot replies), or, for a push with no review round, the replies and 👍 reactions **Push with no review round** in [references/pr-feedback-and-ci.md](references/pr-feedback-and-ci.md) allows. Never resolve a thread, approve, request changes, edit/delete comments, or post anything else.
 - Surface stale `pr-body.md` before creating a PR; keep `/orc-docs` happy-path QA steps; attach screenshots via `gh pr create --attach` or omit on `gh < 2.99.0` without manual-upload reminders; strip `Generated with` footers before `gh pr create` and never add AI attribution.

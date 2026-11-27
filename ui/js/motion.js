@@ -1,5 +1,5 @@
 // Settings → Visuals → Motion & visuals. data-animations-off on <html> is
-// the whole switch: index.html's stylesheet stills every CSS animation and
+// the whole switch: shell-base.css stills every CSS animation and
 // transition from it. Scripted effects that follow both preferences use
 // reducedMotion(). The choice is this
 // browser's, like the system setting it stands beside; index.html's pre-paint

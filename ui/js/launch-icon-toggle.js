@@ -2,22 +2,24 @@ import { launchToggleTooltip } from './control-tooltip.js';
 
 // The startbar's launch toggles, these and Fast, share this: `on` selects a
 // pressed toggle, which grows into a pill with its `.name` beside the icon.
-// Below the composer's full width (798px inside the footer) the desktop start bar has no
-// room for names beside Fast, permissions, Evals and the account, so a pressed
-// toggle keeps its round icon rather than wrap the row. A phone gives the
-// toggles a row of their own, so the name stays there.
-export const launchToggleNameCss = on => `
+// `host` narrows that to hosts matching it, as Fast names itself only in the
+// new-run composer. When the start bar has no room for every name,
+// fitLaunchBar() (launch-bar-fit.js) marks toggles `compact`, and a compact
+// toggle keeps its round icon rather than wrap the row. On a phone every
+// toggle there is compact: they share the model's row, and the line under the
+// composer names what is on.
+export const launchToggleNameCss = (on, host = '') => {
+  const named = host ? `:host(${host}) ${on}` : `:host ${on}`;
+  const compact = `:host(${host}[compact]) ${on}`;
+  return `
   .name { display: none; }
-  ${on} { width: auto; min-width: 30px; gap: 6px; grid-auto-flow: column; padding: 0 11px 0 9px; }
-  ${on} .name { display: inline; font-size: 12.5px; font-weight: 600; line-height: 1; white-space: nowrap; }
-  @media (max-width: 700px) { ${on} { min-width: 44px; padding: 0 14px 0 12px; } }
-  @media (min-width: 701px) {
-    @container launch-bar (max-width: 797px) {
-      ${on} { width: 30px; padding: 0; }
-      ${on} .name { display: none; }
-    }
-  }
-  @media (forced-colors: active) { ${on} { color: HighlightText; } }`;
+  ${named} { width: auto; min-width: 30px; gap: 6px; grid-auto-flow: column; padding: 0 11px 0 9px; }
+  ${named} .name { display: inline; font-size: 12.5px; font-weight: 600; line-height: 1; white-space: nowrap; }
+  @media (max-width: 700px) { ${named} { min-width: 44px; padding: 0 14px 0 12px; } }
+  ${compact} { width: 30px; padding: 0; }
+  ${compact} .name { display: none; }
+  @media (forced-colors: active) { ${named} { color: HighlightText; } }`;
+};
 
 // A round icon button in the composer startbar that a press turns on and off,
 // such as Evals or a package's own launch choice. Its tooltip reads
@@ -56,9 +58,15 @@ export function defineLaunchIconToggle(tag, { label, about, icon, css = '' }) {
         </button>`;
       // Clicks cross the shadow boundary on their own, so the host needs no re-dispatched event.
       this.button = this.shadowRoot.querySelector('button');
+      this._label = label;
       this.button.setAttribute('aria-label', label);
       this.shadowRoot.querySelector('.name').textContent = label;
-      launchToggleTooltip(this, this.button).set(label, about);
+      this._tooltip = launchToggleTooltip(this, this.button);
+      this._tooltip.set(label, about);
+    }
+
+    set about(value) {
+      this._tooltip.set(this._label, value);
     }
 
     focus(options) { this.button.focus(options); }

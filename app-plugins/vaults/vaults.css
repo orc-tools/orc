@@ -16,10 +16,10 @@
     radial-gradient(circle at 62px 50%, color-mix(in srgb, var(--vault-tint) 22%, transparent), transparent 46%),
     repeating-radial-gradient(circle at 62px 50%, transparent 0 22px, color-mix(in srgb, var(--vault-tint) 7%, transparent) 22px 23px),
     linear-gradient(120deg, color-mix(in srgb, var(--vault-tint) 9%, var(--panel)), var(--panel) 70%);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--heading) 8%, transparent) inset, 0 10px 28px -18px color-mix(in srgb, var(--vault-tint) 70%, transparent); }
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--heading) 8%, transparent); }
 .vault-hero .vault-note { font-size: 13px; }
 
-.vault-door { display: block; flex: none; width: 56px; height: 56px; }
+.vault-door { position: relative; display: block; flex: none; width: 56px; height: 56px; }
 .vault-door.is-large { width: 84px; height: 84px; }
 .vault-door svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .vault-door-rim { fill: color-mix(in srgb, var(--vault-tint) 26%, var(--panel)); stroke: var(--vault-tint); stroke-width: 2; }
@@ -32,10 +32,22 @@
 .vault-door-wheel { transition: transform .7s cubic-bezier(.3, 1.4, .5, 1); }
 .vault-card:is(:hover, :focus-visible) .vault-door-wheel { transform: rotate(135deg); }
 .vault-door.is-large .vault-door-ticks { animation: vault-turn 90s linear infinite; }
-.vault-door.is-waiting .vault-door-rim { stroke: var(--orange); animation: vault-glow 2.4s ease-in-out infinite; }
+.vault-door.is-waiting .vault-door-rim { stroke: var(--orange); }
+/* A waiting door glows: a ring's blurred shadow around the rim fades in and
+   out, so only its opacity moves. A filter on the rim repainted the door on
+   every frame. */
+.vault-door.is-waiting::after {
+  content: ""; position: absolute; inset: 2.3%; border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 5px 1px var(--orange); opacity: 0; animation: vault-glow 2.4s ease-in-out infinite;
+}
 .vault-entering .vault-door-wheel { animation: vault-unlock 1s cubic-bezier(.3, 1.3, .5, 1) both; }
 
-.vault-pulse { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); animation: vault-pulse 2s ease-out infinite; }
+/* The dot sends out a ring: a copy of it that grows and fades. */
+.vault-pulse { position: relative; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); }
+.vault-pulse::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; background: inherit; pointer-events: none;
+  opacity: 0; animation: vault-pulse 2s ease-out infinite;
+}
 .vault-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
 .vault-stat { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--muted-strong); font-size: 12px; text-decoration: none; white-space: nowrap; }
 .vault-stat strong { color: var(--heading); font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -45,8 +57,8 @@ a.vault-stat:hover { border-color: var(--orange); }
 
 @keyframes vault-turn { to { transform: rotate(360deg); } }
 @keyframes vault-unlock { from { transform: rotate(-300deg); } }
-@keyframes vault-glow { 50% { filter: drop-shadow(0 0 5px var(--orange)); } }
-@keyframes vault-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--orange) 70%, transparent); } 70%, 100% { box-shadow: 0 0 0 7px transparent; } }
+@keyframes vault-glow { 50% { opacity: 1; } }
+@keyframes vault-pulse { 0% { transform: scale(1); opacity: .7; } 70%, 100% { transform: scale(3); opacity: 0; } }
 @keyframes vault-rise { from { opacity: 0; transform: translateY(10px); } }
 @keyframes vault-fresh { 0%, 35% { background: color-mix(in srgb, var(--green) 22%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 55%, transparent); } }
 .vault-header h2 { color: var(--heading); margin: 0; font-size: 24px; line-height: 1.25; overflow-wrap: anywhere; }
@@ -73,11 +85,12 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-cards { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
 .vault-cards > li { display: flex; min-width: 0; }
 .vault-card { position: relative; flex: 1; display: flex; align-items: flex-start; gap: 14px; padding: 16px 16px 14px; border: 1px solid color-mix(in srgb, var(--vault-tint) 30%, var(--border)); border-radius: 12px; overflow: hidden;
-  background: linear-gradient(150deg, color-mix(in srgb, var(--vault-tint) 12%, var(--panel)), var(--panel) 55%); color: var(--text); text-decoration: none; min-width: 0;
-  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+  background: color-mix(in srgb, var(--vault-tint) 6%, var(--panel)); color: var(--text); text-decoration: none; min-width: 0;
+  transition: border-color .18s ease; }
+/* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
 .vault-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg, var(--vault-tint), color-mix(in srgb, var(--vault-tint) 20%, transparent)); }
 .vault-card.is-waiting::before { background: linear-gradient(90deg, var(--orange), var(--vault-tint)); }
-.vault-card:is(:hover, :focus-visible) { border-color: var(--vault-tint); transform: translateY(-2px); box-shadow: 0 12px 26px -16px var(--vault-tint); }
+.vault-card:is(:hover, :focus-visible) { border-color: var(--vault-tint); }
 .vault-card-text { display: grid; gap: 5px; min-width: 0; flex: 1; }
 /* A page drawn at two fifths of its size, as the card's picture. */
 .vault-card.has-preview { flex-wrap: wrap; padding-top: 0; }
@@ -128,6 +141,7 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-md pre { white-space: pre-wrap; }
 
 .vault-proposal-list, .vault-decided ul, .vault-notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+/* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
 .vault-proposal { padding: 12px 12px 12px 14px; border: 1px solid color-mix(in srgb, var(--orange) 40%, var(--border)); border-left: 3px solid var(--orange); border-radius: 8px; background: color-mix(in srgb, var(--orange) 6%, var(--panel)); min-width: 0; }
 .vault-proposal-head { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted-strong); min-width: 0; }
 .vault-proposal-source { overflow-wrap: anywhere; min-width: 0; }
@@ -170,12 +184,12 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-template-card:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .vault-template-card input { position: absolute; top: 7px; left: 7px; z-index: 1; accent-color: var(--accent); margin: 0; }
 .vault-cover { display: block; width: 100%; height: clamp(54px, 10vw, 88px); }
-.vault-cover[data-cover="moodboard"] { background: #d97a49 url("./templates/moodboard/art.webp") center 45%/cover; }
-.vault-cover[data-cover="goal-atlas"] { background: #869b77 url("./templates/goal-atlas/art.webp") center/cover; }
-.vault-cover[data-cover="listening-room"] { position: relative; overflow: hidden; background: #382d3f; }
-.vault-cover[data-cover="listening-room"]::before, .vault-cover[data-cover="listening-room"]::after { content: ""; position: absolute; height: 80%; aspect-ratio: 1; top: 10%; }
-.vault-cover[data-cover="listening-room"]::before { left: 45%; border-radius: 50%; background: repeating-radial-gradient(#19151a 0 2px, #514650 3px 4px); }
-.vault-cover[data-cover="listening-room"]::after { right: 40%; transform: rotate(-4deg); background: repeating-radial-gradient(ellipse at 85% 48%, #f4a27f 0 7%, #392239 8% 13%); }
+/* Each finished template's cover draws the page it opens: the year on its sheet, the gold action
+   beside the day, the torn prep card. */
+.vault-cover[data-cover] { background: center / cover no-repeat; }
+.vault-cover[data-cover="self-celebrations"] { background-color: #f7c948; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 88'%3E %3Crect width='200' height='88' fill='%23f7c948'/%3E%3Crect x='18' y='12' width='164' height='64' rx='7' fill='%23fff6d8'/%3E %3Crect x='157' y='16' width='16' height='56' rx='4' fill='%23fbdc7c'/%3E %3Cpath d='M26 64h148' stroke='%23231a06' stroke-width='1.4'/%3E%3Ccircle cx='34' cy='58' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='34' cy='49' r='3.6' fill='%235236b8'/%3E%3Ccircle cx='53' cy='58' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='53' cy='49' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='53' cy='40' r='3.6' fill='%235236b8'/%3E%3Ccircle cx='72' cy='58' r='3.6' fill='%230a6a66'/%3E%3Ccircle cx='91' cy='58' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='91' cy='49' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='91' cy='40' r='3.6' fill='%235236b8'/%3E%3Ccircle cx='91' cy='31' r='3.6' fill='%230a6a66'/%3E%3Ccircle cx='110' cy='58' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='110' cy='49' r='3.6' fill='%235236b8'/%3E%3Ccircle cx='129' cy='58' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='129' cy='49' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='129' cy='40' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='129' cy='31' r='3.6' fill='%235236b8'/%3E%3Ccircle cx='129' cy='22' r='3.6' fill='%230a6a66'/%3E%3Ccircle cx='148' cy='58' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='148' cy='49' r='3.6' fill='%235236b8'/%3E%3Ccircle cx='148' cy='40' r='3.6' fill='%230a6a66'/%3E%3Ccircle cx='167' cy='58' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='167' cy='49' r='3.6' fill='%23d6381b'/%3E%3Ccircle cx='167' cy='40' r='3.6' fill='%235236b8'/%3E%3Ccircle cx='167' cy='31' r='3.6' fill='%230a6a66'/%3E%3Ccircle cx='167' cy='22' r='3.6' fill='%23d6381b'/%3E%3C/svg%3E"); }
+.vault-cover[data-cover="next-up"] { background-color: #141e2a; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 88'%3E %3Crect width='200' height='88' fill='%23141e2a'/%3E %3CclipPath id='p'%3E%3Crect x='14' y='12' width='118' height='64' rx='7'/%3E%3C/clipPath%3E %3Crect x='14' y='12' width='118' height='64' rx='7' fill='%23f2c230'/%3E %3Cg clip-path='url(%23p)'%3E%3Ccircle cx='122' cy='86' r='40' fill='%23ecb721'/%3E%3Ccircle cx='122' cy='86' r='28' fill='%23e3aa12'/%3E%3Ccircle cx='122' cy='86' r='16' fill='%23d69c06'/%3E%3C/g%3E %3Crect x='24' y='23' width='72' height='7' rx='2' fill='%23141e2a'/%3E%3Crect x='24' y='34' width='54' height='7' rx='2' fill='%23141e2a'/%3E %3Crect x='24' y='58' width='34' height='9' rx='3' fill='%23141e2a'/%3E %3Crect x='140' y='12' width='46' height='64' rx='7' fill='%231c2a3a'/%3E %3Ccircle cx='148' cy='23' r='2.4' fill='%23f2c230'/%3E%3Crect x='153' y='21.5' width='26' height='3' rx='1.5' fill='%23f4efe3'/%3E %3Crect x='147' y='36' width='30' height='3' rx='1.5' fill='%23aebbc9'/%3E%3Crect x='147' y='50' width='24' height='3' rx='1.5' fill='%23aebbc9'/%3E %3Crect x='147' y='64' width='28' height='3' rx='1.5' fill='%23aebbc9'/%3E%3C/svg%3E"); }
+.vault-cover[data-cover="prep"] { background-color: #1b3d32; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 88'%3E %3Crect width='200' height='88' fill='%231b3d32'/%3E %3CclipPath id='c'%3E%3Crect x='22' y='12' width='156' height='64' rx='7'/%3E%3C/clipPath%3E %3Cg clip-path='url(%23c)'%3E%3Crect x='22' y='12' width='156' height='64' fill='%23f6eedd'/%3E%3Crect x='122' y='12' width='56' height='64' fill='%23ece1c9'/%3E%3C/g%3E %3Cpath d='M122 14v60' stroke='%237fa690' stroke-width='1.4' stroke-dasharray='3 2.4'/%3E %3Ccircle cx='122' cy='12' r='4.5' fill='%231b3d32'/%3E%3Ccircle cx='122' cy='76' r='4.5' fill='%231b3d32'/%3E %3Crect x='32' y='21' width='64' height='7' rx='2' fill='%231f4438'/%3E%3Crect x='32' y='32' width='40' height='7' rx='2' fill='%231f4438'/%3E %3Cg fill='%234a7862'%3E%3Crect x='32' y='47' width='5' height='6' rx='1'/%3E%3Crect x='32' y='57' width='5' height='6' rx='1'/%3E%3Crect x='32' y='67' width='5' height='6' rx='1'/%3E%3C/g%3E %3Cg fill='%23b9ad94'%3E%3Crect x='41' y='48.5' width='62' height='3' rx='1.5'/%3E%3Crect x='41' y='58.5' width='54' height='3' rx='1.5'/%3E%3Crect x='41' y='68.5' width='58' height='3' rx='1.5'/%3E%3C/g%3E %3Cg fill='%231f4438'%3E%3Ccircle cx='134' cy='25' r='4'/%3E%3Ccircle cx='134' cy='37' r='4'/%3E%3Ccircle cx='134' cy='49' r='4'/%3E%3C/g%3E %3Cg fill='%23b9ad94'%3E%3Crect x='141' y='23.5' width='26' height='3' rx='1.5'/%3E%3Crect x='141' y='35.5' width='22' height='3' rx='1.5'/%3E%3Crect x='141' y='47.5' width='24' height='3' rx='1.5'/%3E%3C/g%3E %3Crect x='131' y='62' width='34' height='3' rx='1.5' fill='%237fa690'/%3E%3C/svg%3E"); }
 .vault-template-text { display: grid; align-content: start; gap: 4px; min-width: 0; padding: 9px; }
 .vault-template-label { font-size: 13px; font-weight: 650; color: var(--heading); }
 .vault-template-about { color: var(--muted-strong); font-size: 12px; line-height: 1.45; }
@@ -189,12 +203,16 @@ a.vault-stat:hover { border-color: var(--orange); }
   .vault-template-gallery { grid-template-columns: 1fr; }
   .vault-template-card { grid-template-columns: 72px 1fr; grid-template-rows: 1fr; }
   .vault-cover { height: 100%; min-height: 60px; }
+  /* The narrow cover keeps the action and the card's title in view. */
+  .vault-cover:is([data-cover="next-up"], [data-cover="prep"]) { background-position: 10% center; }
   .vault-template-text { padding: 7px 10px; }
 }
 .vault-dialog::backdrop { background: color-mix(in srgb, var(--bg) 60%, transparent); }
 .vault-dialog form { display: grid; gap: 10px; }
 .vault-dialog h3 { margin: 0; color: var(--heading); font-size: 17px; overflow-wrap: anywhere; }
 .vault-dialog .vault-note { font-size: 13px; }
+.vault-new-builds { display: grid; gap: 10px; min-width: 0; }
+.vault-new-builds .vault-account { margin-top: 0; }
 .vault-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 #vaults-view :is(button, a, input[type="radio"]):focus-visible, .vault-dialog :is(button, input[type="radio"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -202,7 +220,7 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-bar { display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap; margin-bottom: 10px; }
 .vault-bar .vault-door { width: 44px; height: 44px; }
 .vault-bar-text { flex: 1 1 220px; min-width: 0; }
-.vault-bar h2 { color: var(--heading); margin: 0; font-size: 22px; line-height: 1.25; overflow-wrap: anywhere; }
+.vault-bar h2 { color: var(--heading); margin: 0; font-size: 24px; line-height: 1.25; overflow-wrap: anywhere; }
 .vault-bar h2:focus { outline: none; }
 .vault-bar .vault-about { margin: 2px 0 0; font-size: 13px; color: var(--muted-strong); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .vault-bar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -213,7 +231,7 @@ a.vault-stat:hover { border-color: var(--orange); }
 
 /* Opaque: theme scenery never shows under the box or what it says. */
 .vault-ask { display: grid; gap: 6px; padding: 10px 12px 8px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 12px; background: var(--panel);
-  box-shadow: 0 8px 22px -18px var(--accent); transition: border-color .18s ease; }
+  transition: border-color .18s ease; }
 .vault-ask:focus-within { border-color: var(--accent); }
 .vault-ask.is-building { border-color: color-mix(in srgb, var(--orange) 55%, var(--border)); }
 .vault-ask textarea { display: block; width: 100%; min-width: 0; box-sizing: border-box; min-height: 30px; max-height: 220px; resize: none; padding: 4px 2px; border: 0; outline: none;
@@ -256,10 +274,20 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-said-line .vault-said-asked { color: var(--text); font-style: italic; min-width: 0; }
 .vault-said-line [data-vault-stop] { margin-left: auto; }
 .vault-stage { position: relative; display: grid; box-sizing: border-box; min-height: 420px; margin-top: 12px; border: 1px solid color-mix(in srgb, var(--vault-tint) 35%, var(--border)); border-radius: 14px;
-  overflow: hidden; background: var(--panel); box-shadow: 0 16px 40px -28px var(--vault-tint); }
+  overflow: hidden; background: var(--panel); }
 .vault-stage[hidden] { display: none; }
-.vault-stage.is-building { border-color: var(--orange); animation: vault-building 2.2s ease-in-out infinite; }
+/* A page being built edges its stage in orange, and a wider edge inside it
+   breathes in and out: a layer of its own whose opacity moves, where an
+   animated shadow repainted the whole stage. */
+.vault-stage.is-building { border-color: var(--orange); }
+.vault-stage.is-building::after {
+  content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--orange) 55%, transparent);
+  opacity: 0; animation: vault-building 2.2s ease-in-out infinite;
+}
 .vault-frame { grid-area: 1 / 1; display: block; width: 100%; height: 100%; border: 0; background: #fff; color-scheme: light; }
+/* The page follows Orc's mode, so its frame shows no white behind a dark one. */
+:root[data-theme="dark"] :is(.vault-frame, .vault-card-preview) { background: var(--bg); color-scheme: dark; }
 .vault-frame.is-loading { opacity: 0; pointer-events: none; }
 .vault-stage-empty { grid-area: 1 / 1; align-self: center; justify-self: center; display: grid; justify-items: center; gap: 8px; max-width: 46ch; padding: 28px 20px; text-align: center; }
 .vault-stage-empty h3 { margin: 6px 0 0; color: var(--heading); font-size: 17px; }
@@ -267,19 +295,20 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-stage-empty .vault-quick { justify-content: center; }
 .vault-stage-empty.is-building .vault-door-wheel { animation: vault-turn 2.4s linear infinite; }
 .vault-building-fact { display: inline-flex; align-items: center; gap: 6px; color: var(--gate); }
-@keyframes vault-building { 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 28%, transparent), 0 16px 40px -28px var(--orange); } }
+@keyframes vault-building { 50% { opacity: 1; } }
 
 /* ---------- A vault's page, full screen ----------
    The page fills everything beside the sidebar. What the header held floats
    over it: the menu button, and Orc's box at the foot when the page has
    none of its own. The layer above the page lets clicks through to it. */
 #vaults-view.is-full:not([hidden]) { position: relative; display: grid; padding: 0; overflow: hidden; }
-#vaults-view.is-full > .vault-stage { grid-area: 1 / 1; width: 100%; max-width: none; min-height: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none; animation: none; }
-#vaults-view.is-full > .vault-stage.is-building::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; box-shadow: inset 0 0 0 2px var(--orange); animation: vault-building-edge 2.2s ease-in-out infinite; }
+#vaults-view.is-full > .vault-stage { grid-area: 1 / 1; width: 100%; max-width: none; min-height: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+/* Full screen the stage has no border, so a steady orange edge stands in
+   for it under the breathing one. */
+#vaults-view.is-full > .vault-stage.is-building::before { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; box-shadow: inset 0 0 0 2px var(--orange); }
 #vaults-view.is-full > #vaults-body { position: absolute; inset: 0; z-index: 2; max-width: none; margin: 0; pointer-events: none; }
 #vaults-view.is-float-dragging { user-select: none; cursor: grabbing; }
 #vaults-view.is-float-held .vault-frame { pointer-events: none; }
-@keyframes vault-building-edge { 50% { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--orange) 55%, transparent); } }
 
 /* Placed by fractions of the room: the translate takes off the same share of
    its own size, so 0 sits on the near edge and 1 on the far one, whatever
@@ -290,7 +319,7 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-dock { z-index: 2; width: 40px; height: 40px; }
 .vault-dock-btn { position: relative; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; pointer-events: auto; touch-action: none;
   border: 1px solid color-mix(in srgb, var(--vault-tint) 45%, var(--border)); border-radius: 50%; background: var(--panel); color: var(--heading);
-  box-shadow: 0 6px 18px -8px rgb(0 0 0 / .45); cursor: var(--orc-cursor-pointer, pointer); opacity: .82; transition: opacity .15s ease, border-color .15s ease, transform .15s ease; }
+  box-shadow: var(--float-shadow); cursor: var(--orc-cursor-pointer, pointer); opacity: .82; transition: opacity .15s ease, border-color .15s ease, transform .15s ease; }
 .vault-dock-btn svg { width: 19px; height: 19px; }
 .vault-dock-btn:is(:hover, :focus-visible), .vault-dock.is-open .vault-dock-btn, .vault-dock-btn[aria-expanded="true"] { opacity: 1; border-color: var(--vault-tint); }
 .vault-dock-btn.is-building { border-color: var(--orange); opacity: 1; }
@@ -305,9 +334,9 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-dock-stack .vault-said > *, .vault-dock-stack > .vault-status, .vault-dock-menu { pointer-events: auto; }
 /* Status lines here sit straight over the page, so they get a panel. */
 .vault-dock-stack .vault-status:not(:empty) { margin: 0; padding: 7px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
-.vault-dock-stack :is(.vault-said-line, .vault-said-card, .vault-link-ask) { box-shadow: 0 10px 26px -14px rgb(0 0 0 / .5); }
+.vault-dock-stack :is(.vault-said-line, .vault-said-card, .vault-link-ask) { box-shadow: var(--float-shadow); }
 .vault-dock-menu { display: grid; gap: 10px; padding: 12px 14px 14px; border: 1px solid color-mix(in srgb, var(--vault-tint) 40%, var(--border)); border-radius: 12px; background: var(--panel);
-  box-shadow: 0 14px 34px -16px rgb(0 0 0 / .55); animation: vault-rise .16s ease-out both; }
+  box-shadow: var(--float-shadow); animation: vault-rise .16s ease-out both; }
 .vault-dock-menu .vault-crumb { margin: 0; }
 .vault-dock-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .vault-dock-head .vault-door { width: 36px; height: 36px; }
@@ -319,9 +348,9 @@ a.vault-stat:hover { border-color: var(--orange); }
 
 .vault-chat { z-index: 1; width: min(560px, calc(100% - 24px)); max-height: calc(100% - 24px); box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; pointer-events: auto;
   padding: 6px 10px 10px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--panel) 94%, transparent);
-  box-shadow: 0 16px 40px -16px rgb(0 0 0 / .5); backdrop-filter: blur(8px); }
+  box-shadow: var(--float-shadow); backdrop-filter: blur(8px); }
 .vault-chat.is-small { width: auto; padding: 0; border: 0; background: none; box-shadow: none; backdrop-filter: none; }
-.vault-chat .vault-ask { border-color: var(--border); box-shadow: none; }
+.vault-chat .vault-ask { border-color: var(--border); }
 .vault-chat .vault-said { margin: 0; min-height: 0; }
 .vault-chat .vault-said:not(:has(> :not(.vault-status:empty))) { display: none; }
 .vault-chat-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -341,7 +370,7 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-chat-reply.is-error { color: var(--red-text); border-color: color-mix(in srgb, var(--red-text) 40%, var(--border)); }
 .vault-chat-reply.is-pending { color: var(--muted-strong); font-style: italic; }
 .vault-chat-pill { display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 16px 0 13px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 999px;
-  background: var(--panel); color: var(--heading); font: inherit; font-size: 13px; font-weight: 600; box-shadow: 0 8px 22px -10px rgb(0 0 0 / .5); cursor: var(--orc-cursor-pointer, pointer); }
+  background: var(--panel); color: var(--heading); font: inherit; font-size: 13px; font-weight: 600; box-shadow: var(--float-shadow); cursor: var(--orc-cursor-pointer, pointer); }
 .vault-chat-pill:hover { border-color: var(--accent); }
 .vault-chat-pill.is-building { border-color: var(--orange); }
 .vault-chat-pill svg { width: 17px; height: 17px; }
@@ -369,6 +398,7 @@ a.vault-stat:hover { border-color: var(--orange); }
 .vault-tools li > span { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
 .vault-tools code { color: var(--muted-strong); margin-left: 6px; }
 .vault-history { max-height: 340px; overflow-y: auto; }
+/* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
 .vault-history li { padding: 8px 12px; border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--bg); border-radius: 0 8px 8px 0; min-width: 0; }
 .vault-history p { margin: 0; overflow-wrap: anywhere; }
 .vault-history-asked { color: var(--heading); font-size: 13px; font-weight: 600; }
@@ -381,7 +411,7 @@ a.vault-stat:hover { border-color: var(--orange); }
   .vault-ask-foot .settings-btn-inline { margin-left: auto; }
   .vault-automation-actions { width: 100%; }
   #vaults-view { padding: 18px 16px 40px; }
-  .vault-header h2 { font-size: 22px; }
+  .vault-header h2 { font-size: 20px; }
   .vault-panel { padding: 12px; }
   .vault-hero { padding: 16px; }
   .vault-hero-text { flex-basis: 200px; }
@@ -397,7 +427,7 @@ a.vault-stat:hover { border-color: var(--orange); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vault-door-ticks, .vault-door-rim, .vault-door-wheel, .vault-pulse, .vault-note-open, .vault-stage, .vault-stage::after, .vault-dock-menu,
+  .vault-door-ticks, .vault-door::after, .vault-door-wheel, .vault-pulse::after, .vault-note-open, .vault-stage::after, .vault-dock-menu,
   .vault-stage-empty.is-building .vault-door-wheel,
   .vault-entering :is(.vault-cards > li, .vault-proposal, .vault-sections > .vault-panel) { animation: none !important; }
   .vault-card, .vault-door-wheel, .vault-ask, .vault-dock-btn, .vault-switch input, .vault-switch input::after { transition: none; }

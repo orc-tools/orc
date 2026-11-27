@@ -4,7 +4,7 @@
   position: absolute; top: 50%; left: 10px; width: 14px; height: 14px;
   color: var(--muted-strong); transform: translateY(-50%); pointer-events: none;
 }
-/* Scoped to .app-plugin-hub so padding-left beats .app-plugin-search in index.html's later inline stylesheet. */
+/* Scoped to .app-plugin-hub so padding-left beats .app-plugin-search in settings.css. */
 .app-plugin-hub .app-plugin-search-box .app-plugin-search { flex: 1 1 auto; width: 100%; padding-left: 31px; }
 .app-plugin-count { margin: 0; }
 .app-plugin-count:empty { display: none; }
@@ -129,7 +129,7 @@
 .app-plugin-meta { margin: 0; font-size: 12px; color: var(--muted-strong); }
 .app-plugin-state { color: var(--muted-strong); }
 .app-plugin-side { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; }
-/* Scoped to .app-plugin-hub so padding: 0 beats .settings-btn-inline in index.html's later inline stylesheet. */
+/* Scoped to .app-plugin-hub so padding: 0 beats .settings-btn-inline in shell-dialogs.css. */
 .app-plugin-hub .app-plugin-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -173,6 +173,27 @@
 .app-plugin-hub[data-zip-drag] .app-plugin-drop { display: grid; }
 .app-plugin-drop strong { display: block; margin-bottom: 4px; color: var(--heading); font-size: 18px; }
 .app-plugin-drop span { color: var(--muted-strong); }
+/* A plugin installed from Git: where it came from, and pin or follow. */
+.app-plugin-git-meta code { padding: 1px 5px; border-radius: 4px; background: var(--code); font: 11.5px var(--orc-font-mono); overflow-wrap: anywhere; }
+/* Branch, folder and commit stay whole; only the repository address, which can be a long path, breaks anywhere. */
+.app-plugin-git-meta code:not(:first-child) { white-space: nowrap; }
+.app-plugin-git-status a { color: var(--accent-text); }
+/* Check now: a small refresh icon after the status text, quiet until hovered. */
+.app-plugin-hub .app-plugin-git-check { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; min-width: 26px; min-height: 26px;
+  margin: -4px 0 -4px 2px; padding: 0; border-color: transparent; background: transparent; color: var(--muted-strong); vertical-align: middle; }
+.app-plugin-hub .app-plugin-git-check:hover:not(:disabled) { color: var(--heading); background: var(--button-hover, color-mix(in srgb, var(--accent) 10%, var(--bg))); }
+.app-plugin-hub .app-plugin-git-check:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.app-plugin-git-check svg { flex: none; width: 14px; height: 14px; }
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-animations-off]) .app-plugin-git-check[aria-busy="true"] svg { animation: pending-spin 900ms linear infinite; }
+}
+.app-plugin-git-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.app-plugin-git-actions .settings-btn-inline { flex: none; }
+.plugin-git { display: flex; flex-direction: column; gap: 14px; }
+.plugin-git-follow { display: flex; flex-direction: column; gap: 6px; }
+.plugin-git-follow .settings-label { margin: 0; }
+.plugin-git-follow .settings-hint { margin: 0; }
+.plugin-git .plugin-zip-warn, .plugin-git .plugin-zip-error { margin: 0; }
 /* Install a plugin: the confirm screen for a dropped zip. */
 .plugin-zip-dialog { --orc-dialog-max-width: 560px; }
 .plugin-zip-who { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
@@ -181,7 +202,7 @@
 .plugin-zip-ident { min-width: 0; }
 .plugin-zip-ident p { margin: 0; overflow-wrap: anywhere; }
 .plugin-zip-name { color: var(--heading); font-size: 16px; font-weight: 600; }
-.plugin-zip-version, .plugin-zip-origin { color: var(--muted); font-size: 13px; font-weight: 400; }
+.plugin-zip-version, .plugin-zip-origin { color: var(--muted-strong); font-size: 13px; font-weight: 400; }
 .plugin-zip p.plugin-zip-desc { margin: 0 0 12px; }
 .plugin-zip-heading { margin: 14px 0 6px; color: var(--heading); font-size: 14px; }
 .plugin-zip-list { margin: 0 0 12px; padding-left: 18px; }
@@ -206,8 +227,9 @@
 .app-plugin-setup button, .app-plugin-setup orc-accordion::part(summary), .app-plugin-actions button { min-height: 36px; }
 @media (max-width: 700px), (pointer: coarse) {
   .app-plugin-hub .app-plugin-icon-btn { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  .app-plugin-hub .app-plugin-git-check { width: 44px; height: 44px; min-width: 44px; min-height: 44px; margin: -12px -8px -12px -6px; }
   .app-plugin-switch { min-width: 44px; min-height: 44px; box-sizing: border-box; justify-content: center; }
-  .app-plugin-setup button, .app-plugin-setup orc-accordion::part(summary), .app-plugin-actions button, .app-plugin-search, .app-plugin-foot .settings-btn-inline, .app-plugin-tab-jump { min-height: 44px; }
+  .app-plugin-setup button, .app-plugin-setup orc-accordion::part(summary), .app-plugin-actions button, .app-plugin-search, .app-plugin-foot .settings-btn-inline, .app-plugin-git-actions .settings-btn-inline, .app-plugin-tab-jump { min-height: 44px; }
 }
 @media (max-width: 700px) {
   .app-plugin-tools .app-plugin-search-box { max-width: none; flex-basis: 100%; }

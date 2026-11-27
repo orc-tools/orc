@@ -1,6 +1,7 @@
 {
   "apiVersion": 2,
   "id": "pocket",
+  "icon": "icon.png",
   "name": "Pocket",
   "version": "1.0.0",
   "description": "A see-through purple handheld: backlight on by night, clear plastic by day.",
@@ -11,7 +12,7 @@
       "label": "Pocket",
       "description": "Batteries not included~",
       "css": "theme.css",
-      "icon": "icon.png",
+      "icon": "dock-icon.png",
       "gary": "gary.png",
       "sheila": "sheila.png",
       "scene": "scene.bundle.js",

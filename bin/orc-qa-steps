@@ -10,12 +10,13 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ui"))
 import qa_steps  # noqa: E402
+
+from run_lifecycle import Snapshot, write_meta
 
 QA_ROUTE, QA_PHASE = "qa", "qa-hub"
 SETTLED = ("cancelled", "complete", "merged", "merged-to-parent")
@@ -36,7 +37,10 @@ def main():
     run_dir = Path(args.run_dir).expanduser().resolve()
     meta_path = run_dir / "meta.json"
     try:
-        meta = json.loads(meta_path.read_text())
+        value = json.loads(meta_path.read_text())
+        if not isinstance(value, dict):
+            raise ValueError("expected a JSON object")
+        meta = Snapshot(value)
     except (OSError, ValueError) as error:
         return fail("cannot read %s: %s" % (meta_path, error))
     try:
@@ -53,23 +57,13 @@ def main():
         return fail(str(error))
     qa_steps.write_json(str(run_dir / qa_steps.STEPS_FILE), document)
     if meta.get("route") == QA_ROUTE and meta.get("status") not in SETTLED:
-        # Read again: the app's start may have rewritten the file meanwhile.
-        meta = json.loads(meta_path.read_text())
         meta.update(phase=QA_PHASE, status="awaiting-gate")
         # The server titled the run after its pull request at launch.
         meta.pop("titlePending", None)
-        fd, tmp = tempfile.mkstemp(dir=run_dir, prefix=".meta.", suffix=".tmp")
         try:
-            with os.fdopen(fd, "w") as handle:
-                json.dump(meta, handle, indent=2)
-                handle.write("\n")
-            os.replace(tmp, meta_path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+            write_meta(meta_path, meta, caller="orc-qa-steps")
+        except (OSError, ValueError) as error:
+            return fail(str(error))
     kinds = [step["kind"] for step in document["steps"]]
     edges = sum(step.get("group") == qa_steps.EDGE for step in document["steps"])
     print(json.dumps({"ok": True, "steps": len(kinds), "edgeCases": edges, "source": document["source"],

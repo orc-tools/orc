@@ -44,9 +44,9 @@ BEGIN_WINDOW = 60
 BEGINS_PER_CLIENT = 5
 PUSH_DELAY = 3
 MAX_PENDING = 32
-TOP_KEYS = ("branch", "review", "shipAction", "offerOtherShipActions", "prPushAction")
+TOP_KEYS = ("branch", "review", "shipAction", "offerOtherShipActions", "offerShipWhenDone", "prPushAction")
 UI_KEYS = ("sounds", "eventSounds", "archiveSettledAssetsDays", "prPoll", "projectOrder",
-           "statusOrder", "modelPins", "planRenewalDays", "hiddenServerProjects", "notifications")
+           "modelPins", "planRenewalDays", "hiddenServerProjects", "notifications")
 SECTIONS = ("worktree", "ui", "repos")
 # Settings that fit one computer's hardware, agents and accounts are not
 # synced, so each computer keeps its own: Orchestrate's rules and presets

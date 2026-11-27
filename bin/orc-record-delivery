@@ -30,7 +30,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "ui"))
-from delivery_record import DeliveryError, REFUSED_STATUSES, meta_lock, now, read_meta, settle, write_meta
+from delivery_record import DeliveryError, REFUSED_STATUSES, meta_lock, now, read_meta, settle
+from run_lifecycle import write_meta
 import run_relationships  # noqa: E402
 
 
@@ -141,7 +142,6 @@ def cleanup_untouched_branches(run_dir, meta):
                 detail = (res.stderr or res.stdout).strip() or "worktree teardown failed"
                 raise DeliveryError("cannot tear down unused worktree: %s" % detail)
 
-    meta = read_meta(run_dir / "meta.json")
     for _repo_id, main_repo, branch, _wt in checked:
         if not isinstance(main_repo, str) or not os.path.isdir(main_repo) or not isinstance(branch, str) or not branch.strip():
             continue
@@ -273,8 +273,8 @@ def main(argv=None):
                     current["title"] = clean_title
                     current.pop("titlePending", None)
                 meta = settle(current, pr_urls, args.merged)
-            write_meta(meta_path, meta)
-    except DeliveryError as exc:
+            write_meta(meta_path, meta, caller="orc-record-delivery")
+    except (DeliveryError, OSError, ValueError) as exc:
         print("orc-record-delivery: %s" % exc, file=sys.stderr)
         return 1
 

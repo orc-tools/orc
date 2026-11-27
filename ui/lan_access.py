@@ -59,11 +59,11 @@ def rotate_secret(path):
     return secret
 
 
-def cookie_value(headers):
+def cookie_value(headers, cookie=COOKIE):
     raw = headers.get("Cookie") or ""
     for part in raw.split(";"):
         name, _, value = part.strip().partition("=")
-        if name == COOKIE:
+        if name == cookie:
             return value
     return None
 

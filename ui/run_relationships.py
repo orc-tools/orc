@@ -14,9 +14,11 @@ import os
 import re
 import subprocess
 import tempfile
+from pathlib import Path
 from datetime import datetime, timezone
 
 import question_media
+import run_lifecycle
 
 
 SCHEMA_VERSION = 1
@@ -498,6 +500,12 @@ def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, ti
     if os.path.dirname(run_dir) != runs_dir or not os.path.isdir(run_dir):
         raise ValueError("question run is outside the configured run store")
     run_id = os.path.basename(run_dir)
+    with run_lifecycle.locked_run(run_dir):
+        return _publish_question_locked(config_dir, run_dir, run_id, answer, repair, ui_spec,
+                                        staged, clean_title)
+
+
+def _publish_question_locked(config_dir, run_dir, run_id, answer, repair, ui_spec, staged, clean_title):
     meta_path = os.path.join(run_dir, "meta.json")
     if os.path.islink(meta_path):
         raise ValueError("question metadata must not be a symlink")
@@ -509,6 +517,8 @@ def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, ti
     if not isinstance(meta, dict) or meta.get("runId") != run_id:
         raise ValueError("question metadata has the wrong run id")
 
+    run_lifecycle.validate(run_lifecycle.state(meta), ("done", "complete"),
+                           owner=run_id, caller="publish question")
     answer_path = os.path.join(run_dir, "answer.md")
     terminal = (meta.get("outcome"), meta.get("phase"), meta.get("status")) \
         == ("question", "done", "complete")
@@ -543,8 +553,7 @@ def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, ti
             terminal_meta = _terminal_question_meta(meta, run_dir)
             terminal_meta.update({"outcome": "question", "phase": "done",
                                   "status": "complete", "title": clean_title})
-            _atomic_bytes(meta_path, (json.dumps(terminal_meta, indent=2, sort_keys=True)
-                                      + "\n").encode())
+            run_lifecycle.write_locked(Path(meta_path), terminal_meta, expected=meta, caller="publish question")
         return {"runId": run_id, "answer": answer_path,
                 "project": question_project_context(read_store(config_dir), run_id)}
     else:
@@ -583,8 +592,7 @@ def publish_question(config_dir, run_dir, answer, repair=False, ui_spec=None, ti
         terminal_meta["title"] = clean_title
     terminal_meta.update({"outcome": "question", "phase": "done",
                           "status": "complete"})
-    _atomic_bytes(meta_path, (json.dumps(terminal_meta, indent=2, sort_keys=True)
-                              + "\n").encode())
+    run_lifecycle.write_locked(Path(meta_path), terminal_meta, expected=meta, caller="publish question")
     return {"runId": run_id, "answer": answer_path, "project": project}
 
 
@@ -682,6 +690,12 @@ def continue_question(config_dir, run_dir, project, message):
     if canonical is None:
         raise ValueError("invalid project")
     resolved = os.path.realpath(run_dir)
+    with run_lifecycle.locked_run(resolved):
+        return _continue_question_locked(config_dir, resolved, canonical, message)
+
+
+def _continue_question_locked(config_dir, resolved, canonical, message):
+    run_dir = resolved
     run_id = os.path.basename(resolved)
     try:
         with open(os.path.join(resolved, "meta.json"), encoding="utf-8") as handle:
@@ -716,8 +730,8 @@ def continue_question(config_dir, run_dir, project, message):
         "## Answer\n\n" + read("answer.md"),
     ) if part) + "\n"
     meta_path = os.path.join(run_dir, "meta.json")
-    with open(meta_path, "rb") as handle:
-        original = handle.read()
+    original = dict(meta)
+    original_bytes = Path(meta_path).read_bytes()
     os.makedirs(os.path.join(run_dir, "inputs"), exist_ok=True)
     _atomic_bytes(os.path.join(run_dir, FOLLOW_UP_BRIEF), brief.encode())
     consent = os.path.join(run_dir, LAUNCH_DELIVERY)
@@ -731,8 +745,10 @@ def continue_question(config_dir, run_dir, project, message):
     # A launch stub is gated or quick; anything else reads as retired history.
     if meta.get("mode") not in ("gated", "quick"):
         meta["mode"] = "gated"
+    continued = False
     try:
-        _atomic_bytes(meta_path, (json.dumps(meta, indent=2, sort_keys=True) + "\n").encode())
+        run_lifecycle.write_locked(Path(meta_path), meta, expected=original, caller="continue question")
+        continued = True
         with locked_store(config_dir) as store:
             store["questionProjects"] = [
                 row for row in store["questionProjects"]
@@ -740,7 +756,9 @@ def continue_question(config_dir, run_dir, project, message):
     except Exception:
         # Half a takeover would be a running run nobody builds, so the answer
         # stays whole and the caller starts a child instead.
-        _atomic_bytes(meta_path, original)
+        if continued:
+            run_lifecycle.write_locked(Path(meta_path), original, expected=meta, caller="restore question",
+                                       original_bytes=original_bytes)
         if os.path.lexists(set_aside) and not os.path.lexists(consent):
             os.replace(set_aside, consent)
         raise
@@ -769,19 +787,46 @@ def write_context(config_dir, token, package, markdown):
 
 def plan_handoff(runs, row):
     """Identify work started by a plan for top-level display and plan
-    navigation. The runs of a plan that opened one run per step across
-    several repositories stay nested under it: they list as its group."""
+    navigation. The runs of a plan that lists its steps beneath it
+    (`planNested`, from plans_nesting_steps) stay nested under it: they list
+    as its group."""
     source = runs.get(row.get("sourceRunId"))
     child = runs.get(row.get("childRunId"))
     return (isinstance(source, dict) and source.get("route") == PLANNING_ROUTE
             and isinstance(child, dict) and child.get("route") != PLANNING_ROUTE
             and row.get("mode") != "orc-plan-session"
-            and not plan_group_spans_repos(row))
+            and row.get("planNested") is not True)
 
 
 def plan_group_spans_repos(row):
     return row.get("planGroup") is True and type(row.get("planRepos")) is int \
         and row["planRepos"] > 1
+
+
+def plans_nesting_steps(runs, rows):
+    """The plans whose step runs list beneath them: one whose steps span
+    repositories, or one with two or more steps standing (a run launched and
+    not cancelled, launching, or waiting its turn). A plan built as one run,
+    or with only one step started, keeps that run as its build. Derived on
+    every read, so plans started before this rule regroup too."""
+    steps, nesting = {}, set()
+    for row in rows:
+        if not isinstance(row, dict) or type(row.get("planStep")) is not int:
+            continue
+        source = row.get("sourceRunId")
+        if not isinstance(runs.get(source), dict) or runs[source].get("route") != PLANNING_ROUTE:
+            continue
+        if plan_group_spans_repos(row):
+            nesting.add(source)
+        state = row.get("state")
+        if state == "launched":
+            child = runs.get(row.get("childRunId"))
+            if not isinstance(child, dict) or child.get("status") == "cancelled":
+                continue
+        elif state not in ("launching", "waiting"):
+            continue
+        steps.setdefault(source, set()).add(row["planStep"])
+    return nesting | {plan for plan, numbers in steps.items() if len(numbers) > 1}
 
 
 def compatibility_view(runs, store):
@@ -846,7 +891,11 @@ def compatibility_view(runs, store):
             if isinstance(row, dict) and valid_run_id(row.get("childRunId")):
                 take_child({"sourceRunId": run_id, "childRunId": row.get("childRunId"),
                             "title": row.get("title"), "legacyFile": row.get("file")}, legacy=True)
+    nesting = plans_nesting_steps(runs, children)
     for row in children:
+        if plan_group_spans_repos(row) or (
+                row.get("sourceRunId") in nesting and type(row.get("planStep")) is int):
+            row["planNested"] = True
         if plan_handoff(runs, row):
             row["planHandoff"] = True
     links.sort(key=lambda row: (row["sourceRunId"], row["targetRunId"], row["type"]))
@@ -857,9 +906,10 @@ def compatibility_view(runs, store):
 
 
 def group_row(row):
-    """A launch row that puts its run in a group: one of a plan's per-step
-    runs, or a sibling a run opened in another repository."""
-    return isinstance(row, dict) and (row.get("planGroup") is True or row.get("sibling") is True)
+    """A launch row that puts its run in a group: one of the step runs a plan
+    lists beneath it, or a sibling a run opened in another repository."""
+    return isinstance(row, dict) and (row.get("planGroup") is True or row.get("sibling") is True
+                                      or row.get("planNested") is True)
 
 
 def _repo_name(path):
@@ -877,6 +927,8 @@ def group_view(root_id, rows, metas):
     root = metas.get(root_id) or {}
     plan = root.get("route") == PLANNING_ROUTE
     by_step = {row.get("planStep"): row for row in rows if type(row.get("planStep")) is int}
+    spans = (len({row.get("planRepo") for row in rows if row.get("planRepo")}) > 1
+             or any(plan_group_spans_repos(row) for row in rows))
     members = []
     if not plan:
         members.append({"runId": root_id, "title": root.get("title") or root_id,
@@ -892,7 +944,8 @@ def group_view(root_id, rows, metas):
             continue
         if state not in ("launched", "launching", "waiting"):
             continue
-        waits = [(by_step.get(step) or {}).get("planRepo") or "step %d" % step
+        # Across repositories a wait names the repository; in one, the step.
+        waits = [((by_step.get(step) or {}).get("planRepo") if spans else None) or "step %d" % step
                  for step in row.get("waitsOn") or ()]
         members.append({
             "runId": child, "step": row.get("planStep"),

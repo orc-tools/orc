@@ -21,6 +21,10 @@ import re
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+from run_lifecycle import Snapshot, write_meta
+
 
 SETTLED = {"escalated", "complete", "merged", "merged-to-parent", "cancelled", "failed"}
 OPEN_GATE_PHASES = {"grilling", "clarification", "plan", "planning"}
@@ -240,13 +244,13 @@ def publish(run_dir: Path, report: Path) -> dict:
         text = report.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise ValueError("cannot read the report: %s" % exc) from exc
+    meta = Snapshot(meta)
     validate_report(text, meta["evals"].get("children") or [])
     write_atomic(run_dir / "evals-report.md", text if text.endswith("\n") else text + "\n")
-    meta = parent_meta(run_dir)
     meta["evals"]["reportPublishedAt"] = now()
     meta.update(phase="done", status="complete", outcome="evals")
     meta.pop("titlePending", None)
-    write_atomic(run_dir / "meta.json", json.dumps(meta, indent=2) + "\n")
+    write_meta(run_dir / "meta.json", meta, caller="orc-evals-report")
     return {"ok": True, "report": str(run_dir / "evals-report.md")}
 
 
@@ -262,7 +266,7 @@ def main(argv=None) -> int:
     try:
         result = gather(args.run_dir.resolve()) if args.command == "gather" \
             else publish(args.run_dir.resolve(), args.report)
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1
     print(json.dumps(result))

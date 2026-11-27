@@ -167,9 +167,12 @@ def main():
     guides.add_argument('--repo', required=True, type=Path)
     install = commands.add_parser('install')
     install.add_argument('path', nargs='?')
-    install.add_argument('--git')
-    install.add_argument('--subdir')
-    install.add_argument('--ref', default='HEAD')
+    install.add_argument('--git', help='a Git repository: HTTPS, SSH or an absolute local path')
+    install.add_argument('--subdir', help="the package's folder in the repository (default: its root)")
+    install.add_argument('--branch', help='install the branch\'s current commit and remember the branch')
+    install.add_argument('--follow', action='store_true',
+                         help='with --branch: install each new commit on the branch (default: stay on this one)')
+    install.add_argument('--ref', help='with --git and no --branch: the revision to install (default: HEAD)')
     install.add_argument('--disabled', action='store_true')
     install.add_argument('--adopt-legacy', type=Path)
     link = commands.add_parser('link', help='use a theme folder in place while you work on it')
@@ -187,6 +190,12 @@ def main():
     bundled.add_argument('id', help='bundled package id')
     for action in ('enable', 'disable', 'remove'):
         commands.add_parser(action).add_argument('id')
+    for action, text in (('follow', 'install each new commit on a Git plugin\'s branch'),
+                         ('pin', 'keep a Git plugin on the commit it has'),
+                         ('update', 'install the newest commit on a Git plugin\'s branch')):
+        commands.add_parser(action, help=text).add_argument('id')
+    git_check = commands.add_parser('git-check', help='check Git plugins\' branches: update the ones that follow')
+    git_check.add_argument('id', nargs='?')
     commands.add_parser('adopt', help='enable, once, bundled packages that took over core behaviour since setup')
     setup = commands.add_parser('setup')
     setup.add_argument('--plugins', default='', help='comma-separated optional bundled ids; empty means required only')
@@ -212,13 +221,18 @@ def main():
                                     name=args.name, description=args.description)
         elif args.action == 'install':
             options = {'enable': not args.disabled, 'expected_revision': revision, 'adopt_legacy': args.adopt_legacy}
-            if args.git and args.subdir and not args.path:
-                result = registry.install_git(args.git, args.subdir, args.ref, **options)
-            elif args.path and not args.git and not args.subdir:
-                result = registry.install(args.path, **options)
+            if args.git and not args.path:
+                if args.follow and not args.branch:
+                    parser.error('--follow needs --branch')
+                result = registry.install_git(args.git, args.subdir or '', args.ref, branch=args.branch,
+                                              follow=args.follow, **options)
+            elif args.path and not (args.git or args.subdir or args.branch or args.follow or args.ref):
+                result = registry.install_over(args.path, **options)
             else:
-                parser.error('supply a local package path OR --git SOURCE --subdir PACKAGE')
+                parser.error('supply a local package path OR --git SOURCE [--branch NAME [--follow]] [--subdir PACKAGE]')
             code_notice(result, result.get('installedId'))
+            if result.get('message'):
+                print('orc-app-plugin: ' + result['message'], file=sys.stderr)
         elif args.action == 'link':
             result = registry.link(args.path, enable=not args.disabled, expected_revision=revision)
             code_notice(result, result.get('installedId'))
@@ -231,6 +245,14 @@ def main():
             result = registry.set_enabled(args.id, args.action == 'enable', revision)
         elif args.action == 'remove':
             result = registry.uninstall(args.id, revision)
+        elif args.action in ('follow', 'pin'):
+            result = registry.set_git_follow(args.id, args.action == 'follow', revision)
+        elif args.action == 'update':
+            result = registry.update_git(args.id, revision)
+        elif args.action == 'git-check':
+            for line in registry.check_git(args.id):
+                print(line)
+            return
         elif args.action == 'adopt':
             result = registry.adopt_upgrades()
         else:

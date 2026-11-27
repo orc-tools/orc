@@ -65,9 +65,19 @@ function vaultBuildSource(build) {
 }
 // The page is shown through the frame Orc wraps it in, which keeps it from
 // going anywhere else. The address changes with the page's version, so each
-// of a build's saves loads afresh.
-function vaultPageUrl(slug, version) {
-  return `/api/vaults/${encodeURIComponent(slug)}/frame?v=${encodeURIComponent(version ?? '')}`;
+// of a build's saves loads afresh, and carries Orc's mode, which the page
+// paints in from the start.
+function vaultPageUrl(slug, version, mode) {
+  const shown = mode === 'light' || mode === 'dark' ? `&mode=${mode}` : '';
+  return `/api/vaults/${encodeURIComponent(slug)}/frame?v=${encodeURIComponent(version ?? '')}${shown}`;
+}
+// Orc's mode, light or dark: the one the document wears (Orc's shell always
+// sets data-theme to it), else the one saved for this browser (`saved`, from
+// the orcTheme key), else the system's.
+function vaultMode(theme, saved, systemDark) {
+  if (theme === 'light' || theme === 'dark') return theme;
+  if (saved === 'light' || saved === 'dark') return saved;
+  return systemDark ? 'dark' : 'light';
 }
 // A link a page asked Orc to open, when it is one Orc may open: a web
 // address on another site. `own` is Orc's own origin.
@@ -184,6 +194,6 @@ function vaultPlaceNudge(at, key, home) {
 // END TESTABLE: vault helpers
 
 export {
-  VAULT_NOTE_LIMIT, VAULT_SOUL_LIMIT, vaultBuildSource, vaultByteLength, vaultCountLabel, vaultHue, vaultLink, vaultMeterPercent, vaultNotePath, vaultNoteUrl, vaultPageUrl, vaultPlural, vaultSizeLabel, vaultToolLabel, vaultsByNeed,
+  VAULT_NOTE_LIMIT, VAULT_SOUL_LIMIT, vaultBuildSource, vaultByteLength, vaultCountLabel, vaultHue, vaultLink, vaultMeterPercent, vaultMode, vaultNotePath, vaultNoteUrl, vaultPageUrl, vaultPlural, vaultSizeLabel, vaultToolLabel, vaultsByNeed,
   VAULT_PLACE_HOMES, vaultBuildEndedLine, vaultLayout, vaultPlaceFromPoint, vaultPlaceNudge, vaultPageGesture, vaultPageRequest, vaultPageState, vaultPermalink, vaultTrustsLink,
 };

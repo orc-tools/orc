@@ -1,0 +1,24 @@
+<aside class="chat" aria-label="Vault chat">
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-out" viewBox="0 0 16 16"><path d="M5 11 11 5M6 5h5v5"/></symbol>
+    <symbol id="i-send" viewBox="0 0 14 14"><path d="M7 11.5v-9M3 6.5l4-4 4 4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5"/></symbol>
+    <symbol id="i-tick" viewBox="0 0 14 14"><path d="m2.5 7.5 3 3 6-7"/></symbol>
+  </svg>
+  <div class="chat-inner">
+    <div class="chat-heading">
+      <label for="chat-draft" id="chat-title">Vault chat</label>
+      <button type="button" id="chat-history" aria-controls="conversation" aria-expanded="false">Conversation <span id="turn-count"></span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+    </div>
+    <section id="conversation" aria-label="Conversation" hidden>
+      <p id="chat-empty">Your conversation will appear here.</p>
+      <ol id="chat-turns"></ol>
+    </section>
+    <div class="composer">
+      <textarea id="chat-draft" rows="1" maxlength="8000" aria-label="Message to your vault" placeholder="What would you like to change?"></textarea>
+      <button type="button" id="chat-send" disabled><span id="chat-send-label">Send</span><svg class="icon" aria-hidden="true"><use href="#i-send"/></svg></button>
+      <button type="button" id="chat-stop" hidden>Stop</button>
+    </div>
+    <p id="chat-status" role="status"></p>
+  </div>
+</aside>

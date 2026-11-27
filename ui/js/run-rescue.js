@@ -54,6 +54,7 @@ export function rescueSectionHtml(run) {
     : failed ? 'The last turn failed. Continue with a fresh session below.'
       : operation?.state === 'started' ? 'The previous session is superseded. Messages go to the replacement.' : '';
   const history = (meta.sessionHistory || []).filter(row => row.state === 'superseded');
+  const contextPath = operation?.checkpoint ? operation.checkpoint.replace(/checkpoint\.json$/, 'context.md') : '';
   return `<fieldset class="settings-fieldset control-section"${failed || operation?.state === 'failed' ? ' data-lamp="error"' : ''}>
     <legend class="settings-label"><h5 id="control-rescue-title" tabindex="-1">Switch model or account</h5></legend>
     <p class="control-help">${unstarted
@@ -77,7 +78,7 @@ export function rescueSectionHtml(run) {
       <button type="submit">${unstarted ? 'Start on this agent' : 'Stop old session and continue'}</button>
     </form>
     <p data-rescue-status class="control-status-line${failed ? ' control-error' : ''}" role="status" aria-live="polite">${esc(message || '')}</p>
-    ${operation?.checkpoint ? `<a href="${esc(fileUrl(run.id, operation.checkpoint.replace(/checkpoint\.json$/, 'context.md')))}" target="_blank" rel="noopener">Read rescue context</a>` : ''}
+    ${contextPath ? `<a href="${esc(fileUrl(run.id, contextPath))}" target="_blank" rel="noopener" data-text-stage data-text-title="Rescue context" data-text-path="${esc(contextPath)}" data-copy-label="Copy context">Read rescue context</a>` : ''}
     ${history.length ? `<orc-accordion label="${history.length} superseded session${history.length === 1 ? '' : 's'}"><ul>${history.map(row => `<li>${esc(row.harness)} ${esc(row.claudeAccount || '')} <code>${esc(row.sessionId || row.codexThreadId || row.providerSessionId || 'unrecorded')}</code></li>`).join('')}</ul></orc-accordion>` : ''}
   </fieldset>`;
 }

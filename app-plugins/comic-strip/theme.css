@@ -325,7 +325,7 @@
   font-style: italic; font-weight: 800; letter-spacing: -.02em;
 }
 :root[data-comic-strip] .factory-ticket-facts {
-  border-top: 1.5px dashed var(--comic-strip-rule);
+  padding-top: 9px; border-top: 1.5px dashed var(--comic-strip-rule);
 }
 
 /* The new-run screen as one comic page (frontend.js draws it and marks the
@@ -398,13 +398,22 @@
   fill: light-dark(#ffe578, #ffda6b);
 }
 .newconv-prompt:has(#nc-send[hidden]) .comic-strip-burst { display: none; }
-/* The nudge puts START's letters on the middle of the burst's spiky body
-   (62, 40 of its 124 x 84), not the middle of its box. */
-#new-view[data-comic-strip-page] #nc-send { position: relative; z-index: 2; translate: 1.5px 3.3px; }
+/* The button keeps one width whatever its mode is called, and the nudge puts
+   its letters on the middle of the burst's spiky body (62, 40 of its
+   124 x 84), not the middle of its box. A name too long for one line wraps
+   and shrinks (frontend.js). */
+#new-view[data-comic-strip-page] #nc-send { position: relative; z-index: 2; translate: 10.5px 3.3px; }
 #new-view[data-comic-strip-page] #nc-send::part(button) {
+  width: 96px; justify-content: center; text-align: center; white-space: nowrap;
   border: 0; background: transparent; box-shadow: none; opacity: 1;
   color: var(--comic-strip-ink); font: italic 900 18px/1 var(--comic-strip-display); letter-spacing: .01em;
+  font-size: var(--comic-strip-label-size, 18px);
   text-transform: uppercase; rotate: -8deg;
+}
+/* Whole words only, and two lines no taller than one, so the composer does
+   not grow when the name changes. */
+#new-view[data-comic-strip-page] #nc-send[data-comic-strip-wrap]::part(button) {
+  white-space: normal; overflow-wrap: normal; word-break: normal; line-height: .9;
 }
 #new-view[data-comic-strip-page] #nc-send[disabled]::part(button) {
   color: color-mix(in srgb, var(--comic-strip-ink) 72%, var(--comic-strip-gold));

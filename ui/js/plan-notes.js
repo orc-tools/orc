@@ -9,9 +9,10 @@
 // reach the run's session as one batch.
 import { CARD_FOLD_TIMING } from './chat-card.js';
 import { CHAT_KEY, announce, esc, startWorkLabel, submitChord } from './core.js';
-import { sessionModelBadge, sessionSpeedHtml } from './launch-options.js';
+import { sessionModelBadge, sessionModelBadgeHtml } from './launch-options.js';
 import { reducedMotion } from './motion.js';
 import { ATTACH_ICON, composerText, promptComposerHtml } from './prompt-composer.js';
+import { readSessionDraft, saveSessionDraft } from './session-draft.js';
 
 const NOTES_ARTIFACT = 'planning/planning.html';
 const NOTES_SOURCE = 'planning/planning.mdx';
@@ -454,6 +455,24 @@ export function planChatSendLabel(drafts, typed) {
   return typed ? `Send with ${planNotesCount(drafts)}` : `Send ${planNotesCount(drafts)}`;
 }
 
+// What a plan keeps unsent across a reload (ui/js/session-draft.js), as the
+// run chat does (ui/js/chat.js): the chat box's message and images, the note
+// box open on a part with its words and images, and the words of a note being
+// written in the picture viewer. Null when there is nothing to keep.
+export function planDraft({ message = '', images = [], note = null, picture = '' } = {}) {
+  const kept = {
+    ...(message ? { message } : {}),
+    ...(images.length ? { images } : {}),
+    ...(note?.anchor ? { note: { anchor: note.anchor, text: note.text || '', images: note.images || [] } } : {}),
+    ...(picture.trim() ? { picture } : {}),
+  };
+  return Object.keys(kept).length ? kept : null;
+}
+
+// Words that can no longer go where they were written join the chat box's
+// message, after what is there.
+export const planDraftJoin = (...parts) => parts.map(part => String(part || '').trim()).filter(Boolean).join('\n\n');
+
 // The shared image tray (ATTACHMENTS_JS) keeps a textarea's images under its
 // id, and every plan page makes a box with the same id. Each box gets its own
 // name, so one box never reads or clears the images of a box made earlier.
@@ -527,6 +546,7 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
   let loadedKey = '';
   let pending = null;   // The part the open form is about.
   let sending = false;  // A note is on its way, carrying a box's uploads.
+  let leaving = null;   // The chat box fading out as the plan stops taking notes.
   // The batch whose answers the reader folded. Answers to a newer batch
   // show open, and leaving the plan forgets it.
   let foldedBatch = null;
@@ -544,6 +564,9 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
   dock.className = 'plan-chat';
   dock.setAttribute('role', 'region');
   dock.setAttribute('aria-label', 'Notes');
+  // Out of sight until the first paint says it takes notes, so a plan that
+  // opens with its work started never shows the box fading out.
+  dock.hidden = true;
   dock.innerHTML = `<div class="plan-chat-lane"><div class="plan-notes" hidden></div>${composerHtml()}</div>`;
   const tray = dock.querySelector('.plan-notes');
   const composer = dock.querySelector('.newconv-prompt');
@@ -552,6 +575,31 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
   const modelBadge = composer.querySelector('[data-plan-chat-model]');
   const messageImages = noteImageBox(composer, message, composer.querySelector('[data-plan-note-file]'), () => sending);
   submitChord(message, () => sendButton, true);
+
+  // Unsent words come back after a reload (planDraft above). The chat box
+  // takes its message and images at once. A note box waits for the plan and
+  // its notes to be drawn, then opens on its part again (placeSavedNote).
+  const draftKey = `orcPlanDraft:${runId}`;
+  const saved = readSessionDraft(draftKey) || {};
+  let savedNote = saved.note?.anchor ? saved.note : null;
+  let picture = '';   // The words in the picture viewer's note box.
+  // Images handed back to a box the image tray has not taken up yet: it
+  // takes a box only once it is on the page and enabled.
+  const waiting = new Map();
+  const imagesIn = (box, input) => ('orcAttachments' in input.dataset ? box.attached() : waiting.get(input) || []);
+  const giveImages = (input, references) => {
+    waiting.set(input, references);
+    window.orcRestoreAttachments?.(input, references);
+  };
+  // A note half-written in the picture viewer, which a reload closed.
+  message.value = planDraftJoin(saved.message, saved.picture);
+  giveImages(message, Array.isArray(saved.images) ? saved.images : []);
+  function saveDraft() {
+    if (!alive) return;
+    const note = pending ? { anchor: pending.anchor, text: field.value, images: imagesIn(formImages, field) } : savedNote;
+    saveSessionDraft(draftKey, planDraft({ message: message.value, images: imagesIn(messageImages, message), note, picture }));
+  }
+  if (saved.picture) saveDraft();
 
   const regions = () => [...root.querySelectorAll(NOTE_REGIONS)];
   const regionOf = node => regions().find(region => region.contains(node));
@@ -590,6 +638,8 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
     form.remove();
     pending = null;
     field.value = '';
+    waiting.delete(field);
+    saveDraft();
     if (refocus) from?.focus?.({ preventScroll: true });
   }
 
@@ -600,6 +650,27 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
     place(form);
     field.focus({ preventScroll: true });
     form.scrollIntoView({ block: 'nearest' });
+    saveDraft();
+  }
+
+  // Opens a note box a reload put away on its part again, once the plan and
+  // its notes are drawn. A part the plan no longer has, or a plan taking no
+  // notes on its parts while it is revised, hands the words to the chat box.
+  function placeSavedNote() {
+    if (!savedNote || !loadedAt || !regions().length || !canCompose()) return;
+    const note = savedNote;
+    const images = Array.isArray(note.images) ? note.images : [];
+    savedNote = null;
+    const block = takes() ? blockFor(note.anchor) : null;
+    if (block) {
+      openForm(note.anchor, placeAt(block));
+      field.value = note.text;
+      giveImages(field, images);
+    } else {
+      message.value = planDraftJoin(message.value, note.text);
+      giveImages(message, [...new Set([...imagesIn(messageImages, message), ...images])]);
+    }
+    saveDraft();
   }
 
   // Each picture sits in a box its own size, so a pin keeps its spot when
@@ -623,6 +694,16 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
     pin.setAttribute('aria-hidden', 'true');
     return pin;
   };
+
+  // The part of the plan an anchor names, if the plan still has it.
+  function blockFor(anchor, blocks = regions().flatMap(region => [...region.querySelectorAll(NOTE_BLOCKS)])) {
+    const exact = String(anchor?.exact || '');
+    if (!exact) return null;
+    return blocks.find(candidate => offsetOf(candidate) === anchor.start && candidate.textContent.startsWith(exact))
+      || blocks.find(candidate => candidate.textContent.slice(0, QUOTE_LIMIT) === exact) || null;
+  }
+  // A note's box sits under the part it is on, inside a list item or cell.
+  const placeAt = block => node => (block.matches('li, td, th') ? block.append(node) : block.after(node));
 
   // Marks each note not yet sent on the part it names, or, while Orc
   // revises the plan, each note it is working on.
@@ -652,10 +733,7 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
         return;
       }
       // A note on the whole plan quotes nothing, so it marks no part.
-      const exact = String(anchor.exact || '');
-      if (!exact) return;
-      const block = blocks.find(candidate => offsetOf(candidate) === anchor.start && candidate.textContent.startsWith(exact))
-        || blocks.find(candidate => candidate.textContent.slice(0, QUOTE_LIMIT) === exact);
+      const block = blockFor(anchor, blocks);
       if (!block) return;
       block.classList.add('plan-noted');
       const mark = document.createElement('span');
@@ -692,7 +770,7 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
     message.disabled = !open || notes.busy;
     message.placeholder = revising ? REVISING_PLACEHOLDER : COMPOSE_PLACEHOLDER;
     const badge = sessionModelBadge(meta());
-    const badgeHtml = esc(badge.text) + sessionSpeedHtml(badge.speedName);
+    const badgeHtml = sessionModelBadgeHtml(badge);
     if (modelBadge.dataset.html !== badgeHtml) {
       modelBadge.innerHTML = badgeHtml;
       modelBadge.dataset.html = badgeHtml;
@@ -723,8 +801,24 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
         || ('planNotesFold' in held.dataset && tray.querySelector('[data-plan-notes-fold]'))
         || tray.querySelector('button') || message)?.focus?.({ preventScroll: true });
     }
-    paintComposer();
-    dock.hidden = tray.hidden && composer.hidden;
+    placeSavedNote();
+    // When the plan stops taking notes, as at Start work, the box fades out
+    // before it gives its room back.
+    if (tray.hidden && !canCompose() && !dock.hidden && !leaving && dock.isConnected && !reducedMotion()) {
+      dock.inert = true;
+      leaving = dock.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-out', fill: 'forwards' });
+      leaving.finished.catch(() => {}).then(() => {
+        leaving.cancel();
+        leaving = null;
+        dock.inert = false;
+        dock.hidden = true;
+        if (alive) paint();
+      });
+    }
+    if (!leaving) {
+      paintComposer();
+      dock.hidden = tray.hidden && composer.hidden;
+    }
     // A plan drawn again takes the open form with it.
     if (pending && !form.isConnected) closeForm();
     if (!takes()) closeForm();
@@ -843,6 +937,12 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
     },
     // Set by the viewer while it is open, and called when the notes change.
     onchange: null,
+    // The words of the note the viewer is writing, kept so a reload, which
+    // closes the viewer, hands them to the chat box.
+    draft(text) {
+      picture = String(text || '');
+      saveDraft();
+    },
   };
   planPictureNotes.set(root, viewer);
 
@@ -889,6 +989,8 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
       createdId = reply.draft?.id || null;
       message.value = '';
       messageImages.drop({ kept: true });
+      waiting.delete(message);
+      saveDraft();
     }
     const ids = wasRevising
       ? (createdId ? [createdId] : [])
@@ -920,7 +1022,8 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
     else if (event.target.closest('[data-plan-chat-send]:not([disabled])')) sendMessage();
   });
   // The shared image tray fires input when a box's images change, too.
-  message.addEventListener('input', paintComposer);
+  message.addEventListener('input', () => { paintComposer(); saveDraft(); });
+  field.addEventListener('input', saveDraft);
 
   // A click on a part of the plan starts a note on it. A drag selects text
   // as it always did, a link or button keeps its own click, and a picture
@@ -939,8 +1042,7 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
     const text = block.textContent.trim();
     if (!text) return;
     const start = offsetOf(block) + (block.textContent.length - block.textContent.trimStart().length);
-    openForm(planNoteAnchor(fullText(), start, text, headingPath(block)),
-      node => (block.matches('li, td, th') ? block.append(node) : block.after(node)));
+    openForm(planNoteAnchor(fullText(), start, text, headingPath(block)), placeAt(block));
   };
   root.addEventListener('click', onClick);
 
@@ -1017,10 +1119,11 @@ export function mountPlanNotes({ root, dock, runId, meta, source, changed }) {
       if (turned) paint();
     },
     destroy() {
-      // Leaving the plan puts an unsent note away, as Cancel does; a message
-      // typed in the chat box goes with its images.
+      // Leaving the plan puts an unsent note away, as Cancel does. A message
+      // typed in the chat box stays with its images for when the plan opens
+      // again, as the run chat's does.
       closeForm();
-      messageImages.drop();
+      window.orcClearAttachments?.(message);
       stopFold();
       alive = false;
       clearInterval(timer);

@@ -10,7 +10,12 @@
   let state;
   let sent;
   let previousTurns;
-  draft.placeholder = document.querySelector('main').dataset.placeholder || draft.placeholder;
+  // A template names its box in its own words on <main>: data-placeholder,
+  // data-chat-title and data-send-label.
+  const own = document.querySelector('main').dataset;
+  draft.placeholder = own.placeholder || draft.placeholder;
+  if (own.chatTitle) byId('chat-title').textContent = own.chatTitle;
+  if (own.sendLabel) byId('chat-send-label').textContent = own.sendLabel;
 
   function controls() {
     send.disabled = !state || state.building || !draft.value.trim();

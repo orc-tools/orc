@@ -1,23 +1,21 @@
 // orc-ui: Saved filter views, the filter menu, search, and the run list.
 
-import { orcRegisterOverlayCloser, refresh } from './activity.js';
-import { $, CHAT_KEY, GEAR_ICON, absoluteStamp, deliveryTagHtml, focusTagHtml, announce, canonicalPhase, captureFocus, collapsedGroups, esc, focusRunDestination, highlightSearchMatch, isOpenConversation, isSidebarDone, isMergeQueued, needsAttention, isQuestionRun, labelMenuTrigger, lastActiveRunId, lastSearchSignature, nativeInput, powerMode, restoreFocus, reviewParent, reviewsForRun, runCreated, runStarted, runs, runsLoaded, runStateTagHtml, setFocusRunDestination, setLastActiveRunId, setLastSearchSignature, setSidebarGroupByState, setSidebarOpen, showToast, sidebarGroupBy, sidebarProjectOrder, sidebarStatusOrder, sessionStatus, sessionStatusHtml } from './core.js';
+import { refresh, chatComposerReady, focusChatComposer, updateChatRun, orcRegisterOverlayCloser } from './panel-navigation.js';
+import { isMergeSelected } from './merge-selection.js';
+import { prBadgeHtml } from './pr-badge.js';
+import { $, CHAT_KEY, GEAR_ICON, absoluteStamp, deliveryTagHtml, focusTagHtml, serversTaskTagHtml, announce, canonicalPhase, captureFocus, collapsedGroups, esc, focusRunDestination, highlightSearchMatch, isOpenConversation, isSidebarDone, isMergeQueued, mergeWrappingUpUntil, needsAttention, isQuestionRun, labelMenuTrigger, lastActiveRunId, lastSearchSignature, nativeInput, powerMode, restoreFocus, reviewParent, reviewsForRun, runCreated, runStarted, runs, runsLoaded, runStateTagHtml, setFocusRunDestination, setLastActiveRunId, setLastSearchSignature, setSidebarGroupByState, setSidebarOpen, showToast, sidebarGroupBy, sidebarProjectOrder, sessionStatus, sessionStatusHtml, CONTROL_KEY } from './core.js';
 import { harnessMark } from './agent-marks.js';
-import { cachedConfigData } from './config-data.js';
-import { CONTROL_KEY } from './control.js';
+import { cachedConfigData, normPath } from './config-data.js';
 import { effortLabel } from './launch-options.js';
 import { reducedMotion } from './motion.js';
 import { knownHarnesses } from './harnesses.js';
-import { prBadgeHtml } from './dialogs.js';
-import { q } from './diff.js';
-import { isMergeSelected } from './merge-plan.js';
-import { normPath } from './settings.js';
 import { unpushedMainHtml, watchRepoSync } from './repo-sync.js';
-import { RUN_STATE_LABELS, externalReviewAuthor, groupCountsLabel, groupWaitLabel, isExternalReview, isLocalReviewRun, isOrchestrationWorker, isPlanGroupRoot, isPlanningRun, normalizeStatusOrder, openManualSteps, pairedBuildOf, shownManualSteps, planStartingSince, presentRun, runNoteLabel } from './run-presentation.js';
+import { externalReviewAuthor, groupCountsLabel, groupWaitLabel, groupStepOf, isExternalReview, isLocalReviewRun, isOrchestrationWorker, isPlanGroupRoot, isPlanningRun, openManualSteps, pairedBuildOf, shownManualSteps, planStartingSince, presentRun, runNoteLabel, stateText } from './run-presentation.js';
 import { waitForPaneClosed } from './session-close.js';
+import { shortcutMatches } from './shortcuts.js';
 import { playSettle, playSettleRow, playUnsettle } from './settle-scenes.js';
-import { chatComposerReady, focusChatComposer, updateChatRun } from './chat.js';
 import { flushManualSteps } from './manual-steps.js';
+import { paintedFunMode } from './fun-modes.js';
 import { mountRunRowSlot, mountSidebarHeadSlot, themeComponent } from './theme-components.js';
 // [{ id, name, conds: [{ key, op: 'is'|'not'|'any', value }] }] —
 // persisted so filters survive a refresh. Single-value operators keep string
@@ -243,7 +241,7 @@ function loadRunIds(key) {
 }
 // Runs used to be pinnable in the sidebar; clear the list they were kept in.
 try { localStorage.removeItem('orcPinnedRunIds'); } catch (e) {}
-const GROUP_LABELS = { project: 'Project', status: 'Status', none: 'None' };
+const GROUP_LABELS = { project: 'Project', none: 'None' };
 const SORT_LABELS = {
   newest: 'Newest',
   oldest: 'Oldest',
@@ -566,8 +564,8 @@ export const isSettledByHand = id => id in settledAt;
 // leaves for the shelf ahead of the page, so the settle scene has the gap to
 // close.
 let leavingRunId = null;
-export function groupedPlanBuild(plan) {
-  const build = pairedBuildOf(plan, runs);
+export function groupedPlanBuild(plan, byId = null) {
+  const build = pairedBuildOf(plan, runs, byId);
   if (build && (isSettledByHand(plan.id) || !isSettledByHand(build.id))) return build;
   return null;
 }
@@ -627,7 +625,8 @@ async function settleRun(id, settled = true, { stepsTicked = false } = {}) {
   }
   const { state, unfinished: notDone } = presentRun(run);
   const unfinished = settled && notDone && !(state.key === 'idle' && await branchUnchanged(run.id));
-  const { workers, offered } = settled && !run.meta?.parentRunId
+  // A step's run under its plan settles its own runs with it, as a top-level run does.
+  const { workers, offered } = settled && (!run.meta?.parentRunId || groupStepOf(run.meta, run.id) !== null)
     ? unsettledDescendants(run) : { workers: [], offered: [] };
   const choice = settled && (unfinished || offered.length)
     ? await confirmSettle(title, unfinished ? state.label : '', offered.length) : 'run';
@@ -974,18 +973,54 @@ export function runActivity(r, now) {
   if (sessionStatus(r.meta || {}) === 'running') return now;
   return Math.max(r.mtime * 1000, planStartingSince(r.meta || {}) || 0);
 }
+function runAgeDate(r, now) {
+  const running = sessionStatus(r.meta || {}) === 'running';
+  const raw = running ? now : runActivity(r, now);
+  // Floor running timestamps to the minute so `datetime` and `title` stay
+  // identical across every 3-second poll within the same minute.
+  const ms = running ? Math.floor(raw / 60000) * 60000 : raw;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 function runAgeHtml(r, now) {
-  const date = new Date(runActivity(r, now));
-  if (Number.isNaN(date.getTime())) return '';
+  const date = runAgeDate(r, now);
+  if (!date) return '';
   return `<time class="run-age" datetime="${date.toISOString()}" title="Last activity ${absoluteStamp(date)}">${compactAge(date, new Date(now))}</time>`;
+}
+function nextCompactAgeChangeAt(dateMs, now) {
+  const minutes = Math.floor((now - dateMs) / 60000);
+  if (minutes < 60) return dateMs + (Math.max(0, minutes) + 1) * 60000;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return dateMs + (hours + 1) * 3600000;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return dateMs + (days + 1) * 86400000;
+  if (days < 35) return dateMs + (Math.floor(days / 7) + 1) * 7 * 86400000;
+  if (days < 365) return dateMs + (Math.floor(days / 30) + 1) * 30 * 86400000;
+  return dateMs + (Math.floor(days / 365) + 1) * 365 * 86400000;
+}
+function nextRowExpiryAt(r, now) {
+  const meta = r.meta || {};
+  let next = Infinity;
+  const ageDate = runAgeDate(r, now);
+  if (ageDate) {
+    next = Math.min(next, nextCompactAgeChangeAt(ageDate.getTime(), now));
+    if (sessionStatus(meta) === 'running') {
+      next = Math.min(next, (Math.floor(now / 60000) + 1) * 60000);
+    }
+  }
+  const starting = planStartingSince(meta, now);
+  if (starting !== null) next = Math.min(next, starting + 5 * 60 * 1000);
+  if (meta.forkingSince) {
+    const forkingEnd = (meta.forkingSince + 900) * 1000;
+    if (forkingEnd > now) next = Math.min(next, forkingEnd);
+  }
+  const wrapUntil = mergeWrappingUpUntil(meta);
+  if (wrapUntil !== null && wrapUntil > now) next = Math.min(next, wrapUntil);
+  return next;
 }
 // Saved project order (Settings) as lowercase keys; unknown projects sort after.
 export function projectOrderKeys() {
   return (typeof sidebarProjectOrder === 'undefined' ? [] : sidebarProjectOrder).map(p => String(p).toLowerCase());
-}
-// Saved status order (config.ui.statusOrder) with any omitted or future statuses appended in default order.
-export function statusOrderKeys() {
-  return normalizeStatusOrder(typeof sidebarStatusOrder === 'undefined' ? null : sidebarStatusOrder);
 }
 // Query tolerance: 0 = substring hit, 1 = loose (in-order characters) hit,
 // -1 = miss. Loose matching is what lets a half-remembered or mistyped query
@@ -996,12 +1031,23 @@ function subsequenceOf(needle, hay) {
   for (let j = 0; j < hay.length && i < needle.length; j++) if (hay[j] === needle[i]) i++;
   return i === needle.length;
 }
-export function queryRank(r, q) {
+// A run's searchable text, lowercased once rather than on every key. A rename
+// or a phase change edits meta in place, so the cache holds the values it
+// lowercased and redoes them when one differs. The first three are its name.
+const searchFieldCache = new WeakMap();
+function searchFields(r) {
   const meta = r.meta || {};
-  const fields = [r.id, meta.title, meta.sourceRef, meta.phase, meta.branch,
-    runProjectPath(r)].filter(Boolean).map(v => String(v).toLowerCase());
-  if (fields.some(v => v.includes(q))) return 0;
-  return fields.some(v => subsequenceOf(q, v)) ? 1 : -1;
+  const source = [r.id, meta.title, meta.sourceRef, meta.phase, meta.branch, runProjectPath(r)];
+  const cached = r.meta && searchFieldCache.get(r.meta);
+  if (cached && cached.source.every((value, index) => value === source[index])) return cached.fields;
+  const fields = source.map(v => (v ? String(v).toLowerCase() : ''));
+  if (r.meta) searchFieldCache.set(r.meta, { source, fields });
+  return fields;
+}
+export function queryRank(r, q) {
+  const fields = searchFields(r);
+  if (fields.some(v => v && v.includes(q))) return 0;
+  return fields.some(v => v && subsequenceOf(q, v)) ? 1 : -1;
 }
 function matchesQuery(r, q) {
   return queryRank(r, q) >= 0;
@@ -1013,9 +1059,7 @@ function searchTier(r, q) {
   const rank = queryRank(r, q);
   if (rank < 0) return Infinity;
   if (rank > 0) return 2;
-  const meta = r.meta || {};
-  return [r.id, meta.title, meta.sourceRef]
-    .some(v => v && String(v).toLowerCase().includes(q)) ? 0 : 1;
+  return searchFields(r).slice(0, 3).some(v => v && v.includes(q)) ? 0 : 1;
 }
 // ---- settled shelf ----
 // It shares the state tag's class, so a theme's lettering for row tags reaches it.
@@ -1056,6 +1100,9 @@ let searchLimit = SEARCH_PAGE;
 let searchPagedQuery = '';
 let searchDrawn = 0;
 let searchMatched = 0;
+// Typing draws the list once it pauses this long, not on every key.
+const SEARCH_DEBOUNCE_MS = 150;
+let searchRenderTimer;
 function searchShownText() {
   return searchDrawn < searchMatched ? `First ${searchDrawn} of ${searchMatched} matching runs shown`
     : `${$('count').textContent} runs shown`;
@@ -1063,11 +1110,18 @@ function searchShownText() {
 // A search spans every run, so it leaves nothing to settle.
 export function settledRuns(shownIds, q, now, byId, inheritedIds) {
   if (q) return [];
-  inheritedIds ??= inheritedSettledReviewIds();
-  const settledTime = r => settledAt[r.id] ?? (runActivity(r, now) || 0);
-  return runs.filter(r => !reviewParent(r, runs, byId) && !shownIds.has(r.id)
-    && (r.id in settledAt || inheritedIds.has(r.id) || isSidebarDone(r.meta || {}, r.files || [])))
-    .sort((a, b) => (settledTime(b) - settledTime(a)) || (runStarted(b) - runStarted(a)));
+  byId ??= new Map(runs.map(run => [run.id, run]));
+  inheritedIds ??= inheritedSettledReviewIds(undefined, byId);
+  const filtered = runs.filter(r => !reviewParent(r, runs, byId) && !shownIds.has(r.id)
+    && (r.id in settledAt || inheritedIds.has(r.id) || isSidebarDone(r.meta || {}, r.files || [])));
+  const settledTimes = new Map();
+  const startedTimes = new Map();
+  for (const r of filtered) {
+    settledTimes.set(r.id, settledAt[r.id] ?? (runActivity(r, now) || 0));
+    startedTimes.set(r.id, runStarted(r, runs, byId));
+  }
+  return filtered.sort((a, b) => (settledTimes.get(b.id) - settledTimes.get(a.id))
+    || (startedTimes.get(b.id) - startedTimes.get(a.id)));
 }
 // `count` also takes in the settled rows the list holds for the open run.
 function settledShelfHtml(settled, trees, renderRun, count) {
@@ -1107,7 +1161,238 @@ let listFollowsOpenRun = false;
 export function releaseOpenRunRow(openingId) {
   const leavingRun = !runs.some(run => run.id === openingId);
   const clearedWarnings = leavingRun && clearTransientRunWarnings();
+  if (leavingRun) {
+    followedRunId = revealPending = heldRunId = null;
+    cancelRevealAlign();
+  }
   if ((listFollowsOpenRun && leavingRun) || clearedWarnings) renderList();
+}
+const isRealListDom = list => Boolean(list && list.nodeType === 1 && typeof document?.createElement === 'function');
+const rowDomCache = new Map();
+const groupDomCache = new Map();
+let htmlTemplateEl = null;
+let shelfHeadingEl = null;
+let shelfClosedBodyEl = null;
+let shelfScrimEl = null;
+let shelfDrawerEl = null;
+let shelfDrawerBodyEl = null;
+let shelfMoreEl = null;
+let searchMoreEl = null;
+let filterEmptyEl = null;
+let lastClearFiltersOpts = null;
+let lastSettledTotal = 0;
+let onRowInserted = null;
+let onRowRemoved = null;
+let onListReconciled = null;
+
+function htmlToElement(html) {
+  if (!htmlTemplateEl) htmlTemplateEl = document.createElement('template');
+  htmlTemplateEl.innerHTML = html;
+  return htmlTemplateEl.content.firstElementChild;
+}
+
+function collectPaintedIcons(root) {
+  const iconsByPath = new Map();
+  if (!root) return iconsByPath;
+  for (const img of root.querySelectorAll('img.project-icon[data-project]')) {
+    if (!img.complete || !img.naturalWidth) continue;
+    const key = img.dataset.project;
+    if (!iconsByPath.has(key)) iconsByPath.set(key, []);
+    iconsByPath.get(key).push(img);
+  }
+  return iconsByPath;
+}
+
+function restorePaintedIcons(root, iconsByPath) {
+  if (!root || !iconsByPath.size) return;
+  for (const img of root.querySelectorAll('img.project-icon[data-project]')) {
+    const kept = iconsByPath.get(img.dataset.project)?.shift();
+    if (kept) img.replaceWith(kept);
+  }
+}
+
+function reconcileChildren(container, desired) {
+  if (!container.firstElementChild) {
+    if (!desired.length) return;
+    const frag = document.createDocumentFragment();
+    for (const node of desired) frag.appendChild(node);
+    container.appendChild(frag);
+    return;
+  }
+  const desiredSet = new Set(desired);
+  let child = container.firstElementChild;
+  while (child) {
+    const next = child.nextElementSibling;
+    if (!desiredSet.has(child)) child.remove();
+    child = next;
+  }
+  let cursor = container.firstElementChild;
+  for (const node of desired) {
+    if (node === cursor) {
+      cursor = cursor.nextElementSibling;
+    } else {
+      container.insertBefore(node, cursor);
+    }
+  }
+}
+
+function invalidateRowDomCache(id) {
+  for (const prefix of ['main:', 'shelf:']) {
+    const cached = rowDomCache.get(prefix + id);
+    if (cached) {
+      cached.contextKey = null;
+      cached.html = null;
+    }
+  }
+}
+
+// The run whose row the list last scrolled to, and the one whose row it still
+// has to: on load the run opens before the list has drawn its row.
+let followedRunId = null;
+let revealPending = null;
+// The list changes height just after a run opens, as the Settled shelf and
+// the usage panel arrive, which can push the row back out of view. The row is
+// held in view through that until the reader moves the list themselves.
+let heldRunId = null;
+let revealAlignFrame = 0;
+function cancelRevealAlign() {
+  if (!revealAlignFrame) return;
+  cancelAnimationFrame(revealAlignFrame);
+  revealAlignFrame = 0;
+}
+for (const moved of ['wheel', 'touchmove', 'pointerdown', 'keydown']) {
+  $('list')?.addEventListener?.(moved, () => {
+    heldRunId = null;
+    cancelRevealAlign();
+  }, { capture: true, passive: true });
+}
+// Opening another run scrolls the list just far enough to show its whole row.
+// The same run opening again, on another tab or after a refresh moved its row,
+// leaves the list where the reader put it.
+export function followOpenRun(id) {
+  if (id === followedRunId) return;
+  followedRunId = revealPending = id;
+  heldRunId = null;
+  cancelRevealAlign();
+  revealOpenRunRow();
+}
+function rowRevealEdge(row, scroller) {
+  // A pinned group header covers the top of the scroller, so a row under it
+  // is hidden. The header's own height and offset say how much it covers.
+  const head = row.closest('.run-group')?.querySelector(':scope > .run-group-head');
+  const pin = head && getComputedStyle(head);
+  const covered = pin?.position === 'sticky' ? head.offsetHeight + (parseFloat(pin.top) || 0) : 0;
+  const top = scroller.getBoundingClientRect().top + scroller.clientTop + covered;
+  const bottom = top - covered + scroller.clientHeight;
+  return { top, bottom, box: row.getBoundingClientRect() };
+}
+let lastIntrinsicHeightKey = '';
+function syncRowIntrinsicHeight(force = false) {
+  const list = $('list');
+  if (!list) return;
+  const intrinsicKey = `${sidebarGroupBy}:${document.documentElement?.dataset?.theme || ''}:${document.documentElement?.dataset?.mode || ''}`;
+  if (!force && intrinsicKey === lastIntrinsicHeightKey) return;
+  const sample = list.querySelector(':scope > .run:not(.fork-child), :scope > .run-group > .run-group-body:not([hidden]) > .run:not(.fork-child)');
+  const height = sample?.getBoundingClientRect?.().height || 0;
+  if (height > 0) {
+    const value = `${height}px`;
+    if (list.style.getPropertyValue('--run-row-intrinsic-height') !== value) {
+      list.style.setProperty('--run-row-intrinsic-height', value);
+    }
+    lastIntrinsicHeightKey = intrinsicKey;
+  } else {
+    list.style.removeProperty('--run-row-intrinsic-height');
+    lastIntrinsicHeightKey = '';
+  }
+}
+function scheduleRevealAlign(id, row, scroller, fromTop, initialDelta, smooth) {
+  if (typeof requestAnimationFrame !== 'function') return;
+  let direction = Math.sign(initialDelta);
+  let gliding = smooth;
+  let framesLeft = smooth ? 90 : 6;
+  let idleFrames = 0;
+  let corrections = 0;
+  let lastScrollTop = scroller.scrollTop;
+  const edgeError = ({ top, bottom, box }) => (fromTop ? box.top - top : box.bottom - bottom);
+  const step = () => {
+    revealAlignFrame = 0;
+    if (heldRunId !== id || !row.isConnected || !row.getClientRects().length || framesLeft-- <= 0) return;
+    const currentScrollTop = scroller.scrollTop;
+    const moved = Math.abs(currentScrollTop - lastScrollTop) > 0.5;
+    lastScrollTop = currentScrollTop;
+    const err = edgeError(rowRevealEdge(row, scroller));
+    if (!gliding) {
+      if (Math.abs(err) > 0.5 && corrections < 4) {
+        scroller.scrollBy({ top: err, behavior: 'auto' });
+        if (Math.abs(scroller.scrollTop - currentScrollTop) > 0.5) corrections++;
+        lastScrollTop = scroller.scrollTop;
+      }
+    } else if (direction * err <= 0.5) {
+      // Stop once off-screen content-visibility sizing resolves past the target edge.
+      scroller.scrollBy({ top: err, behavior: 'auto' });
+      if (Math.abs(err) > 0.5 && Math.abs(scroller.scrollTop - currentScrollTop) > 0.5) corrections++;
+      gliding = false;
+      idleFrames = 0;
+      lastScrollTop = scroller.scrollTop;
+      framesLeft = Math.min(framesLeft, 6);
+    } else if (moved) {
+      idleFrames = 0;
+    } else if (++idleFrames >= 2 && Math.abs(err) > 0.5 && corrections < 4) {
+      const nudgeSmooth = Math.abs(err) > 24;
+      scroller.scrollBy({ top: err, behavior: nudgeSmooth ? 'smooth' : 'auto' });
+      if (Math.abs(scroller.scrollTop - currentScrollTop) > 0.5) corrections++;
+      gliding = nudgeSmooth;
+      direction = Math.sign(err);
+      idleFrames = 0;
+      lastScrollTop = scroller.scrollTop;
+    }
+    if (gliding || framesLeft > 0) revealAlignFrame = requestAnimationFrame(step);
+  };
+  revealAlignFrame = requestAnimationFrame(step);
+}
+function revealOpenRunRow(id = revealPending) {
+  const list = $('list');
+  // A collapsed sidebar lays out no list. The row is shown once it opens.
+  if (!id || !list?.getClientRects?.().length) return;
+  const row = [...list.querySelectorAll('.run')].find(el => el.dataset.id === id && el.getClientRects().length);
+  if (!row) {
+    // A run with no row to show sits in a closed group or behind a filter,
+    // and opening that later must not move the list. A run the list has not
+    // heard of yet keeps waiting for its row.
+    if (runs.some(run => run.id === id)) {
+      revealPending = heldRunId = null;
+      cancelRevealAlign();
+    }
+    return;
+  }
+  const scroller = row.closest('#settled-body') || list;
+  // A list still taking its place has no height to measure the row against.
+  if (!scroller.clientHeight) return;
+  revealPending = null;
+  heldRunId = id;
+  cancelRevealAlign();
+  syncRowIntrinsicHeight(true);
+  const { top, bottom, box } = rowRevealEdge(row, scroller);
+  // A pixel of slack, so a row that fits by a fraction counts as in view.
+  const above = box.top < top - 1;
+  const below = box.bottom > bottom + 1;
+  if (!above && !below) return;
+  // The shortest way there, and a row taller than the list shows from its top.
+  const fromTop = above || box.height > bottom - top;
+  const initialDelta = fromTop ? box.top - top : box.bottom - bottom;
+  const smooth = !reducedMotion();
+  scroller.scrollBy({ top: initialDelta, behavior: smooth ? 'smooth' : 'auto' });
+  if (!smooth) {
+    for (let i = 0; i < 3; i++) {
+      const next = rowRevealEdge(row, scroller);
+      const err = fromTop ? next.box.top - next.top : next.box.bottom - next.bottom;
+      if (Math.abs(err) <= 0.5) break;
+      const prevTop = scroller.scrollTop;
+      scroller.scrollBy({ top: err, behavior: 'auto' });
+      if (Math.abs(scroller.scrollTop - prevTop) <= 0.5) break;
+    }
+  }
+  scheduleRevealAlign(id, row, scroller, fromTop, initialDelta, smooth);
 }
 export function activateSidebarRun(id) {
   // A theme's own row draws the open state itself, so it needs the draw.
@@ -1121,10 +1406,12 @@ export function activateSidebarRun(id) {
 
   rows.forEach(row => {
     const current = row === destination;
+    const wasActive = row.classList?.contains?.('active');
     row.classList.toggle('active', current);
     const link = row.querySelector('.run-link');
     if (current) link?.setAttribute('aria-current', 'page');
     else link?.removeAttribute('aria-current');
+    if (wasActive !== current) invalidateRowDomCache(row.dataset.id);
   });
 
   const group = destination.closest('.run-group');
@@ -1135,6 +1422,9 @@ export function activateSidebarRun(id) {
     collapsedGroups[header.dataset.group] = false;
     try { localStorage.setItem('orcSidebarCollapsedGroups', JSON.stringify(collapsedGroups)); } catch (e) {}
   }
+  // The next full draw would otherwise read this run as newly opened and
+  // open its group again after the reader closed it.
+  if (typeof setLastActiveRunId === 'function') setLastActiveRunId(id);
   return true;
 }
 // What the last render drew above the Settled shelf, and whether a search chose it.
@@ -1175,18 +1465,23 @@ function waitingStepRowHtml(r, last, withProject) {
   const step = r.waitingStep;
   const since = step.since ? new Date(step.since) : new Date((r.mtime || 0) * 1000);
   return `<div class="run fork-child run-waiting-step${last ? ' fork-last' : ''}" data-id="${esc(r.id)}" data-opens="${esc(r.planId)}" data-part="run-row" data-state="waiting">
-    ${withProject && step.repo ? `<div class="run-project" data-part="run-project">${step.path ? projectIconHtml(step.path, step.repo) : projectMonogramHtml(step.repo)}<span class="run-project-name">${esc(step.repo)}</span></div>` : ''}
+    ${withProject && r.spans && step.repo ? `<div class="run-project" data-part="run-project">${step.path ? projectIconHtml(step.path, step.repo) : projectMonogramHtml(step.repo)}<span class="run-project-name">${esc(step.repo)}</span></div>` : ''}
     <a class="run-link" href="#${encodeURIComponent(r.planId)}" data-id="${esc(r.planId)}" title="${esc(step.title)}"><div class="name" data-part="run-title"><span class="sr-only">Step ${step.step} of the plan — </span>${esc(step.title)}</div></a>
     <div class="sub" data-part="run-meta"><span class="sub-tags"><span class="state-tag state-waiting" data-part="state-tag" data-state="waiting" title="Starts by itself when that run reaches Ship">${esc(groupWaitLabel(step))}</span></span><span class="run-end">${Number.isNaN(since.getTime()) ? '' : `<time class="run-age" datetime="${since.toISOString()}">${compactAge(since)}</time>`}</span></div>
   </div>`;
 }
 
-export function renderList() {
+export function renderList({ trustRunRefs = false } = {}) {
   if (listPressHeld || priorityDragId) {
     listRenderPending = true;
     return;
   }
   listRenderPending = false;
+  if (searchRenderTimer !== undefined) {
+    clearTimeout(searchRenderTimer);
+    searchRenderTimer = undefined;
+  }
+  const focusedBefore = typeof document !== 'undefined' ? document.activeElement : null;
   const focus = captureFocus();
   const drawerScroll = $('settled-drawer') && $('settled-body')?.scrollTop;
   const activeView = filterViews.find(v => v.id === activeViewId) || null;
@@ -1199,7 +1494,7 @@ export function renderList() {
   const stranded = strandedReviewIds(byId);
   // A review lives in its run's Chat, and a plan paired with its build in
   // the build's row (plan-pair.js), so neither lists a row of its own.
-  const pairedPlans = new Set(runs.filter(groupedPlanBuild).map(run => run.id));
+  const pairedPlans = new Set(runs.filter(run => groupedPlanBuild(run, byId)).map(run => run.id));
   const rowless = run => pairedPlans.has(run.id) || (!stranded.has(run.id) && reviewParent(run, runs, byId));
   const parentOf = run => stranded.has(run.id) ? undefined : (run.meta || {}).parentRunId;
   const inheritedIds = inheritedSettledReviewIds(stranded, byId);
@@ -1223,20 +1518,35 @@ export function renderList() {
   });
   const orchestrating = id => (childRuns.get(id) || []).some(child => isOrchestrationWorker(child.meta));
   // A worker under a closed fork toggle leaves the list with all beneath it;
-  // a search spans every run, so it collapses nothing.
+  // a search spans every run, so it collapses nothing, but it still knows
+  // which runs the toggles fold away, for the note that it went past them.
   const collapsedIds = new Set();
-  const collapse = run => {
-    if (collapsedIds.has(run.id)) return;
-    collapsedIds.add(run.id);
-    (childRuns.get(run.id) || []).forEach(collapse);
+  const foldInto = ids => {
+    const fold = run => {
+      if (ids.has(run.id)) return;
+      ids.add(run.id);
+      (childRuns.get(run.id) || []).forEach(fold);
+    };
+    return fold;
   };
-  if (!q) {
-    childRuns.forEach((children, pid) => {
-      if (!expandedForkRuns.has(pid)) children.filter(child => isOrchestrationWorker(child.meta)).forEach(collapse);
-    });
-  }
+  const collapse = foldInto(collapsedIds);
+  const foldedIds = q ? new Set() : collapsedIds;
+  childRuns.forEach((children, pid) => {
+    if (!expandedForkRuns.has(pid)) children.filter(child => isOrchestrationWorker(child.meta)).forEach(foldInto(foldedIds));
+  });
   const matched = q ? runs.filter(r => matchesQuery(r, q))
     : runs.filter(r => !settledIds.has(r.id) && !collapsedIds.has(r.id) && matchesConds(filterMeta(r), conds, r.id, r.files || []));
+  // A search spans every run. Say so when it finds one the filter would hide.
+  const filterName = activeView ? activeView.name : activeViewId === CUSTOM_VIEW_ID ? 'Custom' : '';
+  const beyondFilter = !!q && matched.some(r => settledIds.has(r.id) || foldedIds.has(r.id)
+    || isSidebarDone(r.meta || {}, r.files || []) || !matchesConds(filterMeta(r), conds, r.id, r.files || []));
+  const scopeNote = $('search-scope');
+  if (scopeNote) {
+    // A live region: write only a change, or every redraw reads it out again.
+    const note = !beyondFilter ? '' : filterName ? `Searching all runs, not only ${filterName}` : 'Searching all runs, settled ones too';
+    scopeNote.hidden = !beyondFilter;
+    if (scopeNote.textContent !== note) scopeNote.textContent = note;
+  }
   const matchedIds = new Set(matched.map(r => r.id));
   let shown = runs.filter(r => matchedIds.has(r.id));
   const restsOnShelf = r => settledIds.has(r.id) || isSidebarDone(r.meta || {}, r.files || []);
@@ -1340,7 +1650,7 @@ export function renderList() {
   // A search that finds a paired plan, or the plan opened on one of its own
   // pages, lists the build it shows as.
   for (const plan of shown.filter(run => pairedPlans.has(run.id) && (q || run.id === activeId))) {
-    const build = groupedPlanBuild(plan);
+    const build = groupedPlanBuild(plan, byId);
     if (!shownIds.has(build.id)) {
       shown.push(build);
       shownIds.add(build.id);
@@ -1426,7 +1736,7 @@ export function renderList() {
     if (!times.has(run.id)) times.set(run.id, read(run));
     return times.get(run.id);
   };
-  const startedAt = memo(new Map(), run => runStarted(run, runs));
+  const startedAt = memo(new Map(), run => runStarted(run, runs, byId));
   const createdAt = memo(new Map(), runCreated);
   const creationDirection = !q && sidebarSortBy === 'oldest' ? -1 : 1;
   const compareRunCreation = (a, b) => creationDirection * (startedAt(b) - startedAt(a))
@@ -1460,14 +1770,23 @@ export function renderList() {
       if (seen.has(r.id)) return;
       seen.add(r.id);
       into.push([r, depth]);
-      (kids.get(r.id) || []).forEach(k => walkInto(k, depth + 1, into));
+      const children = kids.get(r.id) || [];
       // A plan's step that waits on another has no run yet, but lists in its
-      // group all the same, saying what it waits on.
-      if (!q && isPlanGroupRoot(r.meta, r.id)) {
-        r.meta.runGroup.members.filter(member => member.state === 'waiting').forEach(member => {
-          into.push([{ id: `${r.id}~step-${member.step}`, waitingStep: member, planId: r.id, meta: {}, mtime: r.mtime }, depth + 1]);
-        });
+      // group all the same, in its step's place, saying what it waits on.
+      const waiting = !q && isPlanGroupRoot(r.meta, r.id)
+        ? r.meta.runGroup.members.filter(member => member.state === 'waiting')
+        : [];
+      if (!waiting.length) {
+        children.forEach(k => walkInto(k, depth + 1, into));
+        return;
       }
+      const stepOf = new Map(r.meta.runGroup.members.filter(member => member.runId).map(member => [member.runId, member.step ?? 1000]));
+      const rows = [...children.map(k => ({ step: stepOf.get(k.id) ?? 1000, run: k })),
+        ...waiting.map(member => ({ step: member.step ?? 1000, member }))];
+      // Children arrive in step order already; a stable sort slots each wait in.
+      rows.sort((a, b) => a.step - b.step);
+      rows.forEach(({ run, member }) => (run ? walkInto(run, depth + 1, into)
+        : into.push([{ id: `${r.id}~step-${member.step}`, waitingStep: member, planId: r.id, spans: r.meta.runGroup.repos > 1, meta: {}, mtime: r.mtime }, depth + 1])));
     };
     const markLast = tree => {
       if (tree.length > 1) tree[tree.length - 1].push(true);
@@ -1495,9 +1814,8 @@ export function renderList() {
     const treeActivity = new Map(trees.map(tree => [tree, Math.max(...tree.map(([r]) => runActivity(r, now) || 0))]));
     trees.sort((a, b) => (treeTier.get(a) - treeTier.get(b)) || (treeActivity.get(b) - treeActivity.get(a)));
   }
-  const groupBy = typeof sidebarGroupBy === 'string' ? sidebarGroupBy : 'none';
-  const groupKey = root => groupBy === 'project' ? runProject(root).key
-    : groupBy === 'status' ? presentRun(root).state.key : '';
+  const groupBy = typeof sidebarGroupBy !== 'undefined' && sidebarGroupBy === 'project' ? 'project' : 'none';
+  const groupKey = root => (groupBy === 'project' ? runProject(root).key : '');
   const priorityRoot = new Map();
   priorityGroups = new Map();
   priorityGroupOf = new Map();
@@ -1551,17 +1869,22 @@ export function renderList() {
     const parentRun = depth ? byId.get(parentId) : null;
     const role = depth && isOrchestrationWorker(meta) ? meta.orchestrationWorker?.role : null;
     const workerRole = Object.hasOwn(WORKER_ROLE_LABELS, role) ? role : null;
-    const childKind = workerRole ? `${WORKER_ROLE_LABELS[workerRole]} worker` : isLocalReviewRun(meta) ? 'Review'
+    // Under its plan, a step's run says which step it builds.
+    const groupStep = depth && isPlanGroupRoot(parentRun?.meta, parentId) ? groupStepOf(meta, r.id) : null;
+    const childKind = workerRole ? `${WORKER_ROLE_LABELS[workerRole]} worker` : groupStep ? `Step ${groupStep}` : isLocalReviewRun(meta) ? 'Review'
       : parentRun?.meta?.route === 'evals' ? 'Eval candidate'
       : planHosts.has(r.id) ? 'Plan' : 'Fork';
     const forkPrefix = depth ? `<span class="sr-only">${childKind} of ${esc((parentRun && parentRun.meta && parentRun.meta.title) || parentId)} — </span>` : '';
     const settledByHand = r.id in settledAt;
     const groupRoot = isPlanGroupRoot(meta, r.id);
+    const groupRepos = groupRoot && meta.runGroup.repos > 1;
+    // A step's run builds in its plan's project, which the plan's row names.
+    const ownProject = !groupStep || parentRun.meta.runGroup.repos > 1;
     // A plan whose runs span repositories names how many, not its own project.
     // An Evals candidate under its parent is named by its model alone.
     const candidate = depth ? evalsCandidateLabel(r.id, parentRun?.meta) : '';
-    const project = withProject && !candidate ? (groupRoot ? { key: 'group', label: `${meta.runGroup.repos} repositories` } : runProject(r)) : null;
-    const projectIcon = project && (groupRoot ? projectMonogramHtml('Plan') : isExternalReview(meta) ? EXTERNAL_REVIEW_ICON : isLocalReviewRun(meta) ? REVIEW_ICON : projectIconHtml(runProjectPath(r), project.label));
+    const project = withProject && !candidate && ownProject ? (groupRepos ? { key: 'group', label: `${meta.runGroup.repos} repositories` } : runProject(r)) : null;
+    const projectIcon = project && (groupRepos ? projectMonogramHtml('Plan') : isExternalReview(meta) ? EXTERNAL_REVIEW_ICON : isLocalReviewRun(meta) ? REVIEW_ICON : projectIconHtml(runProjectPath(r), project.label));
     const externalTag = isExternalReview(meta) ? EXTERNAL_REVIEW_TAG : '';
     // The row is too narrow for both, and whose PR it is says more than the project.
     const reviewAuthor = externalReviewAuthor(meta);
@@ -1575,7 +1898,7 @@ export function renderList() {
     // by hand. A review settled with its parent has neither.
     const actions = settledByHand
       ? `<button class="settle-run unsettle-run" type="button" data-key="unsettle-${esc(r.id)}" data-run-id="${esc(r.id)}" aria-label="${esc(`Un-settle ${title}`)}" title="Un-settle"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>`
-      : `${shelved || settledInList ? '' : `<button class="settle-run" type="button" data-key="settle-${esc(r.id)}" data-run-id="${esc(r.id)}" aria-label="${esc(`Settle ${title}`)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Settle</button>`}`;
+      : `${shelved || settledInList ? '' : `<button class="settle-run" type="button" data-key="settle-${esc(r.id)}" data-run-id="${esc(r.id)}" aria-label="${esc(`Settle ${title}`)}" title="Moves this run to the Settled shelf and closes its session, terminals and worktree; keeps the branch, PR and history."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Settle</button>`}`;
     const selected = typeof isMergeSelected === 'function' && isMergeSelected(r.id);
     const priorityRootId = !shelved && priorityRoot.get(r.id);
     // The reader is on this run already, and Chat reports it read.
@@ -1589,7 +1912,7 @@ export function renderList() {
     const openSteps = !shelved && !settledInList ? shownManualSteps(meta, r.files || []) : 0;
     const warning = runWarnings.get(r.id)?.message || '';
     rowSlotData.set(r.id, {
-      id: r.id, title, state: state.key, stateLabel: state.label, stateDetail: state.detail || '',
+      id: r.id, title, state: state.key, stateLabel: stateText(state), stateDetail: state.detail || '',
       active: r.id === activeId, settled: shelved || settledInList, depth, workerRole, forks: nForks,
       project: project ? (project.key === 'other' ? 'No project' : project.label) : '',
       questions: badges.questions || 0, attention: Boolean(badges.attention && !reviewing), unread,
@@ -1603,18 +1926,19 @@ export function renderList() {
       </a>
       <div class="sub" data-part="run-meta"><span class="sub-tags">
         ${['queued', 'paused'].includes(state.key) ? '' : sessionStatusHtml(reviewing ? latestReview.meta : meta)}
-        ${prBadgeHtml(meta)}
-        ${unread ? '<span class="unread-tag"><span class="dot" aria-hidden="true"></span>Unread</span>' : ''}
         ${settledInList ? SETTLED_TAG : runStateTagHtml(reviewTag ? { ...state, key: 'reviewing' } : state)}
         ${groupRoot && !settledInList ? `<span class="run-group-counts">${esc(groupCountsLabel(meta.runGroup))}</span>` : ''}
-        ${meta.runNote && !settledInList ? `<span class="run-note-tag">${esc(runNoteLabel(meta.runNote))}</span>` : ''}
-        ${openSteps ? `<span class="steps-tag">${openSteps} ${openSteps === 1 ? 'step' : 'steps'} left</span>` : ''}
+        ${groupStep ? `<span class="run-group-step">Step ${groupStep}</span>` : ''}
         ${badges.questions && !state.countsQuestions ? `<span class="waiting-tag question-tag">${badges.questions} ${badges.questions === 1 ? 'question' : 'questions'}</span>` : ''}
-        ${badges.attention && !reviewing ? '<span class="attention-tag">attention</span>' : ''}
-        ${deliveryTagHtml(meta, { linkLive: false, files: r.files || [], working: state.key === 'working' })}
-        ${sidebar.stale ? '<span class="stale-tag" aria-label="no recent activity">stale</span>' : ''}
-        ${focusTagHtml(meta)}
+        ${openSteps && !state.countsSteps ? `<span class="steps-tag">${openSteps} ${openSteps === 1 ? 'step' : 'steps'} left</span>` : ''}
+        ${prBadgeHtml(meta)}
+        ${unread ? '<span class="unread-tag"><span class="dot" aria-hidden="true"></span>Unread</span>' : ''}
         ${forkTag}
+        ${deliveryTagHtml(meta, { linkLive: false, withPushed: false, files: r.files || [], working: state.key === 'working' })}
+        ${sidebar.stale ? '<span class="stale-tag" aria-label="no recent activity">stale</span>' : ''}
+        ${meta.runNote && !settledInList ? `<span class="run-note-tag">${esc(runNoteLabel(meta.runNote))}</span>` : ''}
+        ${focusTagHtml(meta)}
+        ${serversTaskTagHtml(meta)}
         ${evalsTagHtml(meta)}
       </span><span class="run-end">${runAgeHtml(r, now)}${harnessMarkHtml(meta)}</span></div>
       ${warning ? `<p class="run-warning">${esc(warning)}</p>` : ''}
@@ -1624,13 +1948,13 @@ export function renderList() {
   const previousSignature = typeof lastSearchSignature === 'undefined' ? null : lastSearchSignature;
   const searchChanged = !!signature && signature !== previousSignature;
   if (typeof lastSearchSignature !== 'undefined') setLastSearchSignature(signature || null);
+  const listEl = $('list');
+  const realDom = isRealListDom(listEl);
   const shelfTrees = () => {
     const settledOrder = new Map(settled.map((run, index) => [run.id, index]));
     return makeTrees(settled, () => 0).sort((a, b) => Math.min(...a.map(([r]) => settledOrder.get(r.id)))
       - Math.min(...b.map(([r]) => settledOrder.get(r.id))));
   };
-  const shelf = settledShelfHtml(settled, shelfTrees, renderRun, settled.length + heldCount);
-  const writeList = html => keepProjectIcons('#list', () => { $('list').innerHTML = html; });
   if (q !== searchPagedQuery) {
     searchPagedQuery = q;
     searchLimit = SEARCH_PAGE;
@@ -1651,32 +1975,14 @@ export function renderList() {
   });
   const searchMoreHtml = () => (waiting
     ? `<button id="search-more" class="search-more" type="button" data-key="search-more">Show ${Math.min(waiting, SEARCH_PAGE)} more</button>` : '');
-  if (allSettled) {
-    writeList(`<div id="filter-empty"><p>All settled</p></div>${shelf}`);
-  } else if (emptyMatch) {
-    const narrowing = tagged ? 'these filters' : 'your search';
-    const clearLabel = tagged ? 'Clear filters' : 'Clear search';
-    // Clearing a view goes back to Active, so on Active itself it would do nothing.
-    const clearable = !tagged || activeViewId !== fallbackViewId();
-    writeList(`<div id="filter-empty">
-      <p>No runs match ${narrowing}</p>
-      ${clearable ? `<button id="clear-filters" class="clear-filters" type="button" data-key="clear-filters">${clearLabel}</button>` : ''}
-    </div>${shelf}`);
-    if (clearable) $('clear-filters').onclick = () => clearFilters({
-      clearSearch: !tagged,
-      cleared: tagged ? 'Filters' : 'Search',
-    });
-  } else if (groupBy === 'none') {
-    writeList(pageOf(trees).flat().map(entry => renderRun(entry)).join('') + searchMoreHtml() + shelf);
-  } else {
-    const statusOrder = statusOrderKeys();
+  const orderGroups = () => {
     const groups = new Map();
     trees.forEach(tree => {
       const root = tree[0][0];
       const key = groupKey(root);
       if (!groups.has(key)) {
-        const label = groupBy === 'project' ? runProject(root).label : RUN_STATE_LABELS[key];
-        groups.set(key, { key, label, path: groupBy === 'project' ? runProjectPath(root) : '', trees: [] });
+        const label = runProject(root).label;
+        groups.set(key, { key, label, path: runProjectPath(root), trees: [] });
       }
       groups.get(key).trees.push(tree);
     });
@@ -1689,137 +1995,449 @@ export function renderList() {
       const best = Math.min(...tiers);
       return { best, hits: tiers.filter(tier => tier === best).length };
     };
-    const ordered = [...groups.values()].sort((a, b) => {
+    return [...groups.values()].sort((a, b) => {
       if (q) {
         const ar = relevance(a), br = relevance(b);
         if (ar.best !== br.best) return ar.best - br.best;
         if (ar.hits !== br.hits) return br.hits - ar.hits;
       }
-      if (groupBy === 'project') {
-        const ai = projectOrder.indexOf(a.key), bi = projectOrder.indexOf(b.key);
-        if (ai !== -1 || bi !== -1) return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi);
-      } else {
-        const ai = statusOrder.indexOf(a.key), bi = statusOrder.indexOf(b.key);
-        if (ai !== bi) return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi);
-      }
+      const ai = projectOrder.indexOf(a.key), bi = projectOrder.indexOf(b.key);
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi);
       return a.label.localeCompare(b.label);
     });
+  };
+
+  if (!realDom) {
+    const shelf = settledShelfHtml(settled, shelfTrees, renderRun, settled.length + heldCount);
+    const writeList = html => keepProjectIcons('#list', () => { listEl.innerHTML = html; });
+    if (allSettled) {
+      writeList(`<div id="filter-empty"><p>All settled</p></div>${shelf}`);
+    } else if (emptyMatch) {
+      const narrowing = tagged ? 'these filters' : 'your search';
+      const clearLabel = tagged ? 'Clear filters' : 'Clear search';
+      // Clearing a view goes back to Active, so on Active itself it would do nothing.
+      const clearable = !tagged || activeViewId !== fallbackViewId();
+      writeList(`<div id="filter-empty">
+        <p>No runs match ${narrowing}</p>
+        ${clearable ? `<button id="clear-filters" class="clear-filters" type="button" data-key="clear-filters">${clearLabel}</button>` : ''}
+      </div>${shelf}`);
+      if (clearable) $('clear-filters').onclick = () => clearFilters({
+        clearSearch: !tagged,
+        cleared: tagged ? 'Filters' : 'Search',
+      });
+    } else if (groupBy === 'none') {
+      writeList(pageOf(trees).flat().map(entry => renderRun(entry)).join('') + searchMoreHtml() + shelf);
+    } else {
+      const ordered = orderGroups();
+      const drawnGroups = [];
+      const groupsHtml = ordered.map(group => {
+        const storageKey = `${groupBy}:${group.key}`;
+        const containsActive = group.trees.some(tree => tree.some(([r]) => r.id === activeId));
+        if (searchChanged || (activeRunChanged && containsActive)) collapsedGroups[storageKey] = false;
+        const collapsed = collapsedGroups[storageKey] === true;
+        // A closed group draws no rows under a search, which leaves the page to
+        // the groups below it.
+        const groupTrees = q && collapsed ? [] : pageOf(group.trees);
+        if (!groupTrees.length && !collapsed) return '';
+        drawnGroups.push(group);
+        const head = `<button class="run-group-head" type="button" data-group="${esc(storageKey)}" aria-expanded="${!collapsed}"><span class="chevron" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></span>${groupBy === 'project' ? projectIconHtml(group.path, group.label) : ''}<span class="run-group-label">${esc(group.label)}</span>${group.path ? unpushedMainHtml(group.path) : ''}</button>`;
+        return `<section class="run-group" data-part="run-group">${head}<div class="run-group-body"${collapsed ? ' hidden' : ''}>${groupTrees.flat().map(entry => renderRun(entry)).join('')}</div></section>`;
+      }).join('');
+      writeList(groupsHtml + searchMoreHtml() + shelf);
+      try { localStorage.setItem('orcSidebarCollapsedGroups', JSON.stringify(collapsedGroups)); } catch (e) {}
+      watchRepoSync(drawnGroups.map(group => group.path), renderList);
+    }
+    if (typeof mountSidebarHeadSlot === 'function') {
+      mountSidebarHeadSlot({ runCount: runs.length, lowPower: typeof powerMode !== 'undefined' && powerMode === 'low' });
+    }
+    if (typeof themeComponent === 'function' && themeComponent('runRow') && typeof mountRunRowSlot === 'function') {
+      // A plan's waiting step has no run behind it, so no theme row to mount.
+      document.querySelectorAll('.run').forEach(el => rowSlotData.has(el.dataset.id) && mountRunRowSlot(el, rowSlotData.get(el.dataset.id)));
+    }
+    document.querySelectorAll('.run').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === activeId);
+      // A plan's waiting step has no run yet: it opens the plan it waits in.
+      const opens = el.dataset.opens || el.dataset.id;
+      el.onclick = event => {
+        setFocusRunDestination(document.body.classList.contains('sidebar-open'));
+        const selectedRunId = decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
+        const alreadySelected = opens === selectedRunId;
+        setSidebarOpen(false);
+        if (focusRunDestination && alreadySelected) {
+          event.preventDefault();
+          setFocusRunDestination(false);
+          $('title').focus();
+          return;
+        }
+        // Picking another run while Run Control is open opens that run's Run
+        // Control; picking the open run itself still leaves for its Chat.
+        const keepControl = !alreadySelected && location.hash.slice(1).split('/').slice(1).join('/') === CONTROL_KEY;
+        if (keepControl) event.preventDefault();
+        location.hash = encodeURIComponent(opens) + (keepControl ? `/${CONTROL_KEY}` : '');
+      };
+    });
+    // Stop the click reaching .run's own onclick so it opens the PR, not the run.
+    document.querySelectorAll('.pr-tag, a.pushed-tag').forEach(el => el.onclick = event => event.stopPropagation());
+    document.querySelectorAll('.fork-toggle').forEach(el => el.onclick = event => {
+      event.stopPropagation();
+      const id = el.dataset.runId;
+      if (!expandedForkRuns.delete(id)) expandedForkRuns.add(id);
+      renderList();
+    });
+    document.querySelectorAll('.settle-run').forEach(el => el.onclick = async event => {
+      event.stopPropagation();
+      const id = el.dataset.runId;
+      const unsettle = el.classList.contains('unsettle-run');
+      const open = id === decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
+      const row = el.closest('.run');
+      const startHash = location.hash;
+      const settled = unsettle ? settleRun(id, false) : settleWithScene(id, { row: open ? null : row });
+      if (!await settled) {
+        // a refresh while the confirm was open replaced the button it hands focus back to
+        if (!el.isConnected) [...document.querySelectorAll('.settle-run')].find(button => button.dataset.runId === id)?.focus();
+        return;
+      }
+      if (location.hash !== startHash) return;
+      const settledNow = id in settledAt;
+      // the row has moved: to the shelf when settled, back into the list when not
+      const moved = [...document.querySelectorAll(settledNow ? '.unsettle-run' : '.settle-run:not(.unsettle-run)')]
+        .find(button => button.dataset.runId === id);
+      (moved || $('settled-head') || $('search')).focus();
+    });
+    const settledHead = $('settled-head');
+    if (settledHead) settledHead.onclick = () => setSettledExpanded(!settledExpanded);
+    const drawer = $('settled-drawer');
+    if (drawer) {
+      if (drawerScroll) $('settled-body').scrollTop = drawerScroll;
+      $('settled-scrim').onclick = () => setSettledExpanded(false);
+      drawer.onkeydown = event => {
+        if (event.key !== 'Escape' || !settledExpanded) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setSettledExpanded(false);
+        $('settled-head')?.focus();
+      };
+    }
+    const settledMore = $('settled-more');
+    if (settledMore) settledMore.onclick = () => {
+      const firstNew = $('settled-body').querySelectorAll('.run-link').length;
+      settledLimit = firstNew + SETTLED_PAGE;
+      renderList();
+      const rows = $('settled-body')?.querySelectorAll('.run-link');
+      rows?.[firstNew]?.focus();
+      announce(`${Math.min(settled.length, settledLimit)} of ${settled.length} settled runs shown`);
+    };
+    const searchMore = $('search-more');
+    if (searchMore) searchMore.onclick = () => {
+      const firstNew = searchDrawn;
+      searchLimit = firstNew + SEARCH_PAGE;
+      renderList();
+      $('list').querySelectorAll('.run-link')[firstNew]?.focus();
+      announce(`${searchDrawn} of ${searchMatched} matching runs shown`);
+    };
+    document.querySelectorAll('.run-group-head').forEach(el => el.onclick = () => {
+      const collapsed = el.getAttribute('aria-expanded') === 'true';
+      el.setAttribute('aria-expanded', String(!collapsed));
+      el.parentElement.querySelector('.run-group-body').hidden = collapsed;
+      collapsedGroups[el.dataset.group] = collapsed;
+      try { localStorage.setItem('orcSidebarCollapsedGroups', JSON.stringify(collapsedGroups)); } catch (e) {}
+      // A closed group drew no rows under a search, so opening it has to draw them.
+      if (q) renderList();
+    });
+    restoreFocus(focus);
+    return cleared;
+  }
+
+  // Real DOM incremental reconciliation path.
+  const activeTheme = typeof paintedFunMode === 'function' ? (paintedFunMode() || '') : '';
+  const hasRunRowTheme = typeof themeComponent === 'function' && Boolean(themeComponent('runRow'));
+  const hasStatusLampTheme = typeof themeComponent === 'function' && Boolean(themeComponent('statusLamp'));
+  const cfg = cachedConfigData();
+  const cfgAccountsKey = cfg ? JSON.stringify([cfg.claudeAccounts || null, cfg.claudeAccountNames || null]) : '';
+  const activeThemeKey = `${activeTheme}|${hasRunRowTheme ? 1 : 0}|${hasStatusLampTheme ? 1 : 0}`;
+  const globalContextKey = `${activeThemeKey}|${cfgAccountsKey}`;
+  const docHasFocus = typeof document !== 'undefined' && document.hasFocus?.() ? 1 : 0;
+  const pendingCreations = [];
+  const liveRowKeys = new Set();
+  const liveGroupKeys = new Set();
+
+  const resolveRow = (entry, withProject, shelved) => {
+    const [r, depth, last] = entry;
+    const cacheKey = `${shelved ? 'shelf' : 'main'}:${r.id}`;
+    liveRowKeys.add(cacheKey);
+    const cached = rowDomCache.get(cacheKey);
+    if (r.waitingStep) {
+      const html = waitingStepRowHtml(r, last, withProject);
+      if (cached && cached.html === html && cached.el) {
+        return { cacheKey, r, el: cached.el, active: false };
+      }
+      const slot = { cacheKey, r, html, parentRun: null, latestReview: null, contextKey: '', nextAgeAt: Infinity, slotData: null, slotSig: '', active: false, shelved, cached, el: null };
+      pendingCreations.push(slot);
+      return slot;
+    }
+    const meta = r.meta || {};
+    const parentId = sidebarParentId(r);
+    const parentRun = depth ? byId.get(parentId) : null;
+    const reviews = meta.route === 'qa' ? reviewsForRun(r.id, runs, byId, reviewsByParent) : [];
+    const latestReview = reviews.at(-1) || null;
+    const isActive = r.id === activeId;
+    const forksOpen = expandedForkRuns.has(r.id);
+    const revealed = forcedIds.has(r.id) && restsOnShelf(r);
+    const settledByHand = r.id in settledAt;
+    const settledInList = !q && !shelved && !revealed && settledIds.has(r.id);
+    const selected = typeof isMergeSelected === 'function' && isMergeSelected(r.id);
+    const priorityRootId = !shelved ? (priorityRoot.get(r.id) || '') : '';
+    const canToggleForks = !q && (orchestrating(r.id) || startedPlanHosts.has(r.id));
+    const warning = runWarnings.get(r.id)?.message || '';
+    const iconState = withProject ? (projectIconState.get(runProjectPath(r)) || '') : '';
+    const contextKey = `${globalContextKey}|${depth ? 1 : 0}|${last ? 1 : 0}|${withProject ? 1 : 0}|${shelved ? 1 : 0}|${isActive ? 1 : 0}|${isActive ? docHasFocus : ''}|${q}|${parentId || ''}|${planHosts.has(r.id) ? 1 : 0}|${startedPlanHosts.has(r.id) ? 1 : 0}|${childCounts.get(r.id) || 0}|${canToggleForks ? 1 : 0}|${forksOpen ? 1 : 0}|${settledByHand ? 1 : 0}|${settledInList ? 1 : 0}|${revealed ? 1 : 0}|${selected ? 1 : 0}|${priorityRootId}|${warning}|${iconState}|${reviews.length}`;
+
+    if (trustRunRefs && cached && cached.el && cached.runRef === r && cached.parentRef === parentRun
+        && cached.reviewRef === latestReview && cached.contextKey === contextKey && now < cached.nextAgeAt) {
+      renderedRunIds.add(r.id);
+      return { cacheKey, r, el: cached.el, active: isActive };
+    }
+
+    const html = renderRun(entry, withProject, shelved);
+    const slotData = hasRunRowTheme ? rowSlotData.get(r.id) : null;
+    const slotSig = slotData ? JSON.stringify(slotData) : '';
+    const nextAgeAt = latestReview ? Math.min(nextRowExpiryAt(r, now), nextRowExpiryAt(latestReview, now)) : nextRowExpiryAt(r, now);
+    if (cached && cached.el && cached.html === html && cached.themeKey === activeThemeKey && cached.slotSig === slotSig) {
+      cached.runRef = r;
+      cached.parentRef = parentRun;
+      cached.reviewRef = latestReview;
+      cached.contextKey = contextKey;
+      cached.nextAgeAt = nextAgeAt;
+      return { cacheKey, r, el: cached.el, active: isActive };
+    }
+    const slot = {
+      cacheKey, r, html, parentRun, latestReview, contextKey, nextAgeAt,
+      slotData, slotSig, active: isActive, shelved, cached, el: null,
+    };
+    pendingCreations.push(slot);
+    return slot;
+  };
+
+  let mainRowSlots = null;
+  let groupDescriptors = null;
+  let emptyStateHtml = '';
+
+  if (allSettled) {
+    lastClearFiltersOpts = null;
+    emptyStateHtml = '<p>All settled</p>';
+    delete listEl.dataset.groupBy;
+  } else if (emptyMatch) {
+    const narrowing = tagged ? 'these filters' : 'your search';
+    const clearLabel = tagged ? 'Clear filters' : 'Clear search';
+    const clearable = !tagged || activeViewId !== fallbackViewId();
+    lastClearFiltersOpts = clearable ? { clearSearch: !tagged, cleared: tagged ? 'Filters' : 'Search' } : null;
+    emptyStateHtml = `<p>No runs match ${narrowing}</p>${clearable ? `<button id="clear-filters" class="clear-filters" type="button" data-key="clear-filters">${clearLabel}</button>` : ''}`;
+    delete listEl.dataset.groupBy;
+  } else if (groupBy === 'none') {
+    lastClearFiltersOpts = null;
+    delete listEl.dataset.groupBy;
+    mainRowSlots = pageOf(trees).flat().map(entry => resolveRow(entry, true, false));
+  } else {
+    lastClearFiltersOpts = null;
+    listEl.dataset.groupBy = groupBy;
+    const ordered = orderGroups();
     const drawnGroups = [];
-    const groupsHtml = ordered.map(group => {
+    groupDescriptors = [];
+    for (const group of ordered) {
       const storageKey = `${groupBy}:${group.key}`;
       const containsActive = group.trees.some(tree => tree.some(([r]) => r.id === activeId));
       if (searchChanged || (activeRunChanged && containsActive)) collapsedGroups[storageKey] = false;
       const collapsed = collapsedGroups[storageKey] === true;
-      // A closed group draws no rows under a search, which leaves the page to
-      // the groups below it.
       const groupTrees = q && collapsed ? [] : pageOf(group.trees);
-      if (!groupTrees.length && !collapsed) return '';
+      if (!groupTrees.length && !collapsed) continue;
       drawnGroups.push(group);
-      const head = `<button class="run-group-head" type="button" data-group="${esc(storageKey)}" aria-expanded="${!collapsed}"><span class="chevron" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></span>${groupBy === 'project' ? projectIconHtml(group.path, group.label) : ''}<span class="run-group-label">${esc(group.label)}</span>${group.path ? unpushedMainHtml(group.path) : ''}</button>`;
-      return `<section class="run-group" data-part="run-group">${head}<div class="run-group-body"${collapsed ? ' hidden' : ''}>${groupTrees.flat().map(entry => renderRun(entry)).join('')}</div></section>`;
-    }).join('');
-    writeList(groupsHtml + searchMoreHtml() + shelf);
+      liveGroupKeys.add(storageKey);
+      const headInnerHtml = `<span class="chevron" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></span>${groupBy === 'project' ? projectIconHtml(group.path, group.label) : ''}<span class="run-group-label">${esc(group.label)}</span>${group.path ? unpushedMainHtml(group.path) : ''}`;
+      let entry = groupDomCache.get(storageKey);
+      if (!entry) {
+        const section = document.createElement('section');
+        section.className = 'run-group';
+        section.dataset.part = 'run-group';
+        const head = document.createElement('button');
+        head.className = 'run-group-head';
+        head.type = 'button';
+        head.dataset.group = storageKey;
+        const body = document.createElement('div');
+        body.className = 'run-group-body';
+        section.append(head, body);
+        entry = { section, head, body, headInnerHtml: null };
+        groupDomCache.set(storageKey, entry);
+      }
+      if (entry.headInnerHtml !== headInnerHtml) {
+        const icons = collectPaintedIcons(entry.head);
+        entry.head.innerHTML = headInnerHtml;
+        restorePaintedIcons(entry.head, icons);
+        entry.headInnerHtml = headInnerHtml;
+      }
+      const expandedStr = String(!collapsed);
+      if (entry.head.getAttribute('aria-expanded') !== expandedStr) entry.head.setAttribute('aria-expanded', expandedStr);
+      if (entry.body.hidden !== collapsed) entry.body.hidden = collapsed;
+      const slots = groupTrees.flat().map(item => resolveRow(item, false, false));
+      groupDescriptors.push({ entry, slots });
+    }
     try { localStorage.setItem('orcSidebarCollapsedGroups', JSON.stringify(collapsedGroups)); } catch (e) {}
-    watchRepoSync(drawnGroups.map(group => group.path));
+    watchRepoSync(drawnGroups.map(group => group.path), renderList);
   }
+
+  // Settled shelf slots (reuses the same batched parser when rows change).
+  lastSettledTotal = settled.length;
+  const shelfTotalCount = settled.length + heldCount;
+  const shelfMotion = shelfTotalCount ? drawerMotionNow() : null;
+  const shelfDrawn = Boolean(shelfTotalCount && (settledExpanded || shelfMotion?.dir === 'close'));
+  let shelfRowSlots = null;
+  let shelfMoreCount = 0;
+  if (shelfDrawn) {
+    const page = [];
+    for (const tree of shelfTrees()) {
+      if (page.length >= settledLimit) break;
+      page.push(...tree);
+    }
+    shelfMoreCount = settled.length - page.length;
+    shelfRowSlots = page.map(row => resolveRow(row, true, true));
+  }
+
+  if (pendingCreations.length) {
+    if (!htmlTemplateEl) htmlTemplateEl = document.createElement('template');
+    htmlTemplateEl.innerHTML = pendingCreations.map(slot => slot.html).join('');
+    const created = [...htmlTemplateEl.content.children];
+    for (let i = 0; i < pendingCreations.length; i++) {
+      const slot = pendingCreations[i];
+      const el = created[i];
+      if (!el) continue;
+      if (!slot.r.waitingStep) el.classList.toggle('active', slot.active);
+      if (slot.cached?.el) {
+        const icons = collectPaintedIcons(slot.cached.el);
+        restorePaintedIcons(el, icons);
+        onRowRemoved?.(slot.cached.el);
+      }
+      if (hasRunRowTheme && slot.slotData && typeof mountRunRowSlot === 'function') {
+        mountRunRowSlot(el, slot.slotData);
+      }
+      onRowInserted?.(el, slot.shelved);
+      rowDomCache.set(slot.cacheKey, {
+        el,
+        html: slot.html,
+        runRef: slot.r,
+        parentRef: slot.parentRun,
+        reviewRef: slot.latestReview,
+        contextKey: slot.contextKey,
+        nextAgeAt: slot.nextAgeAt,
+        themeKey: activeThemeKey,
+        slotSig: slot.slotSig,
+      });
+      slot.el = el;
+    }
+  }
+
+  const syncReusedActive = slot => {
+    if (slot.el && !slot.r.waitingStep && slot.el.classList.contains('active') !== slot.active) {
+      slot.el.classList.toggle('active', slot.active);
+    }
+    return slot.el;
+  };
+
+  const desiredListChildren = [];
+  if (emptyStateHtml) {
+    if (!filterEmptyEl) {
+      filterEmptyEl = document.createElement('div');
+      filterEmptyEl.id = 'filter-empty';
+    }
+    if (filterEmptyEl.innerHTML !== emptyStateHtml) filterEmptyEl.innerHTML = emptyStateHtml;
+    desiredListChildren.push(filterEmptyEl);
+  } else if (groupDescriptors) {
+    for (const desc of groupDescriptors) {
+      reconcileChildren(desc.entry.body, desc.slots.map(syncReusedActive).filter(Boolean));
+      desiredListChildren.push(desc.entry.section);
+    }
+  } else if (mainRowSlots) {
+    for (const slot of mainRowSlots) {
+      const el = syncReusedActive(slot);
+      if (el) desiredListChildren.push(el);
+    }
+  }
+
+  if (waiting > 0) {
+    if (!searchMoreEl) {
+      searchMoreEl = htmlToElement('<button id="search-more" class="search-more" type="button" data-key="search-more"></button>');
+    }
+    const label = `Show ${Math.min(waiting, SEARCH_PAGE)} more`;
+    if (searchMoreEl.textContent !== label) searchMoreEl.textContent = label;
+    desiredListChildren.push(searchMoreEl);
+  }
+
+  if (shelfTotalCount > 0) {
+    if (!shelfHeadingEl) {
+      shelfHeadingEl = htmlToElement('<h2 id="settled-shelf" class="settled-heading" data-part="settled-shelf"><button id="settled-head" type="button" data-key="settled-toggle" aria-expanded="false" aria-controls="settled-body"><span class="chevron" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></span>Settled <span class="settled-count"></span></button></h2>');
+    }
+    const headBtn = shelfHeadingEl.firstElementChild;
+    const countSpan = headBtn?.querySelector('.settled-count');
+    const expStr = String(settledExpanded);
+    if (headBtn && headBtn.getAttribute('aria-expanded') !== expStr) headBtn.setAttribute('aria-expanded', expStr);
+    const countStr = `(${shelfTotalCount})`;
+    if (countSpan && countSpan.textContent !== countStr) countSpan.textContent = countStr;
+
+    if (!shelfDrawn) {
+      if (!shelfClosedBodyEl) {
+        shelfClosedBodyEl = htmlToElement('<div id="settled-body" role="group" aria-labelledby="settled-head" hidden></div>');
+      }
+      desiredListChildren.push(shelfHeadingEl, shelfClosedBodyEl);
+    } else {
+      const motionClass = shelfMotion ? (shelfMotion.dir === 'open' ? ' is-opening' : ' is-closing') : '';
+      const scrimClass = `settled-scrim${motionClass}`;
+      const drawerClass = `settled-drawer${motionClass}`;
+      if (!shelfScrimEl || shelfScrimEl.className !== scrimClass) {
+        shelfScrimEl = htmlToElement(`<div id="settled-scrim" class="${scrimClass}" aria-hidden="true"></div>`);
+      }
+      if (!shelfDrawerEl || shelfDrawerEl.className !== drawerClass) {
+        shelfDrawerEl = htmlToElement(`<div id="settled-drawer" class="${drawerClass}" data-part="settled-drawer"></div>`);
+      }
+      if (!shelfDrawerBodyEl) shelfDrawerBodyEl = htmlToElement('<div id="settled-body" role="group" aria-labelledby="settled-head"></div>');
+      const delay = shelfMotion ? `-${shelfMotion.elapsed}ms` : '';
+      for (const el of [shelfScrimEl, shelfDrawerEl]) {
+        if (el.style.getPropertyValue('--drawer-t') !== delay) {
+          if (delay) el.style.setProperty('--drawer-t', delay);
+          else el.style.removeProperty('--drawer-t');
+        }
+      }
+      const drawerBodyChildren = shelfRowSlots.map(syncReusedActive).filter(Boolean);
+      if (shelfMoreCount > 0) {
+        if (!shelfMoreEl) shelfMoreEl = htmlToElement('<button id="settled-more" class="settled-more" type="button" data-key="settled-more"></button>');
+        const moreLabel = `Show ${Math.min(shelfMoreCount, SETTLED_PAGE)} more`;
+        if (shelfMoreEl.textContent !== moreLabel) shelfMoreEl.textContent = moreLabel;
+        drawerBodyChildren.push(shelfMoreEl);
+      }
+      reconcileChildren(shelfDrawerBodyEl, drawerBodyChildren);
+      reconcileChildren(shelfDrawerEl, [shelfHeadingEl, shelfDrawerBodyEl]);
+      if (drawerScroll) shelfDrawerBodyEl.scrollTop = drawerScroll;
+      desiredListChildren.push(shelfScrimEl, shelfDrawerEl);
+    }
+  }
+
+  reconcileChildren(listEl, desiredListChildren);
+
+  for (const [key, entry] of rowDomCache) {
+    if (!liveRowKeys.has(key)) {
+      onRowRemoved?.(entry.el);
+      rowDomCache.delete(key);
+    }
+  }
+  for (const key of groupDomCache.keys()) {
+    if (!liveGroupKeys.has(key)) groupDomCache.delete(key);
+  }
+
   if (typeof mountSidebarHeadSlot === 'function') {
     mountSidebarHeadSlot({ runCount: runs.length, lowPower: typeof powerMode !== 'undefined' && powerMode === 'low' });
   }
-  if (typeof themeComponent === 'function' && themeComponent('runRow') && typeof mountRunRowSlot === 'function') {
-    // A plan's waiting step has no run behind it, so no theme row to mount.
-    document.querySelectorAll('.run').forEach(el => rowSlotData.has(el.dataset.id) && mountRunRowSlot(el, rowSlotData.get(el.dataset.id)));
+  onListReconciled?.();
+  if (!focusedBefore || !focusedBefore.isConnected || document.activeElement !== focusedBefore) {
+    restoreFocus(focus);
   }
-  document.querySelectorAll('.run').forEach(el => {
-    el.classList.toggle('active', el.dataset.id === activeId);
-    // A plan's waiting step has no run yet: it opens the plan it waits in.
-    const opens = el.dataset.opens || el.dataset.id;
-    el.onclick = event => {
-      setFocusRunDestination(document.body.classList.contains('sidebar-open'));
-      const selectedRunId = decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
-      const alreadySelected = opens === selectedRunId;
-      setSidebarOpen(false);
-      if (focusRunDestination && alreadySelected) {
-        event.preventDefault();
-        setFocusRunDestination(false);
-        $('title').focus();
-        return;
-      }
-      // Picking another run while Run Control is open opens that run's Run
-      // Control; picking the open run itself still leaves for its Chat.
-      const keepControl = !alreadySelected && location.hash.slice(1).split('/').slice(1).join('/') === CONTROL_KEY;
-      if (keepControl) event.preventDefault();
-      location.hash = encodeURIComponent(opens) + (keepControl ? `/${CONTROL_KEY}` : '');
-    };
-  });
-  // Stop the click reaching .run's own onclick so it opens the PR, not the run.
-  document.querySelectorAll('.pr-tag, a.pushed-tag').forEach(el => el.onclick = event => event.stopPropagation());
-  document.querySelectorAll('.fork-toggle').forEach(el => el.onclick = event => {
-    event.stopPropagation();
-    const id = el.dataset.runId;
-    if (!expandedForkRuns.delete(id)) expandedForkRuns.add(id);
-    renderList();
-  });
-  document.querySelectorAll('.settle-run').forEach(el => el.onclick = async event => {
-    event.stopPropagation();
-    const id = el.dataset.runId;
-    const unsettle = el.classList.contains('unsettle-run');
-    const open = id === decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
-    const row = el.closest('.run');
-    const startHash = location.hash;
-    const settled = unsettle ? settleRun(id, false) : settleWithScene(id, { row: open ? null : row });
-    if (!await settled) {
-      // a refresh while the confirm was open replaced the button it hands focus back to
-      if (!el.isConnected) [...document.querySelectorAll('.settle-run')].find(button => button.dataset.runId === id)?.focus();
-      return;
-    }
-    if (location.hash !== startHash) return;
-    const settledNow = id in settledAt;
-    // the row has moved: to the shelf when settled, back into the list when not
-    const moved = [...document.querySelectorAll(settledNow ? '.unsettle-run' : '.settle-run:not(.unsettle-run)')]
-      .find(button => button.dataset.runId === id);
-    (moved || $('settled-head') || $('search')).focus();
-  });
-  const settledHead = $('settled-head');
-  if (settledHead) settledHead.onclick = () => setSettledExpanded(!settledExpanded);
-  const drawer = $('settled-drawer');
-  if (drawer) {
-    if (drawerScroll) $('settled-body').scrollTop = drawerScroll;
-    $('settled-scrim').onclick = () => setSettledExpanded(false);
-    drawer.onkeydown = event => {
-      if (event.key !== 'Escape' || !settledExpanded) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setSettledExpanded(false);
-      $('settled-head')?.focus();
-    };
-  }
-  const settledMore = $('settled-more');
-  if (settledMore) settledMore.onclick = () => {
-    const firstNew = $('settled-body').querySelectorAll('.run-link').length;
-    settledLimit = firstNew + SETTLED_PAGE;
-    renderList();
-    const rows = $('settled-body')?.querySelectorAll('.run-link');
-    rows?.[firstNew]?.focus();
-    announce(`${Math.min(settled.length, settledLimit)} of ${settled.length} settled runs shown`);
-  };
-  const searchMore = $('search-more');
-  if (searchMore) searchMore.onclick = () => {
-    const firstNew = searchDrawn;
-    searchLimit = firstNew + SEARCH_PAGE;
-    renderList();
-    $('list').querySelectorAll('.run-link')[firstNew]?.focus();
-    announce(`${searchDrawn} of ${searchMatched} matching runs shown`);
-  };
-  document.querySelectorAll('.run-group-head').forEach(el => el.onclick = () => {
-    const collapsed = el.getAttribute('aria-expanded') === 'true';
-    el.setAttribute('aria-expanded', String(!collapsed));
-    el.parentElement.querySelector('.run-group-body').hidden = collapsed;
-    collapsedGroups[el.dataset.group] = collapsed;
-    try { localStorage.setItem('orcSidebarCollapsedGroups', JSON.stringify(collapsedGroups)); } catch (e) {}
-    // A closed group drew no rows under a search, so opening it has to draw them.
-    if (q) renderList();
-  });
-  restoreFocus(focus);
+  revealOpenRunRow();
   return cleared;
 }
 let searchAnnounceTimer;
@@ -1864,6 +2482,10 @@ function endPriorityDrag() {
 // the list, and every render draws a new one.
 const gutterSize = new ResizeObserver(entries => {
   for (const { target } of entries) target.style.setProperty('--list-gutter', `${target.offsetWidth - target.clientWidth}px`);
+  syncRowIntrinsicHeight(true);
+  // The sidebar opening from collapsed gives the list its first layout, and a
+  // list that changes height can cover the row it just showed.
+  revealOpenRunRow(revealPending || heldRunId);
 });
 gutterSize.observe($('list'));
 let gutterDrawer = null;
@@ -1872,16 +2494,189 @@ let gutterDrawer = null;
 const shelfSize = new ResizeObserver(([entry]) => {
   $('list').style.setProperty('--settled-shelf-height', `${entry.target.offsetHeight}px`);
 });
-new MutationObserver(() => {
-  shelfSize.disconnect();
-  const shelf = $('list').querySelector(':scope > .settled-heading');
-  if (shelf) shelfSize.observe(shelf);
-  const drawer = $('list').querySelector(':scope > .settled-drawer > #settled-body');
-  if (drawer === gutterDrawer) return;
-  if (gutterDrawer) gutterSize.unobserve(gutterDrawer);
-  gutterDrawer = drawer;
-  if (drawer) gutterSize.observe(drawer);
-}).observe($('list'), { childList: true });
+// A row's tags stay on one line. They are drawn most needed first, so when the
+// row is too narrow the ones that run past its edge drop whole, from the end,
+// and the line's hover title names them. The run's state never drops; on a row
+// too narrow for it alone it shortens instead. The tag line's width comes from
+// the row, not its tags, so hiding one never makes the observer below fire
+// again.
+export function fitRunTags(line) {
+  const tags = [...line.children];
+  tags.forEach(tag => tag.classList.remove('tag-dropped', 'tag-squeezed'));
+  line.removeAttribute('title');
+  // A hidden sidebar or drawer measures nothing; it fits again once shown.
+  if (!line.clientWidth) return;
+  const edge = line.getBoundingClientRect().right + 0.5;
+  const state = tags.findIndex(tag => tag.classList.contains('state-tag'));
+  const first = tags.findIndex((tag, i) => i > state && tag.getBoundingClientRect().right > edge);
+  if (first >= 0) {
+    const dropped = tags.slice(first);
+    dropped.forEach(tag => tag.classList.add('tag-dropped'));
+    // The fork count reads "⑂ 2", so a tag without words gives its label instead.
+    const names = dropped.map(tag => {
+      const text = tag.textContent.replace(/\s+/g, ' ').trim();
+      return /\p{L}/u.test(text) ? text : tag.getAttribute('aria-label') || '';
+    }).filter(Boolean);
+    if (names.length) line.title = `Also: ${names.join(', ')}`;
+  }
+  if (state >= 0 && tags[state].getBoundingClientRect().right > edge) tags[state].classList.add('tag-squeezed');
+}
+const visibleTagLines = new Set();
+const tagLineSize = new ResizeObserver(entries => entries.forEach(({ target }) => fitRunTags(target)));
+const listTagObserver = typeof IntersectionObserver === 'function'
+  ? new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        visibleTagLines.add(entry.target);
+        tagLineSize.observe(entry.target);
+      } else {
+        visibleTagLines.delete(entry.target);
+        tagLineSize.unobserve(entry.target);
+      }
+    }
+  }, { root: $('list'), rootMargin: '200px 0px' })
+  : null;
+const fitVisibleRunTags = () => {
+  visibleTagLines.forEach(fitRunTags);
+  $('settled-body')?.querySelectorAll('.run .sub-tags').forEach(fitRunTags);
+};
+// A web font that arrives late widens every tag without resizing the line.
+document.fonts?.ready.then(() => {
+  syncRowIntrinsicHeight(true);
+  fitVisibleRunTags();
+});
+
+let observedShelfEl = null;
+onRowInserted = (el, shelved) => {
+  const line = el.querySelector?.('.sub-tags');
+  if (!line) return;
+  if (shelved || !listTagObserver) tagLineSize.observe(line);
+  else listTagObserver.observe(line);
+};
+onRowRemoved = el => {
+  const line = el?.querySelector?.('.sub-tags');
+  if (!line) return;
+  listTagObserver?.unobserve(line);
+  tagLineSize.unobserve(line);
+  visibleTagLines.delete(line);
+};
+onListReconciled = () => {
+  const list = $('list');
+  syncRowIntrinsicHeight();
+  const shelf = list.querySelector(':scope > .settled-heading');
+  if (shelf !== observedShelfEl) {
+    shelfSize.disconnect();
+    observedShelfEl = shelf;
+    if (shelf) shelfSize.observe(shelf, { box: 'border-box' });
+  }
+  const drawer = list.querySelector(':scope > .settled-drawer > #settled-body');
+  if (drawer !== gutterDrawer) {
+    if (gutterDrawer) gutterSize.unobserve(gutterDrawer);
+    gutterDrawer = drawer;
+    if (drawer) gutterSize.observe(drawer);
+  }
+};
+
+$('list').addEventListener('click', async event => {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target) return;
+  if (target.closest('.pr-tag, a.pushed-tag')) {
+    event.stopPropagation();
+    return;
+  }
+  const forkToggle = target.closest('.fork-toggle');
+  if (forkToggle) {
+    event.stopPropagation();
+    const id = forkToggle.dataset.runId;
+    if (!expandedForkRuns.delete(id)) expandedForkRuns.add(id);
+    renderList();
+    return;
+  }
+  const settleBtn = target.closest('.settle-run');
+  if (settleBtn) {
+    event.stopPropagation();
+    const id = settleBtn.dataset.runId;
+    const unsettle = settleBtn.classList.contains('unsettle-run');
+    const open = id === decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
+    const row = settleBtn.closest('.run');
+    const startHash = location.hash;
+    const settled = unsettle ? settleRun(id, false) : settleWithScene(id, { row: open ? null : row });
+    if (!await settled) {
+      if (!settleBtn.isConnected) [...document.querySelectorAll('.settle-run')].find(button => button.dataset.runId === id)?.focus();
+      return;
+    }
+    if (location.hash !== startHash) return;
+    const settledNow = id in settledAt;
+    const moved = [...document.querySelectorAll(settledNow ? '.unsettle-run' : '.settle-run:not(.unsettle-run)')]
+      .find(button => button.dataset.runId === id);
+    (moved || $('settled-head') || $('search')).focus();
+    return;
+  }
+  const groupHead = target.closest('.run-group-head');
+  if (groupHead) {
+    const collapsed = groupHead.getAttribute('aria-expanded') === 'true';
+    groupHead.setAttribute('aria-expanded', String(!collapsed));
+    groupHead.parentElement.querySelector('.run-group-body').hidden = collapsed;
+    collapsedGroups[groupHead.dataset.group] = collapsed;
+    try { localStorage.setItem('orcSidebarCollapsedGroups', JSON.stringify(collapsedGroups)); } catch (e) {}
+    if (($('search').value || '').trim()) renderList();
+    return;
+  }
+  if (target.closest('#settled-head')) {
+    setSettledExpanded(!settledExpanded);
+    return;
+  }
+  if (target.closest('#settled-scrim')) {
+    setSettledExpanded(false);
+    return;
+  }
+  if (target.closest('#settled-more')) {
+    const firstNew = $('settled-body').querySelectorAll('.run-link').length;
+    settledLimit = firstNew + SETTLED_PAGE;
+    renderList();
+    $('settled-body')?.querySelectorAll('.run-link')?.[firstNew]?.focus();
+    announce(`${Math.min(lastSettledTotal, settledLimit)} of ${lastSettledTotal} settled runs shown`);
+    return;
+  }
+  if (target.closest('#search-more')) {
+    const firstNew = searchDrawn;
+    searchLimit = firstNew + SEARCH_PAGE;
+    renderList();
+    $('list').querySelectorAll('.run-link')[firstNew]?.focus();
+    announce(`${searchDrawn} of ${searchMatched} matching runs shown`);
+    return;
+  }
+  if (target.closest('#clear-filters')) {
+    if (lastClearFiltersOpts) clearFilters(lastClearFiltersOpts);
+    return;
+  }
+  const row = target.closest('.run');
+  if (!row) return;
+  const opens = row.dataset.opens || row.dataset.id;
+  setFocusRunDestination(document.body.classList.contains('sidebar-open'));
+  const selectedRunId = decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
+  const alreadySelected = opens === selectedRunId;
+  setSidebarOpen(false);
+  if (focusRunDestination && alreadySelected) {
+    event.preventDefault();
+    setFocusRunDestination(false);
+    $('title').focus();
+    return;
+  }
+  const keepControl = !alreadySelected && location.hash.slice(1).split('/').slice(1).join('/') === CONTROL_KEY;
+  if (keepControl) event.preventDefault();
+  location.hash = encodeURIComponent(opens) + (keepControl ? `/${CONTROL_KEY}` : '');
+});
+
+$('list').addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !settledExpanded) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target?.closest('#settled-drawer')) return;
+  event.preventDefault();
+  event.stopPropagation();
+  setSettledExpanded(false);
+  $('settled-head')?.focus();
+});
 $('list').addEventListener('dragstart', event => {
   const row = event.target.closest?.('.run[draggable="true"]');
   if (!row || !priorityGroupOf.has(row.dataset.id)) return;
@@ -1912,6 +2707,20 @@ $('list').addEventListener('drop', event => {
 });
 $('list').addEventListener('dragend', endPriorityDrag);
 
+// ---- keyboard flow through the list ----
+// Draws a search still waiting on its pause, so a key that acts on the
+// results acts on what was typed.
+function flushSearchRender() {
+  if (searchRenderTimer !== undefined) renderList();
+}
+// The rows' links in `scope`, top to bottom, leaving out rows a closed group
+// hides. The list's own rows leave out the Settled shelf's.
+function listRunLinks(scope) {
+  const inList = scope === $('list');
+  return [...scope.querySelectorAll('.run .run-link')]
+    .filter(link => !link.closest('[hidden]') && !(inList && link.closest('#settled-body')));
+}
+
 // ---- search input (pure free text) ----
 // The shell owns the clear ×: Chromium (Chrome, Edge) draws the native one only
 // while the field is focused or hovered, and Firefox never draws it.
@@ -1923,9 +2732,12 @@ searchChrome.textContent = `
 $('search').shadowRoot.append(searchChrome);
 function syncSearchClear() { $('search-clear').hidden = !$('search').value; }
 const clearSearch = () => clearFilters({ clearSearch: true, cleared: 'Search' });
+// The list waits for a pause in typing; clearing the field draws at once.
 $('search').oninput = () => {
   syncSearchClear();
-  renderList();
+  clearTimeout(searchRenderTimer);
+  if ($('search').value.trim()) searchRenderTimer = setTimeout(renderList, SEARCH_DEBOUNCE_MS);
+  else renderList();
   clearTimeout(searchAnnounceTimer);
   searchAnnounceTimer = setTimeout(() => announce(searchShownText()), 500);
 };
@@ -1933,10 +2745,51 @@ $('search-clear').addEventListener('click', clearSearch);
 // Escape clears the same way in every browser; on an empty field it falls
 // through so the phone sidebar can still close.
 $('search').addEventListener('keydown', e => {
+  if (e.isComposing || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  // Down moves into the results, and Enter opens the top one.
+  if (e.key === 'ArrowDown' || e.key === 'Enter') {
+    flushSearchRender();
+    const first = listRunLinks($('list'))[0];
+    if (!first) return;
+    e.preventDefault();
+    if (e.key === 'Enter') first.click();
+    else first.focus();
+    return;
+  }
   if (e.key !== 'Escape' || !$('search').value) return;
   e.preventDefault();
   e.stopPropagation();
   clearSearch();
+});
+// Up and Down move from row to row past each row's own buttons; Up from the
+// first row goes back to the search field. Enter on a row's link opens it.
+$('list').addEventListener('keydown', e => {
+  if ((e.key !== 'ArrowDown' && e.key !== 'ArrowUp') || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const row = e.target.closest?.('.run');
+  if (!row) return;
+  const drawer = row.closest('#settled-body');
+  const links = listRunLinks(drawer || $('list'));
+  const at = links.indexOf(row.querySelector('.run-link'));
+  if (at === -1) return;
+  e.preventDefault();
+  const next = links[at + (e.key === 'ArrowDown' ? 1 : -1)];
+  if (next) next.focus();
+  else if (e.key === 'ArrowUp' && !drawer) $('search').focus();
+});
+// The next or previous run as listed, from anywhere. Without the open run in
+// the list, next starts at the top and previous at the bottom.
+document.addEventListener('keydown', e => {
+  const down = shortcutMatches('next-run', e);
+  if (!down && !shortcutMatches('previous-run', e)) return;
+  e.preventDefault();
+  flushSearchRender();
+  const activeId = decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
+  const activeRow = [...$('list').querySelectorAll('.run')].find(row => row.dataset.id === activeId);
+  const links = listRunLinks(activeRow?.closest('#settled-body') || $('list'));
+  const at = links.findIndex(link => link.closest('.run') === activeRow);
+  const next = at === -1 ? links.at(down ? 0 : -1) : links[at + (down ? 1 : -1)];
+  if (!next) return;
+  next.click();
 });
 $('search-box').addEventListener('click', e => { if (e.target === e.currentTarget) $('search').focus(); });
 function setSidebarGroupBy(value) {
@@ -2035,7 +2888,6 @@ function itemWithActionHtml(item, action) {
 }
 const GROUP_ORDER_ACTIONS = {
   project: { attr: 'data-project-order', label: 'Project order' },
-  status: { attr: 'data-status-order', label: 'Status order' },
 };
 function groupByItemHtml(value) {
   const item = orderItemHtml('group', value, sidebarGroupBy, GROUP_LABELS[value]);

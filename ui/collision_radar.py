@@ -17,12 +17,13 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 import threading
 import time
 
 import project_settings
+import run_lifecycle
 import run_relationships
+import stat_cache
 
 TERMINAL_STATUSES = frozenset({"complete", "merged", "merged-to-parent", "cancelled"})
 NON_BUILD_ROUTES = frozenset(run_relationships.NON_BUILD_ROUTES)
@@ -98,10 +99,12 @@ _CACHE_LOCK = threading.Lock()
 _TRIAL_MERGE_CACHE: OrderedDict[tuple, dict] = OrderedDict()
 _REPO_INDEX_CACHE: OrderedDict[tuple, dict] = OrderedDict()
 _RUN_DIFF_CACHE: OrderedDict[str, tuple[float, tuple, list[str], dict[str, set[str]]]] = OrderedDict()
+_DEFAULT_BRANCH_HEAD_CACHE: OrderedDict[str, tuple[tuple, tuple[str | None, str | None]]] = OrderedDict()
 
 TRIAL_CACHE_LIMIT = 512
 REPO_INDEX_LIMIT = 16
 RUN_DIFF_CACHE_LIMIT = 128
+DEFAULT_BRANCH_HEAD_LIMIT = 128
 LIVE_WORKTREE_TTL_SECONDS = 2.0
 REGENERATE_TIMEOUT_SECONDS = 120
 
@@ -135,12 +138,48 @@ def run_git(repo: str | Path, *args: str, timeout: float = 30, readonly: bool = 
         return None
 
 
+_DEFAULT_RUN_GIT = run_git
+
+
+def git_dirs(repo: str | Path | None) -> tuple[str | None, str | None]:
+    """Return ``(git_dir, common_dir)`` for a repository or linked worktree,
+    without spawning a ``git`` subprocess."""
+    if not repo:
+        return None, None
+    repo_str = os.fspath(repo)
+    marker = os.path.join(repo_str, ".git")
+    try:
+        if os.path.isdir(marker):
+            return marker, marker
+        if not os.path.isfile(marker):
+            return None, None
+        with open(marker, encoding="utf-8", errors="replace") as handle:
+            line = handle.readline().strip()
+        if not line.startswith("gitdir:"):
+            return None, None
+        git_dir = line[len("gitdir:"):].strip()
+        if not os.path.isabs(git_dir):
+            git_dir = os.path.normpath(os.path.join(repo_str, git_dir))
+        common_file = os.path.join(git_dir, "commondir")
+        if os.path.isfile(common_file):
+            with open(common_file, encoding="utf-8", errors="replace") as handle:
+                common = handle.readline().strip()
+            common_dir = common if os.path.isabs(common) else os.path.normpath(os.path.join(git_dir, common))
+        else:
+            common_dir = git_dir
+        return git_dir, common_dir
+    except OSError:
+        return None, None
+
+
 def canonical_repo(path: str | Path | None) -> str | None:
     if not isinstance(path, (str, Path)) or not str(path).strip():
         return None
     expanded = os.path.expanduser(str(path).strip())
     if not os.path.isdir(expanded):
         return None
+    if os.path.exists(os.path.join(expanded, ".git")):
+        return os.path.realpath(expanded)
     res = run_git(expanded, "rev-parse", "--show-toplevel", readonly=True)
     if res is not None and res.returncode == 0 and res.stdout.strip():
         return os.path.realpath(res.stdout.strip())
@@ -168,11 +207,65 @@ def ref_sha(repo: str | Path, ref: str | None) -> str | None:
     return sha if SHA_RE.fullmatch(sha) else None
 
 
+def _default_branch_head_stamp(common_dir: str, branch: str | None) -> tuple:
+    return (
+        stat_cache.optional_file_key(os.path.join(common_dir, "refs", "remotes", "origin", "HEAD")),
+        stat_cache.optional_file_key(os.path.join(common_dir, "refs", "heads", "main")),
+        stat_cache.optional_file_key(os.path.join(common_dir, "refs", "heads", "master")),
+        stat_cache.optional_file_key(os.path.join(common_dir, "refs", "heads", branch)) if branch else None,
+        stat_cache.optional_file_key(os.path.join(common_dir, "packed-refs")),
+    )
+
+
 def default_branch_head(repo: str | Path) -> tuple[str | None, str | None]:
+    repo_str = os.fspath(repo)
+    _git_dir, common_dir = git_dirs(repo_str) if run_git is _DEFAULT_RUN_GIT else (None, None)
+    if common_dir:
+        with _CACHE_LOCK:
+            cached = _DEFAULT_BRANCH_HEAD_CACHE.get(repo_str)
+        if cached is not None:
+            cached_stamp, cached_value = cached
+            if _default_branch_head_stamp(common_dir, cached_value[0]) == cached_stamp:
+                return cached_value
     branch = default_branch(repo)
     if not branch:
-        return None, None
-    return branch, ref_sha(repo, f"refs/heads/{branch}")
+        result: tuple[str | None, str | None] = (None, None)
+    else:
+        result = (branch, ref_sha(repo, f"refs/heads/{branch}"))
+    if common_dir:
+        stamp = _default_branch_head_stamp(common_dir, result[0])
+        with _CACHE_LOCK:
+            if len(_DEFAULT_BRANCH_HEAD_CACHE) >= DEFAULT_BRANCH_HEAD_LIMIT:
+                _DEFAULT_BRANCH_HEAD_CACHE.popitem(last=False)
+            _DEFAULT_BRANCH_HEAD_CACHE[repo_str] = (stamp, result)
+    return result
+
+
+def worktree_sync_stamp(
+    worktree: str | Path,
+    branch: str | None,
+    extra_files: tuple[str, ...] | list[str] = (),
+) -> tuple | None:
+    """Stat stamp of the git and working-tree files that determine whether
+    ``sync_worktree_with_main`` could produce a different outcome."""
+    wt_str = os.fspath(worktree)
+    wt_git_dir, common_dir = git_dirs(wt_str)
+    if not wt_git_dir or not common_dir:
+        return None
+    branch_name = branch.strip() if isinstance(branch, str) and branch.strip() else None
+    return (
+        tuple(
+            stat_cache.optional_file_key(os.path.join(wt_git_dir, name))
+            for name in ("HEAD", "index", "MERGE_HEAD", "index.lock", "CHERRY_PICK_HEAD", "REVERT_HEAD")
+        ),
+        tuple(
+            stat_cache.dir_mtime_ns(os.path.join(wt_git_dir, name))
+            for name in ("rebase-merge", "rebase-apply")
+        ),
+        stat_cache.optional_file_key(os.path.join(common_dir, "refs", "heads", branch_name)) if branch_name else None,
+        stat_cache.optional_file_key(os.path.join(common_dir, "packed-refs")),
+        tuple(stat_cache.optional_file_key(os.path.join(wt_str, rel)) for rel in extra_files),
+    )
 
 
 def is_ancestor(repo: str | Path, older: str | None, newer: str | None) -> bool:
@@ -897,21 +990,6 @@ def _read_json_dict(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _write_json_atomic(path: Path, data: dict) -> None:
-    fd, raw = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp = Path(raw)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-
-
 @contextlib.contextmanager
 def run_repo_lock(runs_dir: Path, main_repo: str | None, timeout: float = 30.0):
     identity = canonical_repo(main_repo) or "unknown"
@@ -1043,6 +1121,7 @@ def sync_worktree_with_main(
             return {"state": "skipped", "reason": "run metadata unavailable"}
         if meta.get("phase") != "build" or meta.get("status") not in ("running", "escalated"):
             return {"state": "skipped", "reason": "run is not in Build"}
+        meta = run_lifecycle.Snapshot(meta)
         main_repo = canonical_repo(meta.get("mainRepoPath"))
         worktree = canonical_repo(meta.get("repoPath"))
         branch = meta.get("branch")
@@ -1091,7 +1170,7 @@ def sync_worktree_with_main(
                 new_base = main_head if merge_head == main_head else merge_head
                 old_base = build_base
                 _update_meta_base(meta, new_base, main_repo)
-                _write_json_atomic(meta_path, meta)
+                run_lifecycle.write_meta(meta_path, meta, caller="sync worktree")
                 return {
                     "state": "synced",
                     "fastForward": False,
@@ -1119,7 +1198,7 @@ def sync_worktree_with_main(
             if meta.pop("buildSyncNotifiedCommit", None) is not None:
                 changed = True
             if changed:
-                _write_json_atomic(meta_path, meta)
+                run_lifecycle.write_meta(meta_path, meta, caller="sync worktree")
             return {"state": "up-to-date", "base": build_base, "head": worktree_head}
 
         # Stacked runs (Build on, or a plan step stacked on the step it waits
@@ -1143,7 +1222,7 @@ def sync_worktree_with_main(
                 and worktree_head != build_base):
             old_base = build_base
             _update_meta_base(meta, main_head, main_repo)
-            _write_json_atomic(meta_path, meta)
+            run_lifecycle.write_meta(meta_path, meta, caller="sync worktree")
             return {
                 "state": "reset-base",
                 "targetBranch": main_branch,
@@ -1178,7 +1257,7 @@ def sync_worktree_with_main(
                 detail = (ff.stderr or ff.stdout).strip() if ff else "fast-forward failed"
                 return {"state": "error", "error": detail}
             _update_meta_base(meta, new_base, main_repo)
-            _write_json_atomic(meta_path, meta)
+            run_lifecycle.write_meta(meta_path, meta, caller="sync worktree")
             return {
                 "state": "synced",
                 "fastForward": True,
@@ -1230,7 +1309,7 @@ def sync_worktree_with_main(
                 return {"state": "error", "error": detail}
             new_head = ref_sha(worktree, "HEAD") or worktree_head
             _update_meta_base(meta, new_base, main_repo)
-            _write_json_atomic(meta_path, meta)
+            run_lifecycle.write_meta(meta_path, meta, caller="sync worktree")
             non_gen_shared = [f for f in shared_files if f not in set(both_gen)]
             return {
                 "state": "synced",
@@ -1263,7 +1342,7 @@ def sync_worktree_with_main(
             "detectedAt": now_iso(),
         }
         meta["buildMergeConflict"] = conflict_record
-        _write_json_atomic(meta_path, meta)
+        run_lifecycle.write_meta(meta_path, meta, caller="sync worktree")
         return {
             "state": "conflicted",
             "aborted": False,

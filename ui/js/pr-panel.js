@@ -5,14 +5,13 @@
 // (ui/run_pull_request.py) and is read-only, because pr_body_edit_blocker
 // refuses the save.
 
+import { chatTabAvailable } from './chat-timeline.js';
+import { revealDiffPanel, chatWorkingOn } from './panel-navigation.js';
+import { resolvePrUrls } from './pr-badge.js';
 import { formatDuration } from './activity-model.js';
 import { LINEAR_MARK_SVG } from './agent-marks.js';
-import { chatTabAvailable, chatWorkingOn, fileReferenceLines, fileReferencePath } from './chat.js';
-import { $, artifactUrl, esc, externalizeLinks, fileUrl, mediaSignature, prPushPending, resolveRelativeUrls } from './core.js';
-import { PR_BODY_RE, prBodySlug } from './control.js';
-import { resolvePrUrls } from './dialogs.js';
-import { openRunFile } from './files-panel.js';
-import { revealDiffPanel } from './diff-panel.js';
+import { $, artifactUrl, esc, externalizeLinks, fileUrl, mediaSignature, prPushPending, resolveRelativeUrls, PR_BODY_RE, prBodySlug } from './core.js';
+import { openRunFile, fileReferenceLines, fileReferencePath } from './files-panel.js';
 import { checksSectionHtml } from './run-checks.js';
 import { agentWorking } from './run-presentation.js';
 
@@ -417,6 +416,24 @@ function newPrBodySave(runId, path, text, size, onChange) {
   return save;
 }
 
+function bindTableActionKeyboard(editable, signal) {
+  const tableButton = '.milkdown-table-block :is(.add-button, .button-group > button)';
+  const allowNativeActivation = event => {
+    if ((event.key === 'Enter' || event.key === ' ') && event.target instanceof Element
+        && event.target.matches(tableButton)) event.stopPropagation();
+  };
+  const options = { capture: true, signal };
+  editable.addEventListener('keydown', allowNativeActivation, options);
+  editable.addEventListener('keypress', allowNativeActivation, options);
+  editable.addEventListener('click', event => {
+    const button = event.target;
+    if (event.detail !== 0 || !(button instanceof Element) || !button.matches(tableButton)
+        || button.classList.contains('add-button')) return;
+    event.stopPropagation();
+    button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+  }, options);
+}
+
 function mountPrBodyEditor(host, runId, key, save, updateDelivery) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
@@ -468,15 +485,20 @@ function mountPrBodyEditor(host, runId, key, save, updateDelivery) {
   async function mountRendered() {
     try {
       // Lazy: the editor bundle is by far the largest thing orc-ui serves.
-      const [{ Crepe, fileReferencePlugin, htmlCommentPlugin, keepTightLists }] = await Promise.all([import('/vendor/orc-editor.min.js'), ensureEditorStyles()]);
+      const [{ Crepe, codeBlockTheme, fileReferencePlugin, htmlCommentPlugin, keepTightLists, nameTableActions }] = await Promise.all([import('/vendor/orc-editor.min.js'), ensureEditorStyles()]);
       if (signal.aborted) return;
       // Resolve only the displayed URL so editing preserves authored paths.
       const images = { proxyDomURL: url => artifactUrl(url, runId, key) };
       const editor = new Crepe({
         root: mountPoint, defaultValue: separateGluedTables(save.text),
-        featureConfigs: { [Crepe.Feature.ImageBlock]: images },
+        featureConfigs: {
+          // Wrap the extension so Crepe's deep defaults cannot merge the One Dark array into it.
+          [Crepe.Feature.CodeMirror]: { theme: { extension: codeBlockTheme } },
+          [Crepe.Feature.ImageBlock]: images,
+        },
       });
       keepTightLists(editor.editor);
+      nameTableActions(editor.editor);
       editor.editor.use(fileReferencePlugin(fileReferencePath));
       editor.editor.use(htmlCommentPlugin());
       await editor.create();
@@ -491,6 +513,7 @@ function mountPrBodyEditor(host, runId, key, save, updateDelivery) {
       if (editable) {
         editable.setAttribute('aria-label', 'PR body');
         bindFileReferences(editable, runId, { editable: true, signal });
+        bindTableActionKeyboard(editable, signal);
         editable.addEventListener('input', queueSave, { signal });
       }
     } catch {
@@ -522,6 +545,9 @@ function mountPrBodyEditor(host, runId, key, save, updateDelivery) {
   };
 }
 
+// How long typing must pause, after the PR body saves, before delivery returns.
+const DELIVERY_SETTLE_MS = 1000;
+
 const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Picked up', approved: 'Approved' };
 
 (() => {
@@ -529,6 +555,20 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
   let shownRun = null;
   let shownState = null;
   let paintedSignature = null;
+  // The PR each multi-PR run shows, until Orc reloads. The first opens first.
+  const pickedPr = new Map();
+  const prUrlFor = (run, urls) => (urls.includes(pickedPr.get(run.id)) ? pickedPr.get(run.id) : urls[0]);
+
+  // One segment per PR, named by its repository and number, when the run has more than one.
+  function switcherHtml(urls, url) {
+    if (urls.length < 2) return '';
+    const segments = urls.map((each, index) => {
+      const [, repo, number] = each.match(/github\.com\/[^/]+\/([^/]+)\/pull\/(\d+)/) || [];
+      const label = repo ? `${repo} #${number}` : `PR ${index + 1}`;
+      return `<button type="button" class="diff-tool" data-pr-index="${index}" aria-pressed="${each === url}">${PR_ICON}${esc(label)}</button>`;
+    }).join('');
+    return `<div class="pr-switch"><div class="diff-tool-group" role="group" aria-label="Pull request">${segments}</div></div>`;
+  }
   let bodyLoads = null;
 
   function retireEditors(state) {
@@ -551,17 +591,41 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     body.replaceChildren();
   };
 
+  // Delivery dims while the PR body is unsaved rather than hiding, so typing
+  // never moves the composer. It comes back only after the body has saved and
+  // typing has paused, so a steady typist sees no flicker.
+  let deliveryHold = null;
+
+  function holdDelivery(runId, held) {
+    const frames = [body.querySelector('.pr-delivery')];
+    const chatActions = document.querySelector('.chat-delivery iframe');
+    if (chatActions?.getAttribute('src') === `/runs/${encodeURIComponent(runId)}/chat-delivery`) frames.push(chatActions);
+    for (const frame of frames) {
+      if (!frame) continue;
+      frame.toggleAttribute('data-saving', held);
+      frame.inert = held;
+    }
+  }
+
   function updateDelivery(runId) {
     if (shownRun?.id !== runId) return;
     const saving = [...shownState.editors.values()].some(entry => entry.handle?.pending())
       || [...pendingPrBodySaves.values()].some(save => save.runId === runId)
       || (prBodyEditable(shownRun) && prBodyPaths(shownRun).some(path => failedPrDraft(prBodySaveKey(runId, path))));
-    const actions = body.querySelector('.pr-delivery');
-    if (actions) actions.hidden = saving;
-    const chatActions = document.querySelector('.chat-delivery iframe');
-    if (chatActions?.getAttribute('src') === `/runs/${encodeURIComponent(runId)}/chat-delivery`) {
-      chatActions.hidden = saving;
+    if (deliveryHold && deliveryHold.runId !== runId) {
+      clearTimeout(deliveryHold.timer);
+      deliveryHold = null;
     }
+    if (saving) {
+      clearTimeout(deliveryHold?.timer);
+      deliveryHold = { runId, timer: null };
+    } else if (deliveryHold && deliveryHold.timer === null) {
+      deliveryHold.timer = setTimeout(() => {
+        deliveryHold = null;
+        if (shownRun?.id === runId) updateDelivery(runId);
+      }, DELIVERY_SETTLE_MS);
+    }
+    holdDelivery(runId, !!deliveryHold);
   }
 
   function sectionHtml(state, id, title, inner, actions = '') {
@@ -792,6 +856,7 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
       { signal: state.loads.signal }).catch(() => null);
     const data = response ? await response.json().catch(() => null) : null;
     if (shownState !== state || !resolvePrUrls(shownRun.meta).urls.includes(url) || state.url !== url) return false;
+    state.switching = false;
     if (response?.ok && data) { state.detail = data; state.error = null; }
     else { state.detail = null; state.error = data?.error || "Orc couldn't reach the host"; }
     return true;
@@ -815,8 +880,19 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
       return;
     }
     const actions = ready && !chatTabAvailable(run)
-      ? `<iframe class="pr-delivery" title="Delivery actions" src="/runs/${encodeURIComponent(run.id)}/pr-delivery"></iframe>` : '';
-    body.innerHTML = actions + headHtml(run, state, editable) + `<div class="pr-content">${content}</div>`;
+      ? `<div class="pr-delivery-bar"><iframe class="pr-delivery" title="Delivery actions" src="/runs/${encodeURIComponent(run.id)}/pr-delivery"></iframe></div>` : '';
+    const urls = resolvePrUrls(run.meta).urls;
+    const url = prUrlFor(run, urls);
+    const switcher = switcherHtml(urls, url);
+    const focusedPr = body.querySelector('.pr-switch [data-pr-index]:focus')?.dataset.prIndex;
+    // A picked PR replaces the whole tab, so the last one's drafts never show while it loads.
+    if (state.switching && !state.detail && !state.error) {
+      body.innerHTML = actions + switcher + '<div class="run-diff-note" role="status"><p>Loading pull request…</p></div>';
+    } else {
+      body.innerHTML = actions + switcher + headHtml(run, state, editable) + `<div class="pr-content">${content}</div>`;
+    }
+    if (focusedPr !== undefined) body.querySelector(`.pr-switch [data-pr-index="${focusedPr}"]`)?.focus({ preventScroll: true });
+    if (state.switching && !state.detail && !state.error) return;
     body.querySelectorAll('.pr-content .md').forEach(node => {
       sanitizePrDom(node, { allowRelative: false });
       bindFileReferences(node, run.id);
@@ -867,7 +943,8 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     state.deliveryKey = deliveryKey;
     // Names behind a Slack reaction repaint the panel without a new PR read.
     const slackBy = (run.meta?.slackReviewPosts || []).map(post => post.by || []);
-    const signature = JSON.stringify([run.id, paths, urls, editable, run.meta?.phase, run.meta?.status, reviewKey, slackBy]);
+    const url = urls.length ? prUrlFor(run, urls) : null;
+    const signature = JSON.stringify([run.id, paths, urls, url, editable, run.meta?.phase, run.meta?.status, reviewKey, slackBy]);
     const fresh = signature !== paintedSignature;
     shownRun = run;
     paintedSignature = signature;
@@ -881,7 +958,7 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
     updateDelivery(run.id);
     loadVerification(run, state);
     const statChanged = !urls.length && await loadStat(run, state);
-    const detailChanged = urls.length > 0 && await loadDetail(run, state, urls[0]);
+    const detailChanged = urls.length > 0 && await loadDetail(run, state, url);
     if (shownState !== state || paintedSignature !== signature) return;
     if (detailChanged || (statChanged && !body.querySelector('.pr-body-editor, .pr-body-host[aria-busy]'))) {
       paint(run, state, paths, editable);
@@ -894,6 +971,15 @@ const SLACK_POST_STATES = { waiting: 'Posted, no reaction yet', 'picked-up': 'Pi
   body.addEventListener('click', event => {
     const state = shownState;
     if (!state) return;
+    const segment = event.target.closest('.pr-switch [data-pr-index]');
+    if (segment) {
+      const url = resolvePrUrls(shownRun.meta).urls[Number(segment.dataset.prIndex)];
+      if (!url || segment.getAttribute('aria-pressed') === 'true') return;
+      pickedPr.set(shownRun.id, url);
+      Object.assign(state, { detail: null, error: null, detailAt: 0, switching: true });
+      prPanelShow(shownRun);
+      return;
+    }
     // The file count is the way to the diff those files are in.
     if (event.target.closest('.pr-stat')) {
       revealDiffPanel('diff', { scope: 'branch' });

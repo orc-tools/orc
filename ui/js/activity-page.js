@@ -1,6 +1,6 @@
+import { normPath } from './config-data.js';
 import { $, announce, esc, isConflictResolutionPending, isQuestionRun, runs } from './core.js';
 import { runProject } from './filters.js';
-import { normPath } from './settings.js';
 import { effortLabel } from './launch-options.js';
 import { modelLabel } from './run-presentation.js';
 import { GROUPS, OTHER_KEY, OUTCOMES, RANGES, clockLabel, dayLabel, dayStartHour, figures, flowLayout, formatDuration, formatTotal, inSpan, joinRows, longDayLabel, matches, nearestPoint, paceLayout, placeRows, previousSpan, rangeSpan, rhythmLayout, ribbonPath, runStartMs, sparkPaths, spokenDuration } from './activity-model.js';

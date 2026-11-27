@@ -2,8 +2,8 @@
 // with that theme's own files (ui/theme-preview.css is the model). Picking
 // one uses it, and installs it first when this Orc does not have it yet.
 
+import { prefillNewConversation } from './panel-navigation.js';
 import { $, esc, focusTemporarily, setThemeMode, themeMode } from './core.js';
-import { prefillNewConversation } from './activity.js';
 import { refreshAppPlugins } from './app-plugins.js';
 import {
   basicsAccents, chooseFunMode, customAccentHex, isCustomAccent, paintBasicsAccent, paintedFunMode, savedBasicsAccent, savedCustomAccent,
@@ -79,7 +79,7 @@ ${sheets.map(href => `<link rel="stylesheet" href="${esc(href)}">`).join('')}</h
     <h2 class="nc-title">What should we build in <span class="nc-project-switch">web</span>?</h2>
     <div class="newconv-prompt">
       <div class="tp-prompt">Add rate limiting to the login endpoint.</div>
-      <footer><span class="tp-pick">Claude Code · Opus</span><span class="tp-pick">Medium</span><button type="button" id="nc-send" tabindex="-1">Start</button></footer>
+      <footer><span class="tp-pick">Claude Code · Opus</span><span class="tp-pick">Medium</span><button type="button" id="nc-send" tabindex="-1">Plan</button></footer>
     </div>
     <div class="nc-tray"><span class="nc-status"><strong>Enter to plan</strong> · Shift+Enter for a new line</span></div>
   </section>

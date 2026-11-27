@@ -19,7 +19,9 @@ import tempfile
 import uuid
 from typing import Callable
 
+import run_lifecycle
 from project_settings import MERGE_SHIP_ACTIONS, PUSH_SHIP_ACTIONS, SETTLE_SHIP_ACTIONS
+from state_transitions import RefusedTransition, advance, refuse
 
 
 def branch_checkout(repo, branch, git):
@@ -38,10 +40,40 @@ class ProtocolError(Exception):
 
 
 _OPEN_STAGES = {"prepared", "claimed", "resolution-claimed", "git-merged"}
+_NO_JOURNAL = "no journal"
+MERGE_JOURNAL = {
+    _NO_JOURNAL: {"prepare": "prepared"},
+    "prepared": {"claim": "claimed"},
+    "claimed": {"record-conflict": "conflicted", "record-git-merge": "git-merged"},
+    "conflicted": {
+        "adopt-source": "conflicted",
+        "claim-resolution": "resolution-claimed",
+        "prepare": "prepared",
+    },
+    "resolution-claimed": {
+        "adopt-source": "resolution-claimed",
+        "claim-resolution": "resolution-claimed",
+        "release-resolution": "conflicted",
+        "record-conflict": "conflicted",
+        "record-git-merge": "git-merged",
+    },
+    "git-merged": {"record-git-merge": "git-merged", "finish": "complete"},
+    "complete": {},
+}
 RETRY_SECONDS = 60
 # How long a session may hold a resolution it was sent before it must have
 # started working on it. Covers the gap between the paste and its turn starting.
+# A resolution whose send never finished skips it: see resolution_send_lost.
 RESOLUTION_START_SECONDS = 120
+# mergeConflict fields that belong to one claimed resolution turn. The sender
+# stamps SENDING before the paste and swaps it for SENT once the session takes
+# it, so a stamp left at SENDING by a process that is gone means the steps
+# never arrived. LOST marks the resend that follows, for the waiting line.
+RESOLUTION_SENDING = "resolutionSendingAt"
+RESOLUTION_SENT = "resolutionSentAt"
+RESOLUTION_LOST = "resolutionLostAt"
+RESOLUTION_TURN_FIELDS = ("resolutionPending", "resolutionRetryAt",
+                          RESOLUTION_SENDING, RESOLUTION_SENT, RESOLUTION_LOST)
 
 
 def now():
@@ -183,6 +215,8 @@ class DispatchChecks:
     binding_error: Callable[[str, dict, str | None], str | None]
     blocker: Callable[[str], object]
     session_working: Callable[[str, dict], bool]
+    # True while this process is still handing the run its resolution steps.
+    resolution_sending: Callable[[str], bool] = lambda run_id: False
 
 
 def entry_for(data, run_id):
@@ -242,6 +276,13 @@ def conflict_resolution_pending(meta):
             and meta["mergeConflict"].get("resolutionPending") is True)
 
 
+def resolution_send_lost(meta):
+    """The resolution was claimed and its send started, but the session never
+    accepted it. Only true once the sending process is known to be gone."""
+    return _main_conflict(meta) and isinstance(
+        meta["mergeConflict"].get(RESOLUTION_SENDING), str)
+
+
 def entry_stalled(entry, meta):
     if entry.get("claimToken") or entry.get("checkoutWait"):
         return False
@@ -261,7 +302,7 @@ class MergeQueue:
 
     def _read_run(self, run_id):
         try:
-            return read_json(self.runs / run_id / "meta.json")
+            return run_lifecycle.Snapshot(read_json(self.runs / run_id / "meta.json"))
         except ProtocolError:
             return {}
 
@@ -270,7 +311,10 @@ class MergeQueue:
             if not self._write_run_adapter(run_id, meta):
                 raise ProtocolError("could not save run status")
         else:
-            write_json(self.runs / run_id / "meta.json", meta)
+            try:
+                run_lifecycle.write_meta(self.runs / run_id / "meta.json", meta, caller="merge queue")
+            except run_lifecycle.RefusedTransition as exc:
+                raise ProtocolError(str(exc)) from exc
 
     def read(self):
         if not self.path.exists():
@@ -338,7 +382,7 @@ class MergeQueue:
         data["entries"].append({
             "runId": run_id, "branch": branch.strip(), "head": head,
             "receiptDigest": receipt, "authorityDigest": authority,
-            "sequence": data["nextSequence"], "enqueuedAt": now(),
+            "sequence": data["nextSequence"], "enqueuedAt": now(), "chatConfirmation": True,
             "claimToken": None, "claimedAt": None, "recoveryDispatchedAt": None,
             **consent.record(),
         })
@@ -494,8 +538,8 @@ class MergeQueue:
             _claim(entry)
             _clear_error(entry)
             self._save(data)
-        meta["mergeConflict"].pop("resolutionPending", None)
-        meta["mergeConflict"].pop("resolutionRetryAt", None)
+        for field in RESOLUTION_TURN_FIELDS:
+            meta["mergeConflict"].pop(field, None)
         meta["status"] = "merging"
         try:
             self._write_run(run_id, meta)
@@ -564,23 +608,22 @@ class MergeQueue:
                 and tx.get("stage") == "conflicted":
             self._settle_conflict(run_id, meta, tx)
             return Dispatch("pinned")
-        if self._resolution_never_started(entry, tx, meta) \
-                and not checks.session_working(run_id, meta):
-            # Escalation first, then release, like _settle_conflict: a crash
-            # between them lands here again on the next tick. The marker is
-            # rebuilt from the journal because a session that reopened its
-            # gate instead of resolving has usually deleted it.
-            if meta.get("status") != "escalated" or not _main_conflict(meta):
-                meta["status"] = "escalated"
-                if not _main_conflict(meta):
-                    meta["mergeConflict"] = {
-                        "target": "main",
-                        "detail": tx.get("failure") or "merge conflicted"}
-                meta.pop("mergeMainTransaction", None)
-                self._write_run(run_id, meta)
-            _release(entry)
-            self._save(data)
-            return Dispatch("resolution-abandoned")
+        if self._resolution_unstarted(entry, tx, meta):
+            if resolution_send_lost(meta):
+                # The steps never reached the session, usually because Orc
+                # restarted mid-send. No grace and no spent attempt: once
+                # nothing is still sending or working, they go again now.
+                if checks.session_working(run_id, meta) or checks.resolution_sending(run_id):
+                    return Dispatch("pinned")
+                conflict = meta["mergeConflict"]
+                conflict.pop(RESOLUTION_SENDING, None)
+                conflict.update({"resolutionPending": True, RESOLUTION_LOST: now()})
+                self._give_back_resolution(run_id, meta, tx, data, entry, force=True)
+                return Dispatch("resolution-unsent")
+            if _older_than(entry.get("claimedAt"), RESOLUTION_START_SECONDS) \
+                    and not checks.session_working(run_id, meta):
+                self._give_back_resolution(run_id, meta, tx, data, entry)
+                return Dispatch("resolution-abandoned")
         if meta.get("status") == "escalated" and isinstance(meta.get("mergeConflict"), dict):
             return Dispatch("pinned")
         ready = (meta.get("host") == checks.local_host
@@ -661,8 +704,24 @@ class MergeQueue:
                 return Dispatch("pinned")
         return Dispatch("dispatched", token, not resolution)
 
+    def _give_back_resolution(self, run_id, meta, tx, data, entry, *, force=False):
+        """Escalation first, then release, like _settle_conflict: a crash
+        between them lands here again on the next tick. The marker is rebuilt
+        from the journal because a session that reopened its gate instead of
+        resolving has usually deleted it."""
+        if force or meta.get("status") != "escalated" or not _main_conflict(meta):
+            meta["status"] = "escalated"
+            if not _main_conflict(meta):
+                meta["mergeConflict"] = {
+                    "target": "main",
+                    "detail": tx.get("failure") or "merge conflicted"}
+            meta.pop("mergeMainTransaction", None)
+            self._write_run(run_id, meta)
+        _release(entry)
+        self._save(data)
+
     @staticmethod
-    def _resolution_never_started(entry, tx, meta):
+    def _resolution_unstarted(entry, tx, meta):
         """A session was sent the resolution and holds the merge slot for it,
         but never ran `--claim-resolution`: the journal still shows the
         conflict under the claim that found it.
@@ -677,8 +736,7 @@ class MergeQueue:
                      or status == "merging" and _main_conflict(meta))
         return (bool(entry.get("claimToken")) and abandoned
                 and isinstance(tx, dict) and tx.get("stage") == "conflicted"
-                and tx.get("claimToken") != entry.get("claimToken")
-                and _older_than(entry.get("claimedAt"), RESOLUTION_START_SECONDS))
+                and tx.get("claimToken") != entry.get("claimToken"))
 
     def _settle_conflict(self, run_id, meta, tx):
         """Journal first, then escalation, then release. Safe after every write."""
@@ -732,9 +790,26 @@ class MergeTransaction:
         return (meta.get("phase") == "done" and meta.get("status") == "merged"
                 and (self._record is None or self._record.get("stage") == "complete"))
 
-    def _save(self, stage):
-        self._record["stage"] = stage
-        write_json(self.path, self._record)
+    def _next_stage(self, event):
+        # The caller holds the repository lock across the journal and Git work.
+        current = self.queue._journal(self.run_id)
+        before = _NO_JOURNAL if current is None else current.get("stage")
+        context = dict(machine="merge journal", owner=self.run_id, caller="MergeTransaction")
+        try:
+            if current != self._record:
+                refuse(**context, before=before, event=f"{event} with stale journal")
+            if current is not None and before == _NO_JOURNAL:
+                refuse(**context, before=before, event=event)
+            return advance(MERGE_JOURNAL, before, event, **context)
+        except RefusedTransition as exc:
+            raise ProtocolError(str(exc)) from exc
+
+    def _save(self, event, **changes):
+        stage = self._next_stage(event)
+        record = {} if event == "prepare" else self._record.copy()
+        record.update(changes, stage=stage)
+        write_json(self.path, record)
+        self._record = record
 
     def _marker(self, stage):
         tx = self._record
@@ -788,8 +863,10 @@ class MergeTransaction:
               contained, token=None):
         if self.open:
             self._require_phase(meta)
-        elif self._record is not None and self._record.get("stage") == "conflicted":
-            self._require_claim(meta)
+        else:
+            self._next_stage("prepare")
+            if self._record is not None:
+                self._require_claim(meta)
         direct_resolution = self.resolving and self._record.get("claimToken") is None
         recorded = None if direct_resolution else self.queue.claim_for_merge(
             self.run_id, source_branch, source_head, token,
@@ -832,48 +909,55 @@ class MergeTransaction:
             if (meta.get("phase") not in ("present", "recap", "ship")
                     or meta.get("status") not in ("awaiting-gate", "merging")):
                 raise ProtocolError("run must be idle at its final gate or claimed for merging")
-            self._record = {
-                "id": str(uuid.uuid4()), "runId": self.run_id,
-                "sourceBranch": source_branch, "sourceHead": source_head,
-                "targetBranch": target_branch, "targetHead": target_head,
-                "targetPath": str(self.queue.repository), "claimToken": recorded,
-                "startedAt": now(),
-                "originalMeta": {"status": meta.get("status"), "phase": meta.get("phase")},
-            }
-            self._save("prepared")
+            self._save(
+                "prepare", id=str(uuid.uuid4()), runId=self.run_id,
+                sourceBranch=source_branch, sourceHead=source_head,
+                targetBranch=target_branch, targetHead=target_head,
+                targetPath=str(self.queue.repository), claimToken=recorded, startedAt=now(),
+                originalMeta={"status": meta.get("status"), "phase": meta.get("phase")},
+            )
             _checkpoint("PREPARE")
             self._claim_metadata(meta)
         _checkpoint("CLAIM")
 
     def _claim_metadata(self, meta):
+        self._next_stage("claim")
+        if not isinstance(meta, run_lifecycle.Snapshot):
+            meta = run_lifecycle.Snapshot(meta)
         meta["status"] = "merging"
         meta["mergeMainTransaction"] = self._marker("claimed")
         self.queue._write_run(self.run_id, meta)
         _checkpoint("METADATA_CLAIM")
-        self._save("claimed")
+        self._save("claim")
 
     def conflicted(self, detail):
+        self._next_stage("record-conflict")
         self._require_claim(self.queue.read_run(self.run_id))
-        self._record.update(failure=detail, finishedAt=now())
-        self._save("conflicted")
+        self._save("record-conflict", failure=detail, finishedAt=now())
         _checkpoint("CONFLICT_JOURNAL")
         self.queue._settle_conflict(self.run_id, self.queue.read_run(self.run_id), self._record)
 
     def git_merged(self, warning=None):
-        if warning:
-            self._record["gitHookStderr"] = warning[-8192:]
-        self._save("git-merged")
+        changes = {"gitHookStderr": warning[-8192:]} if warning else {}
+        self._save("record-git-merge", **changes)
         _checkpoint("GIT")
 
-    def finish(self, merge_head, *, post_merge=False, desktop_update=None):
+    def finish(self, merge_head, *, background=False, post_merge=False, desktop_update=None):
+        self._next_stage("finish")
         meta = self.queue.read_run(self.run_id)
         self._require_claim(meta)
         merged_at = (self._record.get("mergedAt")
                      or (meta.get("mergedAt") if self._completed_metadata(meta) else None)
                      or now())
-        self._record["mergedAt"] = merged_at
+        marker = self._marker("complete")
+        if self._completed_metadata(meta):
+            marker = meta["mergeMainTransaction"]
+        elif background:
+            _, entry = entry_for(self.queue.read(), self.run_id)
+            if entry and entry.get("chatConfirmation") is True:
+                marker["chatConfirmation"] = True
         meta.update(phase="done", status="merged", mergeCommit=merge_head,
-                    mergedAt=merged_at, mergeMainTransaction=self._marker("complete"))
+                    mergedAt=merged_at, mergeMainTransaction=marker)
         meta.pop("mergeConflict", None)
         if post_merge:
             meta["postMergePending"] = True
@@ -883,7 +967,7 @@ class MergeTransaction:
             meta["mergeHookWarning"] = self._record["gitHookStderr"]
         self.queue._write_run(self.run_id, meta)
         _checkpoint("COMPLETE_METADATA")
-        self._save("complete")
+        self._save("finish", mergedAt=merged_at)
 
     def require_resolution(self, meta):
         if not _main_conflict(meta):
@@ -913,10 +997,10 @@ class MergeTransaction:
         old = tx["sourceHead"]
         if old == source_head:
             return
+        self._next_stage("adopt-source")
         self.queue.repin_head(self.run_id, old, source_head)
-        tx.setdefault("adoptedSourceHeads", []).append(old)
-        tx["sourceHead"] = source_head
-        self._save(tx["stage"])
+        self._save("adopt-source", sourceHead=source_head,
+                   adoptedSourceHeads=[*tx.get("adoptedSourceHeads", []), old])
 
     def resolution(self, meta, source_branch, source_head, target_branch, target_head,
                    *, release=False, target_advanced=False):
@@ -932,6 +1016,10 @@ class MergeTransaction:
         elif (self.resolving and meta.get("status") == "merging"
               and not self._marker_matches(meta, "resolution-claimed")):
             raise ProtocolError("resolution claim does not match run metadata")
+        event = "release-resolution" if release else "claim-resolution"
+        self._next_stage(event)
+        if not isinstance(meta, run_lifecycle.Snapshot):
+            meta = run_lifecycle.Snapshot(meta)
         repinned_from = None
         if target_head != tx.get("targetHead"):
             # Later queued runs merge while a conflict waits for its session.
@@ -951,16 +1039,17 @@ class MergeTransaction:
         if self.resolving and tx.get("claimToken") != recorded:
             raise ProtocolError("resolution claim token no longer matches queue")
         if release:
-            tx["resolutionReleasedAt"] = now()
-            self._save("conflicted")
-            self.queue._settle_conflict(self.run_id, meta, tx)
+            self._save(event, resolutionReleasedAt=now())
+            self.queue._settle_conflict(self.run_id, meta, self._record)
         else:
+            changes = {
+                "claimToken": recorded,
+                "resolutionClaimedAt": tx.get("resolutionClaimedAt") or now(),
+            }
             if repinned_from is not None:
-                tx.setdefault("repinnedTargetHeads", []).append(repinned_from)
-                tx["targetHead"] = target_head
-            tx["claimToken"] = recorded
-            tx["resolutionClaimedAt"] = tx.get("resolutionClaimedAt") or now()
-            self._save("resolution-claimed")
+                changes.update(targetHead=target_head,
+                               repinnedTargetHeads=[*tx.get("repinnedTargetHeads", []), repinned_from])
+            self._save(event, **changes)
             meta["status"] = "merging"
             meta["mergeMainTransaction"] = self._marker("resolution-claimed")
             self.queue._write_run(self.run_id, meta)

@@ -1,6 +1,5 @@
+import { refresh, reflectRunChange } from './panel-navigation.js';
 import { announce, esc, runs, setRuns } from './core.js';
-import { refresh } from './activity.js';
-import { reflectRunChange } from './dialogs.js';
 import { ATTACH_ICON } from './prompt-composer.js';
 import { emojiReady, emojifyHtml, loadGithubEmoji, wireEmojiSuggest } from './github-emoji.js';
 
@@ -48,7 +47,9 @@ export function holdPostedReviews(list) {
     const missing = new Set([...cards.keys(), ...roundCards.keys(), ...postedReviews.keys()]);
     for (const run of list) {
       if (!missing.delete(run.id)) continue;
-      if (roundCards.get(run.id)?.sent && !['awaiting-gate', 'running'].includes(run.meta?.status)) roundCards.delete(run.id);
+      // A round this page pushed keeps its card to say so.
+      const round = roundCards.get(run.id);
+      if (round?.sent && !round.pushed && !['awaiting-gate', 'running'].includes(run.meta?.status)) roundCards.delete(run.id);
       if (!missing.size) break;
     }
     for (const id of missing) {

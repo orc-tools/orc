@@ -16,6 +16,8 @@ READ_BUDGET = 2 * 1024 * 1024
 LINE_LIMIT = 1024 * 1024
 _cache = collections.OrderedDict()
 _lock = threading.RLock()
+# A headless send can wait for the queue while its owner reads pending questions.
+_reply_lock = threading.Lock()
 
 
 def _home():
@@ -231,7 +233,7 @@ def _save_replies(run_dir, state):
 def answer(meta, run_dir, data, *, headless_send=None):
     from codex_rpc import Client, RpcError, RpcRejected
 
-    with _lock:
+    with _reply_lock:
         if meta.get("harness") != "codex" or meta.get("status") in ("complete", "merged", "merged-to-parent", "cancelled"):
             return 409, {"error": "This run no longer accepts Codex replies."}
         question = pending(meta)

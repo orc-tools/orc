@@ -118,8 +118,8 @@
   padding: calc(2 * var(--orc-font-sans-nudge, 0px)) 12px 0; font-size: 12.5px; font-weight: 600;
   line-height: calc(24px - 2 * var(--orc-font-sans-nudge, 0px));
 }
-/* Start, below the steps and Builds with. In Split, Start step 1 only sits
-   beside it at the same size. */
+/* Start, below the steps and Builds with. In Split it starts every step;
+   each step's own Start, on its row, starts just that one. */
 .plan-work-go { display: grid; gap: 10px; min-width: 0; }
 .plan-work-go:empty { display: none; }
 .plan-start-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-self: start; }
@@ -179,8 +179,16 @@
 .plan-step[data-state="todo"] .plan-step-name { color: var(--text); font-weight: 500; }
 .plan-step[data-state="done"] .plan-step-name { color: var(--muted-strong); font-weight: 500; }
 .plan-step:is([data-state="todo"], [data-state="done"]) .plan-step-name:hover { color: var(--accent-text); }
-/* A later step's Start sits on its name's line, lifted to share its baseline. */
+/* A step's Start sits on its name's line, lifted to share its baseline. */
 .plan-step-head > orc-button { flex: none; margin-top: -4px; }
+/* Once any Start is pressed, the row Starts fade to disabled while the runs
+   open, in about a fifth of a second. */
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-animations-off]) .plan-step-head > orc-button[data-plan-start][disabled]::part(button) {
+    animation: plan-start-fade 200ms ease-out;
+  }
+}
+@keyframes plan-start-fade { from { opacity: 1; } }
 
 .plan-step-run {
   display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
@@ -200,7 +208,7 @@
   flex: none; display: inline-flex; align-items: center; gap: 6px;
   color: var(--muted-strong); font-size: 12px; line-height: 1.6;
 }
-.plan-step-repo .project-icon { width: 16px; height: 16px; font-size: 10px; }
+.plan-step-repo .project-icon { width: 16px; height: 16px; font-size: 11px; }
 .plan-step-waiting .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
 .plan-step-waiting .plan-step-run-state { color: var(--orange-text); }
 .plan-step-talk {
@@ -228,28 +236,36 @@ orc-button[data-plan-starting]::part(button) { cursor: progress; }
 .plan-steps[data-count="1"] .plan-step-body > orc-button:first-child { margin-top: 0; }
 
 .plan-start-note { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
-/* The build paired with the plan, where Start work was: its state and model,
-   then what the plan was made with, and where notes go now. */
-.plan-building { display: grid; gap: 8px; justify-items: start; min-width: 0; }
-.plan-building-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; color: var(--text); }
+/* The build paired with the plan: its state and model in the model row's
+   place, ruled off as that row is and as tall, then Open Chat where Start
+   work was, so the section links below stay where they were. */
+.plan-building { display: grid; gap: 14px; justify-items: start; min-width: 0; }
+.plan-building-state {
+  justify-self: stretch; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  min-height: var(--plan-builds-h, 46px); margin: 0; padding-top: 12px; border-top: 1px solid var(--border);
+  color: var(--text);
+}
 .plan-building-label { color: var(--accent-text); font-weight: 600; }
-.plan-building-note { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
 /* A build ready to merge reads green, one waiting on you in the gate colour,
    and its call to Chat is the box's one primary button. */
 .plan-building[data-tone="ready"] .plan-building-label { color: var(--ready-text, var(--green-text)); }
 .plan-building[data-tone="ask"] .plan-building-label { color: var(--orange-text, var(--gate)); }
-.plan-building-call { margin: 2px 0 0; color: var(--text); font-size: 13px; line-height: 1.5; }
+.plan-building-call { margin: -4px 0 0; color: var(--text); font-size: 13px; line-height: 1.5; }
 orc-button.plan-chat-call[data-tone="ask"] { --orc-green: var(--orange); }
 .plan-chat-arrow { margin-left: 6px; font-weight: 500; }
-.plan-building-hint {
-  justify-self: stretch; margin: 4px 0 0; padding-top: 10px; border-top: 1px solid var(--border);
-  color: var(--muted); font-size: 12px; line-height: 1.5;
+/* What the plan was made with, and where notes go now, under the links. */
+.plan-work-foot:empty { display: none; }
+.plan-building-foot {
+  margin: 0; padding-top: 10px; border-top: 1px solid var(--border);
+  color: var(--muted-strong); font-size: 12px; line-height: 1.5;
 }
 /* What Start builds on: the composer's launch choices in one row, ruled off
    from the steps above it. */
 .plan-builds { display: grid; gap: 6px; min-width: 0; }
 .plan-work > .plan-builds { padding-top: 12px; border-top: 1px solid var(--border); }
 .plan-builds[hidden] { display: none; }
+/* From Start until the build is listed, the row stays, greyed and out of reach. */
+.plan-builds[inert], .plan-start-choice[inert] { opacity: .55; }
 .plan-builds-label { margin: 0; color: var(--muted-strong); font-size: 12px; font-weight: 500; }
 .plan-builds-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .plan-builds-model { min-width: 0; max-width: 100%; }
@@ -283,8 +299,8 @@ orc-button.plan-chat-call[data-tone="ask"] { --orc-green: var(--orange); }
   box-shadow: 0 16px 0 var(--bg);
 }
 .plan-chat-model {
-  display: inline-flex; align-items: center; min-width: 0; max-width: 100%; padding: 3px 7px;
-  color: var(--muted); font-size: 12px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 100%; padding: 3px 7px;
+  color: var(--muted-strong); font-size: 12px; line-height: 1.3; overflow: hidden;
 }
 .plan-chat-model[hidden] { display: none; }
 .plan-notes {
@@ -313,7 +329,7 @@ orc-button.plan-chat-call[data-tone="ask"] { --orc-green: var(--orange); }
 }
 .plan-notes-fold > :not(.plan-notes-fold-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plan-notes-fold-icon {
-  display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 5px;
+  display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 6px;
   background: color-mix(in srgb, var(--muted-strong) 14%, transparent); color: var(--muted-strong);
 }
 .plan-notes-fold[aria-expanded="false"] .plan-notes-fold-icon svg { transform: rotate(180deg); }
@@ -404,7 +420,7 @@ button.plan-notes-quote:hover { color: var(--accent-text); }
 .plan-note-shot > img { display: block; }
 .plan-note-pin {
   position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
-  border: 2px solid var(--bg); box-shadow: 0 1px 4px rgb(0 0 0 / .45); font-size: 12px;
+  border: 2px solid var(--bg); font-size: 12px;
 }
 .plan-note-form {
   display: grid; gap: 8px; margin: 10px 0 14px; padding: 10px; cursor: auto;
@@ -449,11 +465,8 @@ button.plan-notes-quote:hover { color: var(--accent-text); }
 .plan-notes-revising-meta {
   margin: 0; color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums;
 }
-.plan-notes-revising-bar {
-  display: block; height: 2px; margin: 0 -11px;
-  background: linear-gradient(90deg, transparent 10%, var(--accent) 35%, var(--accent) 60%, transparent 85%);
-  background-size: 200% 100%; background-position: 50% 0;
-}
+.plan-notes-revising-bar { position: relative; display: block; height: 2px; margin: 0 -11px; }
+.plan-notes-revising-bar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 50%; }
 .plan-notes-list.is-working > li { grid-template-columns: auto minmax(0, 1fr); }
 .plan-notes-queued {
   display: inline-flex; align-items: center; gap: 5px; margin-top: 2px;
@@ -473,7 +486,7 @@ button.plan-notes-quote:hover { color: var(--accent-text); }
 .plan-page[data-plan-revising] orc-button[data-plan-start][disabled] { filter: grayscale(1); }
 /* The line runs along the tab bar's bottom edge, across the whole pane: its
    margins and its sticky top undo the scroller's padding (#content in
-   index.html; sticky measures from inside that padding), so it starts stuck
+   run-content.css; sticky measures from inside that padding), so it starts stuck
    and never moves. */
 .plan-page { --plan-edge-top: 20px; --plan-edge-inline: 22px; }
 @media (max-width: 700px) {
@@ -481,15 +494,26 @@ button.plan-notes-quote:hover { color: var(--accent-text); }
 }
 .plan-page[data-plan-revising]::before {
   content: ""; position: sticky; top: calc(-1 * var(--plan-edge-top)); z-index: 2; display: block; height: 2px;
-  margin: calc(-1 * var(--plan-edge-top)) calc(-1 * var(--plan-edge-inline)) calc(var(--plan-edge-top) - 2px);
-  background: linear-gradient(90deg, transparent 0, transparent 30%, var(--accent) 45%, var(--accent) 55%, transparent 70%);
-  background-size: 200% 100%; background-position: 50% 0;
+  margin: calc(-1 * var(--plan-edge-top)) auto calc(var(--plan-edge-top) - 2px) calc(-1 * var(--plan-edge-inline));
+  width: calc((100% + 2 * var(--plan-edge-inline)) / 2);
+}
+/* Both lines are a band half their width, which sweeps from one end to the
+   other and fades at each. It moves by transform inside its own line, so
+   nothing repaints and nothing reaches past the pane's edge to scroll it;
+   without motion it rests in the middle. */
+.plan-notes-revising-bar::after, .plan-page[data-plan-revising]::before {
+  background: linear-gradient(90deg, transparent, var(--accent) 35%, var(--accent) 65%, transparent);
+  transform: translateX(50%);
 }
 @media (prefers-reduced-motion: no-preference) {
   :is(.plan-note-pin, .plan-note-mark).is-working::after { animation: plan-wait 900ms linear infinite; }
-  .plan-notes-revising-bar, .plan-page[data-plan-revising]::before { animation: plan-sweep 1.6s ease-in-out infinite; }
+  .plan-notes-revising-bar::after, .plan-page[data-plan-revising]::before { animation: plan-sweep 1.6s ease-in-out infinite; }
 }
-@keyframes plan-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes plan-sweep {
+  0% { transform: translateX(0); opacity: 0; }
+  30%, 70% { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
 .plan-loose { display: grid; gap: 6px; justify-items: start; min-width: 0; }
 .plan-loose h3 { margin: 0; color: var(--muted-strong); font-size: 12px; font-weight: 600; }
 

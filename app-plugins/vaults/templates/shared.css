@@ -8,12 +8,13 @@
 html, body { height: 100%; margin: 0; }
 body {
   display: grid; grid-template-rows: minmax(0, 1fr) auto;
-  background: var(--paper); color: var(--ink); font: 15px/1.45 var(--sans);
+  background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans);
 }
-main { min-width: 0; overflow: auto; overscroll-behavior: contain; }
-.sheet, .chat-inner { width: min(100%, 1440px); margin-inline: auto; padding-inline: var(--gutter); }
-.sheet { padding-block: clamp(24px, 4vh, 52px); }
-h1, h2, h3, p, figure { margin: 0; }
+main { min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--line) transparent; }
+.sheet, .chat-inner { width: min(100%, var(--sheet, 1240px)); margin-inline: auto; padding-inline: var(--gutter); }
+.sheet { padding-block: clamp(22px, 3.6vh, 44px) 40px; }
+h1, h2, h3, p, figure, ol, ul { margin: 0; }
+ol, ul { padding: 0; list-style: none; }
 h1 { overflow-wrap: anywhere; text-wrap: balance; }
 button, textarea { font: inherit; color: inherit; }
 button, summary { cursor: pointer; }
@@ -21,54 +22,91 @@ button:disabled { cursor: default; }
 a { color: inherit; text-underline-offset: .2em; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 [hidden] { display: none !important; }
-.kicker { font: 700 11px/1.45 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+.hide { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Buttons and the links drawn as buttons. */
 .action {
-  display: inline-flex; align-items: center; justify-content: center; gap: .5em; min-height: 38px;
-  padding: 7px 14px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface);
-  color: var(--ink); font: 650 13px/1.35 var(--sans);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px;
+  padding: 8px 16px; border: 1.5px solid var(--ink); border-radius: 10px; background: transparent;
+  color: var(--ink); font: 700 14px/1.2 var(--sans); text-decoration: none;
 }
-.action:hover:enabled, .action:focus-visible { border-color: var(--accent); }
-.action.primary, .composer button { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
-.action:disabled { opacity: .65; }
+.action:hover:enabled, a.action:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.action.primary, .action.lead { background: var(--ink); color: var(--paper); }
+.action.lead { min-height: 46px; padding-inline: 20px; font-size: 15px; }
+.action.primary:hover:enabled, a.action.lead:hover { background: color-mix(in srgb, var(--ink) 86%, var(--paper)); }
+.action:disabled { opacity: .6; }
+.action .icon { width: 15px; height: 15px; }
+
+/* Sources: an unchecked one offers its setup, one that checked fine is one quiet
+   line, and one that needs you is outlined with its steps. */
+.src summary {
+  display: inline-flex; align-items: center; gap: 6px; width: fit-content; padding: 4px 0;
+  list-style: none; text-decoration: underline; text-underline-offset: 3px;
+}
+.src summary::-webkit-details-marker { display: none; }
+.src summary .icon { width: 11px; height: 11px; transform: rotate(-90deg); }
+.src details[open] summary .icon { transform: none; }
+.src .tick { display: none; width: 13px; height: 13px; stroke-width: 2.2; color: var(--ok, var(--ink)); }
+.src:has(.src-state.ok) .tick { display: inline-block; }
+.src:has(.src-state.ok) details { display: none; }
+.src-state.failed { color: var(--error); font-weight: 600; }
+.src:has(.src-state.failed) { padding: 14px; border: 1.5px solid var(--error); border-radius: 12px; }
+.src:has(.src-state.failed) details[open] > summary { display: none; }
+.setup { padding: 4px 0 2px; color: var(--muted); }
+.setup p + p, .setup code + p { margin-top: 6px; }
+.setup b { color: var(--ink); }
+.setup code {
+  display: block; margin-top: 6px; padding: 7px 10px; border-radius: 8px; background: var(--surface);
+  color: var(--ink); font: 12px/1.5 var(--mono); overflow-wrap: anywhere;
+}
+.setup a { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; color: var(--ink); }
+.setup a .icon { width: 12px; height: 12px; }
+
+/* The chat. */
 .chat {
   z-index: 1; min-width: 0; max-height: 65vh; overflow-y: auto;
-  padding: 11px 0 max(14px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line);
+  padding: 12px 0 max(14px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line);
   background: var(--chat-bg, var(--surface));
 }
-.chat-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
-.chat-heading label { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; }
-.chat-mark { color: var(--accent); font: 22px/1 sans-serif; }
-#chat-history { padding: 5px 0 5px 8px; border: 0; background: none; color: var(--muted); font: 12px/1.4 var(--mono); }
-#chat-history::after { content: '⌃'; margin-left: 6px; }
-#chat-history[aria-expanded=true]::after { content: '⌄'; }
+.chat-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+.chat-heading label { font-size: 13px; font-weight: 700; }
+#chat-history {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 0 4px 8px; border: 0; background: none;
+  color: var(--muted); font-size: 13px;
+}
+#turn-count:empty { display: none; }
+#chat-history .icon { width: 12px; height: 12px; stroke-width: 1.8; transform: rotate(var(--history-turn, 180deg)); }
+#chat-history[aria-expanded=true] .icon { transform: rotate(var(--history-open-turn, 0deg)); }
 #conversation { max-height: 21vh; overflow: auto; padding: 8px 12px; margin-block: 2px 8px; border-block: 1px solid var(--line); }
-#chat-turns { list-style: none; padding: 0; margin: 0; }
 #chat-turns li + li { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
 #conversation { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 #conversation p + p { color: var(--muted); margin-top: 3px; }
 .composer {
-  display: flex; align-items: end; gap: 7px; padding: 5px; border: 1px solid var(--line);
-  border-radius: var(--box-radius, 5px); background: var(--input-bg, var(--paper));
+  display: flex; align-items: end; gap: 8px; padding: 6px; border-radius: 14px;
+  background: var(--input-bg, var(--surface));
 }
-.composer:focus-within { border-color: var(--focus); }
+.composer:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
 .composer textarea {
-  flex: 1; min-width: 0; min-height: 38px; max-height: 100px; padding: 8px 9px;
-  field-sizing: content; resize: vertical; border: 0; outline-offset: -2px; background: transparent; line-height: 1.4;
+  flex: 1; min-width: 0; min-height: 40px; max-height: 100px; padding: 9px 12px;
+  field-sizing: content; resize: none; border: 0; outline: 0; background: transparent; line-height: 1.45;
+  caret-color: var(--caret, var(--accent));
 }
 .composer textarea::placeholder { color: var(--muted); opacity: 1; }
 .composer button {
-  min-height: 38px; padding: 5px 16px; border: 0; border-radius: var(--box-radius, 3px);
-  font-weight: 700; font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 40px; padding: 6px 16px; border: 0; border-radius: 10px;
+  background: var(--accent); color: var(--on-accent); font-weight: 750; font-size: 14px;
 }
 .composer button:disabled { opacity: .65; }
-.composer button span { margin-left: 3px; }
 #chat-status { color: var(--muted); font-size: 13px; max-height: 3.5em; overflow: auto; overflow-wrap: anywhere; }
-#chat-status:not(:empty) { margin-top: 5px; }
+#chat-status:not(:empty) { margin-top: 7px; }
 #chat-status.failed, #conversation .failed { color: var(--error); }
 @media (max-width: 600px) {
   .sheet { padding-block: 20px 25px; }
-  .composer textarea { font-size: 16px; resize: none; }
+  .composer textarea { font-size: 16px; }
   .composer button, .action, #chat-history { min-height: 44px; }
-  .chat { padding-top: 5px; }
-  .chat-heading { margin-bottom: 0; }
+  .chat { padding-top: 6px; }
+  .chat-heading { margin-bottom: 2px; }
 }

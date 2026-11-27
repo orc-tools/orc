@@ -52,7 +52,6 @@
 .factory-recenter, .factory-zoom, .factory-roster-toggle {
   border: 1px solid color-mix(in srgb, var(--border) 78%, var(--heading) 16%); border-radius: 8px;
   background: var(--panel); color: var(--heading);
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--heading) 14%, transparent);
 }
 .factory-recenter {
   padding: 5px 11px; font: inherit; font-size: 12px; font-weight: 600;
@@ -212,9 +211,7 @@
   backdrop-filter: blur(10px) saturate(1.15); -webkit-backdrop-filter: blur(10px) saturate(1.15);
   color: var(--text); font-size: 11px; line-height: 1.32;
   white-space: nowrap;
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--heading) 14%, transparent),
-    0 1px 2px color-mix(in srgb, var(--heading) 10%, transparent);
-  transition: border-color .15s ease, box-shadow .15s ease;
+  transition: border-color .15s ease;
 }
 .factory-label::after {
   content: ''; position: absolute; left: 50%; bottom: -4px; width: 6px; height: 6px;
@@ -230,7 +227,7 @@
 }
 .factory-label-head { display: flex; align-items: center; gap: 5px; max-width: 100%; }
 .factory-label-head .factory-label-name { min-width: 0; }
-.factory-label-effort { flex: none; color: var(--muted-strong); font-size: 10px; }
+.factory-label-effort { flex: none; color: var(--muted-strong); font-size: 11px; }
 .factory-label-cloud {
   flex: none; display: inline-flex; align-items: center; gap: 3px;
   padding: 0 5px; border-radius: 999px;
@@ -245,9 +242,7 @@
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--factory-cloud) 16%, var(--panel) 86%) 0%,
     color-mix(in srgb, var(--panel) 90%, transparent) 100%);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--factory-cloud) 20%, transparent),
-    0 4px 14px color-mix(in srgb, var(--factory-cloud) 22%, transparent),
-    0 2px 5px color-mix(in srgb, var(--heading) 12%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--factory-cloud) 20%, transparent);
 }
 .factory-label[data-cloud="true"]::after {
   border-right-color: color-mix(in srgb, var(--factory-cloud) 62%, var(--border));
@@ -263,11 +258,11 @@
   background: var(--factory-dot);
   box-shadow: 0 0 5px color-mix(in srgb, var(--factory-dot) 45%, transparent);
 }
-.factory-label-meta { color: var(--muted-strong); font-size: 10px; }
+.factory-label-meta { color: var(--muted-strong); font-size: 11px; }
 .factory-label-count {
   margin-top: 1px; padding: 0 6px; border-radius: 999px;
   background: color-mix(in srgb, var(--green) 18%, transparent);
-  color: var(--green-text); font-size: 10px; font-weight: 600;
+  color: var(--green-text); font-size: 11px; font-weight: 600;
 }
 .factory-label.is-main {
   max-width: 206px; padding: 4px 11px 5px; font-size: 12px;
@@ -287,8 +282,7 @@
 }
 .factory-label:is(.is-hot, .is-selected) {
   z-index: 2; border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent),
-    0 6px 16px color-mix(in srgb, var(--heading) 18%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
 }
 .factory-label:is(.is-hot, .is-selected)::after { border-color: var(--accent); }
 
@@ -299,22 +293,33 @@
   width: min(340px, calc(100% - 28px)); max-height: calc(100% - 28px); overflow-y: auto;
   box-sizing: border-box; padding: 12px 14px 13px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, var(--heading) 16%);
+  /* impeccable-disable-next-line border-accent-on-rounded: an allowed edge marker, listed in DESIGN.md */
   border-top: 3px solid var(--factory-dot); border-radius: 12px;
   background: color-mix(in srgb, var(--panel) 94%, transparent);
   backdrop-filter: blur(14px) saturate(1.15); -webkit-backdrop-filter: blur(14px) saturate(1.15);
   color: var(--text); font-size: 12.5px; line-height: 1.45;
-  box-shadow: 0 10px 28px color-mix(in srgb, var(--heading) 20%, transparent),
-    0 2px 5px color-mix(in srgb, var(--heading) 12%, transparent);
+  box-shadow: var(--float-shadow);
   overscroll-behavior: contain;
   animation: factory-ticket-in .22s cubic-bezier(.2, .8, .2, 1);
 }
 .factory-ticket[hidden] { display: none; }
 @keyframes factory-ticket-in { from { opacity: 0; transform: translateY(10px) scale(.98); } }
-.factory-ticket-head { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
-.factory-ticket-head .factory-avatar { --factory-row-bg: var(--panel); }
+.factory-ticket-head {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: start; column-gap: 10px; min-width: 0;
+}
+.factory-ticket-head .factory-avatar { grid-row: 1 / span 2; --factory-row-bg: var(--panel); }
 .factory-ticket-head .factory-state { margin-top: 2px; }
-.factory-ticket-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.factory-ticket-kind { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted-strong); font-size: 11px; font-weight: 600; }
+/* The kind of agent, under its name, with its agent type beside it. */
+.factory-ticket-type {
+  grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; margin-top: 4px;
+  color: var(--muted-strong); font-size: 11.5px; line-height: 1.35;
+}
+.factory-kind-tag {
+  display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--chip);
+  color: var(--text); font-size: 11px; font-weight: 600; line-height: 1.45;
+}
+.factory-ticket-role { min-width: 0; overflow-wrap: anywhere; }
 .factory-ticket[data-cloud="true"] {
   border-color: color-mix(in srgb, var(--factory-cloud) 52%, var(--border));
   border-top-color: var(--factory-dot);
@@ -331,17 +336,13 @@
 .factory-ticket-close:hover { background: color-mix(in srgb, var(--heading) 8%, transparent); color: var(--heading); }
 .factory-ticket-brief, .factory-ticket-error { margin: 10px 0 0; overflow-wrap: anywhere; }
 .factory-ticket-brief {
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; line-clamp: 5; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
 }
 .factory-ticket-error {
   padding-left: 8px; border-left: 2px solid color-mix(in srgb, var(--red) 55%, transparent);
   color: var(--red-text);
 }
-.factory-ticket-facts {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px;
-  margin: 11px 0 0; padding-top: 10px;
-  border-top: 1px dashed color-mix(in srgb, var(--border) 80%, var(--heading) 14%);
-}
+.factory-ticket-facts { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 11px 0 0; }
 .factory-ticket-facts > div { min-width: 0; }
 .factory-ticket-facts dt { color: var(--muted-strong); font-size: 11px; }
 .factory-ticket-facts dd {
@@ -350,6 +351,7 @@
 }
 .factory-ticket-facts code { font-size: 11.5px; }
 /* The advisor's earlier asks: what came of each, and what the agent said next. */
+.factory-ask { flex-basis: 100%; }
 .factory-ask dd { font-variant-numeric: normal; }
 .factory-ask[data-status="failed"] dd, .factory-ask[data-status="dropped"] dd { color: var(--muted-strong); }
 .factory-ask-then { display: block; margin-top: 2px; color: var(--text); }
@@ -441,7 +443,6 @@
 .factory-avatar .mark svg { width: 100%; height: 100%; display: block; }
 .factory-avatar .model-icon > img {
   display: none; grid-area: 1 / 1; width: 22px; height: 22px; object-fit: contain;
-  filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / .22));
 }
 .factory-main .factory-avatar .model-icon > img { width: 27px; height: 27px; }
 .factory-avatar .model-icon.loaded > .mark { display: none; }
@@ -494,7 +495,7 @@ button.factory-agent-name {
   padding: 0 5px; border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--factory-cloud) 46%, transparent);
   background: color-mix(in srgb, var(--factory-cloud) 15%, var(--panel));
-  color: var(--factory-cloud-ink); font-size: 10px; font-weight: 600; line-height: 1.45;
+  color: var(--factory-cloud-ink); font-size: 11px; font-weight: 600; line-height: 1.45;
 }
 .factory-cloud-tag-icon { display: inline-flex; width: 10px; height: 10px; flex: none; }
 .factory-cloud-tag-icon svg { width: 100%; height: 100%; display: block; }
@@ -574,7 +575,7 @@ button.factory-agent-name {
 @media (max-width: 600px) {
   .factory-ticket { left: 8px; bottom: 8px; width: calc(100% - 16px); max-height: 62%; padding: 10px 12px 11px; }
   .factory-ticket-brief { -webkit-line-clamp: 2; line-clamp: 2; }
-  .factory-label:not(.is-main) { max-width: 124px; padding: 2px 7px 3px; font-size: 10px; }
+  .factory-label:not(.is-main) { max-width: 124px; padding: 2px 7px 3px; font-size: 11px; }
   .factory-label[data-cloud="true"]:not(.is-main) { max-width: 152px; }
   .factory-label.is-main { max-width: 174px; padding: 3px 9px 4px; font-size: 11px; }
   .factory-label.is-main[data-cloud="true"] { max-width: 196px; }

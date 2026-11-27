@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
+import integrations
 import zerohands_review
 from stat_cache import keep_recent
 
@@ -219,6 +220,7 @@ def fetch(url: str, cwd: str | None = None, now: float | None = None) -> dict[st
         if hit and now - hit[0] < CACHE_SECONDS:
             return hit[1]
     env = dict(os.environ, GH_PROMPT_DISABLED="1", GIT_TERMINAL_PROMPT="0")
+    integrations.note("run-pr-panel")
     try:
         result = subprocess.run(
             ["gh", "pr", "view", url, "--json", FIELDS],
@@ -251,6 +253,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _gh_token() -> str:
     env = dict(os.environ, GH_PROMPT_DISABLED="1")
+    integrations.note("run-pr-panel")
     try:
         result = subprocess.run(["gh", "auth", "token", "--hostname", "github.com"],
                                 env=env, capture_output=True, text=True, timeout=10, check=False)

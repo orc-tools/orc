@@ -1,25 +1,28 @@
 // orc-ui: Settings screen state and persistence.
 
-import { buildConfigFromForm, changeLineHtml, loadSettings, renderSettingsForm, saveSettings, settingsCameFrom } from './activity.js';
-import { $, absoluteStamp, announce, esc, focusTemporarily, revealRailKey, runs } from './core.js';
-import { compactAge, focusControl, projectIconHtml } from './filters.js';
+import { normPath } from './config-data.js';
+import { applyCostCurrencyConfig, defaultCostCurrency, exchangeRate, validCostCurrency } from './currency.js';
+import { $, absoluteStamp, announce, esc, focusTemporarily, revealRailKey } from './core.js';
+import { compactAge, focusControl, projectIconHtml, runProjectPath } from './filters.js';
+import { releaseUpdateBadgeHtml } from './desktop-update.js';
 import { paintedFunMode, pickableFunModes } from './fun-modes.js';
 import { enabledHarnesses } from './harnesses.js';
 import { DEFAULT_PR_PUSH_ACTION, PR_PUSH_ACTIONS, knownPrPushAction } from './run-presentation.js';
 import { activateInstructions, deactivateInstructions } from './instructions.js';
 import { activateOrchestrate, deactivateOrchestrate } from './orchestrate.js';
-import { unmountPluginSettingsDetail } from './plugin-settings.js';
+import { ORCHESTRATE_MARK_PATHS } from './agent-marks.js';
+import { activateIntegrations, deactivateIntegrations } from './integrations.js';
 import { showPluginView } from './app-plugins.js';
-// ---------- Settings ----------
-// A tilde-form path ("~/Projects/orc") and an absolute one for the same repo
-// ("/Users/developer/Projects/orc") must compare equal when matching config.repos
-// keys — including absolute paths recorded under a different home (another
-// machine or username). Identity is home-agnostic: any /Users/<name> or
-// /home/<name> prefix contracts to ~, mirroring canonical_path in serve.py.
-export function normPath(p) {
-  if (p === '~' || p.startsWith('~/')) return p;
-  return p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');
+let buildConfigFromForm;
+let loadSettings;
+let renderSettingsForm;
+let saveSettings;
+let unmountPluginSettingsDetail;
+export function bindSettingsForm(handlers) {
+  ({ buildConfigFromForm, loadSettings, renderSettingsForm, saveSettings, unmountPluginSettingsDetail } = handlers);
 }
+
+// ---------- Settings ----------
 export function projectName(path) {
   const text = String(path || '');
   return text.split('/').filter(Boolean).pop() || text;
@@ -36,6 +39,31 @@ export function projectOrderFromConfigPayload(data) {
 function projectSettingsHash(projectKey) {
   return `#settings/project/${encodeURIComponent(projectKey)}`;
 }
+// TESTABLE: which Settings page ⇧⌘, opens
+// The project in view is the run's own, or the one the composer has picked on
+// a project's home page. A configured project opens its page; one Settings no
+// longer lists opens Projects rather than "Project not found"; no project in
+// view (Home, Activity, a run under Other projects) opens Settings itself.
+// `configured` is null while the config has not loaded: the page is tried.
+export function projectSettingsTargetHash(hash, runList, composerProject, configured) {
+  const base = String(hash || '').split('?')[0];
+  let path = '';
+  if (base === 'new' || base.startsWith('new/')) {
+    path = String(composerProject || '').trim();
+  } else {
+    let id = '';
+    try { id = decodeURIComponent(base.split('/')[0] || ''); } catch { id = ''; }
+    const run = id ? (runList || []).find(candidate => candidate && candidate.id === id) : null;
+    path = run ? runProjectPath(run) : '';
+  }
+  if (!path) return 'settings';
+  const key = normPath(path).toLowerCase();
+  if (!Array.isArray(configured)) return projectSettingsHash(normPath(path)).slice(1);
+  const project = configured.find(candidate => [candidate.key, candidate.path]
+    .some(value => typeof value === 'string' && value && normPath(value).toLowerCase() === key));
+  return project ? projectSettingsHash(project.key || project.path).slice(1) : 'settings/projects';
+}
+// END TESTABLE: which Settings page ⇧⌘, opens
 export function projectKeyFromSettingsHash(hash = location.hash.slice(1)) {
   const prefix = 'settings/project/';
   if (!hash.startsWith(prefix)) return null;
@@ -56,7 +84,8 @@ export const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance', icon: '<path d="M12 3a9 9 0 1 0 0 18h1.5a2.5 2.5 0 0 0 0-5H12a2 2 0 0 1 0-4h4a5 5 0 0 0 5-5c0-2.2-4-4-9-4Z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="15" cy="7.5" r="1"/>' },
   { id: 'sounds', label: 'Sounds', icon: '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5Z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"/>' },
   { id: 'skills', label: 'Skills', icon: '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>' },
-  { id: 'orchestrate', label: 'Orchestrate', icon: '<circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h4a4 4 0 0 0 4-4V5h2M11 12a4 4 0 0 1 4 4v3h2"/>' },
+  { id: 'orchestrate', label: 'Orchestrate', icon: ORCHESTRATE_MARK_PATHS },
+  { id: 'integrations', label: 'Integrations', icon: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>' },
   { id: 'account', label: 'Account & devices', icon: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>' },
   { id: 'instructions', label: 'Instructions', icon: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>' },
   { id: 'plugins', label: 'Plugins', icon: '<path d="M9 3v4M15 3v4M6 7h12v4a6 6 0 0 1-12 0Z"/><path d="M12 17v4"/>' },
@@ -272,6 +301,8 @@ export function selectSettingsTab(id) {
   else deactivateInstructions();
   if (id === 'orchestrate') activateOrchestrate();
   else deactivateOrchestrate();
+  if (id === 'integrations') activateIntegrations();
+  else deactivateIntegrations();
 }
 export function wireSettingsTabs() {
   const list = $('settings-tabs');
@@ -461,6 +492,16 @@ export function writeOfferOtherShipActions(config, checked) {
   if (checked) delete config.offerOtherShipActions;
   else config.offerOtherShipActions = false;
 }
+// Mirrors offer_ship_when_done in project_settings.py: on unless saved off.
+export const offerShipWhenDone = config => config?.offerShipWhenDone !== false;
+export function writeOfferShipWhenDone(config, checked) {
+  if (checked) delete config.offerShipWhenDone;
+  else config.offerShipWhenDone = false;
+}
+export function projectShipAction(config, projectPath) {
+  if (!projectPath) return '';
+  return projectShipOverride(mergedRepoEntry(config?.repos, projectPath)) || defaultShipAction(config);
+}
 // What a PR review round's push button does with the round's replies
 // (project_settings.pr_push_action): the config's top-level `prPushAction`.
 export const prPushActionOf = config => knownPrPushAction(config?.prPushAction);
@@ -500,6 +541,8 @@ export function shipDefaultCardHtml(config, projects) {
         ${overridesHtml}
         <orc-switch class="settings-check" id="set-offer-other-ship-actions" name="set-offer-other-ship-actions" label="Offer the other Ship actions" aria-describedby="hint-offer-other-ship-actions" ${offerOtherShipActions(config) ? 'checked' : ''}></orc-switch>
         <p class="settings-hint" id="hint-offer-other-ship-actions">Adds a menu beside the Ship button, to ship one run another way.</p>
+        <orc-switch class="settings-check" id="set-offer-ship-when-done" name="set-offer-ship-when-done" label="Offer Ship when done" aria-describedby="hint-offer-ship-when-done" ${offerShipWhenDone(config) ? 'checked' : ''}></orc-switch>
+        <p class="settings-hint" id="hint-offer-ship-when-done">Adds a Ship when done button to the composer and Chat, to skip planning and ship as soon as a build finishes.</p>
       </section>
       <section class="ship-settings-group" aria-labelledby="title-pr-push-action">
         <p class="ship-settings-title" id="title-pr-push-action">Push to a PR</p>
@@ -716,6 +759,7 @@ export function settingsHeaderHtml({ version = settingsData?.version || '', brea
   const versionBadge = breadcrumb
     ? `<span id="changelog-version" class="settings-version"${version ? ` aria-label="Version ${esc(version)}"` : ' hidden'}>${esc(version)}</span>`
     : `<a id="settings-version" class="settings-version" href="#changelog"${version ? ` aria-label="View changelog for version ${esc(version)}"` : ' hidden'}>${esc(version)}</a>`;
+  const versionRow = `<span class="cp-version-row">${versionBadge}${breadcrumb ? '' : releaseUpdateBadgeHtml()}</span>`;
   // <orc-theme-toggle> draws its own monitor, sun and moon icons and writes its
   // own "Theme: <mode> — switch to <next>" name from the document's controller.
   const themeButton = breadcrumb ? '' : '<orc-theme-toggle id="theme-btn"></orc-theme-toggle>';
@@ -725,11 +769,11 @@ export function settingsHeaderHtml({ version = settingsData?.version || '', brea
   const searchButton = breadcrumb ? '' : `<button type="button" id="settings-search-btn" class="settings-search-trigger" aria-label="Search settings (${searchKey})" aria-haspopup="dialog" aria-keyshortcuts="${isMac ? 'Meta+F' : 'Control+F'}">${SETTINGS_SEARCH_ICON}<span class="settings-search-trigger-label">Search settings…</span><kbd class="settings-search-trigger-kbd" aria-hidden="true">${searchKey}</kbd></button>`;
   const id = headerId || (breadcrumb ? 'changelog-head' : 'settings-head');
   if (backHref) {
-    return `<header id="${id}" class="settings-head settings-head-sub"><nav class="settings-breadcrumb" aria-label="Breadcrumb"><a class="settings-back" href="${esc(backHref)}">${SETTINGS_BACK_ICON}<span data-back-label>${esc(backLabel)}</span></a></nav><div class="settings-head-actions"><h2 class="settings-sub-label" tabindex="-1">Settings</h2>${versionBadge}${searchButton}${themeButton}</div></header>`;
+    return `<header id="${id}" class="settings-head settings-head-sub"><nav class="settings-breadcrumb" aria-label="Breadcrumb"><a class="settings-back" href="${esc(backHref)}">${SETTINGS_BACK_ICON}<span data-back-label>${esc(backLabel)}</span></a></nav><div class="settings-head-actions"><h2 class="settings-sub-label" tabindex="-1">Settings</h2>${versionRow}${searchButton}${themeButton}</div></header>`;
   }
   const readout = (name, value, extra = '') => `<div class="cp-readout"${extra}><span class="cp-readout-name">${name}</span>${value}</div>`;
   const skinChip = `<a id="settings-skin" class="cp-skin" href="${esc(settingsSkinHref())}" aria-label="Theme: ${esc(skin)}. Open Appearance">${SETTINGS_SKIN_ICON}<span data-skin-label>${esc(skin)}</span></a>`;
-  return `<header id="${id}" class="settings-head"><span class="cp-beacon" aria-hidden="true"></span><div class="settings-head-main"><h2 tabindex="-1">Settings</h2></div><div class="cp-readouts">${readout('Version', versionBadge, version ? '' : ' hidden')}${readout('Theme', skinChip, skin ? ' data-skin-readout' : ' data-skin-readout hidden')}</div><div class="settings-head-actions">${searchButton}${themeButton}</div></header>`;
+  return `<header id="${id}" class="settings-head"><span class="cp-beacon" aria-hidden="true"></span><div class="settings-head-main"><h2 tabindex="-1">Settings</h2></div><div class="cp-readouts">${readout('Version', versionRow, ' data-version-readout')}${readout('Theme', skinChip, skin ? ' data-skin-readout' : ' data-skin-readout hidden')}</div><div class="settings-head-actions">${searchButton}${themeButton}</div></header>`;
 }
 
 export function settingsSkeletonHtml(inner, activeProjectKey = null, backOptions = null) {
@@ -825,6 +869,7 @@ export function hideSettings() {
   clearSettingsSpotlight();
   deactivateInstructions();
   deactivateOrchestrate();
+  deactivateIntegrations();
   unmountPluginSettingsDetail();
   stopAnchorWatch();
   $('settings-view').hidden = true;
@@ -833,20 +878,19 @@ export function hideSettings() {
   $('settings-btn').setAttribute('label', 'Settings');
 }
 
-// Gear toggle: closing goes back to wherever settings was opened from — a
-// deep-loaded settings view has nothing behind it, so it falls through to the
-// run list, same as closing the gallery.
-export function closeSettingsToOrigin() {
-  if (settingsCameFrom) location.hash = settingsCameFrom;
-  else if (runs.length) location.hash = encodeURIComponent(runs[0].id);
-  else { location.hash = ''; $('empty').hidden = false; }
-  focusControl($('settings-btn'));   // back to the trigger — a view that focuses its own heading still wins
-}
-
 function focusChangelogHeading() {
   const h = document.querySelector('#changelog-title');
-  if (h) h.focus();
+  if (h && $('content-find').hidden) h.focus();
   announce('Settings, changelog');
+}
+
+// One changelog bullet: align a conventional-commit type as quiet metadata
+// (feat/fix/…) so releases scan at a glance; plain text when there's none.
+export function changeLineHtml(line) {
+  const m = /^(\w+)(\([^)]*\))?!?:\s*(.+)$/.exec(line);
+  if (!m) return `<li><span class="rel-msg">${esc(line)}</span></li>`;
+  const type = m[1].toLowerCase();
+  return `<li class="rel-change-typed"><span class="rel-type" translate="no">${esc(type)}</span><span class="rel-msg">${esc(m[3])}</span></li>`;
 }
 
 function changelogHtml(changelog) {
@@ -874,6 +918,7 @@ async function loadChangelog() {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     settingsData = await res.json();
+    applyCostCurrencyConfig(settingsData);
     renderChangelog();
   } catch (e) {
     view.innerHTML = `${settingsHeaderHtml({ breadcrumb: true })}<section class="changelog-body cp-module" aria-labelledby="changelog-title"><h3 id="changelog-title" tabindex="-1">Changelog</h3><p class="settings-note error" role="alert">Couldn't load changelog: ${esc(e.message)}</p><orc-button id="changelog-retry" variant="ghost" size="compact">Retry</orc-button></section>`;
@@ -896,3 +941,32 @@ export function showChangelog() {
 }
 
 export function hideChangelog() { $('changelog-view').hidden = true; }
+
+// General's Costs card: "Show costs in" dollars or pounds (ui.costCurrency).
+// Unchosen, it shows what this device starts on: pounds in the UK.
+export function costCurrencyCardHtml(ui) {
+  const value = validCostCurrency(ui?.costCurrency) || defaultCostCurrency();
+  const rate = exchangeRate();
+  const rateText = rate
+    ? `Today’s rate: $1 is £${rate.usdToGbp.toFixed(4)}${rate.date ? `, the European Central Bank’s for ${esc(rate.date)}` : ''}.`
+    : 'Orc has no rate yet, so costs stay in dollars until it fetches one.';
+  return `<div class="settings-card" data-settings-anchor="costs">
+    <fieldset class="settings-fieldset">
+      <legend class="settings-label">Costs</legend>
+      <div class="settings-field">
+        <span aria-hidden="true">Show costs in</span>
+        <orc-segmented id="set-cost-currency" label="Show costs in" aria-describedby="hint-cost-currency" value="${value}"><button type="button" value="usd">Dollars ($)</button><button type="button" value="gbp">Pounds (£)</button></orc-segmented>
+      </div>
+      <p class="settings-hint" id="hint-cost-currency">Every cost Orc shows is worked out in US dollars at API prices. Pounds convert with a rate Orc fetches once a day. ${rateText}</p>
+    </fieldset>
+    </div>`;
+}
+
+// Saves the choice once it was made or differs from this device's start, so
+// an unrelated save never pins the region's answer.
+export function writeCostCurrency(cfg, value) {
+  const chosen = validCostCurrency(value);
+  if (!chosen) return;
+  if (validCostCurrency(cfg.ui.costCurrency) || chosen !== defaultCostCurrency()) cfg.ui.costCurrency = chosen;
+  else delete cfg.ui.costCurrency;
+}

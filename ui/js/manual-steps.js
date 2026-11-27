@@ -4,7 +4,7 @@
 // A done run's PR body follow-ups join the list as steps that start a run,
 // tick themselves once that run starts, and link to the runs started for them.
 import { CARD_CHEVRON, animateCardFold, cardPreference, flipCardPreference, selectingTextIn, wireCardHead } from './chat-card.js';
-import { announce, dotHtml, esc, isQuestionRun, linkedText, presentRun, runs, setRuns } from './core.js';
+import { announce, dotHtml, esc, isQuestionRun, linkedText, presentRun, runs, setRuns, stateText } from './core.js';
 import { trackUsage } from './usage-tracking.js';
 
 const saving = new Map();
@@ -95,7 +95,7 @@ const startedRuns = step => (isFollowUp(step) ? [...(step.runs || []),
 
 function startedRunHtml({ id, title, run }) {
   const name = run?.meta?.title || title || id;
-  const state = run ? `${dotHtml(run.meta || {})}<span class="chat-step-run-state">${esc(presentRun(run).state.label)}</span>` : '';
+  const state = run ? `${dotHtml(run.meta || {})}<span class="chat-step-run-state">${esc(stateText(presentRun(run).state))}</span>` : '';
   return `<li><a class="chat-step-run" href="#${encodeURIComponent(id)}" data-step-run="${esc(id)}">${state}<span class="chat-step-run-title" title="${esc(name)}">${esc(name)}</span></a></li>`;
 }
 
@@ -119,7 +119,7 @@ export function renderManualSteps(host, { runId, agent, steps, onChanged, onStar
   const preference = cardPreference(stepsFoldKey(runId));
   const started = view.map(startedRuns);
   const signature = JSON.stringify([runId, agent, view, errors.get(runId) || '', preference, covered,
-    started.map(list => list.map(({ id, run }) => run && [id, run.meta?.title, presentRun(run).state.label]))]);
+    started.map(list => list.map(({ id, run }) => run && [id, run.meta?.title, stateText(presentRun(run).state)]))]);
   if (host.dataset.signature === signature) return;
   host.dataset.signature = signature;
   host.hidden = !view.length;

@@ -12,12 +12,13 @@ next turn by orc-ui's ordinary queue flush.
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
 import json
 import os
 import sys
-import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+import follow_up_queue
 
 
 FOLLOW_UPS_FILE = "follow-ups.json"
@@ -34,33 +35,13 @@ def read_json(path):
     return value if isinstance(value, dict) else None
 
 
-def write_follow_ups(path, state):
-    if not state.get("items") and not state.get("held"):
-        try:
-            os.unlink(path)
-        except FileNotFoundError:
-            pass
-        return
-    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".follow-ups.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as handle:
-            json.dump(state, handle, indent=2)
-            handle.write("\n")
-        os.replace(tmp_path, path)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_path)
-        raise
-
-
 def take_steers(run_dir):
     """Remove and return the queued messages meant for the running turn."""
     path = os.path.join(run_dir, FOLLOW_UPS_FILE)
     if not os.path.exists(path):
         return []
     meta = read_json(os.path.join(run_dir, "meta.json")) or {}
-    with open(os.path.join(run_dir, ".follow-ups.lock"), "a+") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with follow_up_queue.lock(run_dir):
         state = read_json(path)
         if not state or state.get("held") is True or meta.get("orchestrationQueueHeld"):
             return []
@@ -70,7 +51,7 @@ def take_steers(run_dir):
         if not steers:
             return []
         state["items"] = [item for item in items if item not in steers]
-        write_follow_ups(path, state)
+        follow_up_queue.write(path, state, "steer", caller="orc-chat-steer")
     return [item["text"] for item in steers]
 
 

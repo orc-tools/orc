@@ -1,31 +1,33 @@
 // orc-ui: Artifact shell: tabs and version history.
 
-import { lastRunsStr, refresh, route } from './activity.js';
+import { chatTabAvailable } from './chat-timeline.js';
+import { refresh, bindRunNavigation, hasRunSnapshot, revealDiffPanel } from './panel-navigation.js';
+import { readScroll, saveScroll } from './artifact-load.js';
+import { loadFile } from './artifact-content.js';
+import { byPeople, prChipContent, resolvePrUrls } from './pr-badge.js';
 import { harnessMark, LINEAR_MARK_SVG, SLACK_MARK_SVG } from './agent-marks.js';
-import { CONTROL_KEY, PR_BODY_RE, linkedMarkdownTab, tabsFor } from './control.js';
-import { $, CHAT_KEY, calendarAvailable, deliveryTagHtml, DECISION_FILES, GEAR_ICON, SOURCE_LABELS, announce, artifactPageUnloading, canonicalPhase, captureFocus, currentArtifactLoad, doneSettled, esc, externalAppHref, flashcardMeeting, flashcardWhen, grillingShellState, hasOwnedLivePane, isFinalReady, isHeadlessRun, isMergedToParent, isPlanningRun, isPresentReady, isQuestionRun, isShipReady, mediaSignature, moveTabIndicator, prPushPending, prRepliesPending, pullRequestKey, renderedArtifactKey, requestedArtifactKey, restoreFocus, restoreTabIndicator, reviewParent, runLinkBadges, runTimesHtml, runs, setCurrentArtifactLoad, setRenderedArtifactKey, setRequestedArtifactKey, versionLabel } from './core.js';
-import { byPeople, prChipContent, resolvePrUrls } from './dialogs.js';
-import { loadFile, q } from './diff.js';
-import { groupedPlanBuild, renderList } from './filters.js';
+import { $, CHAT_KEY, calendarAvailable, deliveryTagHtml, serversTaskTagHtml, DECISION_FILES, GEAR_ICON, SOURCE_LABELS, announce, artifactPageUnloading, canonicalPhase, captureFocus, currentArtifactLoad, doneSettled, esc, flashcardMeeting, flashcardWhen, grillingShellState, hasOwnedLivePane, isFinalReady, isHeadlessRun, isMergedToParent, isPlanningRun, isPresentReady, isQuestionRun, isShipReady, mediaSignature, moveTabIndicator, prPushPending, prRepliesPending, pullRequestKey, renderedArtifactKey, requestedArtifactKey, restoreFocus, restoreTabIndicator, reviewParent, runLinkBadges, runTimesHtml, runs, setCurrentArtifactLoad, setRenderedArtifactKey, setRequestedArtifactKey, versionLabel, CONTROL_KEY, PR_BODY_RE, linkedMarkdownTab, tabsFor } from './core.js';
+import { q } from './diff.js';
+import { followOpenRun, groupedPlanBuild, renderList } from './filters.js';
 import { renderCodexQuestions } from './pending-questions.js';
 import { TERMINAL_ICON, isTerminalOpen } from './terminal.js';
-import { DIFF_ICON, isDiffPanelOpen, revealDiffPanel, sidePanelAvailable, syncDiffPanel } from './diff-panel.js';
+import { DIFF_ICON, isDiffPanelOpen, sidePanelAvailable, syncDiffPanel } from './diff-panel.js';
 import { CLARIFICATION_PAGE, PLANNING_PAGE, amAskHolds, markSentQuestions, openAnswerMode, questionsPending, releaseSentQuestions, settleSentQuestions, syncAnswerCard, syncAnswerMode } from './answer-mode.js';
 import { landingTab, recordPlanReveal, revealedMeta } from './plan-reveal.js';
 import { selectReview } from './review-panel.js';
 import { EVALS_KEY, EVALS_REPORT } from './evals-panel.js';
 import { isPlanRevealPending, isPlanTabHidden, isPlanningComplete, isProjectRedirect, planOf, presentRun, runGroupOf } from './run-presentation.js';
-import { chatMounted, chatTabAvailable, sessionTakesChat, updateChatRun } from './chat.js';
+import { chatMounted, sessionTakesChat, updateChatRun } from './chat.js';
 import { FACTORY_KEY, factoryMounted, unmountFactory, updateFactoryRun } from './secondary-screens.js';
 import { factoryVisualsEnabled } from './motion.js';
+import { appChipsHtml } from './app-chips.js';
 import { MCP_KEY, mcpMounted, mcpTabAvailable, unmountMcp, updateMcpRun } from './mcp-tab.js';
-import { planPageMounted, planPageShows, unmountPlanPage, updatePlanPage } from './plan-page.js';
+import { handPlanPageOver, planPageMounted, planPageShows, unmountPlanPage, updatePlanPage } from './plan-page.js';
 import { pullRequestQa, qaAvailable } from './qa-launch.js';
 import { renderEmptyStateSlot, renderThemeTabBar } from './theme-components.js';
 
 // A checklist: the QA window's steps.
 const QA_ICON = '<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 7 2 2 4-4"/><path d="m3 17 2 2 4-4"/><path d="M13 7h8"/><path d="M13 17h8"/></svg>';
-const EXTERNAL_APP_MARK = '<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>';
 
 // The reaction the review post has: eyes once picked up, a check once done.
 const SLACK_REVIEW_STATES = {
@@ -88,6 +90,8 @@ function defaultTab(meta, tabs, files = []) {
   // landing only for a run whose conversation Orc cannot read.
   if (isQuestionRun(meta, files)) return tabs.some(t => t.key === CHAT_KEY) ? CHAT_KEY : 'answer.md';
   if (meta.route === 'local-review') return 'review/recap.html';
+  const prPlan = prPlanTab(meta, tabs);
+  if (prPlan) return prPlan;
   // A planning session has one page whatever its phase says, closed or not.
   if (isPlanningRun(meta) && tabs.some(t => t.key === PLANNING_TAB)) return PLANNING_TAB;
   // While the agent is working, what it is doing right now is the
@@ -105,6 +109,8 @@ function defaultTab(meta, tabs, files = []) {
 // Opening a run lands on its conversation whenever it has one, falling back
 // to defaultTab when Chat is unavailable.
 function openingTab(meta, tabs, files = []) {
+  const prPlan = prPlanTab(meta, tabs);
+  if (prPlan) return prPlan;
   return tabs.some(t => t.key === CHAT_KEY) ? CHAT_KEY : defaultTab(meta, tabs, files);
 }
 
@@ -116,6 +122,12 @@ function openingTab(meta, tabs, files = []) {
 function prRoundSent(prevMeta, meta) {
   return prevMeta?.status === 'awaiting-gate' && meta.status === 'running'
     && (prPushPending(meta) || prRepliesPending(meta));
+}
+// Before it changes anything, a round asks what to do about each comment,
+// and the PR comments tab is its plan (ui/run_pr_plan.py): the run opens there.
+function prPlanTab(meta, tabs) {
+  return meta.status === 'awaiting-gate' && meta.prFeedback?.state === 'awaiting-answers'
+    && tabs.some(tab => tab.key === PR_COMMENTS_TAB) ? PR_COMMENTS_TAB : null;
 }
 // END TESTABLE: PR comments round tab policy
 
@@ -159,6 +171,33 @@ function lifecycleTabs(meta, tabs, chat) {
   return ordered;
 }
 
+// The title keeps clear of the run tools in the header's corner, which are as
+// wide as their buttons and the side panel button's label make them. With the
+// side panel open a cut title shows itself whole on hover. Each render
+// replaces the title and may replace the tools, so watch the new nodes.
+const runTitleRoom = typeof ResizeObserver === 'function' ? new ResizeObserver(fitRunTitle) : null;
+function fitRunTitle() {
+  const tools = $('links').querySelector('.run-tools');
+  if (tools?.offsetWidth) $('head').style.setProperty('--run-tools-width', `${Math.ceil(tools.getBoundingClientRect().width)}px`);
+  const text = $('title').querySelector('.run-title-text');
+  if (text) text.title = text.scrollWidth > text.clientWidth ? text.textContent : '';
+}
+// A rename shows at once, before the next poll repaints the header.
+export function setRunTitleText(title) {
+  const text = $('title')?.querySelector('.run-title-text');
+  if (!text) return;
+  text.textContent = title;
+  fitRunTitle();
+}
+function watchRunTitleRoom() {
+  fitRunTitle();
+  if (!runTitleRoom) return;
+  runTitleRoom.disconnect();
+  for (const node of [$('title'), $('title').querySelector('.run-title-text'), $('links').querySelector('.run-tools')]) {
+    if (node) runTitleRoom.observe(node);
+  }
+}
+
 // Leave the node alone when a poll repaints the same markup.
 export function paintHtml(node, html) {
   if (node.innerHTML !== html) node.innerHTML = html;
@@ -176,14 +215,6 @@ function backgroundTasksNote(tasks) {
   const count = tasks.length === 1 ? '1 background task' : `${tasks.length} background tasks`;
   const title = `${count} still running:\n${tasks.join('\n')}`;
   return `<span class="background-tasks" title="${esc(title)}">${count} running: <code>${esc(tasks[0])}</code></span>`;
-}
-
-// Start/stop drops the probe cache, so started supplies health until the next probe.
-// A generic stop clears the URL; started === false still distinguishes down from unknown.
-export function worktreeAppHealth(wt) {
-  if (wt.appHealth !== undefined) return wt.appHealth;
-  if (wt.started === true) return 'up';
-  return wt.started === false ? 'down' : undefined;
 }
 
 // BEGIN recap-version-feedback
@@ -415,6 +446,7 @@ export function openRun(id, file, opts) {
   const focus = captureFocus();
   document.querySelectorAll('.run').forEach(el =>
     el.classList.toggle('active', el.dataset.id === id));
+  followOpenRun(id);
   $('empty').hidden = true;
   $('head').hidden = $('tabs').hidden = $('content').hidden = false;
 
@@ -480,7 +512,9 @@ export function openRun(id, file, opts) {
     ? ` <a class="settings-version" href="#changelog" aria-label="View release ${esc(meta.releaseVersion)} in changelog">${esc(meta.releaseVersion)}</a>`
     : ` <span class="settings-version" aria-label="Release ${esc(meta.releaseVersion)}">${esc(meta.releaseVersion)}</span>`;
   const deliveryTag = deliveryTagHtml(meta, { files: paths });
-  $('title').innerHTML = esc(meta.title || run.id)
+  const serversTag = serversTaskTagHtml(meta);
+  $('title').innerHTML = `<span class="run-title-text">${esc(meta.title || run.id)}</span>`
+    + (serversTag ? ` ${serversTag}` : '')
     + releaseBadge
     + (deliveryTag ? ` ${deliveryTag}` : '');
   $('title').title = run.id;
@@ -527,14 +561,8 @@ export function openRun(id, file, opts) {
     const label = `${harnessMark(agent)?.[0] || 'Agent'} thread`;
     links.push(`<a class="harness-thread" href="${esc(url)}" target="_blank" rel="noopener" aria-label="${esc(name || label)}" title="${esc(name || label)}">${harnessMark(agent)?.[1] || ''}${esc(label)}</a>`);
   }
-  const devdServers = answered ? [] : (meta.devdServers || []);
-  // One chip per running server orc-devd runs for this run, named by repo.
-  for (const server of devdServers) {
-    const href = externalAppHref(server.url, id);
-    if (href) {
-      links.push(`<a class="worktree-app-chip" href="${esc(href)}" target="_blank" rel="noopener" title="Open ${esc(server.url || server.label)} in browser">${EXTERNAL_APP_MARK}${esc(server.label)}</a>`);
-    }
-  }
+  // One chip per app the run's worktree serves, running or not, then MCP.
+  if (!answered) links.push(...appChipsHtml(run));
   if (!answered && qaAvailable(run)) {
     // qa-launch.js opens the window; the href is where it lives.
     links.push(`<a class="qa-chip" href="/qa/${encodeURIComponent(id)}" title="Walk through the QA steps in their own window">${QA_ICON}QA</a>`);
@@ -597,6 +625,7 @@ export function openRun(id, file, opts) {
   links.push('</div>');
   paintHtml($('links'), links.join(''));
   syncDiffPanel();
+  watchRunTitleRoom();
   const mergedTarget = meta.mergedIntoBranch || meta.parentBranch || '';
   const grillingTransition = grillingState === 'transition';
   // Cancelled runs lead with why: the tag beside the title only carries the
@@ -726,6 +755,16 @@ export function openRun(id, file, opts) {
   } else if (planPageShows(run, viewing) && id + '/' + viewing === requestedArtifactKey && planPageMounted(id)) {
     lastEmptySlotData = null;
     updatePlanPage(run);
+  } else if (planPageShows(run, viewing) && viewing === current && handPlanPageOver(run)) {
+    // The plan page took the build over in place: it becomes this tab's
+    // render, at the same scroll.
+    lastEmptySlotData = null;
+    const key = id + '/' + viewing;
+    const scrollTop = $('content').scrollTop;
+    setRequestedArtifactKey(key);
+    setCurrentArtifactLoad({ key, scrollTop, resetStoredScroll: false, mergeSettled: doneSettled(run.meta || {}) });
+    setRenderedArtifactKey(key);
+    saveScroll(key, scrollTop);
   } else if (current) {
     lastEmptySlotData = null;
     const prevRun = opts && opts.prevRun;
@@ -798,7 +837,7 @@ function paintRunTabButtons(id, tabs, current) {
 }
 
 function syncMountedThemeSlots() {
-  if (lastRunsStr !== null) renderList();
+  if (hasRunSnapshot()) renderList();
   if ($('tabs') && !$('tabs').hidden && lastRenderedRunTabs) {
     paintRunTabButtons(lastRenderedRunTabs.id, lastRenderedRunTabs.tabs, lastRenderedRunTabs.current);
   }
@@ -818,11 +857,6 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   window.addEventListener('orc-plugins-changed', syncMountedThemeSlots);
 }
 
-// remember scroll position per (run, tab) so a reload lands where you were.
-// sessionStorage: survives reload, clears when the tab closes — right scope,
-// same store as orc-stay. Keyed by loadKey (run.id + '/' + tab).
-export const saveScroll = (k, top) => { try { sessionStorage.setItem('orc-scroll:' + k, top); } catch {} };
-export const readScroll = k => +sessionStorage.getItem('orc-scroll:' + k) || 0;
 // TESTABLE: artifact scroll/load policy
 function artifactShouldRestoreScroll(previousRequestedKey, nextKey) {
   // null only exists on a full document load, when session-scoped restoration
@@ -886,26 +920,6 @@ function requestArtifactLoad(run, key) {
   loadFile(run, key, load);
 }
 
-export function artifactLoadCanWrite(load, iframe = null) {
-  if (currentArtifactLoad !== load || requestedArtifactKey !== load.key) return false;
-  if (!iframe) return true;
-  // Checks this specific element's own attachment rather than picking
-  // whichever iframe a query happens to match, so it stays true for the
-  // incoming frame of a double-buffered swap while an outgoing frame is
-  // still its sibling.
-  return iframe.isConnected && iframe.parentElement === $('content');
-}
-
-export function commitArtifactRender(load) {
-  if (!artifactLoadCanWrite(load)) return false;
-  setRenderedArtifactKey(load.key);
-  if (load.resetStoredScroll) {
-    saveScroll(load.key, 0);
-    load.resetStoredScroll = false;
-  }
-  return true;
-}
-
 // markdown/text tabs scroll #content itself; html tabs scroll inside the
 // iframe (saved separately in loadFile), so skip those here.
 $('content').addEventListener('scroll', () => {
@@ -916,16 +930,18 @@ $('content').addEventListener('scroll', () => {
   }
 }, { passive: true });
 
-// A run in a group names the others beside it: each by its repository, with
-// its PR once it has one, or that it waits. The plan heading the group is not
-// one of them; its steps panel lists the group instead.
+// A run in a group names the others beside it: each by its repository, or
+// by its step when the group builds in one, with its PR once it has one, or
+// that it waits. The plan heading the group is not one of them; its steps
+// panel lists the group instead.
 export function runGroupLineHtml(id, meta) {
   const group = runGroupOf(meta);
   if (!group || !group.members.some(member => member.runId === id)) return '';
   const others = group.members.filter(member => member.runId !== id);
   if (!others.length) return '';
+  const byStep = group.plan && group.repos < 2;
   const items = others.map(member => {
-    const label = esc(member.repo || member.title || 'run');
+    const label = esc((byStep && Number.isInteger(member.step) ? `step ${member.step}` : member.repo) || member.title || 'run');
     const name = member.runId
       ? `<a href="#${encodeURIComponent(member.runId)}" title="${esc(member.title)}">${label}</a>`
       : `<span title="${esc(member.title)}">${label}</span>`;
@@ -936,3 +952,5 @@ export function runGroupLineHtml(id, meta) {
   });
   return `<span class="run-group-line" data-part="run-group-line">With ${items.join('<span aria-hidden="true"> · </span>')}</span>`;
 }
+
+bindRunNavigation(openRun);

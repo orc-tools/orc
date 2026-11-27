@@ -29,6 +29,12 @@ read from GitHub, never from the round's notes, and a reply whose author
 cannot be read is held. Review-body replies share one PR comment, so one held
 point holds them all. A held reply leaves `repliesPostedAt` unset, which keeps
 the page's Push comments button live.
+
+A `thread` reply whose card the round marked `fixed` in `threads` also gets a
+👍 reaction on the comment it answers, once its reply is posted. A reaction that
+fails only prints a warning: the reply stays posted, and the next run reacts on
+any posted fixed card not yet marked `reacted`, without posting the reply again.
+Held replies, review-body replies and cards left, deferred or decided get none.
 """
 
 from __future__ import annotations
@@ -45,6 +51,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "ui"))
+
+from run_lifecycle import Snapshot, write_meta
+from state_transitions import RefusedTransition
+from run_pr_threads import card_id  # noqa: E402
 
 REPLIES_FILE = "pr-replies.json"
 PAGE = "pr-comments.mdx"
@@ -92,10 +104,6 @@ def write_atomic(path, text):
         raise
 
 
-def write_meta(path, meta):
-    write_atomic(path, json.dumps(meta, indent=2) + "\n")
-
-
 def pr_urls(meta):
     urls = meta.get("prUrls") if isinstance(meta.get("prUrls"), list) \
         else [meta.get("prUrl")]
@@ -125,9 +133,10 @@ def load_plan(run_dir, meta):
     for reply in replies:
         if not isinstance(reply, dict):
             raise ReplyError("every reply must be an object")
-        card, kind, body = reply.get("card"), reply.get("kind"), reply.get("body")
-        if not isinstance(card, str) or not card or card == REVIEW_KEY or card in cards:
-            raise ReplyError("reply card ids must be unique non-empty strings: %r" % card)
+        card, kind, body = card_id(reply.get("card")), reply.get("kind"), reply.get("body")
+        if not card or card == REVIEW_KEY or card in cards:
+            raise ReplyError("reply card ids must be unique and not empty: %r" % reply.get("card"))
+        reply["card"] = card
         cards.add(card)
         if not isinstance(body, str) or not body.strip():
             raise ReplyError("card %s has an empty reply" % card)
@@ -139,10 +148,13 @@ def load_plan(run_dir, meta):
         elif kind != "review":
             raise ReplyError("card %s has kind %r; use thread or review" % (card, kind))
     threads = plan.get("threads")
-    links = {thread.get("card"): thread.get("url")
+    links = {card_id(thread.get("card")): thread.get("url")
              for thread in threads if isinstance(thread, dict)} \
         if isinstance(threads, list) else {}
-    return pr, replies, links
+    statuses = {card_id(thread.get("card")): thread.get("status")
+                for thread in threads if isinstance(thread, dict)} \
+        if isinstance(threads, list) else {}
+    return pr, replies, links, statuses
 
 
 def gh(args, stdin=""):
@@ -168,6 +180,33 @@ def post_thread_reply(pr, comment_id, body):
     except ValueError as exc:
         raise ReplyError("gh api returned no JSON for comment %d" % comment_id) from exc
     return {"id": posted.get("id"), "url": posted.get("html_url")}
+
+
+def react_thumbs_up(pr, comment_id):
+    owner, repo, _ = PR_URL.fullmatch(pr).groups()
+    gh(["api", "--method", "POST",
+        "repos/%s/%s/pulls/comments/%d/reactions" % (owner, repo, comment_id),
+        "-f", "content=+1"])
+
+
+def react_on_fixed(meta_path, meta, pr, replies, statuses, only=None):
+    """👍 the comment of each posted, fixed thread card not yet reacted on. A
+    failure warns and leaves the card for the next run."""
+    for reply in replies:
+        card = reply["card"]
+        entry = (meta["prFeedback"].get("replies") or {}).get(card)
+        if reply["kind"] != "thread" or statuses.get(card) != "fixed" \
+                or not isinstance(entry, dict) or entry.get("reacted") \
+                or (only is not None and card != only):
+            continue
+        try:
+            react_thumbs_up(pr, reply["commentId"])
+        except ReplyError as exc:
+            print("orc-pr-replies: could not react \N{THUMBS UP SIGN} on card %s: %s"
+                  % (card, exc), file=sys.stderr)
+            continue
+        entry["reacted"] = True
+        write_meta(meta_path, meta, caller="orc-pr-replies", receipt_field="prFeedback")
 
 
 def answered_api_path(pr, reply, links):
@@ -270,12 +309,17 @@ def post_lock(run_dir):
 def post_replies(run_dir, zerohands_only=False):
     meta_path = run_dir / "meta.json"
     with post_lock(run_dir):
-        meta = read_json(meta_path)
+        meta = Snapshot(read_json(meta_path))
         feedback = meta.get("prFeedback")
         if isinstance(feedback, dict) and feedback.get("repliesPostedAt"):
+            with contextlib.suppress(ReplyError):
+                pr, replies, _, statuses = load_plan(run_dir, meta)
+                react_on_fixed(meta_path, meta, pr, replies, statuses)
             return [], {}
-        pr, replies, links = load_plan(run_dir, meta)
-        posted = meta["prFeedback"].setdefault("replies", {})
+        pr, replies, links, statuses = load_plan(run_dir, meta)
+        meta["prFeedback"].setdefault("replies", {})
+        react_on_fixed(meta_path, meta, pr, replies, statuses)
+        posted = meta["prFeedback"]["replies"]
         held = hold_for_approval(pr, replies, links, posted) if zerohands_only else {}
         new = []
         for reply in replies:
@@ -284,22 +328,24 @@ def post_replies(run_dir, zerohands_only=False):
                 continue
             result = post_thread_reply(pr, reply["commentId"], reply["body"])
             posted[reply["card"]] = dict(result, postedAt=now())
-            write_meta(meta_path, meta)
+            write_meta(meta_path, meta, caller="orc-pr-replies", receipt_field="prFeedback")
             new.append((reply["card"], result["url"]))
+            react_on_fixed(meta_path, meta, pr, replies, statuses, only=reply["card"])
+            posted = meta["prFeedback"]["replies"]
         review = [reply for reply in replies if reply["kind"] == "review"]
         if review and REVIEW_KEY not in posted and review[0]["card"] not in held:
             result = post_pr_comment(pr, review_comment_body(review))
             posted[REVIEW_KEY] = dict(result, postedAt=now(),
                                       cards=[reply["card"] for reply in review])
-            write_meta(meta_path, meta)
+            write_meta(meta_path, meta, caller="orc-pr-replies", receipt_field="prFeedback")
             new.append((", ".join(reply["card"] for reply in review), result["url"]))
         if held:
             return new, held
         meta["prFeedback"]["repliesPostedAt"] = now()
         if meta.get("phase") == "done" and meta.get("status") in ("running", "awaiting-gate"):
             meta["status"] = "complete"
-        write_meta(meta_path, meta)
-        update_page(run_dir, replies, posted)
+        write_meta(meta_path, meta, caller="orc-pr-replies")
+        update_page(run_dir, replies, meta["prFeedback"]["replies"])
         return new, held
 
 
@@ -313,7 +359,7 @@ def main(argv=None):
     run_dir = args.run_dir.expanduser().resolve()
     try:
         new, held = post_replies(run_dir, args.zerohands_only)
-    except ReplyError as exc:
+    except (ReplyError, OSError, RefusedTransition) as exc:
         print("orc-pr-replies: %s" % exc, file=sys.stderr)
         return 1
     if not new and not held:

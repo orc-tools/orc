@@ -4,10 +4,13 @@ team's Slack review channels. Reads change nothing. The three writes each
 follow a click on the page: merging a PR, asking GitHub for your own review,
 and putting your eyes reaction on a PR's Slack post.
 
-Orc's server holds no Slack token, so Slack is reached through a headless
-Claude Code call that may use only the one or two Slack tools the job needs.
-Only the raw tool calls and results in its stream are parsed; the model's
-prose is never trusted."""
+Slack is read through Slack's MCP server with Orc's own sign-in
+(slack_link.py): Orc calls the tools itself and no model runs, so a read
+costs a few HTTP requests and happens every SLACK_STALE_SECONDS, page open
+or not. Until you sign in, Orc never reads Slack on its own: Check now and
+the eyes button fall back to a headless Claude Code call that may use only
+the one or two Slack tools the job needs. Only the raw tool calls and results
+in its stream are parsed; the model's prose is never trusted."""
 from __future__ import annotations
 
 import collections
@@ -24,6 +27,9 @@ import time
 from datetime import datetime, timezone
 
 import headless_session
+import integrations
+
+from . import slack_link
 import local_review
 import run_pull_request
 from run_pull_request import (
@@ -47,8 +53,8 @@ GITHUB_STALE_SECONDS = 60
 # The assistant watches all day, page open or not, on the same hourly GraphQL
 # budget as the user's own gh.
 WATCH_STALE_SECONDS = 300
-SLACK_STALE_SECONDS = 300
-RUN_LIST_SLACK_STALE_SECONDS = 900
+# How old a channel's read may get, page open or not, once Orc is signed in.
+SLACK_STALE_SECONDS = 180
 DETAIL_CACHE_SECONDS = 30
 REPOS_CACHE_SECONDS = 120
 SLACK_TIMEOUT = 120
@@ -75,7 +81,12 @@ SLACK_CHANNEL_ID_RE = re.compile(r"[CG][A-Z0-9]+")
 SLACK_CHANNEL_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}")
 SLACK_TS_RE = re.compile(r"\d+(?:\.\d+)?")
 PICKED_UP_REACTION = "eyes"
-SLACK_NOT_CONNECTED = "Slack is not connected in Claude Code. Run /mcp in Claude Code to sign in."
+SLACK_NOT_CONNECTED = "Slack is not connected in Claude Code. Sign Orc in to Slack in Settings, Integrations."
+# The name Claude Code gives a tool of the server it calls "slack".
+CLAUDE_TOOL_PREFIX = "mcp__slack__"
+# Slack names the emoji in add_reaction's arguments with one of these.
+EMOJI_ARGUMENTS = ("emoji_name", "emoji", "name", "reaction")
+NEXT_CURSOR_RE = re.compile(r"next_cursor\W{1,4}([A-Za-z0-9=_%-]{4,})")
 # A review post this many days old with no picked-up reaction is stale.
 STALE_DAYS = 4
 DEFAULTS = {
@@ -121,6 +132,9 @@ REACTION_RE = re.compile(r"([\w+:'-]+) \((\d+)\)")
 # get_reactions reads ":eyes: \u00d7 2 \u2014 Juan (U01), Kim (U02)".
 REACTORS_LINE_RE = re.compile(r"^:([\w+'-]+):\s*\u00d7\s*\d+\s*\u2014\s*(.+)$", re.M)
 REACTOR_RE = re.compile(r"\s*([^,]+?)\s*\(([UW][A-Z0-9]+)\)")
+# Slack's read_channel quotes each line of a message body ("> *Forest:* <url|title>"),
+# and older results did not; one leading "> " is stripped so both read the same.
+QUOTE_PREFIX_RE = re.compile(r"^> ?", re.M)
 TAG_RE = re.compile(r"^\s*(?:\*(?P<starred>[A-Za-z][\w &'-]{0,29}?)(?:\*:|:\*)|(?P<plain>[A-Za-z][\w&'-]{0,29}):)(?=\s|$)")
 CHANNEL_RE = re.compile(r"Channel:\s*#?([\w.-]+)\s*\(([CG][A-Z0-9]+)\)")
 SLACK_DOMAIN_RE = re.compile(r"https://([a-z0-9-]+\.slack\.com)/archives/")
@@ -257,8 +271,8 @@ class SourceError(Exception):
 
 
 class SlackNotConnected(SourceError):
-    def __init__(self):
-        super().__init__(SLACK_NOT_CONNECTED)
+    def __init__(self, message=SLACK_NOT_CONNECTED):
+        super().__init__(message)
 
 
 def in_orgs(repo, orgs):
@@ -407,23 +421,49 @@ def slack_time(when):
     return moment.timestamp() - offset
 
 
+def _message_blocks(text):
+    """(header, body) for each message in Slack's read_channel text, with
+    bump reminders and join notices dropped."""
+    text = text.replace("\\/", "/")
+    headers = list(HEADER_RE.finditer(text))
+    for index, header in enumerate(headers):
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        block = QUOTE_PREFIX_RE.sub("", text[header.end():end])
+        if ":mr-bump:" not in block and "has joined the channel" not in block:
+            yield header, block
+
+
+def links_pull_requests(text):
+    """Whether a read_channel result has a message that links a pull request.
+    When no message header is recognised, any pull request link counts, so a
+    changed header format is noticed too."""
+    text = text.replace("\\/", "/")
+    if not HEADER_RE.search(text):
+        return bool(PR_LINK_RE.search(text))
+    return any(PR_LINK_RE.search(block) for _header, block in _message_blocks(text))
+
+
+def unread_warning(texts, posts, channel):
+    """The error to show when Slack returned messages linking pull requests
+    but none was read as a tagged review request, which is how a change to
+    Slack's message format shows up."""
+    if posts or not any(links_pull_requests(text) for text in texts):
+        return None
+    return ("Messages in #%s link pull requests, but Orc could read none of them as a review request. "
+            "Slack may have changed its message format; Orc reads posts tagged like *Forest:* <link>." % channel)
+
+
 def parse_messages(text):
     """Posts that link at least one tagged pull request, in Slack's
     read_channel text format. Bump reminders and join notices are dropped."""
-    text = text.replace("\\/", "/")
-    headers = list(HEADER_RE.finditer(text))
     posts = []
-    for index, header in enumerate(headers):
-        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
-        block = text[header.end():end]
-        if ":mr-bump:" in block or "has joined the channel" in block:
-            continue
+    for header, block in _message_blocks(text):
         ts_match = TS_RE.search(block)
         ts = ts_match[1] if ts_match else None
         epoch = float(ts) if ts else slack_time(header["when"])
         links, seen, current_tag = [], set(), None
         for line in block.splitlines():
-            if line.startswith(("Message TS:", "Reactions:")):
+            if line.startswith(("Message TS:", "Reactions:", "Thread:")):
                 continue
             tag_match = TAG_RE.match(line)
             if tag_match:
@@ -483,8 +523,7 @@ def parse_stream(output, channel_name=None, channel_id=None):
     """The Slack facts in a `claude -p --output-format stream-json` stream:
     whether Slack was connected, the channel read, and every read_channel
     result's message text."""
-    found = {"connected": None, "channelId": channel_id, "messages": [], "domains": [],
-             "readCalls": 0, "toolErrors": [], "reactionTool": None}
+    found = new_found(channel_id)
     reads = {}
     for event in _stream_events(output):
         if event.get("type") == "system" and event.get("subtype") == "init":
@@ -503,24 +542,110 @@ def parse_stream(output, channel_name=None, channel_id=None):
                 for text in _tool_result_texts(item.get("content")):
                     if item.get("is_error"):
                         found["toolErrors"].append(text)
-                        continue
-                    try:
-                        payload = json.loads(text)
-                    except ValueError:
-                        payload = None
-                    messages = payload.get("messages") if isinstance(payload, dict) else text
-                    header = CHANNEL_RE.match(messages.lstrip()) if isinstance(messages, str) else None
-                    target = reads[item["tool_use_id"]]
-                    reported_id = header[2] if header else target
-                    if (header and ((target and target != reported_id) or
-                                    (channel_name and header[1].lower() != channel_name.lower())) or
-                            (found["channelId"] and found["channelId"] != reported_id)):
-                        continue
-                    found["channelId"] = reported_id
-                    found["readCalls"] += 1
-                    if isinstance(messages, str):
-                        found["domains"] += SLACK_DOMAIN_RE.findall(messages.replace("\\/", "/"))
-                        found["messages"].append(messages)
+                    else:
+                        take_read(found, text, reads[item["tool_use_id"]], channel_name)
+    return found
+
+
+def new_found(channel_id=None, connected=None):
+    return {"connected": connected, "channelId": channel_id, "messages": [], "domains": [],
+            "readCalls": 0, "toolErrors": [], "reactionTool": None}
+
+
+def take_read(found, text, target, channel_name):
+    """Add one read_channel result to `found`, unless it is another channel's.
+    Returns the result's next page cursor, or None."""
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        payload = None
+    messages = payload.get("messages") if isinstance(payload, dict) else text
+    header = CHANNEL_RE.match(messages.lstrip()) if isinstance(messages, str) else None
+    reported_id = header[2] if header else target
+    if (header and ((target and target != reported_id) or
+                    (channel_name and header[1].lower() != channel_name.lower())) or
+            (found["channelId"] and found["channelId"] != reported_id)):
+        return None
+    found["channelId"] = reported_id
+    found["readCalls"] += 1
+    if isinstance(messages, str):
+        found["domains"] += SLACK_DOMAIN_RE.findall(messages.replace("\\/", "/"))
+        found["messages"].append(messages)
+    pages = payload.get("pagination_info") if isinstance(payload, dict) else None
+    if isinstance(pages, dict):
+        cursor = pages.get("next_cursor")
+        return cursor if isinstance(cursor, str) and cursor else None
+    match = NEXT_CURSOR_RE.search(pages) if isinstance(pages, str) else None
+    return match[1] if match else None
+
+
+def server_tool(tool):
+    """Slack's own name for a tool Claude Code calls `tool`."""
+    return tool[len(CLAUDE_TOOL_PREFIX):] if tool.startswith(CLAUDE_TOOL_PREFIX) else tool
+
+
+def _schema_names(tool):
+    schema = tool.get("inputSchema") if isinstance(tool, dict) else None
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    return list(properties) if isinstance(properties, dict) else []
+
+
+def _direct(call):
+    """Run one direct Slack step, as the errors the readers already handle."""
+    try:
+        return call()
+    except slack_link.NotSignedIn as error:
+        raise SlackNotConnected(str(error)) from None
+    except slack_link.SlackError as error:
+        raise SourceError(str(error)) from None
+
+
+def direct_channel_id(link, opts, tools):
+    """The ID of #slackChannel, from Slack's channel search."""
+    name = opts["slackChannel"]
+    tool = tools.get(server_tool(SEARCH_CHANNELS))
+    if tool is None:
+        raise SourceError("Slack's server has no channel search, so set the channel ID in Pull requests settings.")
+    argument = "query" if "query" in _schema_names(tool) or not _schema_names(tool) else _schema_names(tool)[0]
+    texts, failed = link.call(opts["slackMcpUrl"], tool["name"], {argument: name})
+    if failed:
+        raise SourceError("Slack would not search for #%s: %s" % (name, " ".join(texts).strip()[:200]))
+    named = r"(?<![\w.-])#?%s(?![\w.-])" % re.escape(name)
+    pattern = re.compile(r"%s[^\n]{0,120}?\b([CG][A-Z0-9]{6,})\b|\b([CG][A-Z0-9]{6,})\b[^\n]{0,120}?%s"
+                         % (named, named))
+    for text in texts:
+        for match in pattern.finditer(text.replace("\\/", "/")):
+            return match[1] or match[2]
+    raise SourceError("Slack found no channel named #%s that you can read." % name)
+
+
+def read_direct(link, opts, channel_id, now):
+    """read_channel's pages of the channel, called by Orc itself with its own
+    sign-in, as parse_stream would find them in a Claude Code stream."""
+    url = opts["slackMcpUrl"]
+    tools = link.tools(url)
+    found = new_found(channel_id, True)
+    reaction = next((name for name in tools if REACTION_TOOL_RE.fullmatch(CLAUDE_TOOL_PREFIX + name)), None)
+    found["reactionTool"] = CLAUDE_TOOL_PREFIX + reaction if reaction else None
+    read = server_tool(READ_CHANNEL)
+    if read not in tools:
+        raise SourceError("Slack's server has no %s tool for Orc to read the channel with." % read)
+    target = channel_id or direct_channel_id(link, opts, tools)
+    oldest = int(now - opts["lookbackDays"] * 86400)
+    cursor = None
+    for _call in range(SLACK_READ_CALLS):
+        arguments = {"channel_id": target, "oldest": str(oldest), "limit": 100}
+        if cursor:
+            arguments["cursor"] = cursor
+        texts, failed = link.call(url, read, arguments)
+        cursor = None
+        for text in texts:
+            if failed:
+                found["toolErrors"].append(text)
+            else:
+                cursor = take_read(found, text, target, opts["slackChannel"]) or cursor
+        if not cursor:
+            break
     return found
 
 
@@ -563,18 +688,25 @@ def slack_session(opts, tools, prompt, consequence):
     return result.stdout or ""
 
 
-def fetch_slack(opts, channel_id=None, now=None, previous=None, open_keys=()):
+def fetch_slack(opts, channel_id=None, now=None, previous=None, open_keys=(), link=None):
+    """One channel's posts: with Orc's own sign-in when `link` is given, else
+    through a Claude Code session."""
     now = time.time() if now is None else now
     channel_id = opts.get("slackChannelId") or channel_id
-    tools = [READ_CHANNEL] if channel_id else [READ_CHANNEL, SEARCH_CHANNELS]
-    found = parse_stream(slack_session(opts, tools, slack_prompt(opts, channel_id, now), "Slack can't be read"),
-                         opts["slackChannel"], channel_id)
+    if link is not None:
+        found = _direct(lambda: read_direct(link, opts, channel_id, now))
+    else:
+        tools = [READ_CHANNEL] if channel_id else [READ_CHANNEL, SEARCH_CHANNELS]
+        found = parse_stream(slack_session(opts, tools, slack_prompt(opts, channel_id, now), "Slack can't be read"),
+                             opts["slackChannel"], channel_id)
     if found["connected"] is False:
         raise SlackNotConnected()
     if not found["readCalls"]:
         if found["toolErrors"]:
-            raise SourceError("Slack refused to read #%s." % opts["slackChannel"])
-        raise SourceError("Claude Code finished without reading #%s." % opts["slackChannel"])
+            said = found["toolErrors"][0].strip()[:200]
+            raise SourceError("Slack refused to read #%s%s" % (opts["slackChannel"], ": %s" % said if said else "."))
+        raise SourceError("Slack sent nothing back for #%s." % opts["slackChannel"] if link is not None
+                          else "Claude Code finished without reading #%s." % opts["slackChannel"])
     posts = []
     seen = set()
     for text in found["messages"]:
@@ -583,8 +715,8 @@ def fetch_slack(opts, channel_id=None, now=None, previous=None, open_keys=()):
                 seen.add((post["ts"], post["postedBy"]))
                 posts.append(post)
     posts.sort(key=lambda post: post["epoch"])
-    name_reactors(posts, previous, opts, found["channelId"], open_keys)
-    return {"posts": posts, "channel": opts["slackChannel"], "channelId": found["channelId"] or channel_id,
+    name_reactors(posts, previous, opts, found["channelId"], open_keys, link)
+    return {"posts": posts, "warning": unread_warning(found["messages"], posts, opts["slackChannel"]), "channel": opts["slackChannel"], "channelId": found["channelId"] or channel_id,
             "domain": found["domains"][0] if found["domains"] else None,
             "reactionTool": found["reactionTool"]}
 
@@ -601,9 +733,11 @@ def parse_reactors(text):
             for name, people in REACTORS_LINE_RE.findall(text)}
 
 
-def fetch_reactors(opts, channel_id, stamps):
+def fetch_reactors(opts, channel_id, stamps, link=None):
     """Who reacted to each message in `stamps`, keyed by its timestamp. A
     message Claude did not ask about, or Slack refused, is left out."""
+    if link is not None:
+        return _direct(lambda: reactors_direct(link, opts, channel_id, stamps))
     prompt = ("For each of these messages in Slack channel ID %s, call %s once with that message_ts: %s.\n"
               "Call nothing else and change nothing in Slack. When you have finished, reply with the "
               "single word done.\n" % (channel_id, GET_REACTIONS, ", ".join(stamps)))
@@ -621,7 +755,17 @@ def fetch_reactors(opts, channel_id, stamps):
     return found
 
 
-def name_reactors(posts, previous, opts, channel_id, open_keys=()):
+def reactors_direct(link, opts, channel_id, stamps):
+    found = {}
+    for ts in stamps:
+        texts, failed = link.call(opts["slackMcpUrl"], server_tool(GET_REACTIONS),
+                                  {"channel_id": channel_id, "message_ts": ts})
+        if not failed:
+            found[ts] = parse_reactors(" ".join(texts))
+    return found
+
+
+def name_reactors(posts, previous, opts, channel_id, open_keys=(), link=None):
     """Set each post's reactedBy: the last read's names while its reactions
     are unchanged, else a lookup for the posts showing a picked-up reaction,
     open PRs' newest first. A lookup that fails leaves the names unknown."""
@@ -641,7 +785,7 @@ def name_reactors(posts, previous, opts, channel_id, open_keys=()):
     wanted.sort(key=lambda post: (not any(link["key"] in open_keys for link in post["links"]), -post["epoch"]))
     batch = wanted[:REACTOR_LOOKUPS]
     try:
-        found = fetch_reactors(opts, channel_id, [post["ts"] for post in batch])
+        found = fetch_reactors(opts, channel_id, [post["ts"] for post in batch], link)
     except SourceError:
         return
     for post in batch:
@@ -649,12 +793,14 @@ def name_reactors(posts, previous, opts, channel_id, open_keys=()):
             post["reactedBy"] = found[post["ts"]]
 
 
-def add_slack_reaction(opts, channel_id, ts, tool=None):
+def add_slack_reaction(opts, channel_id, ts, tool=None, link=None):
     """Put the viewer's eyes reaction on one Slack message. Slack's answer is
     read from the tool result. True when this call added it, False when the
     viewer's reaction was already there."""
     if not (SLACK_CHANNEL_ID_RE.fullmatch(channel_id or "") and SLACK_TS_RE.fullmatch(ts or "")):
         raise SourceError("Orc does not know which Slack message to react to. Refresh and try again.")
+    if link is not None:
+        return _direct(lambda: react_direct(link, opts, channel_id, ts))
     tool = tool if tool and REACTION_TOOL_RE.fullmatch(tool) else DEFAULT_REACTION_TOOL
     prompt = ("Add the emoji reaction \"%s\" (no colons) to the Slack message with timestamp %s in "
               "channel ID %s.\nCall %s exactly once and change nothing else in Slack. When you have "
@@ -683,14 +829,31 @@ def add_slack_reaction(opts, channel_id, ts, tool=None):
     return not failed
 
 
+def react_direct(link, opts, channel_id, ts):
+    tools = link.tools(opts["slackMcpUrl"])
+    tool = next((tool for name, tool in tools.items() if REACTION_TOOL_RE.fullmatch(CLAUDE_TOOL_PREFIX + name)), None)
+    if tool is None:
+        raise SourceError("Slack's server has no tool for adding a reaction. Add it in Slack instead.")
+    names = _schema_names(tool)
+    emoji = next((name for name in EMOJI_ARGUMENTS if name in names), EMOJI_ARGUMENTS[0])
+    texts, failed = link.call(opts["slackMcpUrl"], tool["name"],
+                              {"channel_id": channel_id, "message_ts": ts, emoji: PICKED_UP_REACTION})
+    text = " ".join(texts)
+    if failed and "already_reacted" not in text:
+        raise SourceError("Slack refused the reaction: %s" % (text.strip()[:200] or "no reason given"))
+    return not failed
+
+
 def gh_binary():
     return os.environ.get("ORC_PR_MANAGER_GH") or "gh"
 
 
-def graphql(query, variables):
+def graphql(query, variables, job="pr-queue"):
     """(data, errors) for one GraphQL request. gh exits non-zero when any
-    alias failed, yet still prints the partial data, so stdout wins."""
+    alias failed, yet still prints the partial data, so stdout wins. `job`
+    names the call on Settings' Integrations page."""
     body = json.dumps({"query": query, "variables": variables})
+    integrations.note(job)
     try:
         result = subprocess.run([gh_binary(), "api", "graphql", "--input", "-"], input=body,
                                 env=clean_env(), capture_output=True, text=True,
@@ -1722,7 +1885,7 @@ def assemble(state, opts, refreshing, now=None):
     }
 
 
-def refresh_slack_channel(name, read, opts, now, open_keys, sources_changed):
+def refresh_slack_channel(name, read, opts, now, open_keys, sources_changed, link=None):
     if sources_changed is not None and sources_changed.is_set():
         return
     channel_opts = {**opts, "slackChannel": name,
@@ -1730,21 +1893,24 @@ def refresh_slack_channel(name, read, opts, now, open_keys, sources_changed):
     data = read.get("data") or {}
     read["attemptedAt"] = now
     try:
-        fresh = fetch_slack(channel_opts, data.get("channelId"), now, data.get("posts"), open_keys)
-        read.update(error=None, fetchedAt=iso(now), data=fresh, connected=True)
+        fresh = fetch_slack(channel_opts, data.get("channelId"), now, data.get("posts"), open_keys, link)
+        read.update(error=fresh.pop("warning", None), fetchedAt=iso(now), data=fresh, connected=True)
     except SlackNotConnected as error:
         read.update(error=str(error), connected=False)
     except SourceError as error:
-        read.update(error=str(error))
+        # Signed in, a failed read says nothing about the sign-in.
+        read.update(error=str(error), **({"connected": None} if link is not None else {}))
     except Exception as error:   # a parser bug must not take GitHub down with it
         read.update(error="Slack could not be read: %s." % error)
 
 
-def refresh_state(previous, opts, runs_dir, now=None, force=False, slack=True, sources_changed=None):
-    """A new state from GitHub, and from Slack, unless slack is False, when
-    forced or its read is SLACK_STALE_SECONDS old: each Slack read costs a
-    Claude session, while a merged PR should leave the list within a minute. A source that fails keeps
-    its last good data and reports why."""
+def refresh_state(previous, opts, runs_dir, now=None, force=False, slack=True, sources_changed=None,
+                  link=None, check=False):
+    """A new state from GitHub, and from Slack, unless slack is False. With
+    Orc signed in to Slack (`link`), a channel is read when forced or when
+    its read is SLACK_STALE_SECONDS old. Signed out, Slack is read only for
+    `check`, Check now, through a Claude Code session. A source that fails
+    keeps its last good data and reports why."""
     now = time.time() if now is None else now
     state = json.loads(json.dumps(previous))
     state["attemptedAt"] = now
@@ -1762,11 +1928,13 @@ def refresh_state(previous, opts, runs_dir, now=None, force=False, slack=True, s
             r["url"] for r in previous_linked if r["state"] != "MERGED" and in_scope(r["repo"], scope)
             and key_for_url(r["url"]) in linked_keys
         ])
-        if slack and opts.get("useSlack", True) and opts.get("repoScope") is not None:
+        direct = link if link is not None and signed_in(link, opts) else None
+        if slack and opts.get("useSlack", True) and opts.get("repoScope") is not None and (direct or check):
             with concurrent.futures.ThreadPoolExecutor(max_workers=SLACK_WORKERS) as slack_pool:
                 for name, read in channels.items():
-                    if force or slack_due(read, now, SLACK_STALE_SECONDS):
-                        slack_pool.submit(refresh_slack_channel, name, read, opts, now, open_keys, sources_changed)
+                    if force or check or slack_due(read, now, SLACK_STALE_SECONDS):
+                        slack_pool.submit(refresh_slack_channel, name, read, opts, now, open_keys, sources_changed,
+                                          direct)
         try:
             github = fetch_github(searching.result(), visible_slack_posts(state, opts), opts.get("linearWorkspace"),
                                   state["github"].get("data"), prefetching.result(), orgs, repos)
@@ -1777,6 +1945,15 @@ def refresh_state(previous, opts, runs_dir, now=None, force=False, slack=True, s
     state["reviewRuns"] = review_runs_by_pr(runs_dir)
     state["fetchedAt"] = iso(now)
     return state
+
+
+def signed_in(link, opts):
+    """Whether Orc's own Slack sign-in can read the configured server. A
+    Keychain that cannot be read counts as signed out."""
+    try:
+        return link.signed_in(opts["slackMcpUrl"])
+    except (OSError, ValueError):
+        return False
 
 
 def _start_thread(target):
@@ -1805,8 +1982,10 @@ CONFLICT_RUN_OVER = ("cancelled", "failed")
 class Manager:
     PrManagerError = PrManagerError
 
-    def __init__(self, config_dir, runs_dir, read_config, start=None, clock=time.time):
+    def __init__(self, config_dir, runs_dir, read_config, start=None, clock=time.time, slack=None):
         self.config_dir = config_dir
+        # Orc's own Slack sign-in, kept on this Mac beside the cache.
+        self.slack = slack or slack_link.Link(os.path.join(config_dir, "pr-manager", "slack-sign-in.json"))
         self.runs_dir = runs_dir
         self.cache_path = os.path.join(config_dir, "pr-manager", "cache.json")
         # The run Resolve the conflict started for each PR, keyed like key_for_url.
@@ -1820,6 +1999,7 @@ class Manager:
         self._refreshing = False
         self._sources_changed = threading.Event()
         self._refresh_pending = False
+        self._check_pending = False
         self._details = {}
         self._remotes = {}
         self._repos_cache = None
@@ -1839,35 +2019,41 @@ class Manager:
                 self._state = empty_state()
         return self._state
 
-    def request_refresh(self, force=False, slack=True, stale_after=GITHUB_STALE_SECONDS, after_save=False):
+    def request_refresh(self, force=False, slack=True, stale_after=GITHUB_STALE_SECONDS, after_save=False,
+                        check=False):
+        """Start a refresh when one is due. `check` is Check now: the only
+        read that may go through Claude Code while Orc is signed out of Slack."""
         opts, _config = self.options()
         if opts.get("repoScope") is None:
             return False
         slack = slack and opts.get("useSlack", True)
+        direct = slack and signed_in(self.slack, opts)
         with self._lock:
             state = self._state_locked()
             now = self.clock()
             stale = state.get("attemptedAt") is None or now - state["attemptedAt"] > stale_after
             # The assistant's GitHub-only refreshes keep attemptedAt fresh, so
             # Slack goes by its own last read.
-            stale = stale or (slack and any(slack_due(read, now, SLACK_STALE_SECONDS)
-                                            for read in slack_channels(state, opts).values()))
+            stale = stale or (direct and any(slack_due(read, now, SLACK_STALE_SECONDS)
+                                             for read in slack_channels(state, opts).values()))
             if self._refreshing:
                 self._refresh_pending = self._refresh_pending or after_save
+                self._check_pending = self._check_pending or (check and after_save)
                 return False
             if not (force or stale):
                 return False
             self._refreshing = True
-        self._start(lambda: self._refresh(force, slack))
+        self._start(lambda: self._refresh(force, slack, check))
         return True
 
-    def _refresh(self, force=False, slack=True):
+    def _refresh(self, force=False, slack=True, check=False):
         with self._lock:
             previous = self._state_locked()
             sources_changed = self._sources_changed
         try:
             opts, _config = self.options()
-            state = refresh_state(previous, opts, self.runs_dir, self.clock(), force, slack, sources_changed)
+            state = refresh_state(previous, opts, self.runs_dir, self.clock(), force, slack, sources_changed,
+                                  self.slack, check)
         except Exception as error:
             state = json.loads(json.dumps(previous))
             state["attemptedAt"] = self.clock()
@@ -1880,11 +2066,11 @@ class Manager:
             except OSError as error:
                 state["github"].update(ok=False, error="The PR refresh could not be saved: %s." % error)
             self._state = state
-            pending = self._refresh_pending
-            self._refresh_pending = False
+            pending, check_pending = self._refresh_pending, self._check_pending
+            self._refresh_pending = self._check_pending = False
             self._refreshing = pending
         if pending:
-            self._start(lambda: self._refresh(force=True))
+            self._start(lambda: self._refresh(force=True, check=check_pending))
 
     def _save(self, state):
         _write_json(self.cache_path, state)
@@ -1938,8 +2124,9 @@ class Manager:
         return snapshot
 
     def watched(self):
-        """The snapshot the assistant watches for PRs that need you, kept
-        fresh from GitHub only: each Slack read costs a Claude session. None
+        """The snapshot the assistant watches for PRs that need you. The
+        server's watch loop asks all day, so this is what reads Slack every
+        SLACK_STALE_SECONDS with the page closed, once Orc is signed in. None
         until onboarding is complete and the Pull requests page has loaded once."""
         opts, _config = self.options()
         if opts.get("repoScope") is None:
@@ -1948,7 +2135,9 @@ class Manager:
             fetched = self._state_locked().get("fetchedAt")
         if fetched is None:
             return None
-        self.request_refresh(slack=False, stale_after=WATCH_STALE_SECONDS)
+        # Off on Settings' Integrations page, the saved read is all it gets.
+        if integrations.enabled(_config, "github"):
+            self.request_refresh(slack=integrations.enabled(_config, "slack"), stale_after=WATCH_STALE_SECONDS)
         opts, _config = self.options()
         with self._lock:
             state = self._state_locked()
@@ -1959,11 +2148,11 @@ class Manager:
 
     def review_posts(self):
         """Each PR's Slack post from the last saved read, keyed like
-        key_for_url. The run list asks on every poll and each Slack read costs
-        a Claude session, so a read older than RUN_LIST_SLACK_STALE_SECONDS
-        starts one background refresh, and never a first one: Slack is read
-        only for someone who has completed onboarding and opened Pull requests."""
-        opts, _config = self.options()
+        key_for_url. The run list asks on every poll, so with Orc signed in to
+        Slack a read older than SLACK_STALE_SECONDS starts one background
+        refresh, and never a first one: Slack is read only for someone who has
+        completed onboarding and opened Pull requests."""
+        opts, config = self.options()
         scope = opts.get("repoScope")
         if scope is None:
             return {}
@@ -1973,11 +2162,72 @@ class Manager:
         if not opts.get("useSlack", True):
             return {}
         now = self.clock()
-        if any(read.get("attemptedAt") is not None and slack_due(read, now, RUN_LIST_SLACK_STALE_SECONDS)
-               for read in reads):
+        # A refresh reads GitHub with Slack, so both switches must allow it.
+        background = (integrations.enabled(config, "slack") and integrations.enabled(config, "github")
+                      and signed_in(self.slack, opts))
+        if background and any(read.get("attemptedAt") is not None
+                              and slack_due(read, now, SLACK_STALE_SECONDS) for read in reads):
             self.request_refresh()
         posts = slack_by_pr(visible_slack_posts(state, opts), opts)
         return {key: post for key, post in posts.items() if in_scope(key, scope)}
+
+    def slack_status(self):
+        """What Settings' Integrations page shows of Slack, from the saved
+        reads alone: this never starts one."""
+        opts, _config = self.options()
+        with self._lock:
+            reads = slack_channels(self._state_locked(), opts)
+            checking = self._refreshing
+        channels = [{"name": name, "connected": read.get("connected"), "error": read.get("error"),
+                     "readAt": read.get("fetchedAt"), "attemptedAt": iso(read.get("attemptedAt"))}
+                    for name, read in reads.items()]
+        try:
+            sign_in = self.slack.status(opts["slackMcpUrl"])
+        except (OSError, ValueError):
+            sign_in = {"appSaved": False, "signedIn": False, "clientId": None}
+        return {"onboarded": opts.get("repoScope") is not None, "useSlack": opts.get("useSlack", True),
+                "mcpUrl": opts["slackMcpUrl"], "channels": channels, "checking": checking, "signIn": sign_in,
+                "scopes": list(slack_link.SCOPES), "everySeconds": SLACK_STALE_SECONDS}
+
+    def save_slack_app(self, client_id, client_secret):
+        try:
+            self.slack.save_app(client_id, client_secret)
+        except slack_link.SlackError as error:
+            raise PrManagerError(400, str(error)) from None
+        return self.slack_status()
+
+    def forget_slack_app(self):
+        self.slack.forget_app()
+        return self.slack_status()
+
+    def slack_sign_in(self, redirect_uri):
+        """The Slack page that signs Orc in, for the card to open."""
+        opts, _config = self.options()
+        try:
+            return self.slack.start(opts["slackMcpUrl"], redirect_uri)
+        except slack_link.SlackError as error:
+            raise PrManagerError(409, str(error)) from None
+
+    def finish_slack_sign_in(self, query):
+        """Settle Slack's answer, then read the channels with the new sign-in."""
+        notice = self.slack.finish(query)
+        if notice and notice.get("ok"):
+            self.request_refresh(force=True, after_save=True)
+        return notice
+
+    def slack_sign_out(self):
+        self.slack.sign_out()
+        return self.slack_status()
+
+    def check_slack(self):
+        """Read every review channel now, for the page's Check now."""
+        opts, _config = self.options()
+        if opts.get("repoScope") is None:
+            raise PrManagerError(409, "Choose your repositories in Pull requests first, then check Slack.")
+        if not opts.get("useSlack", True):
+            raise PrManagerError(409, "Slack is switched off in Pull requests settings.")
+        self.request_refresh(force=True, after_save=True, check=True)
+        return self.slack_status()
 
     def approved_by_you(self):
         """Keys, like key_for_url, of the open PRs by others whose latest
@@ -2324,7 +2574,7 @@ class Manager:
         if head != merge["headOid"]:
             raise PrManagerError(409, "The pull request changed since this page loaded. Check it again before merging.")
         try:
-            data, errors = graphql(MERGE_MUTATION, {"id": merge["id"], "method": merge["method"], "head": head})
+            data, errors = graphql(MERGE_MUTATION, {"id": merge["id"], "method": merge["method"], "head": head}, "actions")
         except SourceError as error:
             raise PrManagerError(502, str(error)) from None
         self._details.pop(url, None)
@@ -2344,11 +2594,11 @@ class Manager:
         if viewer and detail["author"].lower() == viewer.lower():
             raise PrManagerError(409, "This is your own pull request, so you can't be its reviewer.")
         try:
-            data, errors = graphql(VIEWER_ID_QUERY, {})
+            data, errors = graphql(VIEWER_ID_QUERY, {}, "actions")
             user = (data.get("viewer") or {}).get("id")
             if not user:
                 raise SourceError("GitHub did not say who you are: %s" % _first_error(errors))
-            _data, errors = graphql(REQUEST_REVIEW_MUTATION, {"id": detail["merge"]["id"], "user": user})
+            _data, errors = graphql(REQUEST_REVIEW_MUTATION, {"id": detail["merge"]["id"], "user": user}, "actions")
         except SourceError as error:
             raise PrManagerError(502, str(error)) from None
         if errors:
@@ -2375,7 +2625,8 @@ class Manager:
             raise PrManagerError(409, "This pull request has no post in %s to react to." % names)
         ts, channel, channel_id = target["ts"], target["channel"], target["channelId"]
         try:
-            added = add_slack_reaction(opts, channel_id, ts, target["reactionTool"])
+            link = self.slack if signed_in(self.slack, opts) else None
+            added = add_slack_reaction(opts, channel_id, ts, target["reactionTool"], link)
         except SourceError as error:
             raise PrManagerError(502, str(error)) from None
         with self._lock:

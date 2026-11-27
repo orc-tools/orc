@@ -1,12 +1,11 @@
 // orc-ui: Shell primitives: DOM helpers, formatting, routing, and the run fetch loop.
 
 import { createThemeController } from '../vendor/orc-ds.min.js';
-import { linkedMarkdownTab, tabsFor } from './control.js';
 import { availableThemes, paintedFunMode, wireFunModeHost } from './fun-modes.js';
 import { renderThemeHtmlSlot } from './theme-components.js';
 import { esc, announce } from './dom-text.js';
 
-export function $(id) { return document.getElementById(id); }  // function, not const: used at module-eval time under a cyclic import graph, where a const would still be in TDZ
+export function $(id) { return document.getElementById(id); }
 export const syncArtifactTheme = frame => {
   if (!frame || !frame.contentWindow) return;
   frame.contentWindow.postMessage({
@@ -133,6 +132,7 @@ export function adrLabel(path) {
 // families need an explicit allowlist regex (ADR_RE / PR_BODY_RE). Working files
 // phases leave behind (plan.mdx, build-progress.md, templates, …) never appear.
 export const ORDER = Object.keys(LABELS);
+export const CONTROL_KEY = '__control__';
 // The Chat tab has no file behind it: it reads the run's agent transcript
 // (ui/js/chat.js). It leads every run's strip that has a conversation.
 export const CHAT_KEY = '__chat__';
@@ -248,8 +248,6 @@ export let pendingArtifactFocus = null;
 export const setPendingArtifactFocus = value => { pendingArtifactFocus = value; };
 export let sidebarProjectOrder = [];
 export const setSidebarProjectOrder = value => { sidebarProjectOrder = value; };
-export let sidebarStatusOrder = null;
-export const setSidebarStatusOrder = value => { sidebarStatusOrder = normalizeStatusOrder(value); };
 export let sidebarGroupBy = 'none';
 export const setSidebarGroupByState = value => { sidebarGroupBy = value; };
 export let lastSearchSignature = null;
@@ -261,7 +259,7 @@ export const setFocusRunDestination = value => { focusRunDestination = value; };
 export let collapsedGroups = {};
 try {
   const saved = localStorage.getItem('orcSidebarGroupBy');
-  if (['none', 'project', 'status'].includes(saved)) sidebarGroupBy = saved;
+  if (['none', 'project'].includes(saved)) sidebarGroupBy = saved;
   const collapsed = JSON.parse(localStorage.getItem('orcSidebarCollapsedGroups') || '{}');
   if (collapsed && typeof collapsed === 'object' && !Array.isArray(collapsed)) collapsedGroups = collapsed;
 } catch (e) {}
@@ -473,7 +471,10 @@ $('run-sidebar').addEventListener('click', event => {
   if (event.composedPath().some(node => node instanceof Element && node.matches('[href^="#"]'))) setSidebarOpen(false);
 });
 document.addEventListener('keydown', event => {
-  if (!event.defaultPrevented && event.key === 'Escape' && document.body.classList.contains('sidebar-open')) setSidebarOpen(false, { restoreFocus: true });
+  if (!event.defaultPrevented && event.key === 'Escape' && document.body.classList.contains('sidebar-open')) {
+    event.preventDefault();
+    setSidebarOpen(false, { restoreFocus: true });
+  }
 });
 window.matchMedia('(max-width: 700px)').addEventListener('change', event => {
   const active = document.activeElement;
@@ -573,6 +574,45 @@ export function runsDirUrl(raw) {
   if (!path.startsWith(root + '/')) return raw;
   const [id, ...rest] = path.slice(root.length + 1).split('/');
   return id && rest.length ? fileUrl(id, rest.join('/')) : raw;
+}
+
+// Two homes for a per-repository PR body: the legacy root `pr-body-<slug>.md`
+// and orc-docs' frozen-delivery `delivery/<group-id>/pr-body.md`. Either
+// capture group names the body in the Pull request view.
+export const PR_BODY_RE = /^(?:pr-body-(.+)\.md|delivery\/([^/]+)\/pr-body\.md)$/;
+export const prBodySlug = path => {
+  const match = path.match(PR_BODY_RE);
+  return match ? (match[1] || match[2]) : null;
+};
+
+export function linkedMarkdownTab(run, path) {
+  if (!path || !/\.mdx?$/i.test(path) || ORDER.includes(path) || PR_BODY_RE.test(path)
+    || path.split('/').some(part => !part || part.startsWith('.'))
+    || !run.files.some(file => file.path === path)) return null;
+  return { key: path, label: path.split('/').pop() };
+}
+
+export function tabsFor(run) {
+  const paths = run.files.map(f => f.path);
+  // ultraquick never grills — the run-init stub still drops an empty
+  // grilling.mdx in every run dir, and its synthesized page is the Grilling
+  // loading animation. No tab for it on this mode.
+  const ultraquick = (run.meta || {}).mode === 'ultraquick';
+  // Delivery authority is internal proof; the PR body is the result to read.
+  const minimalShell = (run.meta || {}).route === 'minimal-shell';
+  // PR bodies live in the side panel's Pull request view (pr-panel.js).
+  const hidden = p => (ultraquick && p === 'grilling.html')
+    || (minimalShell && p === 'delivery-authority.json')
+    || p === 'pr-body.md'
+    || p === 'clarification/clarification.html';
+  const tabs = ORDER.filter(p => paths.includes(p) && !hidden(p))
+    .map(p => ({ key: p, label: LABELS[p] }));
+  const adrTabs = paths.filter(p => ADR_RE.test(p)).sort()
+    .map(p => ({ key: p, label: adrLabel(p) }));
+  const recapIdx = tabs.findIndex(t => t.key === 'recap/recap.html');
+  tabs.splice(recapIdx === -1 ? tabs.length : recapIdx + 1, 0, ...adrTabs);
+  if (paths.some(p => (IMG.test(p) || VID.test(p)) && !p.includes('test-results/'))) tabs.push({ key: '__shots__', label: 'Shots' });
+  return tabs;
 }
 
 export function artifactRoute(href) {
@@ -865,15 +905,23 @@ export function reviewsForRun(runId, allRuns = runs, byId, reviewsByParent) {
 
 // File activity must not reorder runs that already have a creation timestamp.
 export function runCreated(run) {
-  const m = run.id.match(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})?/);
-  return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime() / 1000 : run.mtime;
+  const id = run.id;
+  const cache = runCreated._idCache || (runCreated._idCache = new Map());
+  let cached = cache.get(id);
+  if (cached !== undefined) return cached === null ? run.mtime : cached;
+  const m = id.match(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})?/);
+  cached = m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime() / 1000 : null;
+  cache.set(id, cached);
+  return cached === null ? run.mtime : cached;
 }
 // A build that Start work launched from a plan started when the plan did:
 // that is when the request was first sent, and the sidebar keeps the row
 // where the plan first appeared. Activity and timings keep runCreated.
-export function runStarted(run, allRuns = runs) {
+export function runStarted(run, allRuns = runs, byId = null) {
   const planId = run.meta?.planRunId;
-  const plan = planId && planId !== run.id ? allRuns.find(candidate => candidate.id === planId) : null;
+  const plan = planId && planId !== run.id
+    ? (byId ? byId.get(planId) : allRuns.find(candidate => candidate.id === planId))
+    : null;
   return plan ? Math.min(runCreated(run), runCreated(plan)) : runCreated(run);
 }
 export function absoluteStamp(date) {
@@ -896,8 +944,8 @@ export function runTimesHtml(run, now = new Date()) {
     .map(([label, date], index, all) => `<span class="run-time">${label} <time datetime="${date.toISOString()}" title="${absoluteStamp(date)}">${esc(relativeStamp(date, now).replace(/^(Just now|Yesterday)/, word => word.toLowerCase()))}</time>${index < all.length - 1 ? '<span class="run-time-sep" aria-hidden="true">·</span>' : ''}</span>`)
     .join('');
 }
-import { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isBuildRun, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun } from './run-presentation.js';
-export { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isBuildRun, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, RUN_STATE_LABELS, STATE_COLORS, DEFAULT_STATUS_ORDER, normalizeStatusOrder, isDefaultStatusOrder, statusOrderFromConfigPayload, presentRun };
+import { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isBuildRun, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, stateWantText, stateText, RUN_STATE_LABELS, STATE_COLORS, presentRun } from './run-presentation.js';
+export { isOpenConversation, isSidebarDone, isQuestionRun, isMergedToParent, isFlashcardRun, flashcardMeeting, flashcardWhen, meetingBadgeLabel, parseFlashcardPrompt, FLASHCARD_ASK, isPlanningRun, isLocalReviewRun, isLocalReviewClosed, isPlanningComplete, isPlanningClosed, canonicalPhase, isBuildRun, isPresentReady, isShipReady, isFinalReady, isMergeQueued, isConflictResolutionPending, conflictResolutionWaitingText, finalReadyLabel, isReadOnlyRun, strandedQuestionKeys, isDone, isRunning, statusActivity, sessionActivity, sessionBackend, hasOwnedLivePane, isHeadlessRun, sessionStatus, sessionStatusLabel, MERGE_WRAP_UP_MS, mergeWrappingUpUntil, mergeWrappingUp, showsMergedTerminalLabel, doneSettled, isForking, showsWaitingOnYou, attentionActive, needsAttention, soundStateOf, carrySoundState, soundKindForStates, soundKindForTransition, statusColor, busyLabel, runningLabel, prPushPending, prRepliesPending, gateNoun, runState, stateWantText, stateText, RUN_STATE_LABELS, STATE_COLORS, presentRun };
 
 // pushed and live happen in that order, so a run shows only the furthest one
 // it has reached; merged is the Done state's job, and live waits until the run
@@ -913,6 +961,13 @@ export function focusTagHtml(meta) {
   return `<span class="focus-tag" aria-label="${scope}: number ${focus.position} in the queue">#${focus.position}</span>`;
 }
 
+// A run started from Servers' Set up with my agent or Fix with my agent.
+const SERVERS_TASK_LABELS = { setup: 'Setting up dev server', fix: 'Fixing dev server' };
+export function serversTaskTagHtml(meta) {
+  const label = SERVERS_TASK_LABELS[meta?.serversTask?.kind];
+  return label ? `<span class="servers-task-tag">${label}</span>` : '';
+}
+
 // owner/repo#number for a GitHub pull request URL, including links to one of
 // its reviews, comments, files or commits; '' for anything else.
 export function pullRequestKey(url) {
@@ -922,7 +977,9 @@ export function pullRequestKey(url) {
 
 const githubCommit = url => String(url || '').match(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/([0-9a-f]{40,64})$/)?.[1];
 
-export function deliveryTagHtml(meta, { linkLive = true, files = [], working = runState(meta, files).key === 'working' } = {}) {
+// A sidebar row leaves `pushed` out: it only reports what already happened, and
+// the open run's header still shows it beside the title with the commit link.
+export function deliveryTagHtml(meta, { linkLive = true, withPushed = true, files = [], working = runState(meta, files).key === 'working' } = {}) {
   const status = meta.deliveryStatus && typeof meta.deliveryStatus === 'object' ? meta.deliveryStatus : {};
   if (!working && status.live && typeof status.live === 'object') {
     const label = typeof status.live.label === 'string' ? status.live.label : 'deployment';
@@ -938,7 +995,7 @@ export function deliveryTagHtml(meta, { linkLive = true, files = [], working = r
       ? link(status.live.commitUrl, `Open live commit ${commit.slice(0, 7)} on GitHub`)
       : `<span class="live-tag" title="${title}">live</span>`;
   }
-  if (status.pushed !== true) return '';
+  if (!withPushed || status.pushed !== true) return '';
   const title = 'This run’s changes are upstream';
   const commit = githubCommit(status.commitUrl);
   return commit
@@ -971,7 +1028,8 @@ export function applyStatusPatch(meta, status) {
     delete meta.sessionActivity;
   }
 }
-export const runStateTagHtml = state => `<span class="state-tag state-${state.key}" data-part="state-tag" data-state="${esc(state.key)}"${state.detail ? ` title="${esc(state.detail)}"` : ''}>${state.label}${state.detail ? `<span class="sr-only">: ${esc(state.detail)}</span>` : ''}</span>`;
+export const stateWantHtml = state => (state?.want ? `<span class="state-want">${esc(state.wantJoin ?? ' · ')}${esc(state.want)}</span>` : '');
+export const runStateTagHtml = state => `<span class="state-tag state-${state.key}" data-part="state-tag" data-state="${esc(state.key)}"${state.detail ? ` title="${esc(state.detail)}"` : ''}>${esc(state.label)}${stateWantHtml(state)}${state.detail ? `<span class="sr-only">: ${esc(state.detail)}</span>` : ''}</span>`;
 export const dotHtml = meta => {
   const state = runState(meta);
   const pulse = ['working', 'blocked', 'ready'].includes(state.key);

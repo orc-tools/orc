@@ -1,5 +1,6 @@
 // Orc's styled tooltip for a control drawn in a shadow root: the Settings
-// theme toggle and the composer's round launch toggles. It replaces the
+// theme toggle, the composer's round launch toggles and its icon buttons
+// (Attach, Dictate, Auto merge). It replaces the
 // browser's native title popup with a themed top-layer popover that opens on
 // hover and on keyboard focus, closes on Escape, and stays inside the window.
 //
@@ -283,4 +284,36 @@ export class ControlTooltip {
 // anchors the tooltip, which opens above it as the description `id` names.
 export function launchToggleTooltip(host, focus, id = 'hint') {
   return new ControlTooltip(host.shadowRoot, { hover: host, focus, placement: 'above', id });
+}
+
+const iconButtonTooltips = new WeakMap();
+
+// A composer `orc-icon-button` (Attach, Dictate, Auto merge). The design
+// system writes the button's `label` into its native title; this swaps that
+// for the styled tooltip above the button, which follows each label change.
+// `detail(label)`, when given, returns the quieter text after the dash, such
+// as a shortcut. Returns { refresh() } so a state the label does not carry
+// can redraw it; a second call for the same button returns the same one.
+export function iconButtonTooltip(button, { detail = () => '' } = {}) {
+  if (iconButtonTooltips.has(button)) return iconButtonTooltips.get(button);
+  const control = button.control;
+  if (!button.shadowRoot || !control) return { refresh() {} };
+  const label = () => button.getAttribute('label')?.trim() || '';
+  const tooltip = new ControlTooltip(button.shadowRoot, {
+    hover: button, focus: control, placement: 'above', suppressed: () => !label(),
+  });
+  const removeNativeTitle = () => {
+    control.removeAttribute('title');
+  };
+  const refresh = () => {
+    removeNativeTitle();
+    tooltip.set(label(), label() ? detail(label()) : '');
+  };
+  // The design system also restores the title when the button reconnects.
+  new MutationObserver(removeNativeTitle).observe(control, { attributes: true, attributeFilter: ['title'] });
+  new MutationObserver(refresh).observe(button, { attributes: true, attributeFilter: ['label'] });
+  refresh();
+  const handle = { refresh };
+  iconButtonTooltips.set(button, handle);
+  return handle;
 }

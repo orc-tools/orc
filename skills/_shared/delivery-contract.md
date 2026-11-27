@@ -47,10 +47,14 @@ or an equivalent direct instruction) may push
 the exact recorded commit after drift revalidation. The same click, after that
 push, posts the round's `pr-replies.json` through `orc-pr-replies`: thread
 replies to their threads, review-body replies as one PR comment, each recorded
-so none posts twice. A push approved without naming the replies posts only the
-replies to Zerohands, the review bot, through `orc-pr-replies
---zerohands-only`, which reads each comment's author from GitHub. A reply to a
-person always waits for consent that names the replies.
+so none posts twice, and a fixed thread also gets a 👍. A chat push follows
+Settings > Push to a PR as the button does: with **Push comments & commits** it
+posts the replies too. Under **Push commits**, a push approved without naming the
+replies posts only the replies to Zerohands, the review bot, through
+`orc-pr-replies --zerohands-only`, which reads each comment's author from
+GitHub, and a reply to a person waits for consent that names the replies. A
+push with no round on record follows the same setting (`orc-pr`, **Push with no
+review round**).
 **Push comments** consent sends the replies a pushed round has not posted yet.
 An answer or note given in the round's Answer mode questions is never push or
 reply consent, whatever it says.
@@ -108,7 +112,11 @@ resolution but never ran `--claim-resolution` loses the slot the same way after
 two minutes, including one that reopened its gate instead: the server restores
 the conflict and the run stays escalated. Either way the server sends `resolve merge conflicts` again after
 2 minutes, then 30 minutes, then 2 hours, and later entries merge meanwhile;
-after the third the run stays escalated for a person. **Retry merge recovery**
+after the third the run stays escalated for a person. Those waits apply only to
+a resolution its session accepted: the server records the send as started
+before the paste and as sent once the session takes it. A send that started
+but never finished (Orc restarted mid-send) is sent again as soon as the
+session is idle, without the two-minute grace and without spending a retry. **Retry merge recovery**
 remains for a recovery that itself failed, including an in-place run checkout.
 The initial conflict does not require a second click; **Resolve merge
 conflicts** is fallback after a safe release, an undelivered dispatch, or the

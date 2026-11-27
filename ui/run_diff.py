@@ -294,12 +294,21 @@ def _parse_porcelain_v2(cwd: str, porcelain: bytes) -> tuple[str | None, str | N
     return branch, head, (not has_changes), tuple(sig_items)
 
 
+def _checkout_claim(meta: dict) -> tuple[str | None, str | None]:
+    branch = meta.get("branch")
+    wt = meta.get("worktree")
+    path = wt.get("path") if isinstance(wt, dict) and wt.get("enabled") else None
+    return (branch if isinstance(branch, str) and branch else None,
+            path if isinstance(path, str) and path else None)
+
+
 def _probe_live_checkout(meta: dict) -> _LiveProbe | None:
     if not isinstance(meta, dict) or meta.get("status") in TERMINAL_NO_LIVE_STATUSES:
         return None
-    wt = meta.get("worktree") if isinstance(meta.get("worktree"), dict) else {}
-    wt_path = wt.get("path") if wt.get("enabled") else None
-    dedicated = bool(isinstance(wt_path, str) and wt_path and os.path.isdir(os.path.expanduser(wt_path)))
+    wanted, wt_path = _checkout_claim(meta)
+    dedicated = wt_path is not None and os.path.isdir(os.path.expanduser(wt_path))
+    if not wanted and not dedicated:
+        return None
     candidate = wt_path if dedicated else (meta.get("repoPath") or meta.get("mainRepoPath"))
     if not isinstance(candidate, str) or not candidate:
         return None
@@ -318,11 +327,10 @@ def _probe_live_checkout(meta: dict) -> _LiveProbe | None:
     if porcelain is None:
         return None
     current, head, clean, sig_items = _parse_porcelain_v2(real_cwd, porcelain)
-    wanted = meta.get("branch") if isinstance(meta.get("branch"), str) and meta.get("branch") else None
     if dedicated:
         if wanted and current and current != wanted:
             return None
-    elif not (wanted and current == wanted):
+    elif current != wanted:
         return None
     return _LiveProbe(
         cwd=real_cwd,
@@ -347,6 +355,11 @@ def _repo_branch_tip(meta: dict) -> tuple[str, _RepoInfo, str] | None:
     merge commit exists in its repository even without a live worktree."""
     if not isinstance(meta, dict):
         return None
+    branch, _ = _checkout_claim(meta)
+    merge_commit = meta.get("mergeCommit")
+    has_merge_commit = isinstance(merge_commit, str) and HEX_OID.fullmatch(merge_commit)
+    if not branch and not has_merge_commit:
+        return None
     for candidate in (meta.get("mainRepoPath"), meta.get("repoPath")):
         if not isinstance(candidate, str) or not candidate:
             continue
@@ -357,13 +370,11 @@ def _repo_branch_tip(meta: dict) -> tuple[str, _RepoInfo, str] | None:
         info = _repo_info(real_repo)
         if info is None:
             continue
-        branch = meta.get("branch")
-        if isinstance(branch, str) and branch:
+        if branch:
             tip = _git_text(real_repo, ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}"])
             if tip:
                 return real_repo, info, tip
-        merge_commit = meta.get("mergeCommit")
-        if isinstance(merge_commit, str) and HEX_OID.fullmatch(merge_commit):
+        if has_merge_commit:
             resolved = _resolve_commit_tree(real_repo, info, merge_commit)
             if resolved:
                 return real_repo, info, resolved[0]
@@ -1017,9 +1028,7 @@ def branch_has_changes(run_dir: str, meta: dict | None = None) -> bool | None:
     repos = resolved.get("repositories")
     if isinstance(repos, list) and any(isinstance(entry, dict) and not entry.get("primary") for entry in repos):
         return None
-    wt = resolved.get("worktree") if isinstance(resolved.get("worktree"), dict) else {}
-    wt_path = wt.get("path") if wt.get("enabled") and isinstance(wt.get("path"), str) and wt.get("path") else None
-    branch = resolved.get("branch") if isinstance(resolved.get("branch"), str) and resolved.get("branch") else None
+    branch, wt_path = _checkout_claim(resolved)
     if not branch and not wt_path:
         return False
 

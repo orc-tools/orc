@@ -1,6 +1,7 @@
 {
   "apiVersion": 2,
   "id": "grand-theft-orc",
+  "icon": "icon.png",
   "name": "Grand Theft Orc",
   "version": "1.0.0",
   "description": "A coral coupe outside a Vice City motel, in the Florida sun and after the neon comes on.",
@@ -11,7 +12,7 @@
       "label": "Grand Theft Orc",
       "description": "A motel off the causeway",
       "css": "theme.css",
-      "icon": "icon.png",
+      "icon": "dock-icon.png",
       "favicon": "gary.png",
       "gary": "gary.png",
       "sheila": "sheila.png",

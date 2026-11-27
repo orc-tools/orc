@@ -458,7 +458,7 @@
   100% { translate: 0 -10px; clip-path: inset(0 0 0 0); opacity: 0; }
 }
 
-/* Typing heat (see index.html's --typing-heat): the border lights up from its
+/* Typing heat (see project-home.css's --typing-heat): the border lights up from its
    resting colour to the ink and on to cyan, glowing like an overdriven tube. */
 :root[data-phosphor] .newconv-prompt[data-typing-hot] { animation: none; }
 @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {

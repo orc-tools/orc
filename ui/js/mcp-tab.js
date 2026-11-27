@@ -244,7 +244,7 @@ export function mcpServerHtml(server, state, { current = false, pickable = false
   const rows = [...(facts || []), ['Server', identity], ['Protocol', protocol && `MCP ${protocol}`]].filter(row => row[1]);
   const own = connected ? [{ action: 'disconnect', label: 'Disconnect' }]
     : state.status === 'connecting' ? []
-    : [{ action: 'connect', label: failed ? 'Try again' : 'Connect', lead: true, primary: failed && !state.auth }];
+    : [{ action: 'connect', label: failed ? 'Try again' : 'Connect', lead: true, primary: failed && !state.auth && !state.signingIn }];
   const extra = actions || [];
   const shown = [...own, ...extra].filter(item => item.lead).sort((a, b) => !!b.primary - !!a.primary);
   const item = entry => `<button type="button" role="menuitem" data-mcp-action="${mcpEsc(entry.action)}">${mcpEsc(entry.label)}</button>`;
@@ -266,7 +266,8 @@ export function mcpServerHtml(server, state, { current = false, pickable = false
         <div class="mcp-server-address"><dt class="sr-only">URL</dt><dd><code class="mcp-server-url" title="${mcpEsc(server.url)}">${mcpEsc(server.url)}</code></dd></div>
         ${rows.map(([label, value]) => `<div><dt>${mcpEsc(label)}</dt><dd>${mcpEsc(value)}</dd></div>`).join('')}
       </dl>
-      ${failed && state.error ? `<p class="mcp-server-error">${mcpEsc(state.error)}</p>` : ''}
+      ${state.signingIn ? `<p class="mcp-note mcp-server-waiting">${mcpEsc(MCP_SIGN_IN_NOTE)}</p>`
+    : failed && state.error ? `<p class="mcp-server-error">${mcpEsc(state.error)}</p>` : ''}
       ${shown.length ? `<div class="mcp-server-actions">${shown.map(entry =>
         `<orc-button variant="${entry.primary ? 'primary' : 'ghost'}" size="compact" data-mcp-action="${mcpEsc(entry.action)}">${mcpEsc(entry.label)}</orc-button>`).join('')}</div>` : ''}
       ${state.connection?.instructions ? `<orc-accordion class="mcp-instructions" label="Server instructions"><p>${mcpEsc(String(state.connection.instructions))}</p></orc-accordion>` : ''}
@@ -373,7 +374,9 @@ export async function mcpFetchJson(url, options = {}) {
 // `pick()` names the server to open on when the scope has none picked,
 // `onSelect(serverId)` hears each change of the picked server, and `keep`
 // holds what the scope showed until forgetMcpScope.
-export function runMcpSource(run) {
+// `openPage(url)` shows a sign-in page; without one it opens in a new window,
+// which Orc.app hands to the default browser.
+export function runMcpSource(run, { openPage } = {}) {
   const id = encodeURIComponent(run.id);
   return {
     id: run.id,
@@ -381,18 +384,25 @@ export function runMcpSource(run) {
     empty: 'This run has no MCP server to connect to.',
     loadError: "Could not read this run's MCP servers.",
     facts: server => (server.source === 'run' ? [['Route', 'orc-devd, for this run']] : []),
+    // orc-devd lends the run's server one shared login, so a 401 from it is
+    // answered by signing orc-devd in, not by a token Orc would hold.
+    serverActions: (server, state) => (server.source === 'run' && state.status === 'failed' && state.auth && !state.signingIn
+      ? [{ action: 'sign-in', label: 'Sign in', lead: true, primary: true }] : []),
+    onAction(action, serverId) {
+      if (action === 'sign-in') mcpRunSignIn(run.id, serverId, openPage || (url => window.open(url, '_blank', 'noopener')));
+    },
     load: options => mcpFetchJson(`/api/runs/${id}/mcp`, options),
     post: body => mcpFetchJson(`/runs/${id}/mcp`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   };
 }
 
-export function mountMcp(run, container) {
+export function mountMcp(run, container, options) {
   if (mcpMounted(run.id) && mcpView.root.parentElement === container) {
     updateMcpRun(run);
     return;
   }
-  mountMcpInspector(container, runMcpSource(run), { run });
+  mountMcpInspector(container, runMcpSource(run, options), { run });
 }
 
 // Mounts the inspector for `source` in `container`, settling once its
@@ -584,9 +594,13 @@ async function mcpConnect(scopeId, serverId, fresh = false) {
   if (state.status === 'connecting') return;
   Object.assign(state, { status: 'connecting', error: '' });
   if (mcpMounted(scopeId)) mcpPaintAll();
-  const reply = await mcpPost(scopeId, { action: 'connect', server: serverId, fresh });
+  mcpConnectAnswered(scopeId, serverId, await mcpPost(scopeId, { action: 'connect', server: serverId, fresh }));
+}
+
+function mcpConnectAnswered(scopeId, serverId, reply) {
+  const state = mcpServerMemory(mcpMemory(scopeId), serverId);
   if (reply.ok && reply.data.connection) {
-    Object.assign(state, { status: 'connected', connection: reply.data.connection, auth: false, lists: {}, listErrors: {} });
+    Object.assign(state, { status: 'connected', connection: reply.data.connection, auth: false, signingIn: false, lists: {}, listErrors: {} });
     announce(`Connected to ${mcpServerName(scopeId, serverId)}`);
   } else {
     Object.assign(state, { status: 'failed', connection: null, auth: reply.data?.auth === true,
@@ -595,6 +609,48 @@ async function mcpConnect(scopeId, serverId, fresh = false) {
   }
   if (mcpMounted(scopeId)) mcpPaintAll();
   if (state.status === 'connected') mcpListAll(scopeId, serverId, true);
+}
+
+const MCP_SIGN_IN_NOTE = 'Finish signing in on the page Orc opened. The server connects here once you have.';
+// As long as a sign-in page stays worth waiting for, and how often to look.
+const MCP_SIGN_IN_WAIT_MS = 10 * 60 * 1000;
+const MCP_SIGN_IN_POLL_MS = 2000;
+
+// Signs in to a server whose login someone else holds: the source starts it
+// and answers the page to finish it on, or no page when it needed none. Orc
+// then asks the server again until the login lands, without the card
+// flickering through Connecting each time.
+async function mcpRunSignIn(scopeId, serverId, openPage) {
+  const state = mcpServerMemory(mcpMemory(scopeId), serverId);
+  if (state.signingIn) return;
+  state.signingIn = true;
+  if (mcpMounted(scopeId)) mcpPaintAll();
+  const reply = await mcpPost(scopeId, { action: 'sign-in', server: serverId });
+  if (!reply.ok) {
+    Object.assign(state, { signingIn: false, error: reply.message || mcpErrorText(reply.error) });
+    announce(`Could not start the sign-in for ${mcpServerName(scopeId, serverId)}`);
+    if (mcpMounted(scopeId)) mcpPaintAll();
+    return;
+  }
+  if (typeof reply.data.url === 'string') {
+    openPage(reply.data.url);
+    announce(MCP_SIGN_IN_NOTE);
+  }
+  const deadline = Date.now() + MCP_SIGN_IN_WAIT_MS;
+  const look = async () => {
+    if (!state.signingIn || state.status === 'connected') return;
+    if (state.status !== 'connecting') {
+      const again = await mcpPost(scopeId, { action: 'connect', server: serverId });
+      if (!state.signingIn) return;
+      // Anything but another 401 ends the wait: connected, or a new problem.
+      if (again.ok || again.data?.auth !== true || Date.now() > deadline) {
+        state.signingIn = false;
+        return mcpConnectAnswered(scopeId, serverId, again);
+      }
+    }
+    setTimeout(look, MCP_SIGN_IN_POLL_MS);
+  };
+  setTimeout(look, typeof reply.data.url === 'string' ? MCP_SIGN_IN_POLL_MS : 0);
 }
 
 async function mcpDisconnect(scopeId, serverId) {

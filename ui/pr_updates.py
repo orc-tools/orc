@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 
@@ -140,6 +141,20 @@ def record(run_dir, rows, channel=None, now=None):
         return True, cards
 
 
+def note(run_dir, kind, url=None, now=None):
+    """Add a card for something Orc did to the PR itself, such as updating its
+    body. It is your own click, so it never raises Needs attention."""
+    with _locked(run_dir, LOCK_FILE):
+        data = _read(run_dir)
+        items = [item for item in data.get("items") or [] if isinstance(item, dict)]
+        number = re.search(r"/pull/(\d+)", url or "")
+        card = {"kind": kind, "who": None, "bot": False, "at": now or _now(), "url": url,
+                "number": int(number[1]) if number else None, "id": secrets.token_hex(4)}
+        data["items"] = (items + [card])[-ITEMS_MAX:]
+        _write_json(os.path.join(run_dir, UPDATES_FILE), data)
+        return card
+
+
 def acknowledge(run_dir):
     """The user has seen the run's cards. Returns whether anything was waiting."""
     if not os.path.exists(os.path.join(run_dir, UPDATES_FILE)):
@@ -200,6 +215,7 @@ def text(card):
         "picked-up": "%s has picked this up" % who,
         "slack-picked-up": "%s has picked this up in %s" % (who or "Someone", place),
         "slack-approved": "%s has approved this in %s" % (who or "Someone", place),
+        "body-updated": "PR body updated",
     }.get(card.get("kind"), "The pull request changed")
 
 

@@ -805,7 +805,7 @@
   100% { translate: -50% -10%; scale: .7; opacity: 0; }
 }
 
-/* Typing heat (see index.html's --typing-heat): a sea glow that foams at the
+/* Typing heat (see project-home.css's --typing-heat): a sea glow that foams at the
    rim, and on a fast run rolls from side to side like a swell. */
 :root[data-ocean] .newconv-prompt[data-typing-hot] { animation: typing-pulse 3s ease-in-out infinite; }
 @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {

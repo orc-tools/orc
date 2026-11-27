@@ -1,0 +1,745 @@
+/* main */
+main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* A theme's top glow (--head-glow) is painted on main, not on #head inside
+   the run workspace, so the #conn, #ui-stale, #release-update and #restore-sessions banners
+   (direct children of main) sit on top of it rather than pushing it down.
+   84px is the run header's height. */
+main:has(#head:not([hidden])) {
+  background-image: var(--head-glow, none);
+  background-repeat: no-repeat;
+  background-position: left top;
+  background-size: 100% 84px;
+  background-origin: content-box;
+}
+#empty { margin: auto; color: var(--muted-strong); }
+
+.run-placeholder {
+  margin: auto; display: flex; flex-direction: column; align-items: center;
+  gap: 14px; padding: 40px 24px; text-align: center; max-width: 320px;
+}
+.rp-orc { width: 170px; height: auto; }
+.rp-caption { margin: 0; font-size: 15px; font-weight: 600; color: var(--heading); }
+.rp-sub { margin: 0; font-size: 13px; color: var(--muted-strong); }
+.rp-arm { transform-origin: 100px 100px; transform: rotate(-15deg); }
+.rp-spark { opacity: 0; }
+.rp-arm { animation: rp-hammer 1.4s ease-in-out infinite; }
+.rp-workpiece { animation: rp-glow 1.4s ease-in-out infinite; }
+.rp-spark { animation: rp-spark-fly 1.4s ease-in-out infinite; }
+.rp-spark.s2 { animation-delay: .05s; }
+.rp-spark.s3 { animation-delay: .1s; }
+@keyframes rp-hammer {
+  0%, 40% { transform: rotate(-15deg); }
+  55% { transform: rotate(40deg); }
+  65% { transform: rotate(24deg); }
+  100% { transform: rotate(-15deg); }
+}
+@keyframes rp-glow {
+  0%, 50% { opacity: .85; }
+  58% { opacity: 1; }
+  100% { opacity: .85; }
+}
+@keyframes rp-spark-fly {
+  0%, 54% { opacity: 0; transform: translate(0, 0) scale(1); }
+  58% { opacity: 1; transform: translate(0, 0) scale(1); }
+  78% { opacity: 0; transform: translate(10px, -16px) scale(.4); }
+  100% { opacity: 0; }
+}
+/* red, not yellow: a dropped viewer connection means nothing on screen is live.
+   Same token recipe as the dead session chip. */
+#conn {
+  margin: 10px 22px 0; padding: 6px 14px; font-size: 12.5px; color: var(--red-text);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--border));
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  border-radius: 8px;
+}
+/* Pinned to the logo's corner, over the dev-servers badge when both warn,
+   so the header keeps its layout when the warning comes and goes. */
+#orc-version-warning {
+  position: absolute; top: -7px; left: 15px; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0; color: var(--yellow-text);
+  background: var(--panel); border: 0; border-radius: 50%; cursor: var(--orc-cursor-pointer, pointer);
+}
+#orc-version-warning::before { content: ""; position: absolute; inset: -6px; }
+#orc-version-warning[hidden] { display: none; }
+#orc-version-warning[aria-expanded="true"] { background: color-mix(in srgb, var(--yellow) 18%, var(--panel)); }
+#orc-version-warning:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+#orc-versions {
+  position: absolute; top: 100%; left: 0; z-index: var(--z-tooltip);
+  width: min(380px, calc(100vw - 32px)); padding: 14px;
+  border: 1px solid var(--yellow); border-radius: 10px; background: var(--panel);
+  color: var(--text); font-size: 12.5px; font-weight: 400; line-height: 1.5;
+  box-shadow: var(--float-shadow);
+}
+#orc-versions[hidden] { display: none; }
+#orc-versions h2 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.orc-versions-summary { margin: 0 0 10px; color: var(--muted-strong); }
+.orc-machines { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.orc-machine {
+  --tone: var(--green); display: grid; gap: 4px; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--tone) 45%, var(--border));
+  background: color-mix(in srgb, var(--tone) 8%, transparent);
+}
+.orc-machine.is-warn { --tone: var(--yellow); }
+.orc-machine.is-bad { --tone: var(--red); }
+.orc-machine.is-busy { --tone: var(--accent); }
+.orc-machine.is-off { --tone: var(--muted); }
+.orc-machine-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.orc-machine-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.orc-machine-name small { font-weight: 400; color: var(--muted-strong); }
+/* Each theme's font sits at its own height on the line, so these labels are
+   trimmed to their capitals and centred by the box. */
+.orc-machine-badge, .orc-machine .settings-btn-inline, .orc-machine-foot > span { text-box: trim-both cap alphabetic; }
+.orc-machine-badge, .orc-machine .settings-btn-inline { align-content: center; }
+.orc-machine-badge {
+  position: relative; min-height: 19px; padding: 5px 8px 5px 20px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 600; color: var(--text);
+  background: color-mix(in srgb, var(--tone) 22%, transparent);
+}
+.orc-machine-badge::before {
+  content: ""; position: absolute; top: calc(50% - 3.5px); left: 8px;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--tone);
+}
+.orc-machine.is-busy .orc-machine-badge::before { animation: orc-machine-pulse 1s ease-in-out infinite alternate; }
+@keyframes orc-machine-pulse { to { opacity: 0.3; } }
+
+.orc-machine-commit { margin-left: auto; font-size: 11.5px; color: var(--muted-strong); }
+.orc-machine p { margin: 0; }
+.orc-machine-note { color: var(--red-text); }
+.orc-machine .settings-btn-inline { justify-self: start; margin-top: 2px; padding-block: 8px; }
+:where(.orc-machine) .settings-btn-inline { min-height: 32px; }
+.orc-machine .settings-btn-inline[aria-disabled="true"] { opacity: .5; cursor: default; }
+.orc-machine .settings-btn-inline[aria-disabled="true"]:hover { background: var(--chip); border-color: var(--border); }
+.orc-machine-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; }
+.orc-machine-foot .settings-btn-inline { margin-top: 0; }
+.orc-machine-foot > span { flex: 1 1 10em; min-width: 0; font-size: 11.5px; color: var(--muted-strong); overflow-wrap: anywhere; }
+.orc-machine-commits { font-size: 11.5px; color: var(--muted-strong); overflow-wrap: anywhere; }
+.orc-machine orc-accordion::part(summary) { padding: 2px 0; }
+.orc-machine orc-accordion code { white-space: pre-wrap; overflow-wrap: anywhere; }
+#logo-warning { position: relative; display: flex; flex-shrink: 0; }
+#logo { position: relative; }
+#dev-servers-badge {
+  position: absolute; top: -5px; left: 17px; width: 14px; height: 14px;
+  color: var(--yellow); background: var(--panel); border-radius: 50%;
+}
+#dev-servers {
+  position: absolute; top: 100%; left: 0; z-index: var(--z-tooltip);
+  width: min(320px, calc(100vw - 32px)); padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--border));
+  background: var(--panel); border-radius: 8px;
+  font-size: 12.5px; font-weight: 400; line-height: 1.55; color: var(--text);
+  visibility: hidden;
+}
+#dev-servers strong { color: var(--yellow-text); }
+#dev-servers code { font-size: 12px; }
+#logo-warning:not([data-dismissed]):hover #dev-servers,
+#logo-warning:not([data-dismissed]):focus-within #dev-servers { visibility: visible; }
+#logo-warning:has(#orc-version-warning[aria-expanded="true"]) #dev-servers { visibility: hidden; }
+/* Notifications: compact cards stacked in the bottom-right corner (see
+   js/toast.js). Collapsed, older toasts tuck behind the newest one; hovering
+   or focusing the stack fans it out. Tone only tints the icon, so every
+   toast reads as one family on the panel colour. */
+#toast-region {
+  position: fixed; right: 16px; bottom: 16px; z-index: calc(var(--z-sidebar) + 1);
+  width: min(356px, calc(100vw - 32px)); margin: 0; padding: 0; list-style: none;
+  transition: height .3s cubic-bezier(.21, 1.02, .73, 1);
+}
+#toast-region:empty { pointer-events: none; }
+.toast {
+  --index: 0; --offset: 0px; --swipe: 0px; --front-height: auto;
+  position: absolute; right: 0; bottom: 0; width: 100%; box-sizing: border-box;
+  display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 9px;
+  padding: 10px 8px 10px 12px; border-radius: 10px;
+  font-size: 12.5px; line-height: 1.4; color: var(--text);
+  border: 1px solid var(--control-border, var(--border)); background: var(--panel);
+  box-shadow: var(--float-shadow);
+  touch-action: pan-y; user-select: none; overflow: hidden;
+  opacity: 0; transform: translate(var(--swipe), 100%);
+  transition: transform .4s cubic-bezier(.21, 1.02, .73, 1), opacity .4s, height .3s;
+}
+.toast[data-mounted] {
+  opacity: 1;
+  transform: translate(var(--swipe), calc(var(--index) * -10px)) scale(calc(1 - var(--index) * .05));
+}
+/* Collapsed toasts behind the front one take its height, so a taller one
+   never shows a different edge. */
+.toast[data-mounted]:not([data-front]) { height: var(--front-height); }
+.toast:not([data-front]) > * { opacity: 0; transition: opacity .2s; }
+#toast-region[data-expanded] .toast[data-mounted] {
+  height: auto; transform: translate(var(--swipe), calc(var(--offset) * -1));
+}
+#toast-region[data-expanded] .toast > * { opacity: 1; }
+.toast[data-hidden] { opacity: 0; pointer-events: none; }
+.toast[data-swiping] { transition: none; }
+.toast[data-removed] {
+  opacity: 0; pointer-events: none;
+  transform: translate(var(--swipe), calc(var(--index) * -10px + 30%)) scale(.96);
+}
+.toast[data-removed="swipe"] { transform: translate(calc(var(--swipe) + 110%), calc(var(--index) * -10px)); }
+.toast-icon { display: grid; place-items: center; width: 16px; height: 18px; color: var(--muted-strong); }
+.toast-icon svg { width: 16px; height: 16px; }
+.toast[data-tone="success"] .toast-icon { color: var(--green); }
+.toast[data-tone="error"] .toast-icon { color: var(--red); }
+.toast[data-tone="error"] { border-color: color-mix(in srgb, var(--red) 40%, var(--control-border, var(--border))); }
+.toast[data-tone="info"] .toast-icon { color: var(--accent); }
+.toast-spinner {
+  width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid currentColor; border-right-color: transparent;
+  animation: toast-spin .7s linear infinite;
+}
+@keyframes toast-spin { to { transform: rotate(360deg); } }
+.toast-body { min-width: 0; }
+.toast-title { margin: 0; font-weight: 600; color: var(--heading); overflow-wrap: anywhere; }
+.toast-description {
+  margin: 2px 0 0; color: var(--muted-strong); font-size: 12px; overflow-wrap: anywhere;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+.toast-description[hidden], .toast-actions[hidden] { display: none; }
+.toast-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.toast-action {
+  padding: 3px 9px; border: 1px solid var(--control-border, var(--border)); border-radius: 6px;
+  background: none; color: var(--heading); font: inherit; font-size: 12px; font-weight: 600; cursor: var(--orc-cursor-pointer, pointer);
+}
+.toast-action:first-child { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+.toast-action:hover { background: var(--chip); }
+.toast-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.toast-close {
+  display: grid; place-items: center; width: 22px; height: 22px; padding: 0; margin: -2px 0 0;
+  border: 0; border-radius: 6px; background: none; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+}
+.toast-close svg { width: 13px; height: 13px; }
+.toast-close:hover { background: var(--chip); color: var(--heading); }
+.toast-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.toast[data-inline-action] { align-items: center; padding-block: 8px; }
+.toast[data-inline-action] .toast-body {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+}
+.toast[data-inline-action] .toast-title { flex: 1 1 auto; min-width: 0; }
+.toast[data-inline-action] .toast-actions { flex: 0 0 auto; margin-top: 0; }
+.toast[data-inline-action] .toast-action { white-space: nowrap; }
+.toast[data-inline-action] .toast-close { margin-top: 0; }
+@media (prefers-reduced-motion: reduce) {
+  #toast-region, .toast, .toast > * { transition: none; }
+  .toast-spinner { animation-duration: 2s; }
+}
+@media (forced-colors: active) { .toast { border: 1px solid CanvasText; } }
+/* Typing effects (js/typing-fx.js): over the composers, which ocean mode
+   raises, and under the toasts. #typing-fx-top is a popover, so these also
+   undo its default box. */
+.typing-fx {
+  position: fixed; inset: 0; z-index: var(--z-sidebar); width: auto; height: auto;
+  margin: 0; padding: 0; border: 0; background: none; overflow: hidden; pointer-events: none;
+}
+.typing-fx > * { position: absolute; left: var(--x); top: var(--y); line-height: 1; white-space: nowrap; }
+#typing-fx-mirror { position: fixed; top: 0; left: 0; visibility: hidden; pointer-events: none; overflow: hidden; }
+@media (forced-colors: active), print { .typing-fx { display: none; } }
+/* Same accent offer recipe as #restore-sessions below: the page still works,
+   it just runs the scripts from before Orc updated, or a newer public
+   release is waiting on GitHub. */
+#ui-stale, #release-update {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px;
+  margin: 10px 22px 0; padding: 8px 10px 8px 14px; font-size: 12.5px; color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 8px;
+}
+#ui-stale[hidden], #release-update[hidden] { display: none; }
+#release-update.is-bad {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.release-update-text { min-width: 0; overflow-wrap: anywhere; }
+.release-update-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.release-update-notes { color: var(--accent-text); font-weight: 600; white-space: nowrap; }
+/* accent, not yellow: sessions waiting to come back are an offer, not a
+   warning. Same margin/radius recipe as the two banners above it. */
+#restore-sessions {
+  margin: 10px 22px 0; padding: 10px 14px; font-size: 12.5px; color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 8px;
+}
+#restore-sessions strong { color: var(--heading); }
+#restore-sessions .restore-list {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  margin: 6px 0 0; padding: 0; list-style: none;
+}
+#restore-sessions .restore-list li {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px;
+}
+#restore-sessions .restore-list a { color: var(--accent-text); font-weight: 600; }
+#restore-sessions .restore-state { color: var(--muted-strong); }
+#restore-sessions .restore-state.error { color: var(--red-text); }
+#restore-sessions .restore-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px;
+}
+#restore-sessions .restore-status { color: var(--muted-strong); }
+#restore-sessions .restore-status.error { color: var(--red-text); }
+.load-error {
+  max-width: 832px; padding: 10px 14px; font-size: 13px; color: var(--heading);
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--yellow) 12%, transparent);
+  border-radius: 8px;
+}
+/* --run-tools-width is the run tools' measured width (artifact.js), which
+   grows when the side panel button carries a label such as "4 files". The
+   fallback is three bare buttons. */
+#head {
+  padding: 14px 22px 0; position: relative; --run-tool: 28px; --run-tool-gap: 4px;
+  --run-tools-room: calc(var(--run-tools-width, calc(3 * var(--run-tool) + 2 * var(--run-tool-gap))) + 14px);
+}
+#head h2 { margin: 0 0 8px; font-size: 17px; word-break: break-word; }
+/* The run tools sit over the header's top right corner. This float is as
+   wide as they are and one line tall, so only the title's first line gives
+   them room and the lines below it run the full width. */
+#head h2::before { content: ""; float: right; height: 1lh; width: var(--run-tools-room); }
+/* With the side panel open the header is narrow, so the title keeps to one
+   line and ends in an ellipsis before the run tools. Only the words give
+   way: the release and delivery tags after them keep their place. A phone
+   keeps its title below the tools, where it has the full width. */
+@media (min-width: 701px) {
+  #head:has(.side-panel-chip[aria-expanded="true"]) h2 {
+    display: flex; align-items: center; padding-right: var(--run-tools-room);
+  }
+  #head:has(.side-panel-chip[aria-expanded="true"]) h2::before { content: none; }
+  #head:has(.side-panel-chip[aria-expanded="true"]) h2 > * { flex: none; }
+  #head:has(.side-panel-chip[aria-expanded="true"]) h2 > .run-title-text {
+    flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+}
+#links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+#links :is(a, span, button):not(:where(.run-group-line, .run-group-line *)) {
+  font: inherit; font-size: 12px; line-height: 15px; padding: 3px 10px; border-radius: 12px;
+  background: var(--chip); border: 1px solid var(--border);
+  color: var(--heading); text-decoration: none; cursor: var(--orc-cursor-pointer, pointer);
+}
+#links a:hover:not(:where(.run-group-line *)),
+#links button:not(:disabled):hover:not(:where(.run-group-line *)) { background: var(--button-hover-chip); border-color: var(--accent); color: var(--heading); }
+/* the GitHub mark leads the label here too — same gap rationale as .pr-tag */
+#links a.pr-link, #links .linear-ticket, #links a.slack-review, #links a.harness-thread { display: inline-flex; align-items: center; gap: 4px; }
+#links a.harness-thread svg { width: 1em; height: 1em; flex-shrink: 0; }
+#links .worktree-app-chip, #links .qa-chip { display: inline-flex; align-items: center; gap: 4px; }
+#links .worktree-app-chip svg, #links .qa-chip svg { flex-shrink: 0; }
+/* App chips (ui/js/app-chips.js): a dot says up or down, and an offline
+   app's chip carries its play button as a second segment. */
+#links .worktree-app-chip { gap: 6px; }
+#links .app-dot { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 50%; flex: none; background: var(--red); }
+#links [data-app-state="online"] .app-dot { background: var(--green); }
+#links .app-word { padding: 0; border: 0; background: none; color: var(--red-text); }
+#links .worktree-app-chip .status-spinner {
+  padding: 0; border: 1.5px solid var(--border); border-top-color: var(--accent); border-radius: 50%; background: none;
+}
+#links [data-app-state="starting"] { color: var(--muted-strong); cursor: default; }
+#links a[data-app-state="online"] { border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
+#links a.mcp-chip[data-app-state="offline"] { color: var(--muted-strong); }
+#links .app-chip-group { display: inline-flex; align-items: stretch; padding: 0; overflow: hidden; cursor: default; }
+#links .app-chip-group > .worktree-app-chip { border: 0; border-radius: 0; background: none; padding-right: 8px; cursor: default; }
+#links .app-chip-group > .app-play {
+  display: inline-flex; align-items: center; padding: 3px 9px; border: 0; border-left: 1px solid var(--border);
+  border-radius: 0; background: none; color: var(--heading);
+}
+#links .app-chip-group > .app-play:not(:disabled):hover {
+  background: color-mix(in srgb, var(--green) 18%, var(--chip)); border-color: var(--border); color: var(--green-text);
+}
+#links .app-chip-group > .app-play:focus-visible { outline: var(--orc-focus-ring); outline-offset: -2px; }
+#links .app-chip-group > .app-play:disabled { color: var(--muted-strong); cursor: default; }
+#links span.linear-ticket { cursor: default; }
+/* header link badges (related/blocked-by/superseded-by) — the icon is the
+   subtle "this is a link" cue; the type label text carries the meaning, so
+   nothing here depends on color alone. */
+/* both badges are chips now, so layout comes from the component; the icon is
+   slotted and still needs to keep its size inside that flex row */
+#links .link-badge svg { flex-shrink: 0; }
+/* A dead link is the one badge that is not a link, and it has to look unlike
+   one at rest — hover and cursor are not states a reader can see. It drops the
+   chip's Soft Fill and dims its edge, which is exactly how it read before both
+   badges became chips. Both are the component's own theming hooks, not global
+   tokens borrowed inside a component's scope. */
+#links .link-badge-muted {
+  cursor: default;
+  --orc-chip: transparent;
+  --orc-border: color-mix(in srgb, var(--border) 60%, transparent);
+}
+#links .run-tools {
+  position: absolute; top: 12px; right: 22px;
+  display: flex; align-items: center; gap: var(--run-tool-gap);
+}
+#head #links .control-chip, #head #links .terminal-chip,
+#head #links .side-panel-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--run-tool); height: var(--run-tool); padding: 0; border: 0; border-radius: 8px;
+  background: none; color: var(--muted-strong); line-height: 1;
+}
+#head #links .control-chip:hover, #head #links .terminal-chip:hover,
+#head #links .side-panel-chip:hover {
+  background: color-mix(in srgb, var(--heading) 8%, transparent); color: var(--heading);
+}
+#head #links .control-chip[aria-current="page"], #head #links .terminal-chip[aria-expanded="true"],
+#head #links .side-panel-chip[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--heading) 11%, transparent); color: var(--heading);
+}
+/* The side panel button says what the panel holds beside its icon. A phone
+   keeps the icon, with the file count as a badge. */
+#head #links .side-panel-chip.labelled {
+  width: auto; gap: 6px; padding: 0 9px 0 6px;
+  font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* The icon's right half fills in while the panel is open. */
+#head #links .side-panel-chip .side-panel-fill { display: none; }
+#head #links .side-panel-chip[aria-expanded="true"] .side-panel-fill { display: inline; }
+#head #links .side-panel-chip-go { display: none; }
+/* Shut, a labelled button wears a button's outline, heading-coloured text and
+   an arrow after its label, so it reads as something to open rather than a tag
+   about the run. The pointer turns it Signal Blue, as link chips do. Open,
+   only the icon stays: the panel's own tabs say what it holds. */
+@media (min-width: 701px) {
+  #head #links .side-panel-chip.labelled {
+    padding: 0 7px; border: 1px solid var(--border); color: var(--heading);
+  }
+  #head #links .side-panel-chip.labelled .side-panel-chip-go { display: block; flex: none; margin-left: -1px; color: var(--muted-strong); }
+  #head #links .side-panel-chip.labelled:not([aria-expanded="true"]):hover {
+    border-color: var(--accent); background: var(--button-hover); color: var(--accent-text);
+  }
+  #head #links .side-panel-chip.labelled:not([aria-expanded="true"]):hover :is(.side-panel-chip-go, i) { color: inherit; }
+  #head #links .side-panel-chip.labelled[aria-expanded="true"] {
+    width: var(--run-tool); padding: 0; border-color: transparent;
+  }
+  #head #links .side-panel-chip[aria-expanded="true"] > :not(svg:first-child) { display: none; }
+}
+/* The label sits inside the button, not as a chip of its own. */
+#head #links .side-panel-chip span {
+  padding: 0; border: 0; border-radius: 0; background: none; color: inherit;
+  font: inherit; line-height: 1; cursor: inherit;
+}
+#head #links .side-panel-chip i { font-style: normal; color: var(--muted-strong); }
+/* Lines added and removed, in the green and red of Chat's line counts. */
+#head #links .side-panel-chip .side-panel-chip-stat { display: inline-flex; gap: 5px; }
+#head #links .side-panel-chip .side-panel-chip-plus { color: var(--green-text); }
+#head #links .side-panel-chip .side-panel-chip-minus { color: var(--red-text); }
+#head #links .side-panel-chip-count { display: none; }
+/* Search filter menu */
+/* the panel, its placement, elevation and open animation belong to
+   <orc-menu>; the rows slotted into it are still styled here */
+#filter-menu { --orc-menu-min-width: 172px; --orc-menu-max-height: 40rem; }
+:is(#filter-menu, #sidebar-more) :is(button, a) {
+  display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; text-align: left;
+  font: inherit; font-size: 13px; padding: 7px 10px; border: none; border-radius: 6px;
+  background: none; color: var(--heading); text-decoration: none; cursor: var(--orc-cursor-pointer, pointer);
+}
+:is(#filter-menu, #sidebar-more) :is(button, a):is(:hover, :focus-visible) { background: var(--chip); }
+:is(#filter-menu, #sidebar-more) :is(button, a):focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+#filter-menu button[role="menuitemradio"] { padding-left: 26px; position: relative; }
+#filter-menu button[aria-checked="true"]::before {
+  content: '✓'; position: absolute; left: 9px; color: var(--accent-text);
+}
+#filter-menu .menu-sep { height: 1px; margin: 5px 6px; background: var(--border); }
+#filter-menu .menu-label {
+  padding: 8px 10px 4px; font-size: 12px; font-weight: 600; color: var(--muted-strong);
+}
+#filter-menu .menu-label:first-child { padding-top: 4px; }
+/* view row: name (radio) + hover-revealed edit; keyboard/AT users
+   keep the buttons in the tab order even while visually hidden */
+#filter-menu .view-row { display: flex; align-items: center; border-radius: 6px; }
+#filter-menu .view-row:hover, #filter-menu .view-row:focus-within { background: var(--chip); }
+#filter-menu .view-row button[role="menuitemradio"] { flex: 1; min-width: 0; }
+#filter-menu .view-actions { display: flex; gap: 2px; padding-right: 6px; flex-shrink: 0; }
+#filter-menu .view-actions button {
+  width: 28px; height: 28px; padding: 0; display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; opacity: 0;
+  color: var(--muted-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  #filter-menu .view-actions button { transition: opacity .12s ease-out; }
+}
+#filter-menu .view-row:hover .view-actions button,
+#filter-menu .view-row:focus-within .view-actions button,
+#filter-menu .view-actions button:focus-visible { opacity: 1; }
+/* coarse-pointer (touch) users have no :hover to reveal these — keep visible */
+@media (hover: none) {
+  #filter-menu .view-actions button { opacity: 1; }
+}
+#filter-menu .view-actions button:hover, #filter-menu .view-actions button:focus-visible { background: var(--panel); color: var(--heading); }
+/* Project's cog and Priority's ⓘ are the only way to what they open, so
+   they never hide behind hover. */
+#filter-menu .pinned-action button { opacity: 1; }
+#filter-menu .pinned-action svg { width: 13px; height: 13px; }
+/* Priority's note sits in the top layer beside the menu; filters.js places
+   it and sets --arrow-at to the ⓘ's centre along the arrow's edge. */
+#filter-menu .menu-note {
+  position: fixed; inset: auto; margin: 0; box-sizing: border-box;
+  width: max-content; max-width: min(268px, calc(100vw - 16px));
+  padding: 10px 12px; overflow: visible;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--heading); box-shadow: var(--float-shadow);
+  font-size: 12px; line-height: 1.45; text-align: left;
+}
+#filter-menu .menu-note:not(:popover-open) { display: none; }
+#filter-menu .menu-note b { font-weight: 600; }
+#filter-menu .menu-note::after {
+  content: ""; position: absolute; width: 9px; height: 9px;
+  background: var(--panel); border: solid var(--border); border-width: 0 0 1px 1px;
+}
+#filter-menu .menu-note[data-placement="right"]::after { left: -6px; top: calc(var(--arrow-at, 50%) - 5px); transform: rotate(45deg); }
+#filter-menu .menu-note[data-placement="above"]::after { bottom: -6px; left: calc(var(--arrow-at, 50%) - 5px); transform: rotate(-45deg); }
+/* the dialog fields are <orc-input>; it owns their box and focus border, so
+   only their share of the dialog's vertical rhythm is left here */
+#cancel-input, #view-name-input, #link-pr-input, #add-project-input, #add-project-dir { display: block; width: 100%; margin: 4px 0 16px; }
+#view-name-error { margin: -12px 0 14px; font-size: 12px; }
+#view-save-choice { margin: 2px 0 12px; }
+#links span.background-tasks {
+  max-width: 36ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted-strong); cursor: default;
+}
+#links span.background-tasks code { font-size: 11px; }
+.headless-turn-outcome { position: relative; font-size: 12px; }
+.headless-turn-outcome > div { width: min(320px, 80vw); margin-top: 8px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+.headless-turn-outcome p { margin: 0 0 8px; white-space: normal; overflow-wrap: anywhere; }
+/* the copy chips are <orc-copy-button>; it owns the copied and failed states
+   and announces them, so the local success/failure colours are gone with the
+   classes that carried them */
+#pending-q {
+  display: block; width: min(832px, calc(100% - 44px));
+  margin: 28px auto 0; padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+#pending-q[hidden] { display: none; }
+#run-state-note {
+  display: block; margin: 0 0 12px; font-size: 13px;
+  --orc-space-4: 8px; --orc-space-5: 12px; --orc-radius-callout: 8px;
+}
+#run-state-note[hidden] { display: none; }
+/* stopped and cancelled stay the emphatic states; the informational note
+   (read-only child, phase transition) keeps its lighter weight. */
+#run-state-note.stopped { font-weight: 600; overflow-wrap: anywhere; }
+/* slotted text inherits from the element's own box, not from this host, so
+   the cancelled red goes through the token that box reads */
+#run-state-note.cancelled { color: var(--red-text); --orc-text: var(--red-text); }
+#pending-q .pq-head {
+  font-size: 13px; font-weight: 600; line-height: 1.5;
+  color: var(--gate); margin: 0;
+}
+#pending-q .pq-q {
+  font-size: 13px; color: var(--heading); white-space: pre-wrap;
+  margin-top: 6px; overflow-wrap: anywhere;
+}
+#pending-q .pq-q:first-of-type { margin-top: 0; }
+#pending-q ul {
+  margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--heading);
+}
+#pending-q li { overflow-wrap: anywhere; }
+#pending-q li + li { margin-top: 4px; }
+/* answering from here: one button per offered option, then a free-text
+   reply. Both post to /runs/<id>/answer-question, which pastes into the
+   run's own pane — so they render only while the run still owns one. */
+#pending-q .pq-actions {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-top: 10px;
+}
+#pending-q .pq-actions button {
+  font: inherit; font-size: 12px; padding: 6px 12px; min-height: 32px;
+  color: var(--heading); background: var(--chip); overflow-wrap: anywhere;
+  border: 1px solid var(--border); border-radius: 6px; cursor: var(--orc-cursor-pointer, pointer);
+}
+#pending-q .pq-actions button:not(:disabled):hover { border-color: var(--accent); }
+#pending-q .pq-actions button:disabled { opacity: .5; cursor: not-allowed; }
+#pending-q .pq-reply { display: flex; gap: 6px; flex: 1 1 220px; min-width: 0; }
+#pending-q .pq-reply input {
+  font: inherit; font-size: 12px; flex: 1 1 auto; min-width: 0;
+  padding: 6px 10px; color: var(--heading); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+#pending-q .pq-heading {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px 24px; flex-wrap: wrap; margin-bottom: 24px;
+}
+#pending-q .pq-heading > div { flex: 1 1 240px; }
+#pending-q .pq-item + .pq-item { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 24px; }
+#pending-q .pq-help, #pending-q .pq-feedback {
+  font-size: 12px; line-height: 1.5; margin: 4px 0 0; color: var(--muted-strong);
+}
+#pending-q .pq-item .pq-q { font-size: 16px; font-weight: 600; line-height: 1.5; margin: 0 0 16px; max-width: 70ch; }
+#pending-q .pq-options { display: grid; gap: 8px; margin-bottom: 20px; }
+#pending-q .pq-option {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; min-width: 0;
+  padding: 12px 16px; min-height: 48px; border: 1px solid var(--control-border); border-radius: 8px;
+  background: var(--panel); color: var(--text); text-align: left;
+  font: inherit; font-size: 14px; line-height: 1.5; cursor: var(--orc-cursor-pointer, pointer); overflow-wrap: anywhere;
+}
+#pending-q .pq-option:hover { border-color: var(--accent); background: var(--button-hover); }
+#pending-q .pq-option[aria-pressed="true"] {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  color: var(--heading);
+}
+#pending-q .pq-option-mark {
+  display: grid; place-items: center; flex: 0 0 18px; height: 18px; margin-top: 2px;
+  border: 1px solid var(--control-border); border-radius: 50%; color: transparent;
+  font-size: 12px; line-height: 1;
+}
+#pending-q .pq-option[aria-pressed="true"] .pq-option-mark {
+  border-color: var(--accent); background: var(--accent); color: var(--bg);
+}
+#pending-q .pq-label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--muted-strong); }
+#pending-q .pq-item .pq-reply { display: block; }
+#pending-q .pq-compose { display: flex; gap: 8px; }
+#pending-q .pq-compose input {
+  width: 100%; min-height: 44px; padding: 10px 12px; font-size: 14px;
+  border-color: var(--control-border); border-radius: 8px;
+}
+#pending-q .pq-compose input:focus { border-color: var(--focus); }
+#pending-q .pq-submit {
+  flex-shrink: 0; min-height: 44px; padding: 10px 16px; border: 1px solid transparent; border-radius: 8px;
+  background: var(--orc-green, var(--green)); color: var(--orc-button-text, var(--bg)); font: inherit; font-size: 13px; cursor: var(--orc-cursor-pointer, pointer);
+}
+#pending-q .pq-submit:hover { background: color-mix(in srgb, var(--orc-green, var(--green)) 88%, var(--heading)); }
+#pending-q .pq-secondary {
+  min-height: 44px; padding: 8px 0; border: 0; background: none;
+  color: var(--muted-strong); font: inherit; font-size: 12px; cursor: var(--orc-cursor-pointer, pointer);
+}
+#pending-q .pq-secondary:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; }
+#pending-q .pq-footer { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-top: 8px; }
+#pending-q .pq-dismiss { margin-left: auto; }
+#pending-q .pq-feedback { margin: 0; }
+#pending-q .pq-feedback:empty { display: none; }
+#pending-q .pq-answer { padding: 12px 16px; border-radius: 8px; background: var(--panel); }
+#pending-q .pq-answer-text { margin: 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+#pending-q .pq-item:is([data-reply-state="sending"], [data-reply-state="unconfirmed"]) :is(.pq-options, .pq-reply, .pq-dismiss) { display: none; }
+#pending-q .pq-item[data-reply-state="unconfirmed"] .pq-feedback { color: var(--yellow-text); }
+#pending-q button:focus-visible, #pending-q input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (max-width: 700px) {
+  #pending-q { width: calc(100% - 32px); margin-top: 24px; }
+  #pending-q .pq-heading { gap: 4px; margin-bottom: 16px; }
+  #pending-q .pq-heading > div { flex-basis: 100%; }
+  #pending-q .pq-compose { flex-direction: column; }
+  #pending-q .pq-submit { align-self: flex-end; }
+}
+/* the option's ascii mockup — wide ones scroll rather than push the page */
+#pending-q .pq-preview {
+  margin: 4px 0 8px; padding: 8px 10px; overflow-x: auto;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; line-height: 1.35; color: var(--heading);
+  background: var(--chip); border: 1px solid var(--border); border-radius: 6px;
+}
+/* The tabs take the width they need and the run's times get what is left
+   of the row, so the times never cost the header a line of their own. */
+#tabbar {
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); align-items: center;
+  column-gap: 10px; padding: 0 22px; background: var(--tab-bar-bg, transparent);
+  border-bottom: 1px solid var(--tab-bar-border-color, var(--border)); flex-shrink: 0;
+}
+/* tabs hidden = no run open — collapse the whole row so its border doesn't paint */
+#tabbar:has(> #tabs[hidden]) { display: none; }
+/* 4px inner padding pulled back by margin: room for the 2px+2px
+   focus-visible outline inside the scroll clip, gutter stays at 22px.
+   isolation keeps the pill's negative z-index behind the labels only. */
+#tabs { position: relative; isolation: isolate; display: flex; gap: 2px; min-width: 0; overflow-x: auto; padding: 0 4px; margin: 0 -4px; }
+#tabs > :not(button):not(.tab-indicator) { display: contents; }
+#tabs button {
+  border: var(--tab-border-width, 0px) solid transparent; border-radius: var(--tab-radius, 0px);
+  background: var(--tab-bg, none); color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+  padding: 9px 12px; font: var(--tab-font, inherit); font-size: 13px; white-space: nowrap;
+}
+#tabs button:hover { color: var(--text); }
+#tabs button:focus-visible { outline-offset: -2px; }
+#tabs button.active { background: var(--tab-active-bg, var(--tab-bg, none)); color: var(--accent-text); font-weight: 600; }
+/* The active tab is a pill inset from the bar's edges, so it never touches
+   the bar's bottom border or a theme's strip drawn along it. */
+#tabs .tab-indicator {
+  position: absolute; z-index: -1; top: 5px; bottom: 5px; left: 0; width: var(--tab-indicator-width, 0);
+  height: var(--tab-indicator-height, auto); border-radius: var(--tab-radius, 6px);
+  background: var(--tab-indicator-color, color-mix(in srgb, var(--accent) 16%, transparent)); pointer-events: none;
+  /* forced colors drop the fill, and this border then draws the pill */
+  border: 1px solid transparent; box-sizing: border-box;
+  opacity: 0; transform: translate3d(var(--tab-indicator-x, 0), 0, 0);
+  transition: transform .2s cubic-bezier(.22, 1, .36, 1), width .2s cubic-bezier(.22, 1, .36, 1), opacity .12s ease-out;
+}
+#tabs .tab-indicator.visible { opacity: 1; }
+#tabs .tab-indicator.instant { transition: none; }
+/* The design system pads the trigger 10px on both sides, which leaves the
+   chevron hard against the right edge. */
+orc-select::part(trigger) { padding-inline-end: 14px; }
+orc-select[size="compact"]::part(trigger) { padding-inline-end: 12px; }
+/* One line tall and clipped: a time that does not fit beside the tabs wraps
+   onto a line below, out of sight. order makes Last activity the first to
+   be placed, so Started is the first to go, and row-reverse draws the two
+   back in reading order against the right edge. */
+#run-times {
+  display: flex; flex-flow: row-reverse wrap; height: 1lh; overflow: clip;
+  min-width: 0; font-size: 12px; color: var(--muted-strong);
+}
+/* A line always keeps its first item, however wide. This empty one takes
+   that place, so Last activity wraps away too when it does not fit. */
+#run-times::before { content: "\200b"; order: -2; }
+#run-times .run-time { white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
+#run-times .run-time:last-child { order: -1; }
+#run-times .run-time-sep { margin: 0 6px; }
+#run-times time { color: var(--text); }
+#version-banner {
+  margin: 12px 22px 0; padding: 8px 14px; font-size: 13px; color: var(--heading);
+  border: 1px solid color-mix(in srgb, var(--yellow) 40%, transparent);
+  background: color-mix(in srgb, var(--yellow) 12%, transparent);
+  border-radius: 8px;
+}
+/* Both banners are shown by dropping [hidden] on a persistent element (the
+   poll swaps their innerHTML, never the node), so @starting-style bridges the
+   appear instead of teleporting it. Entry only — neither sets an exit state,
+   and a hide worth waiting 180ms for isn't one. Safari 16.5 (Orc.app's
+   WKWebView) has no @starting-style and appears instantly, as it does today. */
+#pending-q, #version-banner {
+  transition: opacity .18s cubic-bezier(.22, 1, .36, 1),
+              transform .18s cubic-bezier(.22, 1, .36, 1);
+}
+@starting-style {
+  #pending-q, #version-banner { opacity: 0; transform: translateY(-4px); }
+}
+#version-banner a { color: var(--yellow-text); font-weight: 600; }
+#version-banner .version-banner-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+}
+#version-banner .plan-refinement { margin-top: 12px; }
+#version-banner .plan-refinement::part(summary) {
+  color: var(--heading); font-size: 14px; font-weight: 600;
+  line-height: 1.4;
+}
+#version-banner .plan-refinement::part(panel) { padding-top: 10px; }
+#version-banner .plan-refinement::part(chevron) { color: var(--muted-strong); }
+#version-banner .refinement-hint {
+  margin-left: 10px; color: var(--muted-strong); font-size: 12px;
+  font-weight: 400; font-variant-numeric: tabular-nums;
+}
+#version-banner .plan-refinement h3 {
+  margin: 0 0 6px; color: var(--heading); font-size: 12px; line-height: 1.4;
+}
+#version-banner .refinement-block {
+  padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--yellow) 32%, transparent);
+}
+#version-banner .refinement-block + .refinement-block { margin-top: 10px; }
+#version-banner .refinement-summary { margin: 0; }
+#version-banner .refinement-summary-row {
+  display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 14px;
+  padding: 5px 0;
+}
+#version-banner .refinement-summary-row + .refinement-summary-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+#version-banner .refinement-summary dt { color: var(--muted-strong); font-weight: 600; }
+#version-banner .refinement-summary dd { margin: 0; color: var(--heading); overflow-wrap: anywhere; }
+#version-banner .refinement-empty { margin: 0; color: var(--muted-strong); }
+#version-banner .refinement-changes { margin: 0; padding-left: 18px; }
+#version-banner .refinement-changes li + li { margin-top: 3px; }
+#version-banner .refinement-stats { color: var(--muted-strong); font-variant-numeric: tabular-nums; }
+#version-banner .refinement-next { display: inline-block; margin-top: 8px; }
+#version-banner .refinement-feedback-thread { padding: 8px 0; border-top: 1px solid var(--border); }
+#version-banner .refinement-feedback-thread:first-of-type { border-top: 0; }
+#version-banner .refinement-feedback-thread p { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  #version-banner .version-banner-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  #version-banner .refinement-summary-row { grid-template-columns: 1fr; }
+}
+#version-banner .version-feedback { margin-top: 10px; }
+#version-banner .version-feedback label { display: block; margin-bottom: 6px; font-weight: 600; }
+#version-banner .version-feedback textarea {
+  display: block; width: 100%; box-sizing: border-box; resize: vertical;
+  min-height: 62px; padding: 10px 12px; border: 1px solid var(--control-border);
+  border-radius: 8px; background: var(--bg); color: var(--text);
+  font: inherit; font-size: 13px; line-height: 1.5;
+}
+#version-banner .version-feedback textarea:disabled { cursor: default; }
+#content-shell { flex: 1; min-height: 0; position: relative; overflow-y: auto; }

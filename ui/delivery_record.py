@@ -6,8 +6,9 @@ import fcntl
 import hashlib
 import json
 import os
-import tempfile
 import time
+
+from run_lifecycle import Snapshot
 
 LOCK_WAIT_SECONDS = 30.0
 # cancelled and merged-to-parent are terminal; merging belongs to the merge queue.
@@ -54,23 +55,7 @@ def read_meta(meta_path):
         raise DeliveryError("cannot read %s: %s" % (meta_path, exc)) from exc
     if not isinstance(meta, dict):
         raise DeliveryError("%s must contain a JSON object" % meta_path)
-    return meta
-
-
-def write_meta(meta_path, meta):
-    fd, temp_name = tempfile.mkstemp(
-        prefix=".meta.json.", suffix=".tmp", dir=meta_path.parent)
-    try:
-        with os.fdopen(fd, "w") as handle:
-            json.dump(meta, handle, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_name, meta_path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temp_name)
-        raise
+    return Snapshot(meta)
 
 
 def settle(meta, pr_urls, merged):

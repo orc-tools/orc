@@ -57,21 +57,21 @@ class Delivery:
     busy: bool = False
 
 
-def submit(run_dir: str | os.PathLike[str], text: str) -> Delivery:
+def submit(run_dir: str | os.PathLike[str], text: str, *, on_exit=None) -> Delivery:
     """Start the run's next turn with the user's ``text``."""
     with headless_session.control_lock(os.fspath(run_dir)):
-        return _submit(run_dir, text, user_turn=True)
+        return _submit(run_dir, text, user_turn=True, on_exit=on_exit)
 
 
-def submit_from_orc(run_dir: str | os.PathLike[str], text: str) -> Delivery:
+def submit_from_orc(run_dir: str | os.PathLike[str], text: str, *, on_exit=None) -> Delivery:
     """Start the run's next turn with text Orc wrote on its own, such as a
     Ship gate reminder. It carries on the user's last turn, so "Since last
     turn" keeps that turn's baseline."""
     with headless_session.control_lock(os.fspath(run_dir)):
-        return _submit(run_dir, text, user_turn=False)
+        return _submit(run_dir, text, user_turn=False, on_exit=on_exit)
 
 
-def _submit(run_dir: str | os.PathLike[str], text: str, *, user_turn: bool) -> Delivery:
+def _submit(run_dir: str | os.PathLike[str], text: str, *, user_turn: bool, on_exit=None) -> Delivery:
     run_dir = os.path.normpath(os.fspath(run_dir))
     run_id = os.path.basename(run_dir)
     meta = run_session.RunSessions(os.path.dirname(run_dir)).read(run_id).meta
@@ -140,7 +140,7 @@ def _submit(run_dir: str | os.PathLike[str], text: str, *, user_turn: bool) -> D
         return Delivery("definitely_unsent", (500, "could not start the agent's next turn: " + str(exc)))
     try:
         headless_session.start_turn(run_dir, agent=agent, argv=argv, prompt=text, cwd=cwd, env=env,
-                                    turn_base=turn_base, user_turn=user_turn)
+                                    turn_base=turn_base, user_turn=user_turn, on_exit=on_exit)
     except headless_session.HeadlessBusy:
         if shell:
             # The command already ran; a busy retry would run it again.

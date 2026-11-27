@@ -146,11 +146,56 @@ def pr_push_action(config):
     return value if value in PR_PUSH_ACTIONS else DEFAULT_PR_PUSH_ACTION
 
 
+PR_PUSH_HINTS = {
+    "comments-and-commits": (
+        "Push to a PR (Settings) is Push comments & commits. When the user asks in this chat to push this "
+        "run's open PR (\"push\", \"push it\"), do what that button does: push the commits, then answer the "
+        "PR's review comments those commits fix, each with a reply checked through talk-like-rick and a "
+        "\U0001f44d reaction; a comment the push leaves unchanged gets a reply only. With a review round "
+        "waiting (`prFeedback`), push it with `--post-replies`; with none, follow \"Push with no review "
+        "round\" in orc-pr's references/pr-feedback-and-ci.md. A PR with no review comments just gets the push."),
+    "commits": (
+        "Push to a PR (Settings) is Push commits. When the user asks in this chat to push this run's open "
+        "PR, push the commits only: replies to people wait for the user's Push comments, and Zerohands "
+        "replies go out as they do today."),
+}
+
+
+PR_ROUND_HINT = (
+    " A chat request to fix, address or answer this PR's review comments, Zerohands' included, runs "
+    "orc-pr's review round (`/orc-pr feedback <run-id>`, references/pr-feedback-and-ci.md), never a "
+    "loose edit, so its replies are recorded for the push.")
+
+
+def has_open_pr(meta):
+    """Whether a run is linked to a pull request it can push to."""
+    if not isinstance(meta, dict):
+        return False
+    urls = meta.get("prUrls") if isinstance(meta.get("prUrls"), list) else [meta.get("prUrl")]
+    if meta.get("source") == "pr":
+        urls = [*urls, meta.get("sourceUrl")]
+    return any(isinstance(url, str) and "/pull/" in url for url in urls)
+
+
+def pr_push_hook_context(meta, config_dir=None):
+    """The turn context that tells a run with an open PR what a chat "push"
+    does, so it matches the Push button and Settings > Push to a PR."""
+    if not has_open_pr(meta) or meta.get("route") == "orchestration-worker":
+        return ""
+    return PR_PUSH_HINTS[pr_push_action(read_config(config_dir))] + PR_ROUND_HINT
+
+
 def offer_other_ship_actions(config):
     """Whether the Ship button's menu offers the other Ship actions for one
     run. The config's top-level `offerOtherShipActions`; on unless it is
     `false`, so the button always does the project's own action."""
     return not (isinstance(config, dict) and config.get("offerOtherShipActions") is False)
+
+
+def offer_ship_when_done(config):
+    """Whether the composer and Chat offer Ship when done. The config's
+    top-level `offerShipWhenDone`; on unless it is `false`."""
+    return not (isinstance(config, dict) and config.get("offerShipWhenDone") is False)
 
 
 def project_override(project):

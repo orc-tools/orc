@@ -20,6 +20,22 @@ def file_key(path):
     return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
 
 
+def optional_file_key(path):
+    """Like ``file_key(path)``, returning None when the file cannot be stat'ed."""
+    try:
+        return file_key(path)
+    except OSError:
+        return None
+
+
+def dir_mtime_ns(path):
+    """A directory's ``st_mtime_ns``, or None when it cannot be stat'ed."""
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return None
+
+
 class TextCache:
     """A hit costs one stat instead of an open, a read and a close."""
 

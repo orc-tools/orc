@@ -83,15 +83,15 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
 .am-card {
   position: relative; flex: 1; min-width: 0; padding: calc(var(--answer-mode-trim-height) + 24px) 32px 24px;
   border: 1px solid var(--border); border-radius: var(--answer-mode-radius); background: var(--panel); overflow: hidden;
-  box-shadow: 0 24px 70px -28px rgba(0, 0, 0, .55);
 }
 .am-stage .am-card { padding: calc(var(--answer-mode-trim-height) + 16px) 22px 16px; }
-.am-stage .am-q { margin-bottom: 8px; font-size: 22px; }
+.am-stage .am-q { margin-bottom: 8px; font-size: 24px; }
 .am-stage .am-why { margin-bottom: 10px; line-height: 1.45; }
 .am-stage .am-options { gap: 6px; }
 .am-stage .am-opt { gap: 10px; padding: 8px 12px; }
 .am-stage .am-opt strong { font-size: 15px; }
 .am-stage .am-actions { margin-top: 14px; }
+/* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
 .am-card::before {
   content: ""; position: absolute; inset: 0 0 auto; height: var(--answer-mode-trim-height); background: var(--answer-mode-trim);
 }
@@ -169,7 +169,7 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
   display: inline-block; margin-left: 8px; padding: 2px 8px; vertical-align: 2px;
   border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); border-radius: 999px;
   background: color-mix(in srgb, var(--green) 16%, transparent);
-  font-size: 11px; font-weight: 700; letter-spacing: .03em; color: var(--green-text, var(--green));
+  font-size: 11px; font-weight: 700; letter-spacing: .03em; color: color-mix(in srgb, var(--green-text, var(--green)) 85%, var(--heading));
 }
 .am-other {
   display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; padding: 4px 12px;
@@ -199,6 +199,7 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
   display: inline-flex; align-items: center; gap: 10px; padding: 9px 18px; border: 1px solid transparent;
   border-radius: 10px; font: inherit; font-size: 15px; font-weight: 600; cursor: var(--orc-cursor-pointer, pointer);
 }
+a.am-btn { text-decoration: none; }
 .am-btn.primary { background: var(--accent); color: var(--answer-mode-on-accent); }
 .am-btn.primary:hover { background: color-mix(in srgb, var(--accent) 86%, var(--heading)); }
 .am-btn.primary kbd { border-color: color-mix(in srgb, var(--answer-mode-on-accent) 45%, transparent); background: transparent; color: var(--answer-mode-on-accent); }
@@ -304,11 +305,55 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
 /* Long drafted comments stop at three lines; the walk shows the rest. */
 .am-invite-quote {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  /* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
   margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid var(--border); border-radius: 0 8px 8px 0;
   background: var(--code); font-size: 14px; line-height: 1.5; color: var(--text); white-space: pre-line; overflow-wrap: anywhere;
 }
+/* Several questions: the first one beside the button that starts on it, the
+   step bars in the heading. A long question stops at two lines. */
+.am-invite-steps { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; font-size: 13px; color: var(--muted-strong); font-variant-numeric: tabular-nums; }
+.am-invite-bars { display: inline-flex; gap: 6px; }
+.am-invite-bars i { width: 28px; height: 7px; border-radius: 4px; background: color-mix(in srgb, var(--border) 70%, transparent); }
+.am-invite-bars i.is-now { background: var(--accent); }
+.am-invite-body { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 16px 14px; }
+.am-invite-body .am-invite-first { min-width: 0; padding: 0; }
+.am-invite-body .am-invite-label { margin-bottom: 4px; }
+.am-invite-body .am-btn { flex: none; }
+.am-invite .am-invite-q {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  margin: 0; font-size: 17px; font-weight: 600; line-height: 1.4; color: var(--heading); overflow-wrap: anywhere;
+}
+/* One question: its choices on the card, answered from the chat. */
+.am-invite-opts { display: grid; gap: 8px; min-width: 0; margin: 12px 0 0; padding: 0; border: 0; }
+.am-invite-opt {
+  position: relative; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
+  padding: 10px 14px; border: 1px solid var(--control-border, var(--border)); border-radius: 10px;
+  cursor: var(--orc-cursor-pointer, pointer);
+}
+.am-invite-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.am-invite-opt:hover { background: var(--accent-soft); }
+.am-invite-opt:has(input:focus-visible) { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.am-invite-opt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.am-invite-opt kbd { align-self: start; margin-top: 2px; }
+.am-invite-opt-text { min-width: 0; }
+.am-invite-opt strong { display: block; font-size: 14px; font-weight: 600; line-height: 1.45; color: var(--heading); }
+.am-invite-opt small { display: block; margin-top: 2px; font-size: 13px; line-height: 1.45; color: var(--muted-strong); }
+.am-invite-tick { width: 18px; height: 18px; border: 1.5px solid var(--border); border-radius: 50%; }
+.am-invite-opts[data-type="multi"] .am-invite-tick { border-radius: 4px; }
+.am-invite-opt:has(input:checked) .am-invite-tick { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 0 5px, transparent 6px); }
+.am-invite-opts[data-type="multi"] .am-invite-opt:has(input:checked) .am-invite-tick { background: var(--accent); box-shadow: inset 0 0 0 3px var(--panel); }
+.am-invite-own { margin: 10px 0 0; font-size: 13px; color: var(--muted-strong); overflow-wrap: anywhere; }
+.am-invite-own q { color: var(--heading); }
+.am-invite-keys { margin-left: auto; font-size: 13px; color: var(--muted-strong); }
+.am-invite .am-invite-first + .am-invite-error { padding: 10px 16px 0; }
+.am-invite-error:empty { display: none; }
+@media (max-width: 640px) {
+  .am-invite-body { flex-direction: column; align-items: stretch; gap: 12px; }
+  .am-invite-body .am-btn { justify-content: center; }
+  .am-invite-bars, .am-invite-keys { display: none; }
+}
 .am-invite-later { display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 16px 0; font-size: 13px; color: var(--muted-strong); }
-.am-invite-later i { width: 40px; height: 9px; border-radius: 5px; background: color-mix(in srgb, var(--border) 70%, transparent); }
+.am-invite-later i { width: 40px; height: 9px; border-radius: 6px; background: color-mix(in srgb, var(--border) 70%, transparent); }
 .am-invite-who { display: block; margin-top: 4px; font-size: 13px; color: var(--muted-strong); }
 .am-invite-who code, .am-comment-meta code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 .am-invite-note { margin: 0; padding: 8px 16px 0; font-size: 13px; color: var(--muted-strong); }
@@ -379,8 +424,8 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
   .am-comment-link { margin-left: 0; }
 }
 
-/* A PR feedback round's finish in Chat (pr-round-card.js): each comment's
-   outcome and reply, and the round's one push. */
+/* A PR feedback round's finish in Chat (pr-round-card.js): a count per
+   outcome and the round's one push, then one line once it went. */
 #answer-card .prr {
   border: 1px solid color-mix(in srgb, var(--green) 45%, var(--border)); border-radius: 12px;
   background: var(--panel); overflow: hidden;
@@ -390,7 +435,8 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
   border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--green) 10%, var(--panel));
 }
 .prr-top strong { font-size: 15px; color: var(--heading); }
-.prr-top > span:last-child { margin-left: auto; font-size: 13px; color: var(--muted-strong); }
+/* The review card's "to <author>" sits at the end of its heading row. */
+.is-review .prr-top > span:last-child { margin-left: auto; font-size: 13px; color: var(--muted-strong); }
 .prr-dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--green); }
 .prr-list { margin: 0; padding: 0; list-style: none; }
 .prr-thread { padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -434,6 +480,15 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
 .prr-note { margin: 0; padding: 12px 16px; font-size: 14px; color: var(--muted-strong); }
 .prr-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 16px; font-size: 13px; color: var(--muted-strong); }
 .prr-foot code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+.prr-top .prr-who, .prr-foot .prr-threads { margin-left: auto; }
+.prr-top .prr-who { font-size: 13px; color: var(--muted-strong); }
+#answer-card .prr.is-pushed {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; width: fit-content; max-width: 100%;
+  padding: 8px 14px; border-color: var(--border); border-radius: 999px; font-size: 13px; color: var(--muted-strong);
+}
+.prr.is-pushed strong { font-weight: 600; color: var(--heading); }
+.prr.is-pushed code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+.prr.is-pushed .prr-done { padding: 0; border: 0; }
 
 /* Your review of someone else's PR (pr-review-card.js): the note, each drafted
    comment and the review's one GitHub write. */
@@ -452,6 +507,11 @@ body.answer-mode-open #run-terminal.terminal-staged #run-terminal-maximise { dis
 .prr-thread.is-dropped .prr-verdict { margin-bottom: 0; color: var(--muted-strong); }
 .prr-post-error { margin: 0; padding: 10px 16px 0; font-size: 13px; color: var(--red-text, var(--red)); }
 .prr-foot orc-button { flex: none; }
+.prr-foot orc-button .status-spinner { display: inline-block; margin-right: 6px; vertical-align: -1px; border-color: currentColor; border-right-color: transparent; }
+.prr-done {
+  flex: none; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
+  font-weight: 600; color: var(--green-text, var(--green));
+}
 
 /* Answer mode's step for a drafted review comment: the box Orc's comment sits in. */
 .am-draft { margin: 0 0 18px; }
@@ -476,10 +536,10 @@ img.gh-emoji { width: 1.25em; height: 1.25em; vertical-align: -0.25em; }
 .gh-emoji-menu {
   position: absolute; z-index: 5; width: 220px; max-width: calc(100% - 24px); overflow-y: auto; margin: 0; padding: 4px; list-style: none;
   border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
-  box-shadow: 0 6px 18px rgb(0 0 0 / .28); font-size: 13px;
+  box-shadow: var(--float-shadow); font-size: 13px;
 }
 .gh-emoji-menu[hidden] { display: none; }
-.gh-emoji-menu li { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 5px; color: var(--text); cursor: var(--orc-cursor-pointer, pointer); }
+.gh-emoji-menu li { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; color: var(--text); cursor: var(--orc-cursor-pointer, pointer); }
 .gh-emoji-menu li[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--heading); }
 .gh-emoji-menu b { font-weight: 600; }
 .gh-emoji-glyph { width: 20px; text-align: center; font-size: 16px; line-height: 1; }

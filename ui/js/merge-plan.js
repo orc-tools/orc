@@ -1,7 +1,8 @@
 // orc-ui: multi-select runs in the sidebar, the run context menu, and the
 // merge planner that orders several runs before they join the merge queue.
 
-import { applyMergeQueueChanges, refresh } from './activity.js';
+import { applyMergeQueueChanges, refresh } from './panel-navigation.js';
+import { mergeSelectedIds } from './merge-selection.js';
 import { bindContextMenu, placeContextMenu } from './context-menu.js';
 import { $, announce, esc, isReadOnlyRun, runs, toast } from './core.js';
 import { openRunRename } from './run-rename.js';
@@ -34,8 +35,7 @@ function mergeRunTitle(id) {
 // ---- selection ----
 // ⌘/Ctrl-click or the context menu's Select marks runs; the list re-renders
 // from this set, so selection survives the poll loop's redraws.
-const mergeSelectedIds = new Set();
-export function isMergeSelected(id) { return mergeSelectedIds.has(id); }
+
 
 function toggleMergeSelected(id) {
   if (mergeSelectedIds.has(id)) mergeSelectedIds.delete(id);

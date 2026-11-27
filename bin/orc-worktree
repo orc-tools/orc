@@ -20,6 +20,9 @@ from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ui"))
+
+from run_lifecycle import Snapshot, state as lifecycle_state, write_meta
+from state_transitions import RefusedTransition, refuse
 import clarification_files
 import project_setup
 import rails_helpers
@@ -49,8 +52,8 @@ def servers():
     return worktree_servers
 
 
-def server_config(repo: Path, config: dict | None = None) -> dict | None:
-    return None if devd_repo(repo) else servers().server_config(repo, config)
+def server_config(repo: Path, config: dict, devd: str | None) -> dict | None:
+    return None if devd else servers().server_config(repo, config)
 
 
 def detect_server(repo: Path) -> dict:
@@ -90,6 +93,14 @@ def read_json(path: Path) -> dict:
     if not isinstance(value, dict):
         raise WorktreeError("%s must contain a JSON object" % path)
     return value
+
+
+def read_run_meta(path: Path, *, expected: Snapshot | None = None) -> Snapshot:
+    meta = Snapshot(read_json(path))
+    if expected is not None and lifecycle_state(meta) != lifecycle_state(expected.original):
+        refuse("run", path.parent.name, "orc-worktree", lifecycle_state(meta),
+               "stale write based on %r" % (lifecycle_state(expected.original),))
+    return meta
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -647,14 +658,14 @@ def anchored_server_pids(worktree: dict, anchors: list[dict]) -> list[int]:
 def run_server_state(run_dir: Path, repo_id: str | None):
     """(repo, worktree block, save) for one run participant's dev server."""
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path)
     state, worktree, primary = worktree_state(meta, repo_id)
 
     def save() -> None:
         # A server can take minutes to come up, and the run's agent or the UI
         # may write meta.json meanwhile. So this saves over what is on disk
         # now and changes only what a server start or stop owns.
-        fresh = read_json(meta_path)
+        fresh = read_run_meta(meta_path)
         try:
             fresh_state, fresh_worktree, fresh_primary = worktree_state(fresh, repo_id)
         except WorktreeError:
@@ -666,7 +677,7 @@ def run_server_state(run_dir: Path, repo_id: str | None):
             else:
                 fresh_worktree.pop(key, None)
         project_primary(fresh, fresh_state, fresh_primary)
-        write_json(meta_path, fresh)
+        write_meta(meta_path, fresh, caller="orc-worktree")
 
     return state.get("mainRepoPath") or meta.get("mainRepoPath"), worktree, save
 
@@ -694,7 +705,7 @@ def adopt_checkout(run_dir: Path, path: str) -> dict:
     request, for the QA run that walks it. Orc did not create the tree, so
     it is never Orc's to delete (`managedByOrc: false`)."""
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path)
     raw_repo = meta.get("mainRepoPath") or meta.get("repoPath")
     if not isinstance(raw_repo, str) or not raw_repo.strip():
         raise WorktreeError("meta.json has no mainRepoPath or repoPath")
@@ -724,14 +735,14 @@ def adopt_checkout(run_dir: Path, path: str) -> dict:
         # The primary participant is the copy devd_attach and teardown read.
         selection[0].update(mainRepoPath=str(repo), repoPath=str(target),
                             worktree=meta["worktree"])
-    write_json(meta_path, meta)
+    write_meta(meta_path, meta, caller="orc-worktree")
     config = load_config()
     worktree_config = config.get("worktree")
     details = {
         "ok": True, "runDir": str(run_dir.resolve()), "mainRepoPath": str(repo), "adapter": adapter,
         "path": str(target), "repoPath": str(target),
         "start": not isinstance(worktree_config, dict) or worktree_config.get("start") is not False,
-        "server": server_config(repo, config),
+        "server": server_config(repo, config, devd),
     }
     if devd:
         try:
@@ -857,7 +868,7 @@ def resolve(run_dir: Path, repo_id: str | None = None) -> dict:
         "branch": branch, "slug": slug, "path": str(path),
         "start": worktree_config.get("start") is not False,
         "baseCommit": base, "baseSource": base_source,
-        "fallbacks": fallbacks, "server": server_config(repo, config),
+        "fallbacks": fallbacks, "server": server_config(repo, config, devd),
     }
     if participant is not None:
         identity = participant.get("identity")
@@ -948,7 +959,7 @@ def devd_attach(run_dir: Path, repo_id: str | None, database: bool = False,
     """Registers the participant's worktree with orc-devd, gives it its own
     database when the run adds a migration, and starts it in the background."""
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path)
     selection = participant_selection(meta, repo_id)
     participant, primary = selection if selection else (None, True)
     inherit_root_worktree(meta, participant, primary)
@@ -971,7 +982,7 @@ def devd_attach(run_dir: Path, repo_id: str | None, database: bool = False,
         database_name = run_devd("db", "copy", devd_id).get("database")
     if start:
         run_devd("start", devd_id)
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path, expected=meta)
     selection = participant_selection(meta, repo_id)
     participant, primary = selection if selection else (None, True)
     inherit_root_worktree(meta, participant, primary)
@@ -988,7 +999,7 @@ def devd_attach(run_dir: Path, repo_id: str | None, database: bool = False,
     worktree["started"] = False
     if primary and participant is not None:
         meta["worktree"] = participant["worktree"]
-    write_json(meta_path, meta)
+    write_meta(meta_path, meta, caller="orc-worktree")
     return {"ok": True, "id": devd_id, "url": worktree.get("url"),
             "database": database_name,
             "warnings": registered.get("warnings") or []}
@@ -1005,7 +1016,7 @@ def adopt_legacy_rails() -> dict:
     skipped: list[dict] = []
     for meta_path in sorted(runs.glob("*/meta.json"), key=str):
         try:
-            meta = read_json(meta_path)
+            meta = read_run_meta(meta_path)
         except WorktreeError:
             continue
         if meta.get("status") in TERMINAL_RUN_STATUSES:
@@ -1051,7 +1062,7 @@ def adopt_legacy_rails() -> dict:
             if entry.get("hosts"):
                 worktree["baseDomain"] = entry["hosts"][0]
         if registered:
-            write_json(meta_path, meta)
+            write_meta(meta_path, meta, caller="orc-worktree")
             adopted.extend({"runId": run_id, "id": e["id"], "url": e.get("url")}
                            for e in registered.values())
     return {"ok": True, "adopted": adopted, "skipped": skipped}
@@ -1068,7 +1079,7 @@ def tree_owner(run_dir: Path, target: Path) -> tuple[Path, dict] | None:
         if meta_path.parent.resolve() == own:
             continue
         try:
-            meta = read_json(meta_path)
+            meta = read_run_meta(meta_path)
         except WorktreeError:
             continue
         states = [meta] + [p for p in meta.get("repositories") or [] if isinstance(p, dict)]
@@ -1109,27 +1120,28 @@ def take_settled_tree(run_dir: Path, target: Path, adapter: str) -> dict:
                 previous = {key: worktree[key] for key in ("devd", "server", "url", "started")
                             if key in worktree}
             worktree.update(managedByOrc=False, handedTo=run_dir.resolve().name)
-    write_json(meta_path, meta)
+    write_meta(meta_path, meta, caller="orc-worktree")
     return {**previous, "takenFrom": owner}
 
 
 def setup_generic(run_dir: Path, repo_id: str | None = None,
                   expected: str = "generic", database: bool = False,
-                  require_worktree: bool = False) -> dict:
-    details = resolve(run_dir, repo_id)
+                  require_worktree: bool = False, *, details: dict | None = None) -> dict:
+    if details is None:
+        details = resolve(run_dir, repo_id)
     if require_worktree:
         # A repository added mid-run never takes over its main checkout.
         details["enabled"] = True
     if details["enabled"] is False:
         if repo_id is not None:
             meta_path = run_dir / "meta.json"
-            meta = read_json(meta_path)
+            meta = read_run_meta(meta_path)
             selection = participant_selection(meta, repo_id)
             if selection:
                 participant, _ = selection
                 participant["status"] = "ready"
                 participant.pop("setupError", None)
-                write_json(meta_path, meta)
+                write_meta(meta_path, meta, caller="orc-worktree")
         details["reused"] = False
         return details
     if details["enabled"] is None:
@@ -1147,7 +1159,7 @@ def setup_generic(run_dir: Path, repo_id: str | None = None,
         run_git(repo, "worktree", "prune")
         listed = listed_worktrees(repo)
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path)
     selection = participant_selection(meta, repo_id)
     participant, primary = selection if selection else (None, True)
     reused = False
@@ -1212,7 +1224,7 @@ def setup_generic(run_dir: Path, repo_id: str | None = None,
         for key in ("mainRepoPath", "repoPath", "branch", "buildBaseCommit", "worktree"):
             if key in participant:
                 meta[key] = participant[key]
-    write_json(meta_path, meta)
+    write_meta(meta_path, meta, caller="orc-worktree")
     details.update({"reused": reused, "repoPath": str(target.resolve()),
                     "buildBaseCommit": state["buildBaseCommit"]})
     if handed:
@@ -1241,7 +1253,7 @@ def setup_generic(run_dir: Path, repo_id: str | None = None,
 
 def teardown_generic(run_dir: Path, repo_id: str | None = None) -> dict:
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path)
     selection = participant_selection(meta, repo_id)
     participant, primary = selection if selection else (None, True)
     inherit_root_worktree(meta, participant, primary)
@@ -1260,7 +1272,7 @@ def teardown_generic(run_dir: Path, repo_id: str | None = None) -> dict:
             run_devd("stop", devd_id)
     else:
         stop_server(run_dir, repo_id)
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path, expected=meta)
     selection = participant_selection(meta, repo_id)
     participant, primary = selection if selection else (None, True)
     inherit_root_worktree(meta, participant, primary)
@@ -1317,7 +1329,7 @@ def teardown_generic(run_dir: Path, repo_id: str | None = None) -> dict:
         meta["repoPath"] = participant["repoPath"]
         meta["branch"] = participant["branch"]
         meta["worktree"] = participant["worktree"]
-    write_json(meta_path, meta)
+    write_meta(meta_path, meta, caller="orc-worktree")
     return {"ok": True, "enabled": False, "removed": removed,
             "path": str(target), "branch": state.get("branch"),
             **({"repoId": participant["id"]} if participant is not None else {})}
@@ -1895,7 +1907,7 @@ def start_minimal(
 ) -> dict:
     run_dir = run_dir.expanduser().resolve()
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path)
     clean_title = title.strip()
     clean_branch = branch.strip()
     if not clean_title:
@@ -1942,7 +1954,7 @@ def start_minimal(
         for item in meta["repositories"]:
             if isinstance(item, dict) and item.get("primary") is True:
                 item["branch"] = clean_branch
-    write_json(meta_path, meta)
+    write_meta(meta_path, meta, caller="orc-worktree")
     # Build means the Clarification is settled; a question file left behind
     # would keep showing its card.
     if (run_dir / clarification_files.BRIEF).is_file():
@@ -2002,10 +2014,9 @@ def start_minimal(
     adapter = resolved["adapter"]
     enabled = resolved["enabled"] is not False
     if adapter == "devd" and enabled:
-        meta = read_json(meta_path)
         meta["phase"] = "build"
         meta["status"] = "running"
-        write_json(meta_path, meta)
+        write_meta(meta_path, meta, caller="orc-worktree")
         return {
             "ok": True,
             "runDir": str(run_dir),
@@ -2018,11 +2029,10 @@ def start_minimal(
         }
 
     if enabled:
-        details = setup_generic(run_dir)
-        meta = read_json(meta_path)
+        details = setup_generic(run_dir, details=resolved)
         meta["phase"] = "build"
         meta["status"] = "running"
-        write_json(meta_path, meta)
+        write_meta(meta_path, meta, caller="orc-worktree")
         return {
             "ok": True,
             "runDir": str(run_dir),
@@ -2036,7 +2046,6 @@ def start_minimal(
 
     base_commit = resolved["baseCommit"]
     checkout_in_place(repo, clean_branch, base_commit)
-    meta = read_json(meta_path)
     selection = participant_selection(meta, None)
     participant, primary = selection if selection else (None, True)
     state = participant if participant is not None else meta
@@ -2053,7 +2062,7 @@ def start_minimal(
                 meta[key] = participant[key]
     meta["phase"] = "build"
     meta["status"] = "running"
-    write_json(meta_path, meta)
+    write_meta(meta_path, meta, caller="orc-worktree")
     return {
         "ok": True,
         "runDir": str(run_dir),
@@ -2076,7 +2085,7 @@ def add_repo(run_dir: Path, raw_repo: str, branch: str,
     run losing track of a branch made on the side."""
     run_dir = run_dir.expanduser().resolve()
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = read_run_meta(meta_path)
     if meta.get("phase") != "build":
         raise WorktreeError("add-repo needs a run in Build (phase is %s)" % meta.get("phase"))
     if participant_selection(meta, None) is None:
@@ -2121,15 +2130,15 @@ def add_repo(run_dir: Path, raw_repo: str, branch: str,
                          "slug": slugify(clean_branch), "path": str(target),
                          "managedByOrc": False, **({"devdRepo": devd} if devd else {})},
         })
-        write_json(meta_path, meta)
+        write_meta(meta_path, meta, caller="orc-worktree")
         details = {"ok": True, "adopted": True, "repoPath": str(target),
                    "buildBaseCommit": base}
     else:
-        write_json(meta_path, meta)
-        adapter = resolve(run_dir, item_id)["adapter"]
+        write_meta(meta_path, meta, caller="orc-worktree")
+        resolved = resolve(run_dir, item_id)
         try:
-            details = setup_generic(run_dir, item_id, expected=adapter,
-                                    require_worktree=True)
+            details = setup_generic(run_dir, item_id, expected=resolved["adapter"],
+                                    require_worktree=True, details=resolved)
         except WorktreeError as exc:
             record_setup_failure(run_dir, item_id, str(exc))
             raise
@@ -2209,13 +2218,13 @@ def record_setup_failure(run_dir: Path, repo_id: str | None, error: str) -> None
         return
     try:
         meta_path = run_dir / "meta.json"
-        meta = read_json(meta_path)
+        meta = read_run_meta(meta_path)
         selection = participant_selection(meta, repo_id)
         if selection:
             participant, _ = selection
             participant["status"] = "blocked"
             participant["setupError"] = error
-            write_json(meta_path, meta)
+            write_meta(meta_path, meta, caller="orc-worktree")
     except (OSError, WorktreeError):
         pass
 
@@ -2267,8 +2276,8 @@ def main() -> int:
             result = stop_main_server(args.repo)
         else:
             result = teardown_generic(args.run_dir, args.repo_id)
-    except WorktreeError as exc:
-        if args.command in ("setup-generic", "setup-devd"):
+    except (WorktreeError, OSError, RefusedTransition) as exc:
+        if isinstance(exc, WorktreeError) and args.command in ("setup-generic", "setup-devd"):
             record_setup_failure(args.run_dir, args.repo_id, str(exc))
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         return 1

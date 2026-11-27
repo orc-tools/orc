@@ -12,13 +12,13 @@ export const BOARD_LISTS = {
 const COLUMNS = { repo: 'Repository', author: 'Author', size: 'Change size', ticket: 'Ticket', checks: 'Checks' };
 const STEPS = [
   { name: 'Repositories', title: 'Which repositories do you follow?', hint: 'Choose where Orc looks for pull requests and review requests.' },
-  { name: 'Slack', title: 'Include reviews from Slack?', hint: 'Orc uses the Slack connection in Claude Code to read the channels you choose.' },
+  { name: 'Slack', title: 'Include reviews from Slack?', hint: 'Orc reads the channels you choose with its own Slack sign-in, set up in Settings, Integrations.' },
   { name: 'Layout', title: 'What belongs on your board?', hint: 'Choose the lists you follow and the columns you want on each pull request.' },
 ];
 const ORG = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 const CHANNEL = /^[a-z0-9][a-z0-9._-]{0,79}$/;
-export const SLACK_SIGN_IN = "Slack isn't connected in Claude Code, so Slack is hidden on this page. Run /mcp in Claude Code to sign in.";
+export const SLACK_SIGN_IN = "Orc isn't signed in to Slack, so Slack is hidden on this page. Sign in from Settings, Integrations, Slack.";
 
 function channelNames(text) {
   return text.split(',').map(part => part.trim()).filter(Boolean).map(part => part.replace(/^#/, '').toLowerCase());

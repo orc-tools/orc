@@ -918,7 +918,7 @@
   80%, 100% { translate: calc(var(--w) * .12 + 40px) -90%; opacity: 0; }
 }
 
-/* Typing heat (see index.html's --typing-heat): the border runs from its
+/* Typing heat (see project-home.css's --typing-heat): the border runs from its
    resting colour through pink to neon. It holds steady, with no beat. */
 :root[data-synthwave] .newconv-prompt[data-typing-hot] { animation: none; }
 @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {

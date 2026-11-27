@@ -24,7 +24,7 @@
 .radio-volume-pop { position: absolute; bottom: 100%; left: 50%; z-index: var(--z-tooltip); translate: -50% 0; padding-bottom: 6px; visibility: hidden; }
 @media (hover: hover) { .radio-volume:not([data-dismissed]):hover .radio-volume-pop { visibility: visible; } }
 .radio-volume:is(:focus-within, [data-open]):not([data-dismissed]) .radio-volume-pop { visibility: visible; }
-.radio-volume-panel { display: flex; padding: 10px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 8px 24px rgb(0 0 0 / 0.3); }
+.radio-volume-panel { display: flex; padding: 10px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: var(--float-shadow); }
 #radio-volume { writing-mode: vertical-lr; direction: rtl; width: 20px; height: 96px; margin: 0; accent-color: var(--accent); cursor: var(--orc-cursor-pointer, pointer); }
 @media (max-width: 700px) { #radio-now { padding-inline: 16px; } }
 /* A submenu can list every playlist someone has. */

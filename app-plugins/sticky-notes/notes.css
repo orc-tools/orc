@@ -38,7 +38,8 @@
 
 /* Under the composer's layer (.newconv is z-index 1), so its pickers and menus
    open over the notes rather than behind them. The bottom margin keeps the
-   board's landing outline clear of the note handout pinned in the corner. */
+   board's landing outline clear of the note handout pinned in the corner of a
+   wide screen. */
 .nc-notes {
   position: relative; z-index: 0; flex: 1 0 auto; width: 100%;
   min-height: max(320px, 46vh); margin: 10px 0 32px; border-radius: 18px;
@@ -63,15 +64,16 @@
 }
 .nc-notes-broken[hidden] { display: none; }
 /* The Evals candidates take the board's place while the composer builds one. */
-#new-view[data-evals] :is(.nc-notes, .nc-handout, .nc-offline-link) { display: none; }
-/* The handout has the bottom left corner, so the link takes the right one. */
+#new-view[data-evals] :is(.nc-notes, .nc-note-tools) { display: none; }
+/* On a wide screen the handout has the bottom left corner, so the link takes
+   the right one. */
 .nc-offline-link {
   position: absolute; z-index: 3; right: 16px; bottom: 14px; display: none; padding: 4px 9px;
   border: 1px solid var(--control-border); border-radius: 999px; background: var(--panel);
   color: var(--muted-strong); font-size: 12px; text-decoration: underline; text-underline-offset: 3px;
 }
 .nc-offline-link:hover { color: var(--accent-text); }
-.nc-offline-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+.nc-offline-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
 @media (display-mode: standalone), (max-width: 700px) {
   .nc-offline-link { display: inline-block; }
 }
@@ -92,12 +94,12 @@
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
   font-family: var(--note-font, inherit);
   transform: rotate(var(--lean)); transform-origin: 50% 8px;
-  filter: var(--note-shadow, drop-shadow(0 1px 1px rgb(0 0 0 / .14)) drop-shadow(0 8px 14px rgb(0 0 0 / .2)));
+  filter: var(--note-shadow, none);
   outline: none;
 }
 .nc-note-paper {
   position: absolute; inset: 0; display: flex; flex-direction: column; box-sizing: border-box;
-  padding: 15px 15px 12px; border-radius: var(--note-radius, 3px 3px 3px 9px); overflow: hidden;
+  padding: 15px 15px 12px; border-radius: var(--note-radius, 4px 4px 4px 9px); overflow: hidden;
   background: var(--note-paper,
     radial-gradient(130% 90% at 0 0, color-mix(in srgb, var(--note-tint) 12%, transparent), transparent 70%),
     linear-gradient(180deg, var(--paper-top), var(--paper) 44px));
@@ -230,19 +232,19 @@
 .nc-note:hover, .nc-note.is-menu-open { --curl: calc(var(--note-fold, 22px) * 1.23); }
 .nc-note:hover, .nc-note:focus-visible, .nc-note.is-menu-open {
   transform: rotate(calc(var(--lean) * .35)) translateY(-3px);
-  filter: var(--note-shadow-raised, drop-shadow(0 2px 2px rgb(0 0 0 / .16)) drop-shadow(0 16px 22px rgb(0 0 0 / .27)));
+  filter: var(--note-shadow-raised, drop-shadow(var(--float-shadow)));
 }
 .nc-note:focus-visible { outline: 2px solid var(--focus); outline-offset: 5px; border-radius: 6px; }
 .nc-note.is-editing {
   z-index: 9998 !important; cursor: grab; touch-action: none;
   transform: translateY(-3px);
-  filter: var(--note-shadow-raised, drop-shadow(0 2px 2px rgb(0 0 0 / .16)) drop-shadow(0 18px 26px rgb(0 0 0 / .3)));
+  filter: var(--note-shadow-raised, drop-shadow(var(--float-shadow)));
 }
 .nc-note.is-editing .nc-note-paper { box-shadow: inset 0 0 0 2px var(--focus); }
 .nc-note.is-dragging, .nc-note.is-resizing { z-index: 9999 !important; cursor: grabbing; }
 .nc-note.is-dragging {
   transform: rotate(calc(var(--lean) + var(--drag-tilt, 0deg))) scale(1.04);
-  filter: var(--note-shadow-raised, drop-shadow(0 4px 4px rgb(0 0 0 / .18)) drop-shadow(0 26px 34px rgb(0 0 0 / .34)));
+  filter: var(--note-shadow-raised, drop-shadow(var(--float-shadow)));
 }
 /* Over the composer the note shrinks toward the pointer, ready to drop in. */
 .nc-note.is-dragging.is-over-prompt {
@@ -258,12 +260,12 @@
 .nc-note-ghost {
   position: fixed; left: 0; top: 0; z-index: 70; pointer-events: none;
   transform: rotate(var(--lean)) scale(1.04);
-  filter: var(--note-shadow-raised, drop-shadow(0 4px 4px rgb(0 0 0 / .18)) drop-shadow(0 26px 34px rgb(0 0 0 / .34)));
+  filter: var(--note-shadow-raised, drop-shadow(var(--float-shadow)));
 }
 .nc-note-flyer {
   position: fixed; z-index: 70; pointer-events: none; transform-origin: 0 0;
   background: color-mix(in srgb, var(--note-tint) 34%, var(--base));
-  box-shadow: inset 0 0 0 1px var(--edge), 0 12px 26px rgb(0 0 0 / .3);
+  box-shadow: inset 0 0 0 1px var(--edge), var(--float-shadow);
 }
 .nc-note {
   transition: transform .3s cubic-bezier(.34, 1.56, .64, 1), filter .2s ease-out, --curl .2s ease-out;
@@ -316,7 +318,6 @@
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px 5px 8px;
   border: 1px solid var(--control-border); border-radius: 999px; background: var(--panel);
   color: var(--heading); font: inherit; font-size: 12px; font-weight: 550;
-  box-shadow: 0 4px 12px rgb(0 0 0 / .14);
   cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent;
   transition: transform .15s ease-out, border-color .15s ease-out;
 }
@@ -353,6 +354,32 @@
 @media (prefers-reduced-motion: reduce) {
   .nc-handout, .nc-handout:hover, .nc-handout-lid { transition: none; transform: none; }
   .nc-handout.is-trash-hot, .nc-handout.is-trash-hot .nc-handout-lid { transform: none; }
+}
+
+/* ---------- The handout and the offline link at phone width ---------- */
+
+/* Pinned to the corners of a phone they sat on top of the notes' text, so there
+   they are a row between the composer and the board and scroll with the page.
+   The row is unpositioned, so on a wide screen its two children still pin to
+   #new-view. */
+.nc-note-tools { flex: none; }
+@media (max-width: 700px) {
+  .nc-note-tools {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    min-height: 32px; margin: 0 4px 10px;
+  }
+  .nc-note-tools > :is(.nc-handout, .nc-offline-link) { position: relative; inset: auto; flex: none; }
+  .nc-note-tools > .nc-handout { box-shadow: none; }
+  /* The link holds the right end by itself, so it stays put when the handout
+     leaves the row to be the bin. */
+  .nc-note-tools > .nc-offline-link { margin-left: auto; }
+  /* A note dragged low on the board has scrolled the row away, so the bin
+     comes back to the corner under the thumb for as long as the drag lasts.
+     The link keeps the row's height, so the board does not move. */
+  .nc-note-tools > .nc-handout.is-trash {
+    position: absolute; left: 16px; bottom: max(12px, env(safe-area-inset-bottom));
+    box-shadow: var(--float-shadow);
+  }
 }
 
 .nc-startbar .newconv-prompt::after {

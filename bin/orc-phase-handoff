@@ -18,6 +18,11 @@ import sys
 import tempfile
 from typing import Iterator
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+from run_lifecycle import Snapshot, write_meta
+from state_transitions import RefusedTransition
+
 
 SCHEMA_VERSION = 1
 ACTIVE_STATES = {"claimed", "running"}
@@ -49,6 +54,7 @@ CONTROL_OWNED_OUTPUTS = {
     "decisions.md",
     "diff.patch",
     ".orc-phase-handoff.lock",
+    ".run-lifecycle.lock",
 }
 
 
@@ -129,7 +135,7 @@ def locked_meta(run_dir: Path) -> Iterator[tuple[Path, dict]]:
         with lock_path.open("a+") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             meta_path = run_dir / "meta.json"
-            yield meta_path, load_object(meta_path)
+            yield meta_path, Snapshot(load_object(meta_path))
     except OSError as exc:
         raise HandoffError(f"cannot lock {run_dir}: {exc}") from exc
 
@@ -544,7 +550,7 @@ def validate_completion_manifest(run_dir: Path, entry: dict) -> tuple[dict, dict
 
 
 def persist(meta_path: Path, meta: dict) -> None:
-    atomic_write(meta_path, canonical_bytes(meta))
+    write_meta(meta_path, meta, caller="orc-phase-handoff")
 
 
 def emit(entry: dict, replayed: bool = False) -> None:
@@ -994,7 +1000,7 @@ def main() -> int:
         validate_common(args)
         args.handler(args)
         return 0
-    except (HandoffError, OSError) as exc:
+    except (HandoffError, OSError, RefusedTransition) as exc:
         print(f"orc-phase-handoff: {exc}", file=sys.stderr)
         return 1
 

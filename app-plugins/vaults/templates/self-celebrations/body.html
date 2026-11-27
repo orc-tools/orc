@@ -1,0 +1,81 @@
+<main data-placeholder="A good thing you did, such as: I unblocked the release by pairing on the flaky test" data-chat-title="Tell it one yourself" data-send-label="Add"><div class="sheet good">
+  <header class="good-head">
+    <h1>Good things, lately</h1>
+    <p class="lede">Your finished work, thanks and small wins, gathered from GitHub, Notion and Slack and kept by month, so one bad week cannot erase a good quarter.</p>
+  </header>
+
+  <section class="year-sheet" aria-labelledby="year-title">
+    <div class="year-head">
+      <h2 id="year-title">The last 12 months, one dot for each good thing</h2>
+      <ul class="key" aria-label="Where each dot came from">
+        <li><i class="dot github"></i>GitHub</li><li><i class="dot notion"></i>Notion</li>
+        <li><i class="dot slack"></i>Slack</li><li><i class="dot me"></i>Told by you</li>
+      </ul>
+    </div>
+    <ol class="year" id="year">
+      <li><span class="dots"></span><span class="month"></span></li><li><span class="dots"></span><span class="month"></span></li>
+      <li><span class="dots"></span><span class="month"></span></li><li><span class="dots"></span><span class="month"></span></li>
+      <li><span class="dots"></span><span class="month"></span></li><li><span class="dots"></span><span class="month"></span></li>
+      <li><span class="dots"></span><span class="month"></span></li><li><span class="dots"></span><span class="month"></span></li>
+      <li><span class="dots"></span><span class="month"></span></li><li><span class="dots"></span><span class="month"></span></li>
+      <li><span class="dots"></span><span class="month"></span></li><li><span class="dots"></span><span class="month"></span></li>
+    </ol>
+  </section>
+
+  <div class="cols">
+    <section class="kept" aria-label="Good things by month">
+      <div id="months">
+        <p class="empty">Nothing kept yet. Press <b>Collect</b> beside a source, or tell it one yourself.</p>
+      </div>
+    </section>
+    <aside class="side" aria-labelledby="sources-title">
+      {{chat}}
+      <section class="sources">
+        <h2 id="sources-title">Where they come from</h2>
+        <div class="src" id="github-source">
+          <b><i class="dot github"></i>GitHub</b><span class="src-state">Unchecked.</span>
+          <button type="button" class="action go" data-ask="Collect good things from GitHub." aria-label="Collect from GitHub">Collect</button>
+          <details><summary>Set up GitHub<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+            <div class="setup"><p>On the Mac running Orc, install the GitHub CLI and sign in.</p>
+              <code>brew install gh</code><code>gh auth login</code>
+              <p>Check with <b>gh auth status</b>, then press Collect again.</p>
+              <a href="https://cli.github.com/">GitHub CLI downloads<svg class="icon" aria-hidden="true"><use href="#i-out"/></svg></a></div>
+          </details>
+        </div>
+        <div class="src" id="notion-source">
+          <b><i class="dot notion"></i>Notion</b><span class="src-state">Unchecked.</span>
+          <button type="button" class="action" data-ask="Collect good things from Notion." aria-label="Collect from Notion">Collect</button>
+          <details><summary>Set up Notion<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+            <div class="setup"><p>Use the Claude login chosen in this vault’s Settings. Add Notion for that login.</p>
+              <code>claude mcp add --scope user --transport http notion https://mcp.notion.com/mcp</code>
+              <p>Open Claude Code, sign in to Notion with <b>/mcp</b>, then press Collect again.</p>
+              <a href="https://developers.notion.com/guides/mcp/get-started-with-mcp">Notion connection guide<svg class="icon" aria-hidden="true"><use href="#i-out"/></svg></a></div>
+          </details>
+        </div>
+        <div class="src" id="slack-source">
+          <b><i class="dot slack"></i>Slack</b><span class="src-state">Unchecked.</span>
+          <button type="button" class="action" data-ask="Collect good things from Slack." aria-label="Collect from Slack">Collect</button>
+          <details><summary>Set up Slack<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+            <div class="setup"><p>Use the Claude login chosen in this vault’s Settings. Add Slack for that login. Your workspace admin may need to approve it first.</p>
+              <code>claude mcp add --scope user --transport http slack https://mcp.slack.com/mcp</code>
+              <p>Open Claude Code, sign in to Slack with <b>/mcp</b>, then press Collect again.</p>
+              <a href="https://docs.slack.dev/ai/slack-mcp-server/connect-to-harnesses">Slack connection guide<svg class="icon" aria-hidden="true"><use href="#i-out"/></svg></a></div>
+          </details>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div></main>
+<script>
+// Names the last 12 months, ending with this one, where the page has not named them yet.
+(() => {
+  const now = new Date();
+  document.querySelectorAll('#year li').forEach((item, index) => {
+    const label = item.querySelector('.month');
+    if (!label || label.textContent.trim()) return;
+    const month = new Date(now.getFullYear(), now.getMonth() - 11 + index, 1);
+    label.textContent = month.toLocaleString('en-US', { month: 'short' });
+    if (index === 11) item.setAttribute('aria-current', 'date');
+  });
+})();
+</script>

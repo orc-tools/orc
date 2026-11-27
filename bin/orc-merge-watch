@@ -8,7 +8,8 @@ it. This polls the state orc-ui already derives -- `GET
 once, with periodic progress while unchanged, so a terminal shows queued
 position, retry failures, merge start, conflict, and landing.
 
-Exit: 0 merged, 1 conflicted/failed/withdrawn, 2 timed out.
+Exit: 0 merged, 1 conflicted/failed/withdrawn, 2 timed out, 3 stepped aside
+for Resolve now (the run is still queued).
 """
 
 from __future__ import annotations
@@ -205,6 +206,14 @@ def watch(runs_dir: Path, run_id: str, base_url: str, timeout: float,
                 say("⚪️ %s is not in the merge queue (removed, released, or "
                     "never queued)" % branch)
                 return 1
+            early = queue.get("earlyResolution")
+            if isinstance(early, dict) and early.get("state") == "preparing":
+                # Resolve now's steps wait for this command's turn to end,
+                # like the conflict paste above, so step aside for them.
+                say("Resolve now was pressed for %s: its steps arrive as your next "
+                    "message. End this turn; after saving or releasing the fix, run "
+                    "orc-merge-watch %s again to follow the merge" % (branch, run_id))
+                return 3
             line = describe(queue)
             if line and line != last:
                 say(line)

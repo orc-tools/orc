@@ -5,8 +5,11 @@ import { fastLabel, launchFastChoice } from './launch-options.js';
 
 // rules.py's JOBS, in the order a run meets them. `tone` is the palette token
 // each job's workers already have in the sidebar's branch lines.
+// `single` jobs run a run themselves at one effort; the rest are task roles
+// the lead delegates, each over an effort range.
 export const JOBS = [
-  { id: 'lead', name: 'Lead', does: 'Plans the work, hands out tasks and puts the results together.', verb: 'leads', tone: 'accent' },
+  { id: 'planner', name: 'Planner', does: 'Writes the plan when you press Start.', verb: 'plans', tone: 'heading', single: true },
+  { id: 'lead', name: 'Lead', does: 'Builds the plan, hands out tasks and puts the results together.', verb: 'leads', tone: 'accent', single: true },
   { id: 'implementation', name: 'Implementation', does: 'Writes the code.', verb: 'builds', tone: 'green' },
   { id: 'research', name: 'Research', does: 'Reads code and docs and reports back.', verb: 'researches', tone: 'cyan' },
   { id: 'review', name: 'Review', does: 'Checks a change without editing it.', verb: 'reviews', tone: 'purple' },
@@ -14,7 +17,10 @@ export const JOBS = [
   { id: 'test', name: 'Test', does: 'Writes and runs the checks.', verb: 'tests', tone: 'yellow' },
   { id: 'general', name: 'General', does: 'Any task the other jobs do not cover.', verb: 'takes the rest', tone: 'muted' },
 ];
+export const PLANNER = 'planner';
 export const LEAD = 'lead';
+// The task roles: what a lead delegates, and what turns Orchestrate on.
+export const TASK_JOBS = JOBS.filter(job => !job.single);
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 export const EFFORT_NAMES = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' };
 
@@ -62,7 +68,7 @@ export function routeTo(rack, model, span = null, fast = false) {
   return { provider: rack.agent, model: model.id, ...held && !whole && { effort: held }, ...speedOf(rack, model, fast) };
 }
 
-// The lead works at one effort, so its range is a single level.
+// The planner and the lead work at one effort, so their range is a single level.
 export function leadRoute(rack, model, { effort = null, fast = false } = {}) {
   const route = routeTo(rack, model);
   return { ...route, ...effort && model.levels.includes(effort) && { effort: [effort, effort] }, ...speedOf(rack, model, fast) };
@@ -117,15 +123,25 @@ export function sameRoute(racks, a, b) {
 }
 
 export function hasTaskRoutes(routes = {}) {
-  return JOBS.some(job => job.id !== LEAD && Boolean(routes?.[job.id]));
+  return TASK_JOBS.some(job => Boolean(routes?.[job.id]));
 }
 
-// A preset in a few words for a list of them: who leads and how many jobs
-// are routed.
+// The planner a preset's plans are written on, as { agent, model, name },
+// or null when it has none or its model is not on offer here: the plan then
+// runs on the lead (serve.py's planner_launch).
+export function presetPlanner(racks, routes = {}) {
+  const found = landing(racks, routes[PLANNER]);
+  return found ? { agent: found.rack.agent, model: found.model.id, name: found.model.name } : null;
+}
+
+// A preset in a few words for a list of them: who plans and who leads when
+// it has a planner, else who leads and how many jobs are routed.
 export function presetWords(racks, routes = {}) {
-  const routed = JOBS.filter(job => job.id !== LEAD && routes[job.id]).length;
+  const routed = TASK_JOBS.filter(job => routes[job.id]).length;
   if (routes[LEAD]) {
     const model = routeParts(racks, routes[LEAD]).model;
+    const planner = presetPlanner(racks, routes);
+    if (planner) return `${planner.name} plans · ${model} leads`;
     return routed ? `${model} leads · ${routed} ${routed === 1 ? 'job' : 'jobs'} routed` : model;
   }
   const jobs = routed ? `${routed} ${routed === 1 ? 'job' : 'jobs'} routed` : 'no jobs routed';
@@ -156,13 +172,16 @@ export function presetIcon(preset) {
 
 // What the model picker's Presets tab lists for each saved preset
 // (/js/launch-presets.js): its name, a caption, its icon and the lead the
-// composer launches on.
+// composer launches on, and the planner a plan started on it is written on.
 export function launchPresetList(presets, racks) {
-  return presets.map(preset => ({
-    id: preset.id, name: preset.name, caption: presetWords(racks, preset.routes),
-    icon: presetIcon(preset), lead: leadPick(preset.routes),
-    orchestrates: hasTaskRoutes(preset.routes),
-  }));
+  return presets.map(preset => {
+    const planner = preset.routes?.[LEAD] ? presetPlanner(racks, preset.routes) : null;
+    return {
+      id: preset.id, name: preset.name, caption: presetWords(racks, preset.routes),
+      icon: presetIcon(preset), lead: leadPick(preset.routes),
+      orchestrates: hasTaskRoutes(preset.routes), ...planner && { planner },
+    };
+  });
 }
 
 // A preset shared through the clipboard is JSON tagged with SHARE_TAG, so it

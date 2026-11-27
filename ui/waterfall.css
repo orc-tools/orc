@@ -35,7 +35,7 @@
 .control-center .wf-legend-item:not(:disabled):hover { border-color: var(--border); background: var(--button-hover); color: var(--heading); }
 .control-center .wf-legend-item[aria-pressed="true"] { border-color: var(--control-border); background: var(--chip); color: var(--heading); }
 .wf-legend-share { color: var(--muted-strong); }
-.wf-key { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--wf-think); }
+.wf-key { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 4px; background: var(--wf-think); }
 .wf [data-a="think"] { background: var(--wf-think); }
 .wf [data-a="explore"] { background: var(--wf-explore); }
 .wf [data-a="edit"] { background: var(--wf-edit); }
@@ -65,8 +65,8 @@
 .wf-crew-mark[data-kind="worker"] { border-radius: 2px; }
 .wf-crew-share { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .wf-header .wf-crew-share { display: block; }
-.wf-meter { flex: 1; height: 6px; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, var(--border) 46%, transparent); }
-.wf-meter span { display: block; min-width: 2px; height: 100%; border-radius: 3px; background: color-mix(in srgb, var(--heading) 62%, var(--panel)); }
+.wf-meter { flex: 1; height: 6px; overflow: hidden; border-radius: 4px; background: color-mix(in srgb, var(--border) 46%, transparent); }
+.wf-meter span { display: block; min-width: 2px; height: 100%; border-radius: 4px; background: color-mix(in srgb, var(--heading) 62%, var(--panel)); }
 .wf-crew-percent { flex: none; min-width: 34px; color: var(--muted-strong); text-align: right; font-variant-numeric: tabular-nums; }
 .wf-crew-row .wf-num { color: var(--heading); }
 
@@ -103,7 +103,7 @@
   color: var(--heading); font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums;
 }
 .wf-model { flex: none; margin-left: auto; padding: 0 6px; border: 1px solid var(--wf-line); border-radius: 999px; color: var(--muted-strong); font-size: 10.5px; font-weight: 500; line-height: 16px; white-space: nowrap; }
-.wf-open { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 5px; color: var(--muted-strong); }
+.wf-open { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; color: var(--muted-strong); }
 .wf-open:hover { background: var(--button-hover); color: var(--heading); }
 .wf-open:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .wf-failed { flex: none; padding: 0 7px; border: 1px solid color-mix(in srgb, var(--red) 40%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red-text); font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -115,7 +115,7 @@
   background: color-mix(in srgb, var(--heading) 7%, transparent);
   border-inline: 1px solid color-mix(in srgb, var(--heading) 34%, transparent);
 }
-.wf-bar { position: absolute; top: 50%; height: 12px; min-width: 3px; margin-top: -6px; overflow: hidden; border-radius: 3px; background: var(--wf-think); }
+.wf-bar { position: absolute; top: 50%; height: 12px; min-width: 3px; margin-top: -6px; overflow: hidden; border-radius: 4px; background: var(--wf-think); }
 .wf-turn .wf-bar { height: 18px; margin-top: -9px; border-radius: 4px; }
 .wf-seg { position: absolute; top: 0; bottom: 0; min-width: 1px; transition: opacity .16s ease; }
 .wf-bar-agent { border: 1.5px solid var(--heading); background: var(--wf-agent); }
@@ -150,7 +150,7 @@
 .wf-figure-value { color: var(--heading); font-size: 19px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .wf-figure-foot { color: var(--muted-strong); font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; }
 .wf-split { margin-top: 11px; }
-.wf-split-bar { display: flex; gap: 1px; height: 8px; overflow: hidden; border-radius: 3px; }
+.wf-split-bar { display: flex; gap: 1px; height: 8px; overflow: hidden; border-radius: 4px; }
 .wf-split-bar span { min-width: 2px; flex-basis: 0; }
 .wf-split-list { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 6px 0 0; padding: 0; list-style: none; color: var(--muted-strong); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .wf-split-list li { display: inline-flex; align-items: center; gap: 5px; }

@@ -16,10 +16,24 @@ orc-app-plugin enable ocean
 orc-app-plugin remove ocean
 orc-app-plugin install /absolute/path/to/package
 orc-app-plugin install --git "$GIT_SOURCE" --ref "$COMMIT" --subdir path/to/package
+orc-app-plugin install --git git@github.com:owner/repo.git --branch orc-plugin [--subdir path/to/package] [--follow]
+orc-app-plugin follow example        # or: pin example
+orc-app-plugin update example
+orc-app-plugin git-check
 orc-app-plugin new /absolute/path/to/new-theme
 orc-app-plugin check /absolute/path/to/package
 orc-app-plugin link /absolute/path/to/theme
 ```
+
+A plugin installed with `--branch` remembers its repository and branch. It stays
+on the commit it installed (pinned) until you run `update`, or, with `--follow` or
+`follow`, Orc installs each new commit on the branch: it checks when Orc starts and
+about once an hour (`git-check` checks now). A pinned copy says how many commits
+are newer and links to the diff on GitHub. Git uses the sign-in this machine
+already has (the GitHub CLI's credential helper, or SSH) and never prompts. A
+failed check or update keeps the working copy and shows why on the plugin's card
+in Settings → Plugins, where Install from Git… installs one the same way. A Git
+plugin does not follow Orc's own releases.
 
 `new` scaffolds a self-contained no-code theme (`orc-plugin.json`, `theme.css` with
 day/night/auto palettes and component shape tokens, and `favicon.svg`) ready to
@@ -418,8 +432,8 @@ Other supported contributions:
   package that starts the build once a plan is ready passes
   `setPlanStart(true)`, so Chat's Planning bar says so instead of asking for
   Start work, and `false` when it no longer will. `showAutoMerge(enabled)` is
-  Auto merge's own: it draws that flip's badge at once and returns
-  `{id, takeBack}`. The returned function unregisters (see Auto merge).
+  for Ship when done (`ui/js/ship-when-done.js`): it draws that flip's badge at
+  once and returns `{id, takeBack}`. The returned function unregisters.
   `extendChatBanners(render)` from `/js/chat.js` adds cards above a run's Chat
   composer. `render({runId, agent, meta, data, slot, onSettled})` runs when
   Chat draws; the package owns its elements in `slot` and may return
@@ -528,7 +542,10 @@ Other supported contributions:
   of `workflow` in `repository` titled `Review <owner>/<repo>#<n>` reviews that
   PR and posts its verdict as a review by an account whose login starts with
   `login`. The Pull request panel shows that review's state; the first enabled
-  package's reviewer wins, and with none the panel shows no reviewer row.
+  package's reviewer wins, and with none the panel shows no reviewer row. An
+  optional `requestComment` (one line, such as `/zerohands review`) adds a
+  Request review button to the PR comments tab, which posts that line on the
+  PR as the person who clicks it.
 - `qaBrowser`: buttons and a page script for the QA window's browser, as
   `{"hosts": [...], "script": "<file>.js", "buttons": [{"id", "label"}]}`.
   `hosts` are host names where `*` stands for part of one label
@@ -621,33 +638,6 @@ as history.
 > packages. Test a local Git/subdirectory install and unknown-link refusal with
 > disposable fixtures. Never opt in from source presence or legacy environment.
 
-### Auto merge
-
-The bundled **Auto merge** package (`auto-merge`) is on by default
-(`onByDefault` and `adoptOnUpgrade`). It adds a ship button leftmost in each
-run's Chat composer, off for every run until someone presses it. A run with it
-on takes its project's Ship action (merge and push, merge or open the PR) once
-it reaches Ship, through core's `ship_at_landing_stop`. Turning Auto merge on in
-a planning run's Chat also starts the build automatically as soon as the plan
-finishes (through core's `start_plan_at_plan_stop`, carrying Auto merge onto
-the launched build run(s)) so it builds and ships without waiting for Start
-work. Each run's choice
-lives in its `auto-merge-choice.json`, and the last attempt in
-`auto-merge-attempt.json`. Each time the choice changes, `set_enabled` or the
-toggle's POST also adds `{id, at, enabled}` to `auto-merge-changes.json` (the
-latest 200), which Chat's payload carries as `autoMergeChanges` and Chat shows
-as a green **Auto merge on** or red **Auto merge off** badge where it happened.
-The POST may send the `changeId` its page already drew the badge with, and
-answers with the `change` it recorded, null when nothing changed. Only the
-user sees the badges: the agent gets no message. It also puts a ship button in the new-run
-composer's slot (`.nc-startbar-auto-merge`). Each browser remembers that
-button's choice, off until first pressed, and while it is on the composer
-skips the plan, launches a change run (`mode: "orc"`) with `autoMerge: true`,
-and updates the tray hint to `Enter to start`, so core's `_reserve_launch`
-calls the package's `set_enabled` for the new run before its agent starts.
-Only Orc's own composer may send it: an MCP or orchestrator launch, an Evals
-or meeting-prep launch, or a launch while the package is off is refused.
-
 ### Vaults
 
 The bundled **Vaults** package keeps small pages you build by describing
@@ -678,7 +668,7 @@ and adopts once where `~/.orc/tailscale.json` exists (`adoptOnUpgradeIf`).
 `share_server.py` copies a plan into `~/.orc/shares/<token>/` and serves only
 those copies, with a strict CSP, on `127.0.0.1:4190`. `backend.py` answers
 `/api/tailscale/*` to Orc on this Mac alone (`handler._host_owner()`) and
-gives core `phone_url`, `private_phone_url` and `close` through
+gives core `phone_url` and `close` through
 `APP_PLUGIN_RUNTIME.invoke`. Its settings page is the setup checklist and
 the **Use it for** switches; **Share** joins the plan page's top right through
 `extendPlanTools`. See [Use Orc on your phone](../docs/tailscale.md).

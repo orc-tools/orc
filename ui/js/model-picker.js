@@ -1,6 +1,6 @@
 import { modelIsHidden, modelIsPinned, subscribeModelCatalog, syncModelCatalog, toggleModelPin, toggleModelVisibility } from './model-catalog.js';
 import { canCreateLaunchPreset, canReorderLaunchPresets, configureLaunchPreset, createLaunchPreset, launchPresets, launchPresetsMax, reorderLaunchPresets, subscribeLaunchPresets } from './launch-presets.js';
-import { agentMarkHtml, bindModelIcons, modelIconHtml } from './agent-marks.js';
+import { ORCHESTRATE_MARK_PATHS, agentMarkHtml, bindModelIcons, modelIconHtml } from './agent-marks.js';
 import { esc } from './core.js';
 import { reducedMotion } from './motion.js';
 import { numberPickIndex, numberPickLabel } from './shortcuts.js';
@@ -14,6 +14,7 @@ const PRESETS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>';
 const PLUS = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>';
 const SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+const ORCHESTRATES = `<svg class="orchestrates" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ORCHESTRATE_MARK_PATHS}</svg>`;
 const CHEVRON = '<svg class="chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const FLOAT_MAX_HEIGHT = 360;
 const GLIDE = { duration: 180, easing: 'cubic-bezier(.2, .8, .2, 1)' };
@@ -67,12 +68,16 @@ class OrcModelPicker extends HTMLElement {
         summary .mark { width: 16px; height: 16px; }
         /* Drops the label as far as the theme font asks, as orc-select does. */
         .value { position: relative; top: var(--orc-font-sans-nudge, 0px); flex: 1; min-width: 0; min-block-size: 1lh; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* A preset that routes jobs: Orchestrate's mark right after the model,
+           quieter than it, and the chevron still at the far end. */
+        .value[data-orchestrates] { flex: 0 1 auto; }
+        .orchestrates { flex: none; width: 14px; height: 14px; margin: 0 auto 0 -2px; color: var(--orc-muted-strong); }
         .evals-pill { flex: none; padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--yellow) 55%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--yellow) 12%, transparent); color: var(--yellow-text); font-size: 11px; font-weight: 600; line-height: 1.4; font-variant-numeric: tabular-nums; }
         .chevron { flex-shrink: 0; color: var(--orc-muted-strong); }
         details[open] .chevron { transform: rotate(180deg); }
         .mark { display: inline-flex; flex: none; width: 14px; height: 14px; color: var(--heading); }
         .mark svg { width: 100%; height: 100%; }
-        .panel { --panel-max-height: var(--float-max-height, min(360px, calc(100dvh - 32px))); position: absolute; z-index: 50; top: calc(100% + 8px); left: var(--panel-left, 0px); display: flex; align-items: stretch; width: min(440px, calc(100vw - 32px)); height: auto; min-height: 0; max-height: var(--panel-max-height); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 18px 48px rgb(0 0 0 / .28); overflow: hidden; }
+        .panel { --panel-max-height: var(--float-max-height, min(360px, calc(100dvh - 32px))); position: absolute; z-index: 50; top: calc(100% + 8px); left: var(--panel-left, 0px); display: flex; align-items: stretch; width: min(440px, calc(100vw - 32px)); height: auto; min-height: 0; max-height: var(--panel-max-height); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--float-shadow); overflow: hidden; }
         .panel:focus { outline: none; }
         /* Inside a scrolling list the panel would be clipped, so above 700px it opens in the top layer; below 700px the mobile sheet owns .panel[popover]. */
         @media (min-width: 701px) {
@@ -91,7 +96,7 @@ class OrcModelPicker extends HTMLElement {
         .tab > svg { fill: currentColor; }
         :is(.tab, .visibility):hover { background: color-mix(in srgb, var(--heading) 7%, transparent); color: var(--heading); }
         :is(.tab, .visibility)[aria-pressed="true"] { background: color-mix(in srgb, var(--heading) 11%, transparent); color: var(--heading); }
-        .tab[aria-pressed="true"]::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+        .tab[aria-pressed="true"]::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 4px 4px 0; background: var(--accent); }
         .tab[data-tab="presets"] > svg { fill: none; }
         .preset-image > img { width: 100%; height: 100%; border-radius: 4px; object-fit: cover; }
         .main, .list { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
@@ -130,7 +135,7 @@ class OrcModelPicker extends HTMLElement {
         .row[aria-disabled="true"] > .model-icon, .row[aria-disabled="true"] .text { opacity: .55; }
         .unavailable { margin: 0 14px 6px; color: var(--muted-strong); font-size: 12px; line-height: 1.45; }
         .tag { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text); font-size: 10.5px; font-weight: 600; line-height: 1.5; }
-        kbd { flex: none; padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, var(--heading) 7%, transparent); color: var(--muted-strong); font-family: inherit; font-size: 11px; line-height: 1.4; }
+        kbd { flex: none; padding: 2px 6px; border-radius: 6px; background: color-mix(in srgb, var(--heading) 7%, transparent); color: var(--muted-strong); font-family: inherit; font-size: 11px; line-height: 1.4; }
         :is(.star, .hide-model, .configure, .add-preset) { flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin-right: 4px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer); }
         .add-preset { margin-right: 0; }
         :is(.star, .hide-model, .configure, .add-preset) svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
@@ -340,6 +345,17 @@ class OrcModelPicker extends HTMLElement {
     if (this.details.open) this.renderPanel();
   }
 
+  // Whether Start writes a plan first. The composer sets it, and on a preset
+  // with a planner the pill then names the planner, the model the prompt
+  // goes to first. Kept out of `selection`, which the launch state owns.
+  set plans(value) {
+    if (Boolean(value) === Boolean(this._plans)) return;
+    this._plans = Boolean(value);
+    if (this.selected) this.renderSummary();
+  }
+
+  get plans() { return Boolean(this._plans); }
+
   get agent() { return this.state.agent; }
 
   get value() { return this.state.model || undefined; }
@@ -448,25 +464,35 @@ class OrcModelPicker extends HTMLElement {
     const { agent, model, fast, evals, orchestration } = this.state;
     const entry = modelEntry(agent, model);
     const label = entry?.[1] || model || agentLabel(agent);
-    // A launch on a preset shows the preset, with its icon, in place of the
-    // model; its name stands alone, and the lead's model is in the label and title.
+    // The pill always names the model that runs first: on a preset, its
+    // lead's, or its planner's while Start writes a plan. The preset's name
+    // stays in the panel and the title, never the pill. A preset that routes
+    // jobs adds Orchestrate's mark (the label and title say "Orchestrate"); a
+    // lead-only one reads like that model picked by hand.
     const preset = this.state.preset ? this.presets().find(entry => entry.id === this.state.preset) || null : null;
     const presetOrchestrates = Boolean(preset && preset.orchestrates !== false && orchestration);
-    const shown = preset ? preset.name : [this.hasAttribute('show-agent') && agentLabel(agent), label].filter(Boolean).join(' · ');
+    const planner = !evals && this.plans && preset?.planner || null;
+    const shown = planner
+      ? [this.hasAttribute('show-agent') && agentLabel(planner.agent), planner.name].filter(Boolean).join(' · ')
+      : [this.hasAttribute('show-agent') && agentLabel(agent), label].filter(Boolean).join(' · ');
     const summary = this.shadowRoot.querySelector('summary');
     // During Evals the composer's own model only compares the candidates.
     summary.toggleAttribute('data-evals', Boolean(evals));
-    summary.innerHTML = `${preset ? presetIconHtml(preset.icon) : agentMarkHtml(agent)}<span class="value" part="value">${esc(shown)}</span>${evals ? '<span class="evals-pill">Judge</span>' : ''}${CHEVRON}`;
+    summary.innerHTML = `${agentMarkHtml(planner ? planner.agent : agent)}<span class="value" part="value"${presetOrchestrates ? ' data-orchestrates' : ''}>${esc(shown)}</span>${presetOrchestrates ? ORCHESTRATES : ''}${evals ? '<span class="evals-pill">Judge</span>' : ''}${CHEVRON}`;
+    const speed = fast ? `, ${fastLabel(fast).toLowerCase()} mode` : '';
     summary.setAttribute('aria-label', evals
       ? `Judge agent and model: ${agentLabel(agent)}, ${label}`
-      : `${preset ? `Preset ${preset.name}${presetOrchestrates ? ', Orchestrate lead' : ''}` : 'Agent and model'}: ${agentLabel(agent)}, ${label}${fast ? `, ${fastLabel(fast).toLowerCase()} mode` : ''}`);
+      : planner
+        ? `Agent and model: planned by ${planner.name} on ${agentLabel(planner.agent)}, built by ${label} on ${agentLabel(agent)}${speed}${presetOrchestrates ? ', Orchestrate' : ''}, ${preset.name} preset`
+        : `Agent and model: ${agentLabel(agent)}, ${label}${presetOrchestrates ? ', Orchestrate' : ''}${speed}${preset ? `, ${preset.name} preset` : ''}`);
     const about = entry ? `${agentLabel(agent)} · ${label} · ${entry[2]}` : agentLabel(agent);
     // A preset with routed jobs plans and delegates; a lead-only preset or
     // plain model launches without Orchestrate.
+    const led = planner ? `planned by ${planner.name}, built by ${about}` : `led by ${about}`;
     summary.title = evals ? `Judge: ${about}. Compares the candidates and writes the report.`
       : preset ? (presetOrchestrates
-        ? `${preset.name}: Orchestrate, led by ${about}. Pick a model instead to launch without Orchestrate.`
-        : `${preset.name}: ${about}. No jobs are routed, so this preset launches without Orchestrate.`)
+        ? `${preset.name}: Orchestrate, ${led}. Pick a model instead to launch without Orchestrate.`
+        : `${preset.name}: ${planner ? led : about}. No jobs are routed, so this preset launches without Orchestrate.`)
       : about;
   }
 

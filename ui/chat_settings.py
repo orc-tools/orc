@@ -75,6 +75,13 @@ SETTINGS = {
     "powerMode": {"label": "Run mode", "store": "config", "type": "choice", "default": "standard",
                   "choices": {"standard": "Standard", "low": "Queue mode"},
                   "about": "Standard runs in parallel; Queue mode runs one at a time"},
+    # Unchosen, each browser starts on pounds in the UK and dollars elsewhere,
+    # so there is no default to leave out of config.json.
+    "costCurrency": {"label": "Show costs in", "store": "config", "type": "choice", "default": None,
+                     "unset": "Dollars, or pounds on a UK device",
+                     "choices": {"usd": "Dollars", "gbp": "Pounds"},
+                     "about": "the currency every cost is shown in, converted at the day's rate",
+                     "aliases": ("currency", "costs", "cost currency")},
 }
 BROWSER_KEYS = tuple(key for key, setting in SETTINGS.items() if setting["store"] == "browser")
 
@@ -150,6 +157,8 @@ def text(key, value, themes=None):
         if value is None:
             return next(iter(themes.values()), "Default")
         return themes.get(value) or "Another theme"
+    if value is None and "unset" in setting:
+        return setting["unset"]
     return setting["choices"].get(value, value)
 
 

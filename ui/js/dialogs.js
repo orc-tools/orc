@@ -1,20 +1,23 @@
 // orc-ui: Confirm / queue / worktree dialogs raised from the run list and Run Control.
 
-import { ncSwitchProject, refresh, route } from './activity.js';
-import { controlRefresh, setControlStatus } from './control.js';
-import { $, announce, esc, nativeInput, presentRun, runs, setRuns, showToast, toast } from './core.js';
+import { ncSwitchProject, refresh, reflectRunChange } from './panel-navigation.js';
+import { $, announce, esc, nativeInput, presentRun, runs, setRuns, showToast, stateText, toast } from './core.js';
 import { focusControl, renderList } from './filters.js';
 import { evalsPickOffer, evalsPickOfferHtml } from './evals-panel.js';
 import { playingScene } from './page-scene.js';
 import { attachPathComplete } from './path-complete.js';
 import { agentWorking } from './run-presentation.js';
+
+// Bundled and installed plugins import the GitHub mark from this module.
+export { GITHUB_MARK_SVG } from './pr-badge.js';
+
 const deleteDialog = $('delete-dialog');
 let deleteTarget = null;
 // What deleting this run cuts short, or '' when it is idle or finished.
 function deleteWarning(run) {
   const { state, unfinished } = presentRun(run);
   if (agentWorking(run.meta || {})) return 'This run’s agent is still working. Deleting the run stops it.';
-  return unfinished && state.key !== 'idle' ? `This run isn’t idle (${state.label}).` : '';
+  return unfinished && state.key !== 'idle' ? `This run isn’t idle (${stateText(state)}).` : '';
 }
 export function deleteRun(id) {
   deleteTarget = id;
@@ -56,12 +59,6 @@ $('delete-confirm').onclick = async () => {
 const cancelDialog = $('cancel-dialog');
 let cancelTarget = null;
 let cancelDone = null;
-
-// re-render list + (if the changed run is open) its detail, from the local cache
-export function reflectRunChange(id) {
-  renderList();
-  if (decodeURIComponent(location.hash.slice(1).split('/')[0] || '') === id) route();
-}
 
 export async function changeRunPause(id, action) {
   const response = await fetch(`/runs/${encodeURIComponent(id)}/focus`, {
@@ -455,10 +452,22 @@ async function renderQueueDialog() {
   }
   $('queue-list').innerHTML = entries.map(e => {
     const stuck = e.state === 'recovery-blocked';
-    const conflicted = Boolean(e.conflictsWithMain) || e.state === 'waiting-conflict' || e.state === 'blocked-conflict';
+    // A run that only will conflict needs nothing from anyone, so it keeps the
+    // calm panel row; the orange is for a run a conflict actually stopped.
+    const willConflict = queueWillConflict(e);
+    const conflicted = !willConflict && (Boolean(e.conflictsWithMain) || e.state === 'blocked-conflict');
     const classes = [e.runId === id && 'queue-current',
+                     willConflict && 'queue-will-conflict',
                      conflicted && 'queue-conflict',
                      !e.removable && (stuck ? 'queue-stuck' : 'queue-merging')].filter(Boolean);
+    const remove = e.removable
+      ? `<button type="button" class="queue-remove" data-remove="${esc(e.runId)}"
+             aria-label="Remove ${esc(e.title)} from the merge queue">Remove</button>`
+      : `<span class="queue-state">${stuck ? '' : '<span class="dot pulse" aria-hidden="true"></span>'}${esc(queueRowLabel(e))}</span>`;
+    const fix = willConflict && queueCanResolveNow(e)
+      ? `<button type="button" class="queue-fix" data-resolve="${esc(e.runId)}"
+             aria-label="Resolve the conflict for ${esc(e.title)} now">Resolve now</button>`
+      : '';
     return `
     <li${classes.length ? ` class="${classes.join(' ')}"` : ''}>
       <span class="queue-pos">${e.position}</span>
@@ -467,10 +476,8 @@ async function renderQueueDialog() {
         <span class="queue-branch">${QUEUE_BRANCH_ICON}<span>${esc(e.branch)}</span></span>
         ${queueRowDetail(e)}
       </span>
-      ${e.removable
-        ? `<button type="button" class="queue-remove" data-remove="${esc(e.runId)}"
-             aria-label="Remove ${esc(e.title)} from the merge queue">Remove</button>`
-        : `<span class="queue-state">${stuck ? '' : '<span class="dot pulse" aria-hidden="true"></span>'}${esc(queueRowLabel(e))}</span>`}
+      ${fix ? `<span class="queue-actions">${fix}${remove}</span>` : remove}
+      ${willConflict ? queueConflictStepsHtml(queueConflictSteps(e)) : ''}
     </li>`;
   }).join('');
   queueDialogPoll();
@@ -503,13 +510,81 @@ function queueRowDetail(e) {
       `<span class="queue-detail">${esc(detail)}</span>`).join('');
   }
   const lines = [];
-  if ((QUEUE_BAD_STATES.includes(e.state) || e.conflictsWithMain) && e.detail) {
+  if (queueWillConflict(e)) {
+    lines.push(queueConflictNote(e));   // its steps get a full-width line of their own
+    if (e.mergeBlocker) lines.push(`<span class="queue-note-muted">${esc(e.mergeBlocker)}</span>`);
+  } else if ((QUEUE_BAD_STATES.includes(e.state) || e.conflictsWithMain) && e.detail) {
     lines.push(`<span class="queue-detail">${esc(e.detail)}</span>`);
   }
   if (Array.isArray(e.regeneratedFiles) && e.regeneratedFiles.length) {
     lines.push(`<span class="queue-regen">Regenerates ${esc(e.regeneratedFiles.slice(0, 3).join(', '))} on merge</span>`);
   }
   return lines.join('');
+}
+
+// A queued run that WILL conflict with main is not stuck: Orc resolves the
+// conflict when the run reaches the front. Only a run a conflict actually
+// stopped (blocked-conflict, waiting-conflict-resolution) keeps the warning.
+function queueWillConflict(e) {
+  return e.state === 'waiting-conflict' || (e.state === 'blocked-active-merge' && Boolean(e.conflictsWithMain));
+}
+
+function queueEarlyState(e) {
+  return (e.earlyResolution && e.earlyResolution.state) || '';
+}
+
+// Resolve now is offered only when the server says it can start one and none
+// is already under way or done.
+function queueCanResolveNow(e) {
+  return e.canResolveEarly === true && !['preparing', 'ready'].includes(queueEarlyState(e));
+}
+
+// Up to three file names, then a count, so a wide conflict stays one line.
+function queueConflictFiles(files) {
+  const names = Array.isArray(files) ? files.filter(Boolean) : [];
+  if (!names.length) return '';
+  const shown = names.slice(0, 3).map(f => `<code>${esc(f)}</code>`).join(', ');
+  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+}
+
+// Built from the structured fields, never by parsing the server's detail.
+function queueConflictNote(e) {
+  const target = esc(e.targetBranch || 'main');
+  const files = queueConflictFiles(e.conflictFiles);
+  const where = files ? ` in ${files}` : '';
+  const early = queueEarlyState(e);
+  if (early === 'ready') {
+    return `<span class="queue-note">Conflict with ${target}${where} is resolved. Orc uses the fix when this run reaches the front.</span>`;
+  }
+  const note = `<span class="queue-note">Will conflict with ${target}${where}.</span>`;
+  if (early !== 'failed') return note;
+  const why = e.earlyResolution.detail;
+  return `${note}<span class="queue-note-muted">${why ? `Resolve now stopped: ${esc(why)}` : 'Resolve now stopped.'}</span>`;
+}
+
+// waitingFor lists the positions ahead that this run waits on; none (or a
+// server that predates the field) means no waiting step.
+function queueWaitingLabel(e) {
+  const ahead = Array.isArray(e.waitingFor) ? e.waitingFor : [];
+  if (!ahead.length) return '';
+  return ahead.length === 1 ? `Waiting for run ${ahead[0]}` : `Waiting for ${ahead.length} runs`;
+}
+
+// The steps between here and merged, first one current: [{label, current}].
+function queueConflictSteps(e) {
+  const waiting = queueWaitingLabel(e);
+  const early = queueEarlyState(e);
+  const labels = early === 'preparing' ? ['Resolving now', waiting, 'Merges']
+    : early === 'ready' ? [waiting, 'Merges']
+    : [waiting, 'Orc resolves the conflict', 'Merges'];
+  return labels.filter(Boolean).map((label, i) => ({ label, current: i === 0 }));
+}
+
+function queueConflictStepsHtml(steps) {
+  return `<span class="queue-steps">${steps.map(step => step.current
+    ? `<span class="queue-step is-current" aria-current="step">${esc(step.label)}</span>`
+    : `<span class="queue-step">${esc(step.label)}</span>`)
+    .join('<span class="queue-step-join" aria-hidden="true"></span>')}</span>`;
 }
 
 // Coarse on purpose: this answers "is it stuck?", not "how long exactly".
@@ -538,6 +613,8 @@ function queueDialogPoll() {
 
 $('queue-list').onclick = async e => {
   if (e.target.closest('a')) return closeQueueDialog();   // navigating to that run
+  const fix = e.target.closest('button[data-resolve]');
+  if (fix) return resolveQueueConflictNow(fix);
   const btn = e.target.closest('button[data-remove]');
   if (!btn) return;
   btn.disabled = true;
@@ -563,6 +640,27 @@ $('queue-list').onclick = async e => {
   // the clicked button is gone with the re-render — keep focus inside the dialog
   if (queueDialog.open) focusControl($('queue-close'));
 };
+
+// Resolve now starts the run's own session on the conflict while it waits, so
+// the merge finds the fix ready instead of resolving it at the front.
+async function resolveQueueConflictNow(btn) {
+  btn.disabled = true;
+  $('queue-error').hidden = true;
+  let res;
+  try {
+    res = await fetch(`/runs/${encodeURIComponent(btn.dataset.resolve)}/merge-queue-resolve`, { method: 'POST' });
+  } catch { res = null; }
+  if (!res || !res.ok) {
+    const msg = res ? ((await res.json().catch(() => ({}))).error) : null;
+    $('queue-error').textContent = msg || 'Could not start resolving that conflict.';
+    $('queue-error').hidden = false;
+  } else {
+    announce('Resolving the conflict now');
+  }
+  await renderQueueDialog();
+  // the clicked button is gone with the re-render — keep focus inside the dialog
+  if (queueDialog.open) focusControl($('queue-close'));
+}
 
 function closeQueueDialog() {
   queueDialogRun = null;
@@ -602,47 +700,6 @@ export async function clearMergeQueue(id) {
   try { await refresh({ force: true }); } catch {}
   reflectRunChange(id);
 }
-// ---- worktree app actions (start / stop / cleanup) ----
-const wtCleanupDialog = $('wt-cleanup-dialog');
-let wtCleanupTarget = null;
-
-export function openWorktreeCleanup(id) {
-  const run = runs.find(r => r.id === id);
-  const wt = (run && run.meta && run.meta.worktree) || {};
-  wtCleanupTarget = id;
-  $('wt-cleanup-path').textContent = wt.path || '';
-  $('wt-cleanup-branch').textContent = (run && run.meta && run.meta.branch) || '';
-  wtCleanupDialog.show();
-}
-$('wt-cleanup-dismiss').onclick = () => wtCleanupDialog.close();
-$('wt-cleanup-confirm').onclick = async () => {
-  const id = wtCleanupTarget;
-  if (!id) return;
-  wtCleanupDialog.close();
-  postWorktreeAction(id, 'cleanup', 'Cleaning up worktree…');
-};
-
-export async function postWorktreeAction(id, action, busyMsg) {
-  announce(busyMsg);
-  setControlStatus('control-worktree-status', busyMsg);
-  let res;
-  try {
-    res = await fetch(`/runs/${encodeURIComponent(id)}/worktree-app`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action })
-    });
-  } catch { res = null; }
-  if (!res || !res.ok) {
-    const msg = res ? ((await res.json().catch(() => ({}))).error) : null;
-    const detail = msg || `Failed to ${action} worktree app.`;
-    announce(detail);
-    setControlStatus('control-worktree-status', `${detail} Check the worktree state and try again.`, 'error');
-    return;
-  }
-  setControlStatus('control-worktree-status', `${action === 'cleanup' ? 'Cleanup' : action === 'start' ? 'Start' : 'Stop'} requested.`, 'ok');
-  await controlRefresh(id);
-}
-
 // With `typed`, the new tab holds that command at its prompt, unrun.
 export async function postOpenTerminal(id, typed = '') {
   announce('Opening terminal…');
@@ -738,70 +795,4 @@ export async function postLinkAction(id, body) {
   } catch (_) {
     return { ok: false, error: 'Could not update the link. Try again.' };
   }
-}
-
-// Resolve the PR URL(s) for a run. Frozen repository delivery (schemaVersion 1)
-// is authoritative only when it actually yields PR URLs; if delivery is present
-// but groupedPrs is empty, fall back to the flattened prUrls/prUrl fields (a
-// compatibility projection for older clients). Shared by the detail header and
-// the sidebar PR badge so both agree on which URL is "the" PR.
-export function resolvePrUrls(meta, { observed = true } = {}) {
-  meta = meta || {};
-  const groupedDeliveryPresent = meta.delivery != null;
-  const deliveryGroups = meta.delivery && meta.delivery.schemaVersion === 1
-    && Array.isArray(meta.delivery.groups) ? meta.delivery.groups : [];
-  const groupedPrs = deliveryGroups
-    .filter(group => group && group.pr && typeof group.pr.url === 'string')
-    .map(group => ({ url: group.pr.url, participantId: group.participantId,
-      branch: group.branch, id: group.id }));
-  const reviewedPr = meta.route === 'local-review' ? meta.review?.prUrl : null;
-  // sourcePrUrl: the PR a branchless run started from, such as an answered review.
-  // deliveryStatus.prUrl: the open PR the server found on a pushed run branch
-  // that never recorded one, such as a run that pushed but never reached Ship.
-  const branchPr = observed && !groupedDeliveryPresent ? meta.deliveryStatus?.prUrl : null;
-  const urls = groupedDeliveryPresent && groupedPrs.length
-    ? groupedPrs.map(item => item.url)
-    : [].concat(meta.prUrls || meta.prUrl || reviewedPr || meta.sourcePrUrl || branchPr || []);
-  return { urls, groupedPrs };
-}
-
-// Sidebar run-row PR badge — lives in .sub (outside the .run-link anchor;
-// nesting anchors is invalid HTML and would truncate the run-link).
-// GitHub octocat mark (Phosphor github-logo), matches the app's inline-SVG
-// icon convention (viewBox 0 0 256 256, fill=currentColor).
-export const GITHUB_MARK_SVG = '<svg class="pr-tag-icon" viewBox="0 0 256 256" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68Z"></path></svg>';
-
-function isGithubPrUrl(url) {
-  return /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/.test(url || '');
-}
-
-// Shared PR-chip inner markup — the sidebar badge and the run-detail header
-// chip both call this so the GitHub decision and glyph placement never
-// diverge. GitHub PR URLs lead with the octocat mark, then the label;
-// anything else keeps the plain trailing "↗" glyph.
-export function prChipContent(url, label) {
-  return isGithubPrUrl(url) ? `${GITHUB_MARK_SVG}${esc(label)}` : `${esc(label)} ↗`;
-}
-
-// Once a reviewer has the PR, the badge leads with the mark your team uses
-// for that in Slack instead of the GitHub mark.
-const PR_REVIEW_MARKS = {
-  'picked-up': ['👀', 'picked up for review'],
-  approved: ['✅', 'approved'],
-};
-
-// "Juan", "Juan and Kim", "Juan, Kim and Lee": the people a review state
-// names, or '' when nobody is known.
-const NAME_LIST = new Intl.ListFormat('en', { type: 'conjunction' });
-export const peopleText = names => NAME_LIST.format((names || []).filter(name => typeof name === 'string' && name));
-export const byPeople = names => (peopleText(names) ? ` by ${peopleText(names)}` : '');
-
-export function prBadgeHtml(meta) {
-  const { urls } = resolvePrUrls(meta);
-  if (!urls.length) return '';
-  const [mark, reviewStatus] = PR_REVIEW_MARKS[meta?.prReview?.state] || [];
-  const status = reviewStatus && `${reviewStatus}${byPeople(meta.prReview.by)}`;
-  const title = [urls.length > 1 ? `${urls.length} PRs — opens first` : '', status ? `PR ${status}` : ''].filter(Boolean).join(' · ');
-  const content = mark ? `<span class="pr-tag-icon pr-tag-mark" aria-hidden="true">${mark}</span>PR` : prChipContent(urls[0], 'PR');
-  return `<a class="pr-tag" href="${esc(urls[0])}" target="_blank" rel="noopener" aria-label="open PR in new tab${status ? `, ${status}` : ''}"${title ? ` title="${esc(title)}"` : ''}${mark ? ` data-review="${esc(meta.prReview.state)}"` : ''}>${content}</a>`;
 }

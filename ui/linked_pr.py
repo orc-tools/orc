@@ -5,6 +5,8 @@ import os
 import re
 import subprocess
 
+import integrations
+
 GITHUB_PULL_URL_RE = re.compile(r"https://github\.com/[^/]+/[^/]+/pull/\d+")
 GH_TIMEOUT = 20
 
@@ -62,6 +64,7 @@ def query_open_pr(repo, branch, slug=None):
                "--json", "url,headRefName,isCrossRepository"]
     if slug:
         command.extend(["--repo", slug])
+    integrations.note("run-prs")
     result = subprocess.run(command, cwd=repo, env=dict(os.environ, GH_PROMPT_DISABLED="1"),
                             capture_output=True, text=True, timeout=GH_TIMEOUT, check=True)
     rows = json.loads(result.stdout)

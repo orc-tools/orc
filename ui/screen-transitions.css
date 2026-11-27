@@ -1,0 +1,115 @@
+/* Changing screen plays the settle blur (settle-scenes.js): the screen being
+   left lifts a touch, then shrinks back into a blur and fades out, while the
+   next screen waits a step back and comes forward beneath it. Every theme
+   gets the same one.
+
+   The old layer sits over the new one so it can fade away to reveal it, and
+   both blend normally: the UA's plus-lighter washes two opaque pages out to
+   white. Its timings match settle-scenes.js's LIFT_MS and VANISH_MS. */
+:root[data-view-transition]::view-transition { background: var(--bg); }
+:root[data-view-transition]::view-transition-old(root),
+:root[data-view-transition]::view-transition-new(root) {
+  mix-blend-mode: normal;
+  transform-origin: 50% 50%;
+  animation-duration: 510ms;
+  animation-fill-mode: both;
+}
+:root[data-view-transition]::view-transition-old(root) { z-index: 1; animation-name: orc-view-vanish; }
+:root[data-view-transition]::view-transition-new(root) { animation-name: orc-view-arrive; }
+@keyframes orc-view-vanish {
+  0% { transform: none; opacity: 1; filter: blur(0); animation-timing-function: cubic-bezier(.3, 0, .2, 1); }
+  25% { transform: scale(.985); opacity: 1; filter: blur(0); animation-timing-function: cubic-bezier(.5, 0, .75, .4); }
+  100% { transform: scale(.92); opacity: 0; filter: blur(10px); }
+}
+@keyframes orc-view-arrive {
+  0%, 25% { transform: scale(.985); animation-timing-function: cubic-bezier(.2, .6, .2, 1); }
+  100% { transform: none; }
+}
+/* The sidebar is on both screens, so activity.js lifts it out of the page
+   into this layer, which shows the live sidebar and never moves. */
+::view-transition-group(orc-sidebar) { animation: none; }
+::view-transition-old(orc-sidebar) { display: none; }
+::view-transition-new(orc-sidebar) { animation: none; mix-blend-mode: normal; }
+/* The laptop switch's fullscreen cover. The laptop being left sends its
+   colours and font in the ticket, so the cover looks the same on both sides
+   of the navigation whatever theme either laptop uses. It sits over every
+   other layer, a theme's own included, for the same reason. */
+#laptop-switch {
+  --ls-bg: var(--laptop-switch-bg, var(--bg));
+  --ls-text: var(--laptop-switch-text, var(--heading));
+  --ls-muted: var(--laptop-switch-muted, var(--muted-strong));
+  --ls-accent: var(--laptop-switch-accent, var(--accent));
+  --ls-share: 9;
+  position: fixed; inset: 0; z-index: 2147483600; outline: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 24px; text-align: center;
+  background: radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--ls-accent) 16%, transparent), transparent min(62vmin, 560px)) var(--ls-bg);
+  color: var(--ls-text); accent-color: var(--ls-accent);
+  font-family: var(--laptop-switch-font, inherit);
+  text-shadow: none; letter-spacing: normal; text-transform: none;
+}
+#laptop-switch.is-fading { opacity: 0; transition: opacity 200ms ease-out; }
+.laptop-switch-laptop { display: flex; flex-direction: column; align-items: center; margin-bottom: 16px; }
+/* A share of the window each way, so the drawn screen has the window's own
+   shape and the page lands on it undistorted. The border is as wide as its
+   radius, which leaves the inside corners square like the page's. */
+.laptop-switch-screen {
+  position: relative; overflow: hidden; box-sizing: content-box;
+  width: calc(var(--ls-share) * 1vw); height: calc(var(--ls-share) * 1vh); height: calc(var(--ls-share) * 1dvh);
+  border: 3px solid var(--ls-text); border-radius: 4px;
+  background: color-mix(in srgb, var(--ls-accent) 10%, var(--ls-bg));
+  transition: background-color 160ms ease-out;
+}
+.laptop-switch-screen::after {
+  content: ''; position: absolute; inset: 0; translate: -100% 0;
+  background: linear-gradient(100deg, transparent 18%, color-mix(in srgb, var(--ls-accent) 62%, transparent) 50%, transparent 82%);
+  animation: laptop-switch-sweep 1600ms cubic-bezier(.45, 0, .25, 1) var(--laptop-switch-phase, 0ms) infinite;
+  transition: opacity 120ms ease-out;
+}
+.laptop-switch-laptop::after {
+  content: ''; width: 126%; height: 5px; margin-top: 2px; border-radius: 1px 1px 6px 6px; background: var(--ls-text);
+}
+#laptop-switch.is-ready .laptop-switch-screen { background: color-mix(in srgb, var(--ls-accent) 42%, var(--ls-bg)); }
+#laptop-switch.is-ready .laptop-switch-screen::after { opacity: 0; }
+@keyframes laptop-switch-sweep { to { translate: 100% 0; } }
+@keyframes laptop-switch-pulse { from { opacity: .25; } to { opacity: .8; } }
+#laptop-switch-name { margin: 0; max-width: min(100%, 28ch); font-size: clamp(20px, 2.2vw, 26px); font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
+#laptop-switch-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ls-muted); }
+/* Always laid out, so the laptop does not jump when a slow switch offers it. */
+#laptop-switch-cancel {
+  visibility: hidden; opacity: 0; margin-top: 16px; padding: 5px 16px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ls-muted) 55%, transparent); background: none;
+  color: var(--ls-text); font: inherit; font-size: 13px; cursor: var(--orc-cursor-pointer, pointer);
+  transition: opacity 200ms ease-out, border-color .15s ease-out;
+}
+#laptop-switch.is-slow #laptop-switch-cancel { visibility: visible; opacity: 1; }
+#laptop-switch-cancel:hover { border-color: var(--ls-accent); }
+/* Left in the toasts' place when an asleep laptop's page fails to start. */
+#laptop-switch-failed {
+  position: fixed; right: 16px; bottom: 16px; z-index: calc(var(--z-sidebar) + 1);
+  width: min(356px, calc(100vw - 32px)); box-sizing: border-box; margin: 0;
+  padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.4; color: var(--text);
+  border: 1px solid var(--control-border, var(--border)); background: var(--panel);
+  box-shadow: var(--float-shadow);
+  cursor: default;
+}
+#laptop-switch-failed[hidden] { display: none; }
+@media (max-width: 700px) {
+  #laptop-switch { --ls-share: 18; }
+  #laptop-switch-cancel { min-height: 44px; padding-inline: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .laptop-switch-screen::after {
+    translate: none; background: color-mix(in srgb, var(--ls-accent) 55%, transparent);
+    animation: laptop-switch-pulse 1200ms ease-in-out infinite alternate;
+  }
+}
+/* laptop-switch.js moves the two layers itself: the page has to stay fixed
+   to the drawn screen at every frame, which keyframes here cannot express. */
+:root[data-laptop-switch]::view-transition { background: var(--laptop-switch-bg, var(--bg)); }
+:root[data-laptop-switch]::view-transition-old(root),
+:root[data-laptop-switch]::view-transition-new(root) {
+  animation: none; mix-blend-mode: normal; transform-origin: var(--laptop-switch-origin, 50% 50%);
+}
+/* Leaving, the page is the old layer and has to shrink over the cover. */
+:root[data-laptop-switch="pull"]::view-transition-old(root) { z-index: 1; }

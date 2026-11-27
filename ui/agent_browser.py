@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ import time
 from urllib.parse import urlsplit
 
 import run_relationships
+import stat_cache
 
 
 VERSION = '0.41.0'
@@ -24,6 +26,8 @@ NAMESPACE = 'orc'
 ACTIVE = ('running', 'awaiting-gate', 'escalated')
 _cleaning = set()
 _cleanup_retry_at = {}
+_cleanup_clean = {}
+_CLEANUP_CLEAN_MAX = 8192
 _cleanup_lock = threading.Lock()
 
 
@@ -228,22 +232,77 @@ def close_owned(run, blocking=True):
     with session_lock(run, blocking):
         state = owned_state(run)
         if state['state'] == 'closed':
+            with _cleanup_lock:
+                _cleanup_clean.pop(os.fspath(run), None)
             return {'closed': False, 'session': state['session']}
         invoke(run, state, ['close'], timeout=10)
         state['state'] = 'closed'
         write_object(browser_directory(run) / 'session.json', state)
+        with _cleanup_lock:
+            _cleanup_clean.pop(os.fspath(run), None)
         return {'closed': True, 'session': state['session']}
+
+
+def _remember_cleanup_clean(path_str, entry):
+    with _cleanup_lock:
+        if len(_cleanup_clean) >= _CLEANUP_CLEAN_MAX:
+            _cleanup_clean.clear()
+        _cleanup_clean[path_str] = entry
 
 
 def schedule_cleanup(run_directory_path):
     try:
-        run = Path(run_directory_path)
+        path_str = os.fspath(run_directory_path)
+        run_st = os.lstat(path_str)
+        if stat.S_ISLNK(run_st.st_mode):
+            return
+        with _cleanup_lock:
+            cached = _cleanup_clean.get(path_str)
+        if cached == ('no-browser', run_st.st_mtime_ns):
+            return
+        browser_path = os.path.join(path_str, 'browser')
+        session_path = os.path.join(browser_path, 'session.json')
+        if cached is not None and cached[0] == 'no-session':
+            try:
+                browser_st = os.lstat(browser_path)
+            except OSError:
+                browser_st = None
+            if (browser_st is not None and not stat.S_ISLNK(browser_st.st_mode)
+                    and browser_st.st_mtime_ns == cached[1]):
+                return
+        elif cached is not None and cached[0] == 'closed':
+            try:
+                browser_st = os.lstat(browser_path)
+            except OSError:
+                browser_st = None
+            if (browser_st is not None and not stat.S_ISLNK(browser_st.st_mode)
+                    and stat_cache.optional_file_key(session_path) == cached[1]):
+                return
+        try:
+            browser_st = os.lstat(browser_path)
+        except (FileNotFoundError, NotADirectoryError):
+            _remember_cleanup_clean(path_str, ('no-browser', run_st.st_mtime_ns))
+            return
+        if stat.S_ISLNK(browser_st.st_mode):
+            return
+        try:
+            session_st = os.lstat(session_path)
+        except (FileNotFoundError, NotADirectoryError):
+            _remember_cleanup_clean(path_str, ('no-session', browser_st.st_mtime_ns))
+            return
+        if not stat.S_ISREG(session_st.st_mode):
+            _remember_cleanup_clean(path_str, ('no-session', browser_st.st_mtime_ns))
+            return
+        run = Path(path_str)
         if run.is_symlink():
             return
         run = run.resolve()
         if not (browser_directory(run) / 'session.json').is_file():
             return
         if owned_state(run)['state'] == 'closed':
+            s_key = stat_cache.optional_file_key(session_path)
+            if s_key is not None:
+                _remember_cleanup_clean(path_str, ('closed', s_key))
             return
     except (OSError, ValueError):
         return

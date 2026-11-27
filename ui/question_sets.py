@@ -16,6 +16,9 @@ import re
 FACT_TONES = ("ok", "warn", "bad", "info")
 MAX_FACTS = 6
 MAX_CLIPS = 8
+# A PR feedback round's recommended approach for one comment: 1 to 3 short
+# steps, drawn on the PR comments tab's plan (ui/run_pr_plan.py).
+MAX_APPROACH_STEPS = 3
 # A review comment's code, as GitHub's diff hunk ends at the commented line.
 COMMENT_HUNK_LINES = 8
 # The audio run_files.AUDIO_TYPES serves, as chat-timeline.js's mediaKind
@@ -89,14 +92,27 @@ def _comment(question):
         return None
     line = comment.get("line")
     url = _text(comment.get("url"))
+    author = _text(comment.get("author"))
     return {
-        "author": _text(comment.get("author")),
+        "author": author,
+        # A review bot such as Zerohands, which the plan marks as one.
+        "bot": comment.get("bot") is True or author.lower().endswith("[bot]"),
         "path": _text(comment.get("path")),
         "line": line if isinstance(line, int) and not isinstance(line, bool) and line > 0 else None,
         "url": url if url.startswith("https://") else "",
         "body": _text(comment.get("body")),
         "diffHunk": "\n".join(str(comment.get("diffHunk") or "").rstrip().splitlines()[-COMMENT_HUNK_LINES:]),
     }
+
+
+def _approach(question):
+    """What Orc recommends doing about one review comment, as short steps."""
+    steps = question.get("approach")
+    if isinstance(steps, str):
+        steps = [steps]
+    if not isinstance(steps, list):
+        return []
+    return [text for text in (_text(step) for step in steps) if text][:MAX_APPROACH_STEPS]
 
 
 def _draft(question):
@@ -237,6 +253,7 @@ def normalize(schema, *, clarification=False):
             "facts": _facts(question),
             "clips": _clips(question),
             "comment": _comment(question),
+            "approach": _approach(question),
             "draft": _draft(question),
             "group": group if isinstance(group, str) and group else None,
             "options": [] if qtype == "text" else [{
@@ -251,6 +268,7 @@ def normalize(schema, *, clarification=False):
         "prefix": _text(schema.get("prefix")) or "Plan",
         "numberFrom": start,
         "notes": bool(schema.get("notes")),
+        "summary": _text(schema.get("summary")),
         "questions": shaped,
         "steps": _steps(questions, shaped),
     }

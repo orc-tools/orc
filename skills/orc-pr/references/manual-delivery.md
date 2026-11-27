@@ -32,5 +32,6 @@
 When a single-repo run already has an open PR (`meta.prUrl`, `meta.prUrls`, or `source: "pr"` `meta.sourceUrl`) and receives `Present action (<run-id>): push to the linked PR` (legacy `Recap action`) or direct explicit chat consent:
 
 - Refuse when no linked PR exists or `meta.delivery` is set; if `meta.prFeedback.state == "awaiting-push"`, follow **Push comments & commits** in [references/pr-feedback-and-ci.md](pr-feedback-and-ci.md) instead.
-- Commit stray `branch` edits in `repoPath`, then run `git push origin <branch>` (never force-push or push the default branch; make no other GitHub write; `Everything up-to-date` is success).
+- Commit stray `branch` edits in `repoPath`, then run `git push origin <branch>` (never force-push or push the default branch; `Everything up-to-date` is success).
+- Then follow Settings > Push to a PR under **Push with no review round** in [pr-feedback-and-ci.md](pr-feedback-and-ci.md): with **Push comments & commits**, reply to and react 👍 on the review comments the push fixes; with **Push commits**, make no other GitHub write.
 - Reopen the final gate and print the PR link.

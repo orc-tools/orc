@@ -270,21 +270,26 @@ def turn_argv(agent, *, session_id=None, resume=False, cwd=None, extra_args=(),
 _SESSION_ENV = re.compile(
     r"HERDR_\w*|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CONFIG_DIR|AI_AGENT"
     r"|CLAUDE_CODE_(?:ENTRYPOINT|EXECPATH|CHILD_SESSION|MESSAGING_\w+|SESSION_\w+)"
-    r"|CODEX_THREAD_ID|CODEX_SANDBOX\w*|ORC_RESCUE_TOKEN|ORC_HIGH_POWER|ORC_LOW_POWER")
+    r"|CODEX_THREAD_ID|CODEX_SANDBOX\w*|ORC_RESCUE_TOKEN|ORC_HIGH_POWER|ORC_LOW_POWER|ORC_POWER_RUN")
 
 # Print mode labels its requests sdk-cli, which Claude's five-hour window
 # charges at roughly 1.8x a custom label for the same work
 # (pingdotgg/t3code#25597).
 CLAUDE_ENTRYPOINT = "orc"
+# An agent's shell command stops at 10 minutes, so bin/test refuses a Python
+# layer it estimates past 8 and prints the --part commands that fit instead
+# of being cut off and polled from the background.
+TEST_BUDGET_SECONDS = "480"
 
 
 def child_env(base, extra=None):
     """The turn's environment: orc-ui's own, without another agent session's
-    identity, plus Orc's Claude label and the run's (ORC_RUN_ID, the Claude
-    account)."""
+    identity, plus Orc's Claude label, bin/test's per-command budget and the
+    run's (ORC_RUN_ID, the Claude account)."""
     env = {key: value for key, value in (base or {}).items()
            if not _SESSION_ENV.fullmatch(key)}
     env["CLAUDE_CODE_ENTRYPOINT"] = CLAUDE_ENTRYPOINT
+    env.setdefault("ORC_TEST_BUDGET_SECONDS", TEST_BUDGET_SECONDS)
     env.update(extra or {})
     return env
 
@@ -357,6 +362,8 @@ def _write_state(run_dir, state):
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, _path(run_dir, STATE_FILE))
+        with _RUNNING_TURN_LOCK:
+            _RUNNING_TURN_CACHE.pop(os.fspath(run_dir), None)
     except OSError:
         with contextlib.suppress(OSError):
             os.unlink(temporary)
@@ -642,6 +649,16 @@ def _prune(run_dir, current):
                 os.unlink(_path(run_dir, name))
 
 
+def exit_recorded(run_dir):
+    """A late enqueue may wake a finished turn once its reaper has saved the diff."""
+    try:
+        with _locked(run_dir, ".exit.lock"):
+            state = _read_state(run_dir) or {}
+            return state.get("status") == "exited" and state.get("exitCode") == 0
+    except FileNotFoundError:
+        return False
+
+
 def _record_exit(run_dir, turn, pid, code):
     with _locked(run_dir):
         state = _read_state(run_dir)
@@ -657,6 +674,7 @@ def _record_exit(run_dir, turn, pid, code):
     with contextlib.suppress(Exception):
         import run_diff
         run_diff.record_turn_diff(run_dir)
+    return True
 
 
 @contextlib.contextmanager
@@ -779,9 +797,10 @@ def settle_replied_turn(run_dir, state, now):
 
 
 def start_turn(run_dir, *, agent, argv, prompt, cwd, env, popen=subprocess.Popen, turn_base=None,
-               user_turn=True):
+               user_turn=True, on_exit=None):
     """Start the run's next turn and return its state. Raises HeadlessBusy
-    while the current turn is still running.
+    while the current turn is still running. The reaper calls ``on_exit(run_dir)``
+    after saving the current turn's exit and diff, outside its state locks.
 
     A turn Orc starts on its own (``user_turn=False``: a Ship gate reminder, a
     main-moved notice, a rescue) carries on the user's last turn, so it keeps
@@ -849,7 +868,10 @@ def start_turn(run_dir, *, agent, argv, prompt, cwd, env, popen=subprocess.Popen
     def reap():
         code = process.wait()
         with contextlib.suppress(FileNotFoundError):  # the run was deleted
-            _record_exit(run_dir, turn, process.pid, code)
+            with _locked(run_dir, ".exit.lock"):
+                recorded = _record_exit(run_dir, turn, process.pid, code)
+            if recorded and on_exit is not None:
+                on_exit(run_dir)
 
     threading.Thread(target=reap, name="headless-reap-%d" % process.pid, daemon=True).start()
     return state
@@ -995,18 +1017,37 @@ def turn_prompt(run_dir, turn):
         return None
 
 
+_RUNNING_TURN_CACHE = {}
+_RUNNING_TURN_LOCK = threading.Lock()
+_RUNNING_TURN_MAX = 8192
+
+
 def running_turn(run_dir):
     """The state of the turn recorded as running, or None when none is.
 
     Reads only the state file, so a sweep can check thousands of runs cheaply;
     ``interrupt`` re-checks the process before it signals anything.
     """
+    cache_key = os.fspath(run_dir)
+    key = stat_cache.optional_file_key(_path(run_dir, STATE_FILE))
+    if key is None:
+        with _RUNNING_TURN_LOCK:
+            _RUNNING_TURN_CACHE.pop(cache_key, None)
+        return None
+    with _RUNNING_TURN_LOCK:
+        hit = _RUNNING_TURN_CACHE.get(cache_key)
+    if hit is not None and hit[0] == key:
+        return dict(hit[1]) if hit[1] is not None else None
     state = _read_state(run_dir)
-    if not state or state.get("status") != "running":
-        return None
-    if not isinstance(state.get("spawnedAt"), (int, float)):
-        return None
-    return state
+    if not state or state.get("status") != "running" or not isinstance(state.get("spawnedAt"), (int, float)):
+        result = None
+    else:
+        result = state
+    with _RUNNING_TURN_LOCK:
+        if len(_RUNNING_TURN_CACHE) >= _RUNNING_TURN_MAX:
+            _RUNNING_TURN_CACHE.clear()
+        _RUNNING_TURN_CACHE[cache_key] = (key, dict(result) if result is not None else None)
+    return dict(result) if result is not None else None
 
 
 def _append_closing_line(run_dir, turn, line):

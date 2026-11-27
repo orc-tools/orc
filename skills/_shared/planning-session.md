@@ -176,8 +176,9 @@ mode) builds the whole plan in one run, every step shows that run, and no
 step offers Start while it stands. **Split** draws a PR on each step, a step
 that waits naming the PR it stacks on: **Start N runs · N PRs** opens one run
 per step at once in the plan's project, and holds a step that waits on
-another until that run reaches Ship, while **Start step 1 only** beside it
-starts just the first PR of the stack. A plan of one step offers **Start run**
+another until that run reaches Ship, while each step's own small **Start**,
+after its PR, starts just that step's run and PR, built from main and
+waiting on no step. A plan of one step offers **Start run**
 alone. Each button says what it opens, with no line under it. That waiting
 step then **stacks**: its run
 starts from the branch of the step it waits on (from the later step's

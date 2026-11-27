@@ -37,6 +37,10 @@ export function modelAgent(model, fallback = '') {
   return fallback || '';
 }
 
+// Orchestrate's node mark (a 24px stroked icon): Settings' Orchestrate tab and
+// the model pill of a preset that routes jobs.
+export const ORCHESTRATE_MARK_PATHS = '<circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h4a4 4 0 0 0 4-4V5h2M11 12a4 4 0 0 1 4 4v3h2"/>';
+
 export const agentMarkHtml = agent => `<span class="mark" aria-hidden="true">${harnessMark(agent)?.[1] || ''}</span>`;
 
 export const modelIconHtml = (glyph, agent) => glyph

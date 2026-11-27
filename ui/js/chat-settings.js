@@ -6,7 +6,7 @@
 // those browser settings in this page's own Settings goes up to the host, so
 // every other browser and device follows it too.
 
-import { applyUiConfig } from './activity.js';
+import { applyUiConfig } from './panel-navigation.js';
 import { fetchConfigData } from './config-data.js';
 import { pullHostTheme } from './host-theme.js';
 import { animationsOff, factoryVisualsEnabled, onFactoryVisualsChange, onReducedMotionChange, setAnimationsOff, setFactoryVisualsEnabled } from './motion.js';

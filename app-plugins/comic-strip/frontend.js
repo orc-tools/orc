@@ -197,6 +197,25 @@ function comicPage(view) {
     + `<polygon class="comic-strip-burst-face" points="${BURST}"/>`);
   composer.append(burst);
   const start = composer.querySelector('#nc-send');
+  // The burst is drawn around one short word. The button takes the name of its
+  // mode, so a longer one (AUTO-MERGE, RUN EVALS, MAKE FLASHCARD) wraps onto
+  // two lines and shrinks until it sits inside the burst.
+  const fitLabel = () => {
+    const face = start?.shadowRoot?.querySelector('button');
+    if (!face) return;
+    start.style.removeProperty('--comic-strip-label-size');
+    start.removeAttribute('data-comic-strip-wrap');
+    if (face.scrollWidth <= face.clientWidth) return;
+    start.setAttribute('data-comic-strip-wrap', '');
+    for (let size = 13; size >= 10; size--) {
+      start.style.setProperty('--comic-strip-label-size', `${size}px`);
+      if (face.scrollWidth <= face.clientWidth) break;
+    }
+  };
+  const relabelled = new MutationObserver(fitLabel);
+  if (start) relabelled.observe(start, { childList: true, characterData: true, subtree: true });
+  fitLabel();
+  document.fonts?.ready.then(() => { if (!controller.signal.aborted) fitLabel(); });
   // Let an edge tap become a click before the drawer can claim it as a swipe.
   burst.addEventListener('touchstart', event => event.stopPropagation(),
     { passive: true, signal: controller.signal });
@@ -317,6 +336,9 @@ function comicPage(view) {
       controller.abort();
       resized.disconnect();
       changed.disconnect();
+      relabelled.disconnect();
+      start?.removeAttribute('data-comic-strip-wrap');
+      start?.style.removeProperty('--comic-strip-label-size');
       cancelAnimationFrame(frame);
       for (const node of [courier, tail, burst, foot]) node.remove();
       for (const name of ['data-comic-strip-page', 'data-comic-strip-fold', 'data-comic-strip-flight']) view.removeAttribute(name);

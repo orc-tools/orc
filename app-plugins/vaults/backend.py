@@ -5,6 +5,7 @@ import json
 import re
 import threading
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import claude_accounts
 
@@ -29,6 +30,10 @@ HISTORY_SHOWN = 20
 HOST = re.compile(r"[A-Za-z0-9.\-\[\]:]{1,255}\Z")
 HEAD = re.compile(r"<head(?:\s[^>]*)?>", re.I)
 DOCTYPE = re.compile(r"\A\s*<!doctype[^>]*>", re.I)
+HTML_TAG = re.compile(r"<html(?=[\s>])", re.I)
+HTML_OPEN = re.compile(r"<html(?:\s[^>]*)?>", re.I)
+# Orc's mode, which the page is told as data-orc-mode on its <html>.
+MODES = ("light", "dark")
 # What a page's frames may do: run their own script, and nothing that opens a
 # window, submits a form or touches the window above them.
 SANDBOX = "allow-scripts"
@@ -40,7 +45,7 @@ LEAD = "<script>%s</script>" % (HERE / PAGE_SCRIPT).read_text(encoding="utf-8").
 # of its own: one request shows it, so it loads wherever Orc does, a paired
 # phone included, whose sign-in does not follow a request a sandboxed frame makes.
 WRAPPER = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>%(title)s</title>
-<style>html,body{margin:0;height:100%%}iframe{display:block;width:100%%;height:100%%;border:0}</style></head>
+<style>html,body{margin:0;height:100%%}iframe{display:block;width:100%%;height:100%%;border:0}%(scheme)s</style></head>
 <body><iframe sandbox="%(sandbox)s" referrerpolicy="no-referrer" title="%(title)s" srcdoc="%(page)s"></iframe></body></html>"""
 
 
@@ -127,12 +132,28 @@ def page_policy(host, slug):
             "frame-src 'none'; frame-ancestors 'self'; webrtc 'block'" % (SANDBOX, own, own, own or " 'none'"))
 
 
-def framed(body, slug):
-    """A page's HTML as the frame holds it: files beside it found by their
-    names, its links handed to Orc to open, and the orcVault bridge."""
+def with_mode(text, mode):
+    """The page with Orc's mode, light or dark, as data-orc-mode on its
+    <html>, so it paints in that mode with no script (the Vaults list's still
+    runs none). The first of two same-named attributes wins, so it goes
+    straight after the tag's name; a page with no <html> tag gets one."""
+    if mode not in MODES:
+        return text
+    attribute = ' data-orc-mode="%s"' % mode
+    match = HTML_TAG.search(text)
+    if match:
+        return text[:match.end()] + attribute + text[match.end():]
+    doctype = DOCTYPE.search(text)
+    at = doctype.end() if doctype else 0
+    return text[:at] + "<html%s>" % attribute + text[at:]
+
+
+def framed(body, slug, mode=None):
+    """A page's HTML as the frame holds it: Orc's mode, files beside it found
+    by their names, its links handed to Orc to open, and the orcVault bridge."""
     lead = '<base href="/api/vaults/%s/page/">%s' % (slug, LEAD)
-    text = body.decode("utf-8", "replace")
-    for pattern in (HEAD, DOCTYPE):
+    text = with_mode(body.decode("utf-8", "replace"), mode)
+    for pattern in (HEAD, HTML_OPEN, DOCTYPE):
         match = pattern.search(text)
         if match:
             return text[:match.end()] + lead + text[match.end():]
@@ -143,7 +164,8 @@ class Service:
     def __init__(self, context):
         self.context = context
         self.store = vault_store.Store(context["home"] / ".orc")
-        self.builder = vault_build.Builder(self.store, meetings=context.get("calendar_meetings"))
+        self.builder = vault_build.Builder(self.store, meetings=context.get("calendar_meetings"),
+                                           read_config=context.get("read_config_full"))
         config_dir = context.get("config_dir")
         self.sync = vault_sync.Sync(self.store, config_dir() if callable(config_dir) else context["home"] / ".orc",
                                     building=self.builder.building)
@@ -176,7 +198,8 @@ class Service:
                 return self.serve_page(handler, page[1], page[2] or vault_store.PAGE_INDEX)
             frame = FRAME.fullmatch(path) if method == "GET" else None
             if frame:
-                return self.serve_frame(handler, frame[1])
+                mode = (parse_qs(urlsplit(handler.path).query).get("mode") or [None])[0]
+                return self.serve_frame(handler, frame[1], mode)
             if method == "GET":
                 status, payload = self.get(path)
             else:
@@ -212,11 +235,14 @@ class Service:
             raise vault_store.VaultError(403, "A vault's page opens inside Orc.", "framed_only")
         return self._send(handler, slug, body, kind)
 
-    def serve_frame(self, handler, slug):
+    def serve_frame(self, handler, slug, mode=None):
         name = self.store.detail(slug)["vault"]["name"]
         body, _kind = self.store.page_file(slug, vault_store.PAGE_INDEX)
+        # The frame wears Orc's mode as its colour scheme, so it shows no white
+        # behind a dark page and a page that asks prefers-color-scheme hears it.
+        scheme = ":root{color-scheme:%s}" % mode if mode in MODES else ""
         wrapper = WRAPPER % {"title": html.escape("%s page" % name, quote=True), "sandbox": SANDBOX,
-                             "page": html.escape(framed(body, slug), quote=True)}
+                             "scheme": scheme, "page": html.escape(framed(body, slug, mode), quote=True)}
         return self._send(handler, slug, wrapper.encode("utf-8"), "text/html")
 
     def serve_app(self, handler, match):
@@ -277,7 +303,10 @@ class Service:
 
     def get(self, path):
         if path == PREFIX:
-            return 200, {"vaults": self.listed(), "templates": vault_store.templates(), "root": str(self.store.root)}
+            # The New vault dialog starts on the defaults and offers the logins.
+            return 200, {"vaults": self.listed(), "templates": vault_store.templates(), "root": str(self.store.root),
+                         "defaults": {"model": vault_store.DEFAULT_MODEL, "effort": vault_store.DEFAULT_EFFORT},
+                         "accounts": claude_accounts.available()}
         match = NOTE.fullmatch(path)
         if match and not match[3]:
             return 200, {"note": self.store.read_note(match[1], match[2])}
@@ -289,8 +318,10 @@ class Service:
     def post(self, path, data):
         store = self.store
         if path == PREFIX:
-            only(data, "name", "template", "purpose")
-            created = store.create(data.get("name"), data.get("template") or "blank", data.get("purpose"))
+            only(data, "name", "template", "purpose", "model", "effort", "account")
+            check_account(data)
+            settings = {key: data[key] for key in ("model", "effort", "account") if key in data}
+            created = store.create(data.get("name"), data.get("template") or "blank", data.get("purpose"), settings)
             return 200, self.detail(created["vault"]["slug"])
         match = PROPOSAL.fullmatch(path)
         if match:
@@ -339,8 +370,7 @@ class Service:
             store.undo(slug)
         elif action == "/settings":
             only(data, "model", "effort", "account", "calendar")
-            if data.get("account") not in (None, "", *claude_accounts.available()):
-                raise vault_store.invalid("That Claude login is not on this Mac.")
+            check_account(data)
             store.save_settings(slug, data)
         elif action == "/tools":
             only(data, "tool", "allowed")
@@ -386,6 +416,11 @@ class Service:
                 thread.join(timeout=2)
         self._threads = []
         return True
+
+
+def check_account(data):
+    if data.get("account") not in (None, "", *claude_accounts.available()):
+        raise vault_store.invalid("That Claude login is not on this Mac.")
 
 
 def only(data, *allowed):

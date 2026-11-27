@@ -12,20 +12,25 @@ export const SHORTCUT_COMMANDS = [
   { id: 'command-palette', label: 'Open the command palette', keys: ['Meta+K', 'Ctrl+K'], menu: 'commandPalette' },
   { id: 'new-conversation', label: 'Start a new conversation', keys: ['Meta+N', 'Ctrl+N'], menu: 'newConversation' },
   { id: 'search', label: 'Search runs', keys: ['/'] },
+  { id: 'next-run', label: 'Open the next run in the sidebar', keys: ['Mod+Alt+ArrowDown'] },
+  { id: 'previous-run', label: 'Open the previous run in the sidebar', keys: ['Mod+Alt+ArrowUp'] },
   { id: 'settings', label: 'Open or close Settings', keys: ['Meta+,', 'Ctrl+,'], menu: 'settings' },
+  { id: 'project-settings', label: 'Open or close the project’s settings', note: 'Opens Settings for the run or project in view, or Settings itself when there is none.', keys: ['Shift+Meta+,', 'Ctrl+Shift+,'], menu: 'projectSettings' },
   { id: 'terminal', label: 'Show or hide the terminal', note: 'Outside a run it opens the project’s root.', keys: ['Meta+J', 'Ctrl+J'], menu: 'terminal' },
   { id: 'switch-project', label: 'Switch project', keys: ['Mod+P'], menu: 'switchProject' },
   { id: 'side-panel', label: 'Show or hide the side panel', keys: ['Mod+B'], menu: 'sidePanel' },
   { id: 'dictation', label: 'Start or stop dictation', keys: ['Mod+D'], menu: 'dictation' },
+  { id: 'stop-agent', label: 'Stop the agent', note: 'Stops the turn of the run in view and keeps your draft.', keys: ['Mod+.'], menu: 'stopAgent' },
   { id: 'model-picker', label: 'Choose a model', keys: ['Mod+M'], menu: 'modelPicker' },
-  { id: 'fast-mode', label: 'Turn Fast mode on or off', note: 'Works in the composer. Opens Settings search in Settings, and Find everywhere else in Orc.app.', keys: ['Mod+F'], menu: 'find' },
+  { id: 'fast-mode', label: 'Turn Fast mode on or off', note: 'Works in the composer.', keys: ['Shift+Mod+F'], menu: 'fastMode' },
   { id: 'effort-down', label: 'Lower the effort', note: 'Works in the composer.', keys: ['Mod+['] },
   { id: 'effort-up', label: 'Raise the effort', note: 'Works in the composer.', keys: ['Mod+]'] },
-  { id: 'auto-merge', label: 'Turn Auto merge on or off', note: 'Works in the new-run composer and a run’s Chat while the Auto merge plugin is on.', keys: ['Mod+S'] },
+  { id: 'auto-merge', label: 'Turn Ship when done on or off', note: 'Works in the new-run composer and a run’s Chat while Offer Ship when done is on.', keys: ['Mod+S'] },
 ];
 
 // Keys Orc.app, the terminal or text editing already own. A shortcut on one of
 // these would either never arrive or take the key away from something else.
+const SHORTCUT_FIND_KEYS = new Set(['Meta+F', 'Ctrl+F']);
 const SHORTCUT_RESERVED = {
   'Meta+Q': 'quits Orc.app', 'Meta+H': 'hides Orc.app', 'Meta+W': 'closes the tab',
   'Meta+R': 'reloads the page', 'Meta+T': 'opens a terminal tab',
@@ -105,6 +110,8 @@ export const numberPickLabel = index => (index < 9 ? `${SHORTCUT_IS_MAC ? '⌘' 
 
 // Option changes the character a Mac key types (⌥K is ˚), so with Alt held
 // the physical key decides; otherwise the typed key does, as it always has.
+// Shift with ⌘ or Ctrl does the same to a symbol key (Ctrl+Shift+, types <),
+// so there the physical symbol decides too and ⇧⌘, stays Shift+Meta+,.
 function shortcutEventKey(event) {
   const code = String(event.code || '');
   if (event.altKey && code) {
@@ -112,6 +119,7 @@ function shortcutEventKey(event) {
     if (/^Digit\d$/.test(code)) return code.slice(5);
     if (SHORTCUT_CODE_KEYS[code]) return SHORTCUT_CODE_KEYS[code];
   }
+  if (event.shiftKey && (event.metaKey || event.ctrlKey) && SHORTCUT_CODE_KEYS[code]) return SHORTCUT_CODE_KEYS[code];
   const key = String(event.key || '');
   if (key === ' ') return 'Space';
   return key.length === 1 ? key.toLowerCase() : key;
@@ -148,6 +156,15 @@ export function shortcutKeys(id) {
   return shortcutOverrides[id] === false ? [] : [shortcutOverrides[id]];
 }
 
+// The key a tooltip names for `id`, such as ⌘. on a Mac and Ctrl+. elsewhere,
+// or '' when the shortcut has been removed. A command with a ⌘ and a Ctrl
+// default names the one this platform uses.
+export function shortcutHint(id) {
+  const keys = shortcutKeys(id);
+  const native = keys.find(text => Boolean(parseShortcut(text)?.meta) === SHORTCUT_IS_MAC);
+  return shortcutKeyLabel(native || keys[0] || '');
+}
+
 export function shortcutIsCustom(id) {
   return id in shortcutOverrides;
 }
@@ -173,6 +190,7 @@ export function shortcutProblem(id, text) {
   if (!combo) return 'Orc can’t read that key.';
   const canonical = shortcutText(combo);
   const label = shortcutKeyLabel(canonical);
+  if (SHORTCUT_FIND_KEYS.has(canonical)) return `${label} already opens Find.`;
   if (SHORTCUT_RESERVED[canonical]) return `${label} already ${SHORTCUT_RESERVED[canonical]}.`;
   if (!shortcutIsChord(combo) && !shortcutIsSymbol(combo.key) && !/^F\d{1,2}$/.test(combo.key)) {
     return `Add ${SHORTCUT_IS_MAC ? '⌘, ⌃ or ⌥' : 'Ctrl or Alt'}: ${label} on its own would fire while you type.`;
@@ -187,7 +205,10 @@ function shortcutReadOverrides(saved) {
   for (const command of SHORTCUT_COMMANDS) {
     const value = saved[command.id];
     if (value === false) next[command.id] = false;
-    else if (typeof value === 'string' && parseShortcut(value)) next[command.id] = shortcutCanonical(value);
+    else if (typeof value === 'string') {
+      const canonical = shortcutCanonical(value);
+      if (canonical && !SHORTCUT_FIND_KEYS.has(canonical)) next[command.id] = canonical;
+    }
   }
   return next;
 }
@@ -206,7 +227,7 @@ export function setShortcutOverride(id, value) {
   if (value === false) next[id] = false;
   else if (typeof value === 'string' && parseShortcut(value)) {
     const canonical = shortcutCanonical(value);
-    if (!defaults.includes(canonical)) next[id] = canonical;
+    if (!SHORTCUT_FIND_KEYS.has(canonical) && !defaults.includes(canonical)) next[id] = canonical;
   }
   shortcutOverrides = next;
   syncNativeShortcuts();

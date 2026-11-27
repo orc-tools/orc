@@ -1,6 +1,7 @@
 {
   "apiVersion": 2,
   "id": "swamp",
+  "icon": "icon.png",
   "name": "Swamp",
   "version": "1.0.0",
   "description": "Orc's original day and night palette and animated cast.",
@@ -11,7 +12,7 @@
       "label": "Swamp",
       "description": "Orc's own green",
       "css": "theme.css",
-      "icon": "icon.png",
+      "icon": "dock-icon.png",
       "gary": "gary.png",
       "sheila": "sheila.png",
       "tokens": "tokens.json",

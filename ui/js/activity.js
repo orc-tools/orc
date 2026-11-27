@@ -1,5 +1,7 @@
+import { focusChatComposer } from './chat.js';
+import { bindActivityNavigation, orcCloseOverlays } from './panel-navigation.js';
 import { devServerFieldsHtml, devServerValues, projectWorktreeServer, writeProjectWorktreeServer } from './dev-server-fields.js';
-import { cachedConfigData, fetchConfigData } from './config-data.js';
+import { cachedConfigData, fetchConfigData, normPath } from './config-data.js';
 import './account-toggle.js';
 import { showServers, hideServers } from './servers.js';
 import { appPluginsSettled, beforePluginRoute, hidePluginViews, isPluginOverlayRoute, showPluginView, pluginViewFamily } from './app-plugins.js';
@@ -7,6 +9,8 @@ import { mountActivityPage, refreshActivityPage, unmountActivityPage } from './a
 import { linkSettingsHtml, wireLinkSettings } from './link.js';
 import './effort-slider.js';
 import './fast-toggle.js';
+import { fitLaunchBar } from './launch-bar-fit.js';
+import { fastModeSettingsHtml, mountFastModeSettings } from './fast-mode-settings.js';
 import './permission-toggle.js';
 import './evals-toggle.js';
 import { evalsPanelHtml } from './evals-candidates.js';
@@ -16,7 +20,8 @@ import { launchModels, mountLaunchSelection, projectCloudAvailability } from './
 import { mountPluginSettings, pluginSettingsHtml, renderPluginSettingsDetail, unmountPluginSettingsDetail } from './plugin-settings.js';
 import { mountSecretSettings, secretSettingsHtml } from './secrets.js';
 import { mountThemeGallery, motionVisualsCardHtml, themeGalleryCardHtml } from './theme-gallery.js';
-import { pluginIdFromSettingsHash } from './settings.js';
+import { pluginIdFromSettingsHash, bindSettingsForm, costCurrencyCardHtml, writeCostCurrency } from './settings.js';
+import { setCostCurrency } from './currency.js';
 import { devicesSettingsHtml, mountDevicesSettings } from './devices.js';
 import { githubSettingsHtml, mountGithubSettings } from './cloud-account.js';
 import { hideWelcome, maybeOpenWelcome, showWelcome } from './agent-accounts.js';
@@ -24,6 +29,7 @@ import { accountLoginsHtml, mountAccountLogins } from './account-logins.js';
 import { attachPathComplete } from './path-complete.js';
 import { bindPromptComposer, composerText, promptComposerHtml } from './prompt-composer.js';
 import { bindDictation, cancelDictation, canFinishDictation, finishDictation } from './dictation.js';
+import { iconButtonTooltip } from './control-tooltip.js';
 import { bindChatSkills } from './chat-skills.js';
 import { runMentionsIn } from './run-refs.js';
 import { setShortcutOverrides, shortcutMatches, shortcutOverridesForConfig } from './shortcuts.js';
@@ -35,14 +41,13 @@ import { MAXIMISE_ICON, copyButtonHtml, openTextStage } from './text-stage.js';
 import { renderEmptyStateSlot } from './theme-components.js';
 import { factoryShowing, unmountFactory } from './secondary-screens.js';
 import { themeAllowsCharacterMotion } from './character-motion.js';
-import { CONTROL_KEY, parentAgent } from './control.js';
-import { $, CHAT_KEY, POWER_MODES, RUN_MODE_LABEL, announce, esc, focusRunDestination, gateNoun, isOrcApp, isQuestionRun, mergeWrappingUpUntil, powerModeOf, queueBuildsOnlyOf, runningLabel, reviewsForRun, runs, sessionActivity, setFocusRunDestination, setPowerMode, setQueueBuildsOnly, setRuns, setSidebarProjectOrder, setSidebarStatusOrder, showsMergedTerminalLabel, carrySoundState, soundKindForStates, soundStateOf, statusActivity, statusOrderFromConfigPayload, toast } from './core.js';
+import { parentAgent } from './control.js';
+import { $, CHAT_KEY, POWER_MODES, RUN_MODE_LABEL, announce, esc, focusRunDestination, gateNoun, isOrcApp, isQuestionRun, mergeWrappingUpUntil, powerModeOf, queueBuildsOnlyOf, runningLabel, reviewsForRun, runs, sessionActivity, setFocusRunDestination, setPowerMode, setQueueBuildsOnly, setRuns, setSidebarProjectOrder, showsMergedTerminalLabel, carrySoundState, soundKindForStates, soundStateOf, statusActivity, toast, CONTROL_KEY } from './core.js';
 import { activateSidebarRun, focusControl, projectIconHtml, releaseOpenRunRow, renderList, syncPriorityRuns, syncSettledRuns } from './filters.js';
 import { QA_CHAT_DEFAULT, QA_CHAT_EFFORTS, ncAgents, ncEnabledTransportOptions, ncEnabledTransports, ncLaunchBackend, ncLaunchUnavailableReason, ncSavedTransport, offersPermissionSwitch, permissionPreference, qaChatChoice, rememberLaunchTransport } from './launch-options.js';
 import { hideGallery, showGallery } from './scenes.js';
 import { quietNow } from './quiet.js';
 import { ADD_SOUND, NO_SOUND, SOUND_EVENTS, allSounds, eventSound, eventSoundsToSave, playChoice, playSound, setCustomSounds, setEventSounds, setSoundVolume, soundVolume } from './sound.js';
-import { focusChatComposer } from './chat.js';
 import { holdSentAnswers } from './answer-mode.js';
 import { holdPostedReviews } from './pr-review-card.js';
 import { modelLabel, planOf } from './run-presentation.js';
@@ -60,9 +65,10 @@ import { enabledHarnesses } from './harnesses.js';
 import { factoryVisualsEnabled, onFactoryVisualsChange, reducedMotion } from './motion.js';
 import { sceneLeft } from './page-scene.js';
 import { canChangeScreen, changeScreen, screenSwapped } from './screen-change.js';
-import { SETTINGS_TABS_SAVING_THEMSELVES, SETTINGS_TABS_WITHOUT_CONFIG, settingsTabViewPanelsHtml, syncSettingsTabView, setSettingsDeferredData, settingsDeferredData, settingsPanelHtml, settingsTabFromHash, settingsTabsHtml, wireSettingsTabs, projBoolFields, RETIRED_PROJECT_KEYS, SHIP_ACTIONS, defaultShipAction, devServerSetupUnused, projectShipOverride, ringDevServerSetup, shipActionLabel, shipDefaultCardHtml, SHIP_ACTION_SETTINGS_HASH, branchExample, writeDefaultShipAction, writeOfferOtherShipActions, writePrPushAction, prPushActionOf, writeProjectShipAction, RUNS_AT_ONCE_OPTIONS, projectRunsAtOnce, writeProjectRunsAtOnce, projectGeneratedFiles, writeProjectGeneratedFiles, generatedFileRuleRowHtml, projectDeployCommand, writeProjectDeployCommand, closeSettingsToOrigin, flushSettingsSave, focusSettingsHeading, hideChangelog, hideSettings, keepDevServerSetupInView, mergedRepoEntry, normPath, projectDeleteBlockersHtml, projectDeleteCountsHtml, projectFieldChecked, projectIndexRowHtml, busiestProjectRuns, sortSettingsProjects, projectKeyFromSettingsHash, projectName, projectOrderFromConfigPayload, projectSearchMatches, revealSettingsAnchor, scheduleSettingsSave, setSettingsData, setSettingsDirty, setSettingsPendingConfig, setSettingsRenderedHash, setSettingsReturnAnnouncement, setSettingsReturnFocusProject, setSettingsSaveQueued, setSettingsSaveTimer, setSettingsSaving, settingsControlNeedsDebounce, settingsData, settingsDirty, settingsPendingConfig, settingsRenderedHash, settingsReturnAnnouncement, settingsReturnFocusProject, settingsRevision, settingsSaveQueued, settingsSaveTimer, settingsSaving, settingsSkeletonHtml, settingsStatusBarHtml, paintSettingsStatus, paintSettingsSaved, settingsViewActive, showChangelog, showSettings, wireProjectDeleteRunLinks, writeProjectBoolean } from './settings.js';
+import { SETTINGS_TABS_SAVING_THEMSELVES, SETTINGS_TABS_WITHOUT_CONFIG, settingsTabViewPanelsHtml, syncSettingsTabView, setSettingsDeferredData, settingsDeferredData, settingsPanelHtml, settingsTabFromHash, settingsTabsHtml, wireSettingsTabs, projBoolFields, RETIRED_PROJECT_KEYS, SHIP_ACTIONS, defaultShipAction, devServerSetupUnused, projectShipOverride, ringDevServerSetup, shipActionLabel, shipDefaultCardHtml, SHIP_ACTION_SETTINGS_HASH, branchExample, writeDefaultShipAction, writeOfferOtherShipActions, offerShipWhenDone, writeOfferShipWhenDone, writePrPushAction, prPushActionOf, writeProjectShipAction, RUNS_AT_ONCE_OPTIONS, projectRunsAtOnce, writeProjectRunsAtOnce, projectGeneratedFiles, writeProjectGeneratedFiles, generatedFileRuleRowHtml, projectDeployCommand, writeProjectDeployCommand, flushSettingsSave, focusSettingsHeading, hideChangelog, hideSettings, keepDevServerSetupInView, mergedRepoEntry, projectDeleteBlockersHtml, projectDeleteCountsHtml, projectFieldChecked, projectIndexRowHtml, busiestProjectRuns, sortSettingsProjects, projectKeyFromSettingsHash, projectName, projectSettingsTargetHash, projectOrderFromConfigPayload, projectSearchMatches, revealSettingsAnchor, scheduleSettingsSave, setSettingsData, setSettingsDirty, setSettingsPendingConfig, setSettingsRenderedHash, setSettingsReturnAnnouncement, setSettingsReturnFocusProject, setSettingsSaveQueued, setSettingsSaveTimer, setSettingsSaving, settingsControlNeedsDebounce, settingsData, settingsDirty, settingsPendingConfig, settingsRenderedHash, settingsReturnAnnouncement, settingsReturnFocusProject, settingsRevision, settingsSaveQueued, settingsSaveTimer, settingsSaving, settingsSkeletonHtml, settingsStatusBarHtml, paintSettingsStatus, paintSettingsSaved, settingsViewActive, showChangelog, showSettings, wireProjectDeleteRunLinks, writeProjectBoolean } from './settings.js';
 import { deactivateInstructions, instructionsPanelHtml, mountInstructionsSettings } from './instructions.js';
 import { activateOrchestrate, deactivateOrchestrate, orchestratePanelHtml } from './orchestrate.js';
+import { activateIntegrations, deactivateIntegrations, integrationsPanelHtml, writeIntegrations } from './integrations.js';
 function showStats() {
   window.orcCloseContentFind?.();
   document.querySelectorAll('.run').forEach(el => el.classList.remove('active'));
@@ -180,20 +186,80 @@ function ncAutoMergeOn() {
   return Boolean(toggle?.checked) && !toggle.closest?.('.newconv-field')?.hidden;
 }
 
+// Matches typed slash/dollar entry commands that override the composer's
+// default start mode on the server (typed_review_entry in ui/serve.py).
+function ncTypedStartMode(draft) {
+  const match = /^\s*[/$]orc(?:([:-])([a-z-]+))?(?=\s|$)/.exec(String(draft || ''));
+  if (!match) return null;
+  const name = match[2];
+  if (!name || name === 'run') return 'orc';
+  if (name === 'plan') return 'orc-plan';
+  if (name === 'plan-session') return 'orc-plan-session';
+  if (name === 'review') return 'orc-review';
+  return null;
+}
+
+function ncActiveTypedStartMode() {
+  if (promptMeeting()) return null;
+  if (typeof promptTickets === 'function' && promptTickets().some(ticket => String(ticket.body || '').trim())) return null;
+  return ncTypedStartMode($('nc-prompt')?.value || '');
+}
+
 // What Start and Enter launch. A new request gets a plan run
 // (skills/orc-plan/SKILL.md), which writes a short plan and stops. Auto merge
 // skips the plan so the run builds straight away and ships when done. A draft
 // that only a build can take builds straight away too: a fork, a follow-up's
 // Start run, or an Evals fan-out.
 function ncStartMode() {
+  if (promptMeeting()) return 'orc';
+  const typed = ncActiveTypedStartMode();
+  if (typed === 'orc') return 'orc';
+  // Typed /orc:plan, /orc:plan-session, and /orc:review send 'orc-plan' so
+  // newConvInput drops build-only flags while typed_review_entry() promotes
+  // the exact server mode.
+  if (typed) return 'orc-plan';
   // A fork's draft names its run by id, or as an `@` mention of its title.
   const draft = $('nc-prompt')?.value || '';
   const forks = Boolean(ncFork) && (draft.includes(ncFork) || runMentionsIn(draft).some(mention => mention.run.id === ncFork));
   // A meeting makes its flashcard straight away; it never writes a plan.
-  return promptMeeting() || ncSelection?.evals || ncFollowUp || forks || ncAutoMergeOn() ? 'orc' : 'orc-plan';
+  return ncSelection?.evals || ncFollowUp || forks || ncAutoMergeOn() ? 'orc' : 'orc-plan';
 }
 
-function showNewConversation(presetRunId) {
+// What the primary button is called and what pressing it does. The label is
+// the button, the verb finishes "Enter to …" on a keyboard, and the line
+// states the concrete outcome on both desktop and touch screens.
+const NC_START_INTENTS = {
+  plan: { label: 'Plan', verb: 'plan', line: 'nothing builds until you start it' },
+  planSession: { label: 'Plan', verb: 'plan', line: 'asks questions first' },
+  build: { label: 'Build', verb: 'build', line: 'skips the plan' },
+  autoMerge: { label: 'Build & ship', verb: 'build and ship', line: 'skips the plan and ships when done' },
+  evals: { label: 'Run evals', verb: 'run evals', line: 'builds and compares candidates' },
+  flashcard: { label: 'Make flashcard', verb: 'make the flashcard', line: '' },
+  review: { label: 'Review', verb: 'review', line: 'reads the PR without changing code' },
+};
+// Names what ncStartMode() launches. Evals wins over Auto merge, as it does
+// when the run starts.
+function ncStartIntent() {
+  if (promptMeeting()) return NC_START_INTENTS.flashcard;
+  const typed = ncActiveTypedStartMode();
+  if (typed === 'orc-plan-session') return NC_START_INTENTS.planSession;
+  if (typed === 'orc-plan') return NC_START_INTENTS.plan;
+  if (typed === 'orc-review') return NC_START_INTENTS.review;
+  if (typed === 'orc') {
+    if (ncSelection?.evals) return NC_START_INTENTS.evals;
+    return ncAutoMergeOn() ? NC_START_INTENTS.autoMerge : NC_START_INTENTS.build;
+  }
+  if (ncStartMode() === 'orc-plan') return NC_START_INTENTS.plan;
+  if (ncSelection?.evals) return NC_START_INTENTS.evals;
+  return ncAutoMergeOn() ? NC_START_INTENTS.autoMerge : NC_START_INTENTS.build;
+}
+// A touch screen has no Enter key to describe, so the tray names the
+// mode instead. The same query hides keyboard-only hints in ui/project-home.css.
+const NC_TOUCH_QUERY = '(hover: none) and (pointer: coarse)';
+const ncOnTouch = () => Boolean(window.matchMedia?.(NC_TOUCH_QUERY).matches);
+let ncTouchWatched = false;
+
+function showNewConversation(presetRunId, focusPrompt) {
   const recoveringRun = ncRecoveryRun;
   ncRecoveryRun = null;
   window.orcCloseContentFind?.();
@@ -245,7 +311,7 @@ function showNewConversation(presetRunId) {
     setPromptMeeting(meeting);
     ncSyncComposer?.();
   }
-  ncFocusPrompt();
+  if (focusPrompt) ncFocusPrompt();
   if (prefilled) {
     queueMicrotask(() => {
       const p = $('nc-prompt');
@@ -401,14 +467,15 @@ function buildNewConversation(view, presetAgent) {
               <orc-icon-button id="nc-attach" label="Attach images or videos"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg></orc-icon-button>
               <input id="nc-attach-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/avif,video/mp4,video/quicktime,video/webm" multiple hidden>
               <orc-copy-button id="nc-copy" variant="ghost" size="compact" disabled hidden>Copy prompt</orc-copy-button>
-              <orc-button id="nc-send" size="compact" disabled>Start</orc-button>
+              <orc-button id="nc-send" size="compact" disabled>Plan</orc-button>
             </span>
           ` })}
         <div class="nc-tray">
           <span id="nc-effort-notice" class="nc-status" role="status" hidden></span>
           <span id="nc-cli-notice" class="nc-status error" role="status" hidden></span>
           <orc-segmented id="nc-transport" class="newconv-transport" label="Launch transport" hidden></orc-segmented>
-          <span id="nc-status" class="nc-status" role="status" aria-live="polite" aria-atomic="true"><strong>Enter to plan</strong> · Shift+Enter for a new line</span>
+          <span id="nc-status" class="nc-status keys" role="status" aria-live="polite" aria-atomic="true"><strong>Enter to plan</strong> — nothing builds until you start it</span>
+          <span id="nc-newline-hint" class="nc-newline-hint">Shift+Enter for a new line</span>
         </div>
       </div>
       ${verificationCardHtml}
@@ -428,8 +495,10 @@ function buildNewConversation(view, presetAgent) {
   });
   window.dispatchEvent(new CustomEvent('orc-newconv-ready', { detail: { root: view } }));
   ncSelection = mountLaunchSelection(view, { capabilities: ncLaunchEffort, presetAgent, accounts: ncClaudeAccounts });
+  fitLaunchBar(view.querySelector('.nc-startbar-config'));
   ncVerifyCard = mountVerificationCard(view, { start: ncStartVerificationSetup, name: ncProjectName, runsWith: ncVerificationRunsWith });
   window.addEventListener('orc-plugins-changed', () => ncSyncComposer?.());
+  window.addEventListener('orc-config-changed', () => ncSyncComposer?.());
   ncSyncAgentAvailability();
   $('nc-project').addEventListener('change', ncSyncAgentAvailability);
   $('nc-model').addEventListener('change', () => $('nc-prompt').focus());
@@ -437,6 +506,7 @@ function buildNewConversation(view, presetAgent) {
   const prompt = $('nc-prompt'), copy = $('nc-copy'), send = $('nc-send');
   const attachInput = $('nc-attach-input');
   $('nc-attach').addEventListener('click', () => attachInput.click());
+  iconButtonTooltip($('nc-attach'));
   attachInput.addEventListener('change', () => {
     const files = Array.from(attachInput.files || []);
     attachInput.value = '';
@@ -511,6 +581,11 @@ function buildNewConversation(view, presetAgent) {
   copy.addEventListener('orc-copy', e => newConvCopyReport(e.detail.ok));
   send.addEventListener('click', e => newConvSubmit(ncStartMode(), 'start', inBackground(e)));
   ncSyncComposer = syncButtons;
+  // A tablet that gains a trackpad swaps the mode line for the shortcuts.
+  if (!ncTouchWatched) {
+    ncTouchWatched = true;
+    window.matchMedia?.(NC_TOUCH_QUERY).addEventListener?.('change', () => ncSyncIntent());
+  }
   ncApplyTransportPicker();
   sync();
   ncSyncIntent();
@@ -651,6 +726,7 @@ function ncApplyProjects(projects, { provisional = false } = {}) {
   ncSyncComposer?.();
   ncSkillInvocation?.refresh();
   if (!provisional) ncVerifyCard?.sync(target);
+  window.dispatchEvent(new CustomEvent('orc-project-changed', { detail: { project: target, config: ncConfigCache } }));
 }
 
 // The composer's ticket badges, with the board's live copy of each note when
@@ -785,7 +861,7 @@ function ncLaunchSending(session, transport) {
 // The status region announces clipboard results to screen readers.
 function newConvCopyReport(ok) {
   const status = $('nc-status');
-  status.classList.remove('launching');
+  status.classList.remove('launching', 'keys');
   status.classList.toggle('error', !ok);
   status.textContent = ok ? 'Prompt copied' : 'Couldn’t copy prompt — try again';
 }
@@ -815,37 +891,43 @@ function ncSyncIntent() {
   const send = $('nc-send'), status = $('nc-status');
   if (!send) return;
   // Every draft change passes through here. Each write is skipped when
-  // nothing changed: replacing Start's label between a press and its release
-  // loses the click, and rewriting the hint has a screen reader say it again.
+  // nothing changed: replacing the button's label between a press and its
+  // release loses the click, and rewriting the hint has a screen reader say it
+  // again.
   const set = (node, name, value) => { if (node.getAttribute(name) !== value) node.setAttribute(name, value); };
+  const intent = ncStartIntent();
+  // While Start writes a plan, the model picker names the preset's planner.
+  const picker = $('nc-model');
+  if (picker) picker.plans = intent === NC_START_INTENTS.plan;
   set(send, 'variant', 'primary');
-  if (send.textContent !== 'Start') send.textContent = 'Start';
+  if (send.textContent !== intent.label) send.textContent = intent.label;
   // With nothing to launch into, Copy prompt is the primary action rather than
-  // a hidden Start button that still claims to be one.
+  // a hidden button that still claims to be one.
   const copy = $('nc-copy');
   if (copy) set(copy, 'variant', !ncLaunchable() ? 'primary' : 'ghost');
   if (status && !status.classList.contains('launching') && !status.classList.contains('error')) {
     const evalsBlocker = ncLaunchable() && ncSelection?.evalsBlocker;
-    // Auto merge is the one way the person skips the plan themselves, so the
-    // hint says so; a draft that only a build takes just starts.
-    const verb = promptMeeting() ? 'make the flashcard'
-      : ncStartMode() === 'orc-plan' ? 'plan'
-      : ncAutoMergeOn() ? 'start without a plan' : 'start';
-    const openVerb = { 'make the flashcard': 'make it', 'start without a plan': 'start' }[verb] || verb;
-    const hint = ncSelection?.blocker ? ncSelection.blocker
-      : evalsBlocker ? `${evalsBlocker} · Add a candidate below`
-      : ncLaunchable()
-        ? ncStartsInBackground()
-          ? `Enter to ${verb} in the background · ⌘Enter to ${openVerb} and open · Shift+Enter for a new line`
-          : `Enter to ${verb} · ⌘Enter in the background · Shift+Enter for a new line`
-        : `${ncLaunchUnavailableReason(ncLaunchCache.backend)}, so Enter copies the prompt · Shift+Enter for a new line`;
-    // Why Start is disabled stays readable on a touch screen, where the
-    // keyboard hints are hidden.
+    const { verb } = intent;
+    const background = ncStartsInBackground();
+    const touch = ncOnTouch();
+    // The hint leads with what the button does, in the button's own word.
+    let lead = '', hint;
+    if (ncSelection?.blocker) hint = ncSelection.blocker;
+    else if (evalsBlocker) hint = `${evalsBlocker} · Add a candidate below`;
+    else if (!ncLaunchable()) hint = `${ncLaunchUnavailableReason(ncLaunchCache.backend)}, so Enter copies the prompt`;
+    else if (touch) {
+      lead = intent.label;
+      hint = intent.line ? `${lead} — ${intent.line}` : lead;
+    } else {
+      lead = `Enter to ${verb}${background ? ' in the background' : ''}`;
+      hint = intent.line ? `${lead} — ${intent.line}` : lead;
+    }
+    // Why the button is disabled stays readable on a touch screen, and so does
+    // the mode line; only hints about keys are hidden there.
     status.classList.toggle('blocked', Boolean(ncSelection?.blocker || evalsBlocker));
-    // Enter writes a plan where it used to build, a meeting's flashcard, or
-    // skips the plan because Auto merge is on, so the hint leads with that.
-    const lead = /^Enter to (?:plan|make the flashcard|start without a plan)(?: in the background)?/.exec(hint)?.[0] || '';
-    if (status.textContent !== hint || Boolean(status.querySelector('strong')) !== Boolean(lead) || status.childElementCount > (lead ? 1 : 0)) {
+    status.classList.toggle('keys', !ncSelection?.blocker && !evalsBlocker && (!touch || !ncLaunchable()));
+    if (status.textContent !== hint || Boolean(status.querySelector('strong')) !== Boolean(lead) || status.childElementCount > (lead ? 1 : 0)
+      || (lead && status.firstElementChild?.textContent !== lead)) {
       const strong = document.createElement('strong');
       strong.textContent = lead;
       status.replaceChildren(...(lead ? [strong] : []), hint.slice(lead.length));
@@ -982,7 +1064,7 @@ function ncVerificationRunsWith(host) {
   const meta = { ...recommended ? { harness: 'claude', launchModel: VERIFICATION_SETUP_MODEL, launchEffort: 'medium' } : own,
     claudeAccount: ncSelection.claudeAccount };
   if (meta.harness === agent && ncSelection.permissionMode) meta.launchPermissionMode = ncSelection.permissionMode;
-  return { row: mountPlanBuilds(host, { meta, labelId: 'nc-verify-runs-label', label: 'Runs with' }), recommended };
+  return { row: mountPlanBuilds(host, { meta, labelId: 'nc-verify-runs-label', label: 'Runs with', presetLeadEffort: false }), recommended };
 }
 // The Set up verification card starts a change run (not a plan) with its own
 // prompt (verification-setup.js: setup, Update steps or Set up again) instead
@@ -1044,7 +1126,6 @@ export async function loadSettings({ useCache = false } = {}) {
     if (!defer) setSettingsData(data);
     setShortcutOverrides(data.config?.ui?.shortcuts);
     setSidebarProjectOrder(projectOrderFromConfigPayload(data));
-    setSidebarStatusOrder(statusOrderFromConfigPayload(data));
     renderList();
     if (defer) return;
     setSettingsDirty(false);
@@ -1335,15 +1416,6 @@ function renderProjectSettingsForm(projectKey) {
   announce(project ? `Settings, ${project.path}` : 'Settings, project not found');
 }
 
-// One changelog bullet: align a conventional-commit type as quiet metadata
-// (feat/fix/…) so releases scan at a glance; plain text when there's none.
-export function changeLineHtml(line) {
-  const m = /^(\w+)(\([^)]*\))?!?:\s*(.+)$/.exec(line);
-  if (!m) return `<li><span class="rel-msg">${esc(line)}</span></li>`;
-  const type = m[1].toLowerCase();
-  return `<li class="rel-change-typed"><span class="rel-type" translate="no">${esc(type)}</span><span class="rel-msg">${esc(m[3])}</span></li>`;
-}
-
 // Cached across polls so the diff loop can gate playSound() without waiting
 // on Settings to be open — set from the boot-time /api/config fetch (see
 // palette.js) and refreshed on every successful save below.
@@ -1360,8 +1432,13 @@ export function applyUiConfig(cfg) {
   globalThis.ORC_OFFER_PERMISSIONS = offersPermissionSwitch(ui);
   globalThis.ORC_PERMISSION_DEFAULT = permissionPreference(ui.permissionDefault);
   globalThis.ORC_STARTED_RUN_BACKGROUND = ui.startedRun === 'background';
+  setCostCurrency(ui.costCurrency);
   globalThis.ORC_PR_PUSH_ACTION = prPushActionOf(cfg);
+  globalThis.ORC_OFFER_SHIP_WHEN_DONE = offerShipWhenDone(cfg);
   setQueueBuildsOnly(queueBuildsOnlyOf(ui));
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('orc-config-changed', { detail: { config: cfg } }));
+  }
 }
 // What every sound asks before it plays, Settings' Play buttons aside: a
 // meeting on your calendar silences Orc as ui.sounds off does (quiet.js).
@@ -1559,31 +1636,6 @@ function customSoundsHtml() {
 
 // A Play button plays during a meeting and a fanfare does not, which would
 // read as a fault with Sound effects ticked and nothing saying why.
-// Claude bills Fast mode only to extra usage. A login whose Fast turn came back
-// without it has the switch hidden, and this note says so and brings it back.
-export function claudeFastNoteHtml(data) {
-  const logins = Array.isArray(data?.claudeFastUnavailable) ? data.claudeFastUnavailable : [];
-  if (!logins.length) return '';
-  const several = (data.claudeAccounts || []).length > 1;
-  const named = several ? ` on ${logins.map(login => esc(data.claudeAccountNames?.[login] || `~/${login}`)).join(', ')}` : '';
-  return `<p class="settings-hint" id="claude-fast-note">Hidden for Claude${named}: Claude bills Fast mode only to extra usage, which ${logins.length > 1 ? 'these logins have' : 'your login has'} turned off, so the run used normal speed. After enabling extra usage, retry with <button type="button" id="claude-fast-reset" class="settings-btn-inline" data-track="Show Claude Fast mode again">Show it again</button></p>`;
-}
-
-async function showClaudeFastAgain(event) {
-  const button = event.currentTarget;
-  button.disabled = true;
-  try {
-    const res = await fetch('/api/claude-fast-mode/reset', { method: 'POST' });
-    if (!res.ok) throw new Error(`reset failed: ${res.status}`);
-    globalThis.ORC_CLAUDE_FAST_UNAVAILABLE = [];
-    settingsData.claudeFastUnavailable = [];
-    $('claude-fast-note')?.remove();
-    globalThis.dispatchEvent?.(new Event('orc-plugins-changed'));
-  } catch {
-    button.disabled = false;
-  }
-}
-
 function renderSoundQuietNote() {
   const note = $('sound-quiet-note');
   const calendarNote = $('sound-calendar-note');
@@ -1612,6 +1664,7 @@ export function renderSettingsForm({ focusPlugin = null } = {}) {
   }
   deactivateInstructions();
   deactivateOrchestrate();
+  deactivateIntegrations();
   unmountPluginSettingsDetail();
   const pluginId = pluginIdFromSettingsHash();
   if (pluginId !== null) {
@@ -1667,12 +1720,7 @@ export function renderSettingsForm({ focusPlugin = null } = {}) {
         <orc-switch class="settings-check" id="set-offer-permissions" name="set-offer-permissions" label="Offer the permissions switch" aria-describedby="hint-offer-permissions" ${offersPermissionSwitch(ui) ? 'checked' : ''}></orc-switch>
         <p class="settings-hint" id="hint-offer-permissions">Shows a switch when you start a conversation, so one run can differ from the default. Hidden, every run uses the default, as runs started from tickets always do.</p>
       </div>
-      <div class="settings-subblock" data-settings-anchor="fast-mode">
-        <orc-switch class="settings-check" id="set-offer-fast" name="set-offer-fast" label="Offer Fast mode" aria-describedby="hint-offer-fast hint-claude-fast" ${ui.offerFastMode !== false ? 'checked' : ''}></orc-switch>
-        <p class="settings-hint" id="hint-offer-fast">Show the Fast mode switch when starting a conversation. Choose Fast for quicker responses at a higher rate.</p>
-        <p class="settings-hint" id="hint-claude-fast">When you start a Fast run with Claude, Claude checks whether your login allows extra usage. If it’s off, the run uses normal speed and Orc hides the switch for that login.</p>
-        ${claudeFastNoteHtml(settingsData)}
-      </div>
+      ${fastModeSettingsHtml(ui, settingsData)}
       <p class="settings-hint">Saved on this computer only: your other computers keep their own answer.</p>
     </fieldset>
     </div>
@@ -1703,6 +1751,7 @@ export function renderSettingsForm({ focusPlugin = null } = {}) {
     </div>
     ${sessionBackendCardHtml(ui, settingsData.headlessAvailable)}
     ${qaChatCardHtml(ui)}
+    ${costCurrencyCardHtml(ui)}
     ${shortcutSettingsHtml()}`)}
     ${settingsPanelHtml('projects', tab, `
     <div class="settings-card" data-settings-anchor="projects">
@@ -1765,6 +1814,7 @@ export function renderSettingsForm({ focusPlugin = null } = {}) {
     ${linkSettingsHtml()}
     </div>`, 'settings-account')}
     ${settingsPanelHtml('orchestrate', tab, orchestratePanelHtml(), 'settings-panel-single settings-panel-wide settings-orchestrate')}
+    ${settingsPanelHtml('integrations', tab, integrationsPanelHtml(config), 'settings-panel-single settings-panel-wide settings-integrations')}
     ${settingsPanelHtml('instructions', tab, instructionsPanelHtml(), 'settings-instructions')}
     ${settingsPanelHtml('plugins', tab, pluginSettingsHtml(), 'settings-panel-single settings-panel-wide')}
     ${settingsStatusBarHtml()}
@@ -1799,6 +1849,7 @@ export function renderSettingsForm({ focusPlugin = null } = {}) {
   syncSettingsTabView();
   mountInstructionsSettings(tab === 'instructions');
   if (tab === 'orchestrate') activateOrchestrate();
+  if (tab === 'integrations') activateIntegrations();
 }
 
 function wireSettingsEvents() {
@@ -1846,9 +1897,10 @@ function wireSettingsEvents() {
     showQueueBuildsSwitch(powerModeControl.value);
     markDirty(event);
   });
-  $('claude-fast-reset')?.addEventListener('click', showClaudeFastAgain);
+  mountFastModeSettings(settingsData);
   $('set-permission-default')?.addEventListener('change', markDirty);
   $('set-started-run')?.addEventListener('change', markDirty);
+  $('set-cost-currency')?.addEventListener('change', markDirty);
   $('set-qa-chat-effort')?.addEventListener('change', markDirty);
 
   const addBtn = $('proj-add-btn');
@@ -2423,6 +2475,7 @@ export function buildConfigFromForm() {
     if ($('set-started-run').value === 'background') cfg.ui.startedRun = 'background';
     else delete cfg.ui.startedRun;
   }
+  if ($('set-cost-currency')) writeCostCurrency(cfg, $('set-cost-currency').value);
   if ($('set-qa-chat-model') && $('set-qa-chat-effort')) {
     const qaChat = { model: $('set-qa-chat-model').value || QA_CHAT_DEFAULT.model, effort: $('set-qa-chat-effort').value || QA_CHAT_DEFAULT.effort };
     if (qaChat.model === QA_CHAT_DEFAULT.model && qaChat.effort === QA_CHAT_DEFAULT.effort) delete cfg.ui.qaChat;
@@ -2451,6 +2504,9 @@ export function buildConfigFromForm() {
     else delete cfg.ui.shortcuts;
   }
 
+  // Each integration's switch; a missing control leaves its saved answer.
+  writeIntegrations(cfg, id => $(`set-integration-${id}`)?.checked);
+
   if ($('set-branch-prefix')) {
     const prefix = $('set-branch-prefix').value.trim();
     if (prefix) {
@@ -2465,6 +2521,7 @@ export function buildConfigFromForm() {
   const defaultShip = $('set-ship-action');
   if (defaultShip) writeDefaultShipAction(cfg, 'shipAction', defaultShip.value);
   if ($('set-offer-other-ship-actions')) writeOfferOtherShipActions(cfg, $('set-offer-other-ship-actions').checked);
+  if ($('set-offer-ship-when-done')) writeOfferShipWhenDone(cfg, $('set-offer-ship-when-done').checked);
   if ($('set-pr-push-action')) writePrPushAction(cfg, $('set-pr-push-action').value);
 
   cfg.repos = cfg.repos || {};
@@ -2619,6 +2676,7 @@ export async function saveSettings() {
 
 let prevHash = null;   // hash of the previous route — #gallery closes back to it
 let prevHashWasPluginView = false;
+let openingDefaultHome = false;
 // A plugin can finish starting after the first route, which then read a link
 // to the plugin's view as a run id.
 let routeWaitsForPlugins = false;
@@ -2630,6 +2688,16 @@ if (typeof window !== 'undefined') window.addEventListener('orc-plugins-changed'
 export let settingsCameFrom = null;   // hash the settings family was entered from — null/'' when deep-loaded
 // #settings, #settings/<tab> and #settings/project/<key> all show the Settings view.
 function isSettingsHash(h) { return h === 'settings' || (h || '').startsWith('settings/'); }
+// Gear toggle: closing goes back to wherever settings was opened from — a
+// deep-loaded settings view has nothing behind it, so it falls through to the
+// run list, same as closing the gallery.
+export function closeSettingsToOrigin() {
+  if (settingsCameFrom) location.hash = settingsCameFrom;
+  else if (runs.length) location.hash = encodeURIComponent(runs[0].id);
+  else { location.hash = ''; $('empty').hidden = false; }
+  focusControl($('settings-btn'));   // back to the trigger — a view that focuses its own heading still wins
+}
+
 function inSettingsFamily(h) { return isSettingsHash(h) || h === 'changelog'; }
 function hashRunId(hash) { return decodeURIComponent((hash || '').split('/')[0] || ''); }
 function staysOnRun(fromHash, toHash) {
@@ -2642,6 +2710,9 @@ function staysOnRun(fromHash, toHash) {
 export function route(event) {
   routeWaitsForPlugins = false;
   let hash = location.hash.slice(1);
+  // The first runs response can arrive after someone starts using the sidebar.
+  const focusPrompt = !openingDefaultHome || document.activeElement === document.body;
+  openingDefaultHome = false;
   // Read before anything below covers or uncovers the run pane.
   const leftFactory = factoryShowing();
   // Skills was a screen of its own before it was a Settings tab; old links,
@@ -2680,6 +2751,10 @@ export function route(event) {
     const next = 'settings/instructions' + hash.slice('instructions'.length);
     history.replaceState(history.state, '', `#${next}`);
     hash = next;
+  }
+  if (hash === 'gallery' && window.ORC_SHOW_ANIMATIONS_GALLERY !== true) {
+    history.replaceState(history.state, '', '#new');
+    hash = 'new';
   }
   const [hashBase, hashQuery = ''] = hash.split('?');
   let ncHandoff = null;
@@ -2738,7 +2813,7 @@ export function route(event) {
       if (ncHandoff.prompt !== null) prefillNewConversation(ncHandoff.prompt, null, null, ncHandoff.project);
       else if (ncHandoff.project) ncPrefillProject = ncHandoff.project;
     }
-    showNewConversation(decodeURIComponent(hash.slice(4)) || null);
+    showNewConversation(decodeURIComponent(hash.slice(4)) || null, focusPrompt);
     return;
   }
   hideNewConversation();
@@ -2841,6 +2916,7 @@ export function routeWithViewTransition(event) {
 }
 
 export let lastRunsStr = null;
+const hasRunSnapshot = () => lastRunsStr !== null;
 // Validator for the conditional poll in refresh(). Anything that replaces the
 // runs snapshot out of band drops it, so the next poll refetches in full
 // instead of being answered 304 against bytes this module no longer holds —
@@ -2850,10 +2926,51 @@ let lastRunsEtag = null;
 // change, fetched only when the live part's X-Orc-Settled-Etag moves.
 let lastSettledEtag = null;
 let lastSettledRows = [];
+let lastLiveEtag = null;
+let lastLiveRows = [];
 const invalidateLiveRuns = () => {
   lastRunsStr = '';
   lastRunsEtag = null;
 };
+
+// Structural equality check so polls keep the previous run object reference
+// for unchanged runs, letting renderList skip rebuilding their DOM or HTML.
+function sameJsonValue(a, b) {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (typeof a !== 'object') return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!sameJsonValue(a[i], b[i])) return false;
+    return true;
+  }
+  if (Array.isArray(b)) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    if (!Object.prototype.hasOwnProperty.call(b, k) || !sameJsonValue(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+function sameRunSnapshot(a, b) {
+  if (a === b) return true;
+  return Boolean(a && b)
+    && a.id === b.id
+    && a.mtime === b.mtime
+    && Boolean(a.pending) === Boolean(b.pending)
+    && sameJsonValue(a.meta, b.meta)
+    && sameJsonValue(a.files, b.files);
+}
+
+function reuseUnchangedRuns(nextRuns, prevById) {
+  if (!prevById.size) return nextRuns;
+  return nextRuns.map(run => {
+    const prev = prevById.get(run.id);
+    return prev && sameRunSnapshot(prev, run) ? prev : run;
+  });
+}
 
 // Live rows win a collision: a run that just left the settled part is newer
 // there. Server order is newest activity first.
@@ -2864,12 +2981,36 @@ function mergeRunParts(live, settled) {
     .sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
 }
 
+function applyRunsDelta(baseRows, delta) {
+  const byId = new Map(baseRows.map(run => [run.id, run]));
+  for (const id of delta.removed) byId.delete(id);
+  for (const run of delta.upserted) byId.set(run.id, run);
+  return [...byId.values()].sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+}
+
+function parseRunsPartBody(body, response, baseEtag, baseRows) {
+  if (response.headers.get('X-Orc-Runs-Delta') === '1') {
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || !baseEtag || parsed.base !== baseEtag
+      || !Array.isArray(parsed.upserted) || !Array.isArray(parsed.removed)) {
+      return null;
+    }
+    return applyRunsDelta(baseRows, parsed);
+  }
+  return JSON.parse(body);
+}
+
 // Playwright route globs such as **/api/runs never match a query string, so
 // the part travels in a header.
-function fetchRunsPart(part, etag) {
+function fetchRunsPart(part, etag, deltaBase = null) {
   return fetch('/api/runs', {
     cache: 'no-store',
-    headers: { 'X-Orc-Runs-Part': part, ...(etag ? { 'If-None-Match': etag } : {}) },
+    headers: {
+      'X-Orc-Runs-Part': part,
+      ...(etag ? { 'If-None-Match': etag } : {}),
+      ...(deltaBase ? { 'X-Orc-Runs-Delta-Base': deltaBase } : {}),
+    },
   });
 }
 
@@ -2881,38 +3022,60 @@ function fetchRunsPart(part, etag) {
 // as is.
 //
 // renderKey is what refresh() compares to decide whether to repaint. It
-// carries the settled tag as well as the live bytes: a change only among
-// settled runs leaves the live body identical, and must still repaint.
+// carries the settled tag as well as the live tag: a change only among
+// settled runs leaves the live rows identical, and must still repaint.
 async function fetchRunParts({ force = false } = {}) {
   let settledEtag = lastSettledEtag, settledRows = lastSettledRows;
+  const liveEtag = lastLiveEtag, liveRows = lastLiveRows;
   for (let attempt = 0; ; attempt++) {
-    const response = await fetchRunsPart('live', !force && attempt === 0 ? lastRunsEtag : null);
+    const liveIfNoneMatch = !force && attempt === 0 ? lastRunsEtag : null;
+    const liveDeltaBase = attempt === 0 ? liveEtag : null;
+    const response = await fetchRunsPart('live', liveIfNoneMatch, liveDeltaBase);
     if (response.status === 304) return { response };
     // An asleep linked laptop answers 503 with an error object; refresh()
     // counts a throw as a missed poll and keeps the list it shows.
     if (!response.ok) throw new Error(`run list: ${response.status}`);
-    const body = await response.text();
-    const live = JSON.parse(body);
-    const wanted = response.headers.get('X-Orc-Settled-Etag');
+    let finalResponse = response;
+    let body = await finalResponse.text();
+    let live = parseRunsPartBody(body, finalResponse, liveDeltaBase, liveRows);
+    if (live === null) {
+      finalResponse = await fetchRunsPart('live', null, null);
+      if (!finalResponse.ok) throw new Error(`run list: ${finalResponse.status}`);
+      body = await finalResponse.text();
+      live = JSON.parse(body);
+    }
+    const wanted = finalResponse.headers.get('X-Orc-Settled-Etag');
     // No settled tag means the reply is the whole list: an older server, or a
     // test double that mocks /api/runs.
     if (!wanted) {
-      return { response, body, live, renderKey: `null\n${body}`, settledEtag: null,
-        settledRows: [], consistent: true };
+      return { response: finalResponse, body, live, liveEtag: null, renderKey: `null\n${body}`,
+        settledEtag: null, settledRows: [], consistent: true };
     }
     let nothingNewer = false;
     if (wanted !== settledEtag) {
-      const settled = await fetchRunsPart('settled', settledEtag);
+      const settledBase = settledEtag;
+      const settled = await fetchRunsPart('settled', settledEtag, settledBase);
       if (settled.status !== 304 && !settled.ok) throw new Error(`settled runs: ${settled.status}`);
       nothingNewer = settled.status === 304 || settled.headers.get('ETag') === settledEtag;
       if (!nothingNewer) {
-        settledRows = JSON.parse(await settled.text());
-        settledEtag = settled.headers.get('ETag');
+        const settledBody = await settled.text();
+        const parsedSettled = parseRunsPartBody(settledBody, settled, settledBase, settledRows);
+        if (parsedSettled !== null) {
+          settledRows = parsedSettled;
+          settledEtag = settled.headers.get('ETag');
+        } else {
+          const fullSettled = await fetchRunsPart('settled', null, null);
+          if (!fullSettled.ok) throw new Error(`settled runs: ${fullSettled.status}`);
+          settledRows = JSON.parse(await fullSettled.text());
+          settledEtag = fullSettled.headers.get('ETag');
+        }
       }
     }
     if (wanted === settledEtag || nothingNewer || attempt === 2) {
-      return { response, body, live, renderKey: `${settledEtag}\n${body}`, settledEtag,
-        settledRows, consistent: wanted === settledEtag };
+      const nextLiveEtag = finalResponse.headers.get('ETag');
+      const renderKey = nextLiveEtag ? `${settledEtag}\n${nextLiveEtag}` : `${settledEtag}\n${body}`;
+      return { response: finalResponse, body, live, liveEtag: nextLiveEtag, renderKey,
+        settledEtag, settledRows, consistent: wanted === settledEtag };
     }
   }
 }
@@ -2928,8 +3091,10 @@ export function applyMergeQueueChanges(changes) {
     const meta = { ...run.meta, mergeQueued: queue.queued };
     delete meta.mergeQueueConflict;
     delete meta.mergeCheckoutWait;
+    delete meta.mergeQueuePosition;
     if (queue.queued && queue.conflictsWithMain) meta.mergeQueueConflict = { files: queue.conflictFiles };
     if (queue.state === 'waiting-checkout') meta.mergeCheckoutWait = queue.detail;
+    if (queue.queued && Number.isInteger(queue.position) && queue.position >= 1) meta.mergeQueuePosition = queue.position;
     return { ...run, meta };
   }));
   renderList();
@@ -3001,6 +3166,8 @@ export async function refresh({ force = false, openingHash } = {}) {
     if (response.status === 304 || queueRevision !== mergeQueueRevision) return;
     // A mismatched pair is applied as it is, and the next poll asks again.
     lastRunsEtag = parts.consistent ? response.headers.get('ETag') : null;
+    lastLiveEtag = parts.liveEtag ?? null;
+    lastLiveRows = parts.liveEtag ? parts.live : [];
     lastSettledEtag = parts.settledEtag;
     lastSettledRows = parts.settledRows;
     // The server's own bytes, not a re-encode of the parsed object: stringifying
@@ -3010,18 +3177,19 @@ export async function refresh({ force = false, openingHash } = {}) {
     if (str === lastRunsStr) return;
     const firstLoad = lastRunsStr === null;
     const prevRuns = runs;
+    const prevById = !firstLoad && prevRuns.length ? new Map(prevRuns.map(p => [p.id, p])) : null;
     lastRunsStr = str;
-    setRuns(holdLocalChanges(launchAttempts.reconcile(mergeRunParts(parts.live, parts.settledRows))));
+    const merged = holdLocalChanges(launchAttempts.reconcile(mergeRunParts(parts.live, parts.settledRows)));
+    setRuns(prevById ? reuseUnchangedRuns(merged, prevById) : merged);
     if (newConvInited && !$('new-view').hidden) ncRenderHeader();
     const scrollTop = $('list').scrollTop;
-    renderList();
+    renderList({ trustRunRefs: !firstLoad });
     $('list').scrollTop = scrollTop;
     appliedSnapshot = true;
 
     if (!firstLoad) {
       const msgs = [];
       const selectedRunId = decodeURIComponent(location.hash.slice(1).split('/')[0] || '');
-      const prevById = new Map(prevRuns.map(p => [p.id, p]));
       runs.forEach(r => {
         const prev = prevById.get(r.id);
         if (!prev) return;
@@ -3057,6 +3225,7 @@ export async function refresh({ force = false, openingHash } = {}) {
       // The placeholder waits for the list, so a slow first load never says
       // "Select a run" before the page it opens on.
       if (!location.hash) {
+        openingDefaultHome = true;
         location.hash = 'new';
         maybeOpenWelcome({ hasRuns: runs.length > 0 });
       } else if (!newConvInited || $('new-view').hidden || prevHash !== location.hash.slice(1)) {
@@ -3134,22 +3303,6 @@ document.addEventListener('keydown', e => {
   $('search').input?.select();   // <orc-input> forwards focus but not select
 });
 
-// Overlays sit above every routed view and routing does not dismiss them, so a
-// shortcut that only changes the hash renders the destination underneath an
-// open dialog/lightbox/palette and reads as a dead key. Dialogs close
-// generically; overlays with their own teardown (the lightbox un-inerts the
-// shell, the palette drops its pending render) register a closer instead.
-// Keyed, because per-render owners like the diff review panel re-register.
-export function orcRegisterOverlayCloser(key, close) {
-  (window.orcOverlayClosers || (window.orcOverlayClosers = new Map())).set(key, close);
-}
-function orcCloseOverlays() {
-  // orc-dialog reflects `open` on the host, so the host is what matches — the
-  // real <dialog> is inside its shadow root and out of reach of this selector.
-  document.querySelectorAll('orc-dialog[open]').forEach(dialog => { try { dialog.close(); } catch {} });
-  (window.orcOverlayClosers || new Map()).forEach(close => { try { close(); } catch {} });
-}
-
 // ⌘N / Ctrl+N opens the new-conversation composer (the agents window). Modifier-
 // based, so it fires even with an input/textarea focused (mirrors ⌘K).
 function orcOpenNewConversation() {
@@ -3180,14 +3333,14 @@ function orcToggleFastMode() {
   $('nc-fast').activate();
   return true;
 }
-window.orcToggleFastMode = orcToggleFastMode;
+window.orcRunFastModeShortcut = orcToggleFastMode;
 
 
 // ⌘, / Ctrl+, toggles the Settings view: the first press opens it, the next
 // one goes back to the view and the focused control it was opened from.
 // Modifier-based, so it fires even with an input/textarea focused (mirrors ⌘N).
 let settingsShortcutOrigin = null;
-function orcOpenSettings() {
+function orcOpenSettings(target = 'settings') {
   // A press that dismisses an overlay sitting on Settings reveals Settings; it
   // takes a press with Settings in plain view to close it.
   const covered = !!document.querySelector('orc-dialog[open], #lightbox.open');
@@ -3200,9 +3353,23 @@ function orcOpenSettings() {
   // Assigning the hash it already holds emits no hashchange, so ⌘, from behind
   // an overlay that was covering Settings would repaint nothing. Re-route by
   // hand, same as ⌘N.
-  if (location.hash === '#settings') route();
-  else location.hash = 'settings';
+  if (location.hash === `#${target}`) route();
+  else location.hash = target;
 }
+// ⇧⌘, / Ctrl+Shift+, does the same for the project in view: its page in
+// Settings, or Settings itself when no project is in view.
+function orcOpenProjectSettings() {
+  const hash = location.hash.slice(1);
+  if (settingsViewActive || isSettingsHash(hash)) {
+    orcOpenSettings();
+    return;
+  }
+  // The composer's own project list is the config's; before it has loaded
+  // once, the project's page is tried rather than holding the key press up.
+  const configured = (settingsData || cachedConfigData())?.projects;
+  orcOpenSettings(projectSettingsTargetHash(hash, runs, ncCurrentProject(), Array.isArray(configured) ? configured : null));
+}
+window.orcOpenProjectSettings = orcOpenProjectSettings;
 function closeSettingsFromShortcut() {
   const origin = settingsShortcutOrigin;
   settingsShortcutOrigin = null;
@@ -3481,3 +3648,20 @@ document.addEventListener('keydown', e => {
   orcOpenSettings();
 });
 
+document.addEventListener('keydown', e => {
+  if (!shortcutMatches('project-settings', e)) return;
+  e.preventDefault();
+  orcOpenProjectSettings();
+});
+
+
+document.addEventListener('orc:run-changed', ({ detail: id }) => {
+  renderList();
+  if (decodeURIComponent(location.hash.slice(1).split('/')[0] || '') === id) route();
+});
+
+bindActivityNavigation({
+  hasRunSnapshot, refresh, route, prefillNewConversation, ncSwitchProject,
+  restoreFailedLaunchPrompt, applyUiConfig, applyMergeQueueChanges, syncSettingsPowerMode,
+});
+bindSettingsForm({ buildConfigFromForm, loadSettings, renderSettingsForm, saveSettings, unmountPluginSettingsDetail });

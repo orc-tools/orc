@@ -649,6 +649,26 @@ def close_tab(orc_dir, tab_id):
     return None
 
 
+def busy(orc_dir, tab_id=None, workspace_id=None):
+    """Whether a pane of the tab, or of any tab in the workspace, is running
+    something besides its shell: a command or agent holds the terminal while
+    its process group, not the shell's, is in the foreground. True when herdr
+    cannot say, so closing still asks."""
+    try:
+        path = session_socket(orc_dir)
+        panes = [p for p in snapshot(path).get("panes", [])
+                 if (tab_id and p.get("tab_id") == tab_id)
+                 or (workspace_id and p.get("workspace_id") == workspace_id)]
+        for pane in panes:
+            info = call(path, "pane.process_info", {"pane_id": pane["pane_id"]}).get("process_info") or {}
+            shell, foreground = info.get("shell_pid"), info.get("foreground_process_group_id")
+            if not shell or foreground != shell:
+                return True
+    except (HerdrError, KeyError):
+        return True
+    return False
+
+
 def close_workspace(orc_dir, workspace_id):
     """Closes a workspace with every tab in it and says what went with it:
     "session" when no other workspace has a tab, which ends the session as

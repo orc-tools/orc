@@ -80,3 +80,27 @@ repeat that line to the user and leave the stash alone.
   no stated goal to pick by), stop, restore `status=escalated` +
   `mergeConflict`, and ask. For `main`, perform the clean abort/restoration and
   helper release above before stopping.
+
+## Resolve now, before the run reaches the front
+
+A `Resolve now action (<run-id>)` comes from the merge queue's Resolve now
+button: the run is still waiting, and that click is consent for one attempt to
+prepare its fix early. It spends nothing of the at-front attempt above.
+
+1. Run `orc-merge-main <run-id> --prepare-early-resolution`. It merges the
+   default branch into the queued HEAD in a scratch checkout and prints where.
+2. Resolve there with the Resolution steps above, run the checks, and commit
+   the merge. Add no other commit: the fix must be that one merge.
+   `--regenerate-generated` only works inside a claim at the front, so here
+   regenerate a configured generated file with the project's own command,
+   or, if you cannot, release and leave it to the front.
+3. Run `orc-merge-main <run-id> --save-early-resolution`. Orc lands the fix
+   when the run reaches the front; if the default branch has moved past it,
+   Orc resolves again there.
+
+Do not touch the run branch or its worktree, the queue or `meta.json`, and do
+not reopen the Ship gate: Ship's approval stays valid because none of them
+change. If the helper says the run is merging or no longer queued, stop. If it
+cannot be resolved safely, run
+`orc-merge-main <run-id> --release-early-resolution --reason '<why>'` and say
+why.

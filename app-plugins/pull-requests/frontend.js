@@ -340,7 +340,7 @@ function ownStatus(row) {
   return { id: 'waiting', tone: stale ? 'warn' : 'neutral', text: 'Waiting for review', detail };
 }
 
-// Slack turned off in Settings, or not connected in Claude Code, leaves no
+// Slack turned off in Settings, or Orc signed out of Slack, leaves no
 // Slack on the page. The server already drops Slack from every row; this hides
 // the parts that would otherwise say "not posted".
 function slackOn() {
@@ -605,7 +605,21 @@ function statusHtml(status) {
     <p class="prs-status-line"><span class="prs-status-text">${esc(status.text)}</span>${status.detail ? `<span class="prs-status-detail">${esc(status.detail)}</span>` : ''}</p></div>`;
 }
 
-function ownRow(row, near) {
+// On Do next, the row's way forward is a pair of buttons beside the links:
+// one named after the step, which opens the assistant's plan, and Open run.
+// Each shows only where its small link does, and the links stay.
+function nextButtons(row, status) {
+  const ref = esc(prRef(row));
+  const plan = row.garyProposal?.href
+    ? `<a class="prs-start" data-lead="true" href="${esc(row.garyProposal.href)}" aria-label="${esc(status.text)} for ${ref}" title="${esc(row.garyProposal.label || 'See the suggested plan')}" data-focus-key="next:${esc(row.url)}">${esc(status.text)}</a>`
+    : '';
+  const run = row.orcRun?.runId
+    ? `<a class="prs-start" href="#${esc(encodeURIComponent(row.orcRun.runId))}" aria-label="Open run ${esc(row.orcRun.title || row.orcRun.runId)}" data-focus-key="open-run:${esc(row.url)}">Open run</a>`
+    : '';
+  return plan + run;
+}
+
+function ownRow(row, near, doNext = false) {
   const status = ownStatus(row);
   const updated = shortAge(row.updatedAt);
   const run = row.orcRun?.runId
@@ -617,8 +631,10 @@ function ownRow(row, near) {
     <div class="prs-row-body">${rowTitle(row)}
       ${meta([...boardFields(row, ['repo', 'author', 'size', 'ticket']), ...relations(row, near), updated ? `updated ${updated} ago` : '', run])}
       ${signals ? `<p class="prs-signals">${signals}</p>` : ''}${reasonsHtml(row)}</div>
-    ${rowLinks(row)}</li>`;
+    ${rowLinks(row, doNext ? nextButtons(row, status) : '')}</li>`;
 }
+
+const nextRow = (row, near) => ownRow(row, near, true);
 
 const REASON_TEXT = {
   feedback: reason => `${reason.bot ? '' : 'Comments from '}${reason.label}${reason.bot ? ' reviewed' : ''}`,
@@ -805,7 +821,7 @@ function renderDashboard() {
   const now = ready.length + action.length + opening.length + rereview.length + approved.length + chase.length;
   count('now', BOARD_LISTS.now.label, now);
   replaceHtml($('prs-now'), now
-    ? `<ul class="prs-rows">${rowsHtml(ready, ownRow)}${rowsHtml(action, ownRow)}${opening.map(readyToOpenRow).join('')}${rowsHtml(rereview, reviewedRow)}${rowsHtml(approved, ownRow)}${rowsHtml(chase, ownRow)}</ul>`
+    ? `<ul class="prs-rows">${rowsHtml(ready, nextRow)}${rowsHtml(action, nextRow)}${opening.map(readyToOpenRow).join('')}${rowsHtml(rereview, reviewedRow)}${rowsHtml(approved, nextRow)}${rowsHtml(chase, nextRow)}</ul>`
     : loading ? '' : searching ? emptyHtml('Nothing that needs you matches your search.', '', 'search')
       : emptyHtml('Nothing needs you right now.', ' No merges, conflicts, new feedback, runs to open, re-reviews or quiet reviews to chase.', 'clear'));
 
@@ -1081,7 +1097,7 @@ html, body { background: var(--bg); }
 .tl-item:last-child { padding-bottom: 0; }
 .tl-avatar { position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--chip); }
 .tl-avatar, .mini { display: inline-grid; place-items: center; object-fit: cover; color: var(--muted-strong); font-size: 12px; font-weight: 600; text-transform: uppercase; }
-.mini { width: 20px; height: 20px; border-radius: 50%; background: var(--chip); font-size: 10px; flex-shrink: 0; }
+.mini { width: 20px; height: 20px; border-radius: 50%; background: var(--chip); font-size: 11px; flex-shrink: 0; }
 .badge { position: absolute; left: 3px; top: 0; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--chip); color: var(--muted-strong); box-shadow: 0 0 0 3px var(--bg); }
 [data-tone="ok"] > .badge { background: var(--green); color: var(--panel); }
 [data-tone="fail"] > .badge { background: var(--red); color: var(--panel); }

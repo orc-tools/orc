@@ -37,7 +37,7 @@ class OrcFastToggle extends HTMLElement {
         }
         /* The new-run composer's toggle names its speed when on, as the other
            launch toggles do; elsewhere Fast stays a round icon. */
-        ${launchToggleNameCss(':host([named]) :is(input:checked + label, button[data-active])')}
+        ${launchToggleNameCss(':is(input:checked + label, button[data-active])', '[named]')}
       </style>
       <input id="fast" type="checkbox" part="input" aria-describedby="hint">
       <label for="fast" part="button">${BOLT}<span class="name" part="name" aria-hidden="true"></span></label>

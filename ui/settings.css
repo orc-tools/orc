@@ -1,5 +1,5 @@
 /* Settings, its project and plugin pages, and the changelog. Linked after
-   index.html's inline stylesheet, so these rules win a tie with the shell's.
+   the shell stylesheets, so these rules win a tie with the shell's.
 
    Settings is drawn as a control panel. Every colour comes from the painted
    theme's palette and card tokens, so the panel changes with the theme. A
@@ -47,7 +47,8 @@
   background-image: radial-gradient(180px 90px at 0 50%, color-mix(in srgb, var(--cp-state) 15%, transparent), transparent 72%);
 }
 /* The signal line along the header's foot takes the state's colour, and
-   sweeps while a save or a load is in flight. */
+   sweeps while a save or a load is in flight: the line shrinks to a band
+   that slides across, clipped by the header, so only its transform moves. */
 .settings-head::after {
   content: ""; position: absolute; inset: auto 0 0; height: 2px; opacity: .85;
   background: linear-gradient(90deg, var(--cp-state), transparent 60%);
@@ -55,11 +56,12 @@
 @media (prefers-reduced-motion: no-preference) {
   #settings-view:has(#settings-status[data-state="busy"]) .settings-head::after,
   #settings-view[aria-busy="true"] .settings-head::after {
-    background: linear-gradient(90deg, transparent, var(--cp-state), transparent) 0 0 / 40% 100% no-repeat;
+    right: auto; width: 40%;
+    background: linear-gradient(90deg, transparent, var(--cp-state), transparent);
     animation: cp-sweep 1.1s linear infinite;
   }
 }
-@keyframes cp-sweep { from { background-position: -70% 0; } to { background-position: 170% 0; } }
+@keyframes cp-sweep { from { transform: translateX(-105%); } to { transform: translateX(255%); } }
 .cp-beacon {
   flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--cp-state);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--cp-state) 22%, transparent), 0 0 12px color-mix(in srgb, var(--cp-state) 55%, transparent);
@@ -72,7 +74,7 @@
 @keyframes cp-pulse { from { opacity: .35; } }
 .settings-head-main { min-width: 0; margin-right: auto; }
 .settings-head :is(h2, h3) {
-  margin: 0; font-size: 22px; font-weight: 650; line-height: 1.2;
+  margin: 0; font-size: 24px; font-weight: 650; line-height: 1.2;
   letter-spacing: -.015em; color: var(--heading);
 }
 .cp-readouts { display: flex; align-items: stretch; flex-wrap: wrap; row-gap: 8px; min-width: 0; }
@@ -111,6 +113,9 @@
   .cp-readout:not(:first-child) { display: none; }
   .cp-readout { padding-right: 4px; }
   .settings-head { padding: 10px 10px 11px 14px; }
+  .settings-head:has(.cp-readouts .settings-update:not([hidden])) .cp-readouts {
+    order: 1; flex-basis: 100%;
+  }
 }
 #settings-body { flex: 1 0 auto; display: flex; flex-direction: column; gap: 16px; }
 /* A tab whose panel is a screen of its own (Skills) sits after the form, so
@@ -149,13 +154,13 @@
 .basics-accent-options legend { padding: 0; margin-bottom: 4px; font-size: 13px; }
 .basics-accent-choices {
   display: flex; flex-wrap: wrap; gap: 2px; width: fit-content;
-  padding: 3px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
+  padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
 }
 .basics-accent-choices label { position: relative; cursor: var(--orc-cursor-pointer, pointer); }
 .basics-accent-choices input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: inherit; }
 .basics-accent-choices span {
   display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; min-height: 32px;
-  border-radius: 5px; font-size: 13px; font-weight: 600;
+  border-radius: 6px; font-size: 13px; font-weight: 600;
 }
 .basics-accent-choices span::before { content: ''; width: 12px; height: 12px; border-radius: 50%; background: var(--swatch); }
 .basics-accent-choices input:checked + span { background: color-mix(in srgb, var(--accent) 20%, var(--bg)); color: var(--heading); }
@@ -167,11 +172,11 @@
 .basics-accent-custom input:checked + span::before { background: var(--custom-swatch); }
 .basics-accent-hex { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
 .basics-accent-hex[hidden] { display: none; }
-.basics-accent-hex > label { color: var(--muted); font-size: 13px; }
+.basics-accent-hex > label { color: var(--muted-strong); font-size: 13px; }
 .basics-accent-hex .settings-hint { margin: 0; }
 .basics-accent-hex-field {
   display: inline-flex; align-items: center; gap: 8px; width: 9.5em; padding: 0 8px;
-  border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
+  border: 1px solid var(--control-border); border-radius: 8px; background: var(--bg);
 }
 .basics-accent-hex-field::before { content: ''; flex: none; width: 14px; height: 14px; border-radius: 4px; background: var(--custom-swatch); }
 .basics-accent-hex-field input {
@@ -226,6 +231,30 @@
   display: flex; flex-direction: column; gap: 10px;
   padding-top: 12px; margin-top: 2px;
   border-top: 1px solid color-mix(in srgb, var(--cp-edge) 65%, transparent);
+}
+/* Fast mode: one row per agent under the switch, its mark, what Fast costs
+   there, and whether the composer offers it. */
+.fast-agents {
+  display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none;
+  border: 1px solid color-mix(in srgb, var(--cp-edge) 75%, transparent); border-radius: var(--orc-radius-sm, 8px);
+}
+.fast-agent {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 4px 12px;
+  padding: 10px 12px;
+}
+.fast-agent + .fast-agent { border-top: 1px solid color-mix(in srgb, var(--cp-edge) 65%, transparent); }
+.fast-agent-mark { display: grid; place-items: center; align-self: start; height: 20px; color: var(--heading); }
+.fast-agent-mark svg { width: 18px; height: 18px; }
+.fast-agent-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fast-agent-name { font-size: 13px; line-height: 20px; font-weight: 600; color: var(--heading); }
+.fast-agent-detail { font-size: 12px; line-height: 1.45; color: var(--muted-strong); text-wrap: pretty; }
+.fast-agent-state { font-size: 12px; color: var(--muted-strong); white-space: nowrap; }
+.fast-agent[data-state="offered"] .fast-agent-state { color: var(--green-text); }
+.fast-agent[data-state="off"] .fast-agent-mark { opacity: .55; }
+.fast-agent .settings-btn-inline { margin: 0; white-space: nowrap; }
+@container settings (max-width: 480px) {
+  .fast-agent { grid-template-columns: 20px minmax(0, 1fr); }
+  .fast-agent > :last-child { grid-column: 2; justify-self: start; }
 }
 /* Git & delivery defaults: Ship action, Push to a PR and Branch prefix, each
    a group of its own split by a hairline. */
@@ -516,6 +545,43 @@
 /* <orc-theme-toggle> owns its box, hover, focus ring and coarse-pointer
    target — only its place in the settings header is stated here */
 #theme-btn { flex: 0 0 auto; }
+.cp-version-row {
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; max-width: 100%;
+}
+.cp-version-row:not(:has(> :not([hidden]))), [data-version-readout]:not(:has(.cp-version-row > :not([hidden]))) {
+  display: none;
+}
+.settings-update {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  padding: 1px 9px 1px 8px; border-radius: 999px; cursor: var(--orc-cursor-pointer, pointer);
+  font: 600 12px/20px var(--orc-font-sans); color: var(--green-text);
+  background: color-mix(in srgb, var(--green) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green) 40%, transparent);
+}
+.settings-update[hidden] { display: none; }
+.settings-update:hover { border-color: var(--green); }
+.settings-update:focus-visible { outline: var(--orc-focus-ring); outline-offset: var(--orc-focus-offset); }
+.settings-update::before {
+  content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+}
+.settings-update::after { content: ""; position: absolute; inset: -4px; }
+
+#release-update-dialog {
+  --orc-dialog-max-width: 520px;
+  --orc-dialog-body-padding: 18px 18px 20px;
+  --dialog-bg: var(--bg);
+}
+#release-update-dialog::part(header) { padding: 10px 18px; }
+#release-update-dialog::part(heading) { font-size: 16px; }
+#release-update-dialog::part(footer) { flex-wrap: wrap; padding: 14px 18px; }
+#release-update-dialog p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--heading); }
+#release-update-dialog p + p:not([hidden]) { margin-top: 10px; }
+#release-update-dialog code { font-size: 12.5px; font-weight: 600; }
+#release-update-dialog .release-update-hint { margin-top: 14px; font-size: 13px; color: var(--muted-strong); }
+#release-update-dialog .release-update-error { color: var(--red-text); overflow-wrap: anywhere; }
+#release-update-dialog .release-update-error:empty { display: none; }
+#release-update-dialog orc-button::part(button) { font-size: 13px; padding: 8px 12px; }
+
 .settings-version {
   display: inline-flex; align-items: center; text-decoration: none;
   font-size: 12px; font-weight: 600; color: var(--accent-text);
@@ -745,7 +811,7 @@
 }
 .proj-link:hover { border-color: var(--cp-signal); background: color-mix(in srgb, var(--cp-signal) 7%, var(--cp-well)); }
 .proj-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.proj-link .project-icon { width: 28px; height: 28px; border-radius: 7px; }
+.proj-link .project-icon { width: 28px; height: 28px; border-radius: 8px; }
 .proj-link .project-monogram { font-size: 11px; }
 .proj-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .proj-name strong {
@@ -892,7 +958,7 @@
   font: 13px/1.4 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .path-suggestions[hidden] { display: none; }
-.path-suggestions li { padding: 5px 8px; border-radius: 5px; color: var(--text); cursor: var(--orc-cursor-pointer, pointer); overflow-wrap: anywhere; }
+.path-suggestions li { padding: 5px 8px; border-radius: 6px; color: var(--text); cursor: var(--orc-cursor-pointer, pointer); overflow-wrap: anywhere; }
 .path-suggestions li:hover { background: var(--button-hover); }
 .path-suggestions li[aria-selected="true"] { background: var(--accent-soft); color: var(--heading); outline: 1px solid var(--focus); outline-offset: -1px; }
 .path-suggestion-detail { display: block; color: var(--muted-strong); font: 12px/1.4 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -1104,12 +1170,12 @@
 .login-inline [data-account-action]:not(:disabled):hover { border-color: var(--red); background: transparent; color: var(--red-text); }
 .login-toggle {
   display: grid; place-items: center; flex: none; width: 26px; height: 26px; padding: 0;
-  border: 1px solid var(--control-border, var(--border)); border-radius: 7px; background: transparent; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+  border: 1px solid var(--control-border, var(--border)); border-radius: 8px; background: transparent; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
 }
 .login-toggle:hover { background: var(--accent-soft); color: var(--heading); }
 .login-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .login-toggle:focus-visible, .login-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.login-link { padding: 0; border: 0; border-radius: 3px; background: none; color: var(--accent-text); font: inherit; cursor: var(--orc-cursor-pointer, pointer); }
+.login-link { padding: 0; border: 0; border-radius: 4px; background: none; color: var(--accent-text); font: inherit; cursor: var(--orc-cursor-pointer, pointer); }
 .login-link:hover { text-decoration: underline; }
 /* The opened part: the facts beside every usage window, then what to do. */
 .login-more { display: grid; grid-template-columns: minmax(150px, 250px) minmax(0, 1fr); align-items: start; gap: 10px 22px; padding: 11px 14px; border-top: 1px solid var(--border); }
@@ -1133,24 +1199,36 @@
 .login-other-clis:empty { display: none; }
 .login-other-clis li { display: flex; align-items: center; gap: 7px; }
 .login-other-clis strong { color: var(--text); font-weight: 600; }
-/* A narrow module (half a row, a small window, a phone) stacks the row: the
-   name and state on one line, what is left under it. */
+/* A narrow module (half a row, a small window, a phone) stacks the row in two
+   tidy lines: the name and the chevron, then the email or folder and the
+   state. What is left, then Sign in and Remove, each take a line under it. */
 @container login (max-width: 620px) {
-  /* The name, its state and the chevron share the first line; the email or
-     folder, what is left, then Sign in and Remove each take a line under it. */
-  .login-row { display: flex; flex-wrap: wrap; column-gap: 12px; }
+  .login-row {
+    grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title toggle" "sub state" "middle middle" "inline inline";
+    gap: 2px 12px;
+  }
   .login-who, .login-side { display: contents; }
-  .login-title { flex: 1 1 auto; }
-  .login-side > .agent-account-state { margin-left: auto; }
-  .login-sub { order: 1; flex: 1 1 100%; margin-top: -6px; }
-  .login-middle { order: 2; flex: 1 1 100%; }
-  .login-inline { order: 3; flex: 1 1 100%; }
+  .login-title { grid-area: title; flex-wrap: nowrap; min-width: 0; }
+  /* A long name shortens before the plan badge leaves its line. */
+  .login-title h4 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .login-title .agent-account-plan { flex: none; }
+  .login-toggle { grid-area: toggle; justify-self: end; }
+  /* A long email shortens before the state. */
+  .login-sub { grid-area: sub; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .login-side > .agent-account-state { grid-area: state; justify-self: end; }
+  .login-middle { grid-area: middle; margin-top: 10px; }
+  .login-inline { grid-area: inline; justify-content: flex-start; margin-top: 8px; }
   .login-more { grid-template-columns: minmax(0, 1fr); }
 }
 @container login (max-width: 320px) {
   .login-module-cli { position: static; height: auto; padding: 0; flex-wrap: wrap; background: none; white-space: normal; }
 }
-@media (pointer: coarse) { .login-toggle { width: 44px; height: 44px; } }
+/* A touch screen draws the chevron at its desktop size and widens only the
+   area it answers to. */
+@media (pointer: coarse) {
+  .login-toggle { position: relative; }
+  .login-toggle::before { content: ''; position: absolute; inset: -9px; }
+}
 .device-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .device-row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .device-row:last-child { border-bottom: none; }
@@ -1234,7 +1312,7 @@
   justify-content: center;
   height: 20px;
   padding: 0 6px;
-  border-radius: 5px;
+  border-radius: 6px;
   border: 1px solid var(--cp-edge, var(--border));
   border-bottom-width: 2px;
   background: var(--cp-plate, var(--panel));
@@ -1410,6 +1488,7 @@
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
+/* impeccable-disable-next-line side-tab: an allowed edge marker, listed in DESIGN.md */
 .settings-search-hit.active::before {
   content: "";
   position: absolute;
@@ -1417,7 +1496,7 @@
   top: 8px;
   bottom: 8px;
   width: 3px;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 4px 4px 0;
   background: var(--green);
   box-shadow: 0 0 8px color-mix(in srgb, var(--green) 65%, transparent);
 }
@@ -1469,7 +1548,7 @@
 }
 .settings-search-hit mark {
   background: color-mix(in srgb, var(--green) 22%, transparent);
-  color: var(--green-text, var(--green));
+  color: color-mix(in srgb, var(--green-text, var(--green)) 80%, var(--heading));
   border-radius: 2px;
   padding: 0 1px;
   font-weight: 700;
@@ -1491,7 +1570,7 @@
 }
 .settings-search-pill,
 .ss-pill {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.3;
   padding: 1px 6px;
@@ -1618,7 +1697,7 @@
   border: 1px solid var(--border);
   background: var(--panel);
   padding: 16px 14px 14px;
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 22%, transparent);
+  box-shadow: var(--float-shadow);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1712,7 +1791,7 @@
   flex-direction: column;
   gap: 4px;
   padding: 7px 8px;
-  border-radius: 7px;
+  border-radius: 8px;
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--bg) 50%, transparent);
   min-width: 0;
@@ -1798,7 +1877,7 @@
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: 7px;
+  border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: color-mix(in srgb, var(--bg) 55%, var(--panel));
   font-size: 12px;
@@ -1845,7 +1924,7 @@
 }
 .ss-fake-fader {
   height: 10px;
-  border-radius: 3px;
+  border-radius: 4px;
   background:
     repeating-linear-gradient(90deg, transparent 0 4px, var(--panel) 4px 6px),
     linear-gradient(90deg, var(--accent) calc(var(--ss-level, 0.8) * 100%), color-mix(in srgb, var(--muted) 35%, var(--bg)) 0);
@@ -2004,7 +2083,7 @@
   justify-content: space-between;
   gap: 6px;
   padding: 7px 9px;
-  border-radius: 7px;
+  border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   background: color-mix(in srgb, var(--bg) 55%, var(--panel));
 }
@@ -2333,4 +2412,98 @@
   .ins-editor { height: 48vh; }
   .ins-row > .ins-line { flex-wrap: wrap; row-gap: 4px; height: auto; min-height: 28px; }
   .ins-row > .ins-line .ins-path { flex-basis: 100%; order: 1; }
+}
+
+/* Integrations: one card each for Slack, GitHub and Notion. Slack's set-up
+   steps run long, so it takes the narrower left column and the two tables
+   stack on the right; below 900px they all stack. */
+.integrations-lede { max-width: 70ch; margin: 0 0 22px; }
+.integrations-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 8fr); gap: 20px 24px; align-items: start; }
+.integrations-stack { display: grid; gap: 20px; min-width: 0; }
+.integrations-error { margin-top: 14px; }
+@container settings (max-width: 900px) {
+  .integrations-grid { grid-template-columns: minmax(0, 1fr); }
+}
+/* The mark sits in the switch's own slot, in the same grid cell, so a click
+   on it still reaches the switch underneath. */
+.integration-switch { display: grid; }
+.integration-switch > * { grid-area: 1 / 1; }
+.integration-mark { z-index: 1; align-self: center; justify-self: start; display: inline-flex; margin-left: 12px; pointer-events: none; color: var(--heading); }
+.integration-mark svg { width: 18px; height: 18px; }
+:where(#settings-view) .integration-switch > orc-switch.settings-check { padding-left: 40px; }
+:where(#settings-view) orc-switch.settings-check[id^="set-integration-"]::part(label) { font-weight: 600; color: var(--heading); }
+:where(#settings-view) .settings-fieldset:has(> .integration-switch > .cp-power[checked]) {
+  --cp-lamp: var(--cp-on); --cp-lamp-glow: color-mix(in srgb, var(--cp-on) 75%, transparent);
+}
+:where(#settings-view) .settings-fieldset:has(> .integration-switch > .cp-power:not([checked])) { --cp-lamp: var(--cp-idle); }
+/* A fieldset is as wide as its widest line unless told otherwise, which let
+   a long table push Slack's card into GitHub's. */
+.integrations-grid .settings-fieldset { min-inline-size: 0; }
+.integration-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.integration-body > :is(p, h3, hr, ol) { margin: 0; }
+.integration-state { font-size: 13px; line-height: 1.5; color: var(--text); }
+.integration-state > span:first-child { margin-right: 4px; }
+.integration-state b { font-weight: 600; color: var(--heading); }
+.integration-state-ok { font-weight: 600; color: var(--green-text); }
+.integration-state-warn { font-weight: 600; color: var(--yellow-text); }
+.integration-state-muted { font-weight: 600; color: var(--muted-strong); }
+.integration-rule { border: 0; border-top: 1px solid var(--cp-edge, var(--border)); margin: 6px 0 4px; }
+.integration-body a { color: var(--accent-text); text-underline-offset: 2px; }
+.integration-heading { font-size: 13px; font-weight: 600; color: var(--heading); }
+.integration-body code { padding: 1px 5px; border-radius: 4px; background: var(--code); color: var(--heading); font: 12px/1.4 var(--orc-font-mono); overflow-wrap: anywhere; }
+.integration-steps { padding: 0; list-style: none; counter-reset: integration-step; }
+.integration-steps li {
+  counter-increment: integration-step; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 4px 10px; align-items: center; padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, var(--cp-edge, var(--border)) 60%, transparent);
+}
+.integration-steps li:first-child { border-top: 0; padding-top: 2px; }
+.integration-steps li::before {
+  content: counter(integration-step); grid-row: 1 / span 2; align-self: start; width: 20px; height: 20px;
+  box-sizing: border-box; border: 1px solid var(--cp-edge, var(--border)); border-radius: 50%;
+  font: 600 11px/18px var(--orc-font-mono); text-align: center; color: var(--muted-strong);
+}
+.integration-steps li[data-done]::before { content: "✓"; color: var(--green-text); border-color: color-mix(in srgb, var(--green) 45%, var(--cp-edge, var(--border))); }
+.integration-steps strong { font-size: 13px; font-weight: 600; color: var(--heading); }
+.integration-steps p { grid-column: 2; margin: 0; font-size: 12px; color: var(--muted-strong); }
+.integration-steps :is(orc-button, .integration-done) { grid-row: 1 / span 2; grid-column: 3; }
+.integration-done { font-size: 12px; font-weight: 600; color: var(--green-text); }
+.integration-app-fields { grid-column: 2; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 4px; }
+.integration-app-fields .settings-field { max-width: none; }
+.integration-total:has(.integration-actions) { align-items: center; flex-wrap: wrap; }
+.integration-actions { display: inline-flex; flex: none; gap: 6px; }
+.integration-table-wrap { min-width: 0; overflow-x: auto; }
+.integration-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.integration-table th {
+  padding: 0 10px 6px 0; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted-strong);
+  border-bottom: 1px solid var(--cp-edge, var(--border)); white-space: nowrap;
+}
+.integration-table td {
+  padding: 9px 10px 9px 0; vertical-align: top; color: var(--heading);
+  border-bottom: 1px solid color-mix(in srgb, var(--cp-edge, var(--border)) 60%, transparent);
+}
+.integration-table td:first-child { width: 100%; }
+.integration-table td small { display: block; margin-top: 1px; font-size: 12px; color: var(--muted-strong); }
+.integration-table tr[data-off] td { color: var(--muted-strong); }
+.integration-table .integration-count, .integration-table th:last-child, .integration-table td:last-child { text-align: right; padding-right: 0; }
+.integration-num { font: 12px/1.4 var(--orc-font-mono); font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+td.integration-num { padding-top: 11px; }
+td.integration-num small { font: inherit; }
+.integration-total { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted-strong); }
+.integration-total .integration-num { color: var(--heading); }
+/* Narrow, each row is its name over its numbers, as the column heads would
+   no longer fit beside them. */
+@container settings (max-width: 560px) {
+  .integration-table thead { display: none; }
+  .integration-table tr { display: flex; flex-wrap: wrap; gap: 2px 14px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--cp-edge, var(--border)) 60%, transparent); }
+  .integration-table td { display: block; padding: 0; border: 0; }
+  .integration-table td:first-child { flex: 1 0 100%; }
+  .integration-table td.integration-num { padding-top: 2px; }
+  .integration-table td.integration-num small { display: inline; margin-left: 6px; }
+  .integration-table td:last-child { margin-left: auto; }
+  /* With no column heads, a count says what it counts. */
+  .integration-table td[data-unit]::after { content: attr(data-unit); color: var(--muted-strong); }
+  .integration-steps li { grid-template-columns: 22px minmax(0, 1fr); }
+  .integration-steps :is(orc-button, .integration-done) { grid-row: auto; grid-column: 2; justify-self: start; margin-top: 4px; }
+  .integration-app-fields { grid-template-columns: minmax(0, 1fr); }
 }

@@ -10,7 +10,7 @@ import { subscribeModelCatalog, syncModelCatalog } from './model-catalog.js';
 import { onReducedMotionChange, reducedMotion } from './motion.js';
 import { trackUsage } from './usage-tracking.js';
 import { modelRacks } from './orchestrate-catalogue.js';
-import { EFFORTS, EFFORT_NAMES, JOBS, LEAD, effortWords, landing, leadRoute, routePhrase, routeSpeed, routeTo, spanWithin } from './orchestrate-routes.js';
+import { EFFORTS, EFFORT_NAMES, JOBS, LEAD, PLANNER, effortWords, landing, leadRoute, routePhrase, routeSpeed, routeTo, spanWithin } from './orchestrate-routes.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const LINKS = 22;
@@ -142,8 +142,8 @@ const jobHtml = (job, nth) => `
         <div class="orch-effort-track">
           <span class="orch-effort-rail"></span><span class="orch-effort-fill"></span>
           <span class="orch-effort-stops" data-orch-stops aria-hidden="true"></span>
-          ${job.id === LEAD ? '' : `<input type="range" class="orch-effort-low" data-orch-low data-track="Lowest effort" min="0" max="1" step="1" aria-label="Lowest effort for ${esc(job.name)}">`}
-          <input type="range" class="orch-effort-high" data-orch-high data-track="${job.id === LEAD ? 'Lead effort' : 'Highest effort'}" min="0" max="1" step="1" aria-label="${job.id === LEAD ? 'Effort' : 'Highest effort'} for ${esc(job.name)}">
+          ${job.single ? '' : `<input type="range" class="orch-effort-low" data-orch-low data-track="Lowest effort" min="0" max="1" step="1" aria-label="Lowest effort for ${esc(job.name)}">`}
+          <input type="range" class="orch-effort-high" data-orch-high data-track="${job.single ? `${job.name} effort` : 'Highest effort'}" min="0" max="1" step="1" aria-label="${job.single ? 'Effort' : 'Highest effort'} for ${esc(job.name)}">
         </div>
         <output class="orch-effort-words" data-orch-words></output>
       </div>
@@ -158,8 +158,8 @@ const boardHtml = showTrace => `
     <legend class="settings-label">Routes</legend>
     <div class="orch-top">
       <div class="orch-guide">
-        <p class="settings-hint orch-how orch-how-wide">Drag the jack on a job to a model, or press the jack and then a model. A cable moves from either end. Route at least one job to turn Orchestrate on; any other unplugged job is the lead’s call.</p>
-        <p class="settings-hint orch-how orch-how-narrow">Pick a model for each job. Route at least one job to turn Orchestrate on; any other job left on Lead decides is the lead’s call. A wider window shows the routes as cables.</p>
+        <p class="settings-hint orch-how orch-how-wide">Drag the jack on a job to a model, or press the jack and then a model. A cable moves from either end. Route a job below the Lead to turn Orchestrate on. An unplugged Planner plans on the Lead, and any other unplugged job is the lead’s call.</p>
+        <p class="settings-hint orch-how orch-how-narrow">Pick a model for each job. Route a job below the Lead to turn Orchestrate on. A Planner left on the Lead’s model plans on the Lead, and any other job left on Lead decides is the lead’s call. A wider window shows the routes as cables.</p>
         ${showTrace ? `<p class="orch-trace-line" data-orch-trace-line aria-hidden="true"></p>` : ''}
       </div>
       <div class="orch-actions">
@@ -228,7 +228,7 @@ export function mountBoard(slot, { signal, saved, loadRules, saveRules, changed,
   // ---- what the cards show ------------------------------------------------
 
   function optionsHtml(job, route, found) {
-    const open = job.id === LEAD ? 'The composer’s model' : 'Lead decides';
+    const open = job.id === LEAD ? 'The composer’s model' : job.id === PLANNER ? 'The Lead’s model' : 'Lead decides';
     const groups = racks.map((rack, r) => `<optgroup label="${esc(rack.label)}">${rack.models.map((model, m) =>
       `<option value="${r}:${m}"${found && found.rack === rack && found.model === model ? ' selected' : ''}>${esc(model.name)}</option>`).join('')}</optgroup>`).join('');
     const lost = route && !found ? `<option value="?" selected disabled>${esc(route.model)} on ${esc(route.provider)} (not on offer)</option>` : '';
@@ -248,7 +248,7 @@ export function mountBoard(slot, { signal, saved, loadRules, saveRules, changed,
     const words = card.querySelector('[data-orch-words]');
     const effort = card.querySelector('[data-orch-effort]');
     const span = !levels.length ? null
-      : job.id === LEAD ? Array(2).fill(leadEffort(route, levels)) : spanWithin(levels, route.effort);
+      : job.single ? Array(2).fill(leadEffort(route, levels)) : spanWithin(levels, route.effort);
     effort.classList.toggle('is-off', !span);
     effort.dataset.levels = levels.join(' ');
     effort.classList.toggle('is-fixed', levels.length < 2);
@@ -263,10 +263,10 @@ export function mountBoard(slot, { signal, saved, loadRules, saveRules, changed,
       high.value = String(levels.indexOf(span[1]));
     }
     paintSpan(card, job);
-    if (!found) words.textContent = route ? '' : job.id === LEAD ? 'Set in the composer' : 'Up to the lead';
+    if (!found) words.textContent = route ? '' : job.id === LEAD ? 'Set in the composer' : job.id === PLANNER ? 'Plans on the Lead' : 'Up to the lead';
     else if (!levels.length) words.textContent = 'Sets its own effort';
-    // A lead route saved without an effort leaves it to the composer until a thumb moves.
-    else if (job.id === LEAD && !route.effort) words.textContent = 'The composer’s effort';
+    // A planner or lead route saved without an effort leaves it to the composer until a thumb moves.
+    else if (job.single && !route.effort) words.textContent = 'The composer’s effort';
   }
 
   function paintFast(card, job, route, found) {
@@ -288,15 +288,15 @@ export function mountBoard(slot, { signal, saved, loadRules, saveRules, changed,
     const levels = effort.dataset.levels ? effort.dataset.levels.split(' ') : [];
     if (!levels.length || effort.classList.contains('is-off')) return null;
     const low = card.querySelector('[data-orch-low]'), high = card.querySelector('[data-orch-high]');
-    const top = Number(high.value), bottom = low ? Math.min(Number(low.value), top) : job.id === LEAD ? top : 0;
+    const top = Number(high.value), bottom = low ? Math.min(Number(low.value), top) : job.single ? top : 0;
     const last = Math.max(levels.length - 1, 1);
-    effort.style.setProperty('--from', `${(job.id === LEAD ? 0 : bottom) / last * 100}%`);
+    effort.style.setProperty('--from', `${(job.single ? 0 : bottom) / last * 100}%`);
     effort.style.setProperty('--to', `${top / last * 100}%`);
     [...card.querySelectorAll('[data-orch-stops] i')].forEach((stop, index) =>
-      stop.classList.toggle('is-lit', index <= top && (job.id === LEAD || index >= bottom)));
+      stop.classList.toggle('is-lit', index <= top && (job.single || index >= bottom)));
     const span = [levels[bottom], levels[top]];
-    const whole = job.id !== LEAD && bottom === 0 && top === levels.length - 1 && levels.length > 1;
-    const text = job.id === LEAD ? EFFORT_NAMES[span[1]] : whole ? 'Any effort' : effortWords(span);
+    const whole = !job.single && bottom === 0 && top === levels.length - 1 && levels.length > 1;
+    const text = job.single ? EFFORT_NAMES[span[1]] : whole ? 'Any effort' : effortWords(span);
     card.querySelector('[data-orch-words]').textContent = text;
     if (low) low.setAttribute('aria-valuetext', EFFORT_NAMES[span[0]]);
     high.setAttribute('aria-valuetext', EFFORT_NAMES[span[1]]);
@@ -314,6 +314,7 @@ export function mountBoard(slot, { signal, saved, loadRules, saveRules, changed,
     note.hidden = !(route && !found);
     note.textContent = note.hidden ? '' : job.id === LEAD
       ? 'This model is not on offer here, so the composer keeps its own.'
+      : job.id === PLANNER ? 'This model is not on offer here, so plans start on the Lead.'
       : 'This model is not on offer here, so tasks with this job fail until you change it.';
     jackOf(job.id).setAttribute('aria-label', found
       ? `${job.name} cable, plugged into ${found.model.name}. Press to move it, Delete to unplug it.`
@@ -625,16 +626,16 @@ export function mountBoard(slot, { signal, saved, loadRules, saveRules, changed,
     save();
   }
 
-  // The lead route on a model, keeping the saved one's effort and speed
-  // unless `change` names them.
-  const leadOn = (rack, model, change = {}) => {
-    const kept = routes[LEAD];
+  // The planner's or lead's route on a model, keeping the saved one's effort
+  // and speed unless `change` names them.
+  const singleOn = (job, rack, model, change = {}) => {
+    const kept = routes[job.id];
     return leadRoute(rack, model, { effort: kept?.effort?.[1], fast: kept?.fast, ...change });
   };
 
   function plug(job, rack, model, { from = null, how = 'list' } = {}) {
-    const next = job.id === LEAD
-      ? leadOn(rack, model, { effort: leadEffort(routes[LEAD], model.levels) })
+    const next = job.single
+      ? singleOn(job, rack, model, { effort: leadEffort(routes[job.id], model.levels) })
       : routeTo(rack, model, routes[job.id]?.effort, routes[job.id]?.fast);
     if (JSON.stringify(next) === JSON.stringify(routes[job.id])) {
       syncAll();
@@ -692,8 +693,10 @@ export function mountBoard(slot, { signal, saved, loadRules, saveRules, changed,
     light([job.id]);
     const line = part('trace-line');
     line.style.setProperty('--job', tone(job));
-    line.textContent = job.id === LEAD
-      ? (route ? `${routePhrase(racks, route)} plans the work and hands out tasks.` : 'No lead yet. Give the lead a model: a run cannot launch on this preset without one.')
+    line.textContent = job.id === PLANNER
+      ? (route ? `${routePhrase(racks, route)} writes the plan when you press Start.` : 'No planner. Plans are written on the Lead.')
+      : job.id === LEAD
+      ? (route ? `${routePhrase(racks, route)} builds the plan and hands out tasks.` : 'No lead yet. Give the lead a model: a run cannot launch on this preset without one.')
       : (route ? `${job.name} tasks go to ${routePhrase(racks, route)}.` : `${job.name} tasks go to whichever model the lead picks.`);
     const found = landing(racks, route);
     pulse(job.id, () => found && seat(modelButton(found.rack.agent, found.model.id), job));
@@ -723,13 +726,13 @@ export function mountBoard(slot, { signal, saved, loadRules, saveRules, changed,
     } else if (event.target.matches('[data-orch-low], [data-orch-high]')) {
       const span = paintSpan(cardOf(job.id), job);
       const fast = routes[job.id]?.fast;
-      if (span) retune(job, found => job.id === LEAD
-        ? leadOn(found.rack, found.model, { effort: span[1] })
+      if (span) retune(job, found => job.single
+        ? singleOn(job, found.rack, found.model, { effort: span[1] })
         : routeTo(found.rack, found.model, span, fast));
     } else if (event.target.matches('[data-orch-fast]')) {
       const route = routes[job.id], fast = event.target.speed;
-      retune(job, found => job.id === LEAD
-        ? leadOn(found.rack, found.model, { fast })
+      retune(job, found => job.single
+        ? singleOn(job, found.rack, found.model, { fast })
         : routeTo(found.rack, found.model, route.effort, fast), 'fast');
     }
   }, { signal });

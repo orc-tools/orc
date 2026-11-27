@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -113,14 +114,29 @@ def key(item: dict) -> tuple:
 
 
 def base_tree(repo: Path, base: str, files: dict[str, str], tmp: Path) -> list[str]:
-    """The files as they were at `base`, each written at its path now."""
+    """The whole checkout as it was at `base`, with each changed file written
+    at its path now. The detector follows a page to the stylesheets it links,
+    so a tree holding only the changed files would hide the problems in the
+    unchanged ones and report them all as new."""
+    # A throwaway index, not `git archive`: that would leave out every folder
+    # .gitattributes marks export-ignore, docs/ and site/ among them.
+    with tempfile.TemporaryDirectory(prefix="orc-design-check-index-") as scratch:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(scratch) / "index")}
+        for args in (["read-tree", base], ["checkout-index", "-a", "--prefix=%s/" % tmp]):
+            out = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, env=env)
+            if out.returncode:
+                print("orc-design-check: could not unpack %s: %s" % (base[:9], out.stderr.strip()),
+                      file=sys.stderr)
+                raise SystemExit(2)
+    # The base's own design notes go: both sides are judged by the checkout's.
+    for rel in CONTEXT:
+        (tmp / rel).unlink(missing_ok=True)
     existing = []
     for rel, old in files.items():
-        blob = subprocess.run(["git", "-C", str(repo), "show", "%s:%s" % (base, old)],
-                              capture_output=True)
-        if blob.returncode == 0:
-            (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
-            (tmp / rel).write_bytes(blob.stdout)
+        if (tmp / old).is_file():
+            if rel != old:
+                (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(tmp / old, tmp / rel)
             existing.append(rel)
     copy_context(repo, tmp)
     return existing

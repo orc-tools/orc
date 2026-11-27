@@ -1,7 +1,6 @@
 """Replace a provider session while retaining one run's workspace and authority."""
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -22,6 +21,8 @@ import headless_session
 import power_mode
 import session_identity
 import session_paths
+import run_lifecycle
+import follow_up_queue
 import run_session
 import run_chat
 import skill_commands
@@ -588,43 +589,37 @@ def _retain_previous_transcript(run, meta, token, previous_session_id, stub):
     return target
 
 
-def _release_follow_ups(run):
+def _release_follow_ups_locked(run):
     """Let the queue carry on with the new session, as Resume queue would.
 
     A switch is an explicit "carry on", so it clears the old session's failed
     send and lifts a Stop hold. A pause the user or the run queue chose
-    (``runPause``, ``focusPaused``) stays in force. Holds the same lock as
-    orc-ui's queue handlers so a concurrent send or flush sees one state.
-    Returns True while such a pause still holds the queue.
+    (``runPause``, ``focusPaused``) stays in force. The caller holds the queue lock.
+    An uncertain delivery stays held too. Return True while either hold remains.
     """
     path = run / 'follow-ups.json'
     if not path.is_file() or path.is_symlink():
         return False
-    with open(run / '.follow-ups.lock', 'a+') as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            try:
-                state = json.loads(path.read_text())
-            except (OSError, ValueError):
-                return False
-            if not isinstance(state, dict):
-                return False
-            paused = bool(state.get('held') and (state.get('runPause') or state.get('focusPaused')))
-            keys = ('lastError', 'lastAttemptAt') if paused else ('held', 'lastError', 'lastAttemptAt')
-            if not any(key in state for key in keys):
-                return paused
-            for key in keys:
-                state.pop(key, None)
-            try:
-                if state.get('items') or state.get('held'):
-                    write_json(path, state)
-                else:
-                    path.unlink()
-            except OSError:
-                pass
-            return paused
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(state, dict):
+        return False
+    if follow_up_queue.projection(state) == 'uncertain':
+        return True
+    paused = bool(state.get('held') and (state.get('runPause') or state.get('focusPaused')))
+    keys = ('lastError', 'lastAttemptAt') if paused else ('held', 'lastError', 'lastAttemptAt')
+    if not any(key in state for key in keys):
+        return paused
+    for key in keys:
+        state.pop(key, None)
+    try:
+        follow_up_queue.write(path, state, 'edit' if paused else 'resume',
+                              caller='session rescue')
+    except OSError:
+        pass
+    return paused
 
 
 def _stop_legacy_session(run, meta):
@@ -640,7 +635,7 @@ def _stop_legacy_session(run, meta):
 
 
 def rescue(run_dir, *, agent, extra_args, claude_account=None, expected_owner=None,
-           expected_generation=None, conversation=None, recovery_notes=None, user_prompt=None):
+           expected_generation=None, conversation=None, recovery_notes=None, user_prompt=None, on_exit=None):
     recovery_notes = normalize_recovery_notes(recovery_notes)
     cleaned_prompt = normalize_user_prompt(user_prompt)
     run = Path(run_dir).resolve()
@@ -651,8 +646,8 @@ def rescue(run_dir, *, agent, extra_args, claude_account=None, expected_owner=No
         raise RescueError(harnesses.refusal(agent))
     if claude_account is not None and (agent != 'claude' or claude_account not in claude_accounts.available()):
         raise RescueError('Unknown Claude account.')
-    with headless_session.control_lock(run):
-        meta = json.loads((run / 'meta.json').read_text())
+    with follow_up_queue.lock(run), headless_session.control_lock(run):
+        meta = run_lifecycle.Snapshot(json.loads((run / 'meta.json').read_text()))
         source_harness = meta.get('harness') or ('claude' if meta.get('sessionId') else None)
         if source_harness and not harnesses.known(source_harness):
             raise RescueError('Unknown run harness: %s' % source_harness)
@@ -703,7 +698,7 @@ def rescue(run_dir, *, agent, extra_args, claude_account=None, expected_owner=No
         operation = {'token': token, 'state': 'stopping', 'agent': agent,
                      'startedAt': headless_session._now_iso()}
         meta['sessionRescue'] = operation
-        write_json(run / 'meta.json', meta)
+        run_lifecycle.write_meta(run / 'meta.json', meta, caller='session rescue')
         try:
             if was_headless:
                 require_no_detached_workers(run)
@@ -712,7 +707,7 @@ def rescue(run_dir, *, agent, extra_args, claude_account=None, expected_owner=No
             else:
                 _stop_legacy_session(run, previous)
             # A killed worker may have written metadata while Stop was in flight.
-            meta = json.loads((run / 'meta.json').read_text())
+            meta = run_lifecycle.Snapshot(json.loads((run / 'meta.json').read_text()))
             if owner(meta) != owner(previous):
                 raise RescueError('The run changed while stopping. Inspect it before retrying.')
             if (meta.get('mergeConflict') or meta.get('mergeOperation')
@@ -738,7 +733,7 @@ def rescue(run_dir, *, agent, extra_args, claude_account=None, expected_owner=No
             )
             meta['sessionRescue'] = operation
             operation['state'] = 'preparing'
-            write_json(run / 'meta.json', meta)
+            run_lifecycle.write_meta(run / 'meta.json', meta, caller='session rescue')
             if stub:
                 # Nothing ran in the checkout, so there is no workspace to checkpoint.
                 (run / 'rescues' / token).mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -800,7 +795,7 @@ def rescue(run_dir, *, agent, extra_args, claude_account=None, expected_owner=No
             first_turn = old_turn.get('turn', 0) + 1
             operation.update(state='ready', firstTurn=first_turn, targetHarness=agent,
                              **({'checkpoint': relative} if relative else {}))
-            write_json(run / 'meta.json', meta)
+            run_lifecycle.write_meta(run / 'meta.json', meta, caller='session rescue')
             if not session_identity.remember_launch_identity(meta, str(run)):
                 raise RescueError('Could not save the replacement session identity.')
             cwd = str(resolved_cwd)
@@ -844,20 +839,20 @@ def rescue(run_dir, *, agent, extra_args, claude_account=None, expected_owner=No
                     prompt = turn_fn(meta, raw_prompt, rescue_checkpoint=saved, run_dir=str(run))
                 # Resuming carries on the user's turn; a fresh launch or typed prompt is a user turn.
                 headless_session.start_turn(run, agent=agent, argv=argv, prompt=prompt, cwd=cwd, env=env,
-                                            user_turn=bool(stub or cleaned_prompt))
+                                            user_turn=bool(stub or cleaned_prompt), on_exit=on_exit)
             # Release the queue only once the new turn owns the session, so a
             # flush waits for that turn to end instead of racing its start.
-            paused = _release_follow_ups(run)
+            paused = _release_follow_ups_locked(run)
             if (not paused and meta.get('orchestrationQueueHeld')
                     and meta.get('status') not in ('complete', 'failed', 'cancelled')):
                 meta.pop('orchestrationQueueHeld', None)
             operation['state'] = 'started'
-            write_json(run / 'meta.json', meta)
+            run_lifecycle.write_meta(run / 'meta.json', meta, caller='session rescue')
             return {'state': 'started', 'token': token, 'checkpoint': relative,
                     'turnStarted': should_start_turn, 'switchedTo': switched_to}
         except (OSError, ValueError, subprocess.TimeoutExpired, headless_session.HeadlessError) as exc:
-            current = json.loads((run / 'meta.json').read_text())
+            current = run_lifecycle.Snapshot(json.loads((run / 'meta.json').read_text()))
             operation.update(state='failed', error=str(exc)[:500])
             current['sessionRescue'] = operation
-            write_json(run / 'meta.json', current)
+            run_lifecycle.write_meta(run / 'meta.json', current, caller='session rescue')
             raise RescueError(str(exc)) from exc

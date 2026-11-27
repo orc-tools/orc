@@ -47,10 +47,13 @@ question as chips under its `context`. Neither field changes the answers.
 
 A PR feedback round (`../orc-pr/references/pr-feedback-and-ci.md`) asks one
 question per review comment from `pr-review-questions.json`. Each carries a
-`comment` object, `{author, body, path, line, url, diffHunk}`, that Answer
+`comment` object, `{author, body, path, line, url, diffHunk, bot}`, that Answer
 mode draws as the step's lead: who said it, where, the quoted comment and
 its code. Its `context` reads as "What Orc found" and its `facts` as the
 evidence chips. Every comment step must be answered and none can be skipped.
+The PR comments tab draws the same file as the round's plan: the file's
+`summary` as **The plan**, each `context` as **The issue** and each
+`approach` (1 to 3 short steps) as **Recommended approach**.
 
 A question that asks the user to judge audio, such as voice takes in an
 audition, lists those takes in `clips`: up to eight `{path, label}` entries,

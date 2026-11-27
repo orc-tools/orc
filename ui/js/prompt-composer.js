@@ -3,7 +3,7 @@ import { esc } from './core.js';
 // The paperclip on every box that takes images.
 export const ATTACH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg>';
 
-// .nc-beam is the travelling border beam, which index.html draws.
+// .nc-beam is the travelling border beam, which project-home.css draws.
 export function promptComposerHtml({ id, label = 'Prompt', footer = '', rows = 6, placeholder = 'Describe the task…' }) {
   return '<div class="newconv-prompt" data-part="composer"><textarea id="' + esc(id) + '" rows="' + rows
     + '" placeholder="' + esc(placeholder) + '" aria-label="' + esc(label)

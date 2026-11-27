@@ -1,6 +1,8 @@
 // orc-ui: Settings fuzzy search (⌘F / Ctrl+F and Settings header trigger)
 // with instant in-memory matching, typo tolerance, and live visual previews.
 
+import { orcRegisterOverlayCloser } from './panel-navigation.js';
+import { defaultCostCurrency, validCostCurrency } from './currency.js';
 import { $, announce, esc, powerModeOf, POWER_MODES, RUN_MODE_LABEL, themeMode } from './core.js';
 import { canOpenPluginSettings, listedPlugin } from './app-plugins.js';
 import { PR_PUSH_ACTIONS, modelLabel, prPushActionLabel } from './run-presentation.js';
@@ -15,6 +17,7 @@ import {
   defaultShipAction,
   mergedRepoEntry,
   offerOtherShipActions,
+  offerShipWhenDone,
   prPushActionOf,
   projectGeneratedFiles,
   projectName,
@@ -26,7 +29,6 @@ import {
   settingsViewActive,
   shipActionLabel,
 } from './settings.js';
-import { orcRegisterOverlayCloser } from './activity.js';
 import { SHORTCUT_COMMANDS, shortcutIsCustom, shortcutKeys, shortcutKeyLabel } from './shortcuts.js';
 import { NO_SOUND, SOUND_EVENTS, allSounds, eventSound, soundVolume } from './sound.js';
 
@@ -37,6 +39,7 @@ const SETTINGS_SEARCH_ICON_MAP = {
   sounds: SETTINGS_TABS.find(tab => tab.id === 'sounds')?.icon || '',
   skills: SETTINGS_TABS.find(tab => tab.id === 'skills')?.icon || '',
   orchestrate: SETTINGS_TABS.find(tab => tab.id === 'orchestrate')?.icon || '',
+  integrations: SETTINGS_TABS.find(tab => tab.id === 'integrations')?.icon || '',
   account: SETTINGS_TABS.find(tab => tab.id === 'account')?.icon || '',
   instructions: SETTINGS_TABS.find(tab => tab.id === 'instructions')?.icon || '',
   plugins: SETTINGS_TABS.find(tab => tab.id === 'plugins')?.icon || '',
@@ -54,7 +57,7 @@ const SETTINGS_SEARCH_ICON_MAP = {
 };
 
 const SETTINGS_SEARCH_SECTION_ORDER = [
-  'general', 'projects', 'appearance', 'sounds', 'skills', 'orchestrate', 'account', 'instructions', 'plugins',
+  'general', 'projects', 'appearance', 'sounds', 'skills', 'orchestrate', 'integrations', 'account', 'instructions', 'plugins',
 ];
 
 const SETTINGS_SEARCH_SUGGESTIONS = ['Sounds', 'Shortcuts', 'Dark mode', 'Linked laptops', 'Ship action'];
@@ -488,6 +491,7 @@ export function buildSettingsIndex(overrides = {}) {
   const permDefault = permissionPreference(ui.permissionDefault);
   const offerPerm = offersPermissionSwitch(ui);
   const startedRun = ui.startedRun === 'background' ? 'background' : 'open';
+  const costIn = validCostCurrency(ui.costCurrency) || defaultCostCurrency();
   const runMode = powerModeOf(ui);
   const runModeLabel = POWER_MODES.find(mode => mode.value === runMode)?.label || 'Standard';
   const archiveLabel = settingsSearchArchiveLabel(ui.archiveSettledAssetsDays);
@@ -499,6 +503,7 @@ export function buildSettingsIndex(overrides = {}) {
   const shipDefault = defaultShipAction(config);
   const shipDefaultLabel = shipActionLabel(shipDefault);
   const offerOtherShip = offerOtherShipActions(config);
+  const offerShipDone = offerShipWhenDone(config);
   const prPushLabel = prPushActionLabel(prPushActionOf(config));
   const showUsage = ui.showUsage !== false;
   const reduceMotion = overrides.animationsOff ?? animationsOff();
@@ -600,6 +605,34 @@ export function buildSettingsIndex(overrides = {}) {
         hint: startedRun === 'background'
           ? 'Start keeps the composer open for your next prompt while the run carries on in the sidebar.'
           : 'Start takes you to the new run’s Chat. ⌘Enter starts it in the background instead.',
+      },
+    },
+    {
+      id: 'general-costs',
+      section: 'general',
+      sectionLabel: 'General',
+      title: 'Costs',
+      snippet: 'Show every cost in US dollars or pounds, converted at the day’s rate',
+      pill: costIn === 'gbp' ? 'Pounds' : 'Dollars',
+      pillTone: 'accent',
+      keywords: ['costs', 'currency', 'pounds', 'dollars', 'gbp', 'usd', 'sterling', '£', '$', 'price', 'spend', 'exchange rate', 'show costs in'],
+      controlsText: 'Show costs in Dollars ($) Pounds (£)',
+      icon: SETTINGS_SEARCH_ICON_MAP.general,
+      href: '#settings/general/costs',
+      anchor: 'costs',
+      tab: 'general',
+      jumpNote: 'Jumps straight to General and highlights the Costs card.',
+      openLabel: 'Open in General →',
+      preview: {
+        kind: 'segmented-card',
+        legend: 'Costs',
+        fieldLabel: 'Show costs in',
+        options: [
+          { value: 'usd', label: 'Dollars ($)' },
+          { value: 'gbp', label: 'Pounds (£)' },
+        ],
+        value: costIn,
+        hint: 'Every cost Orc shows is worked out in US dollars at API prices. Pounds convert with a rate Orc fetches once a day.',
       },
     },
     {
@@ -713,9 +746,9 @@ export function buildSettingsIndex(overrides = {}) {
       snippet: 'Default delivery button and PR push behaviour across your projects',
       pill: shipDefaultLabel,
       pillTone: 'accent',
-      keywords: ['ship', 'ship action', 'merge', 'push', 'pr', 'pull request', 'yeet', 'main', 'delivery', 'default', 'other ship actions',
+      keywords: ['ship', 'ship action', 'ship when done', 'offer ship when done', 'auto merge', 'merge', 'push', 'pr', 'pull request', 'yeet', 'main', 'delivery', 'default', 'other ship actions',
         'push comments', 'push commits', 'review comments', 'replies', 'git'],
-      controlsText: `Ship action ${shipDefaultLabel} Open PR Merge and push Yeet it (merge, push and settle) Merge to main Offer the other Ship actions Have their own Push to a PR ${prPushLabel} Push comments & commits Push commits Branch prefix`,
+      controlsText: `Ship action ${shipDefaultLabel} Open PR Merge and push Yeet it (merge, push and settle) Merge to main Offer the other Ship actions Offer Ship when done Have their own Push to a PR ${prPushLabel} Push comments & commits Push commits Branch prefix`,
       icon: SETTINGS_SEARCH_ICON_MAP.projects,
       href: '#settings/projects/ship-action',
       anchor: 'ship-action',
@@ -727,6 +760,7 @@ export function buildSettingsIndex(overrides = {}) {
         legend: 'Git & delivery defaults',
         defaultLabel: shipDefaultLabel,
         offerOther: offerOtherShip,
+        offerShipWhenDone: offerShipDone,
         prPush: prPushActionOf(config),
         branchPrefix,
         overrides: shipOverrides,
@@ -928,6 +962,77 @@ export function buildSettingsIndex(overrides = {}) {
         legend: 'Orchestrate',
         hint: 'Each preset in the model picker launches a run led by its lead. Drag each job to the model that does it and set how hard it may think.',
         button: 'Open Orchestrate',
+      },
+    },
+
+    // ---- Integrations ----
+    {
+      id: 'integrations-slack',
+      section: 'integrations',
+      sectionLabel: 'Integrations',
+      title: 'Slack',
+      snippet: 'Read Slack for review requests, and the steps to sign Orc in to Slack',
+      pill: '',
+      pillTone: 'muted',
+      keywords: ['slack', 'integrations', 'integration', 'mcp', 'sign in', 'slack app', 'client id', 'review requests', 'channel', 'background', 'automatic'],
+      controlsText: 'Read Slack for review requests Client ID Client secret Save Sign in Check now Sign out',
+      icon: SETTINGS_SEARCH_ICON_MAP.integrations,
+      href: '#settings/integrations/slack',
+      anchor: 'slack',
+      tab: 'integrations',
+      jumpNote: 'Jumps straight to Integrations and highlights the Slack card.',
+      openLabel: 'Open in Integrations →',
+      preview: {
+        kind: 'tab-summary',
+        legend: 'Slack',
+        hint: 'Reads your review channels for pull request links. Off stops the background reads; Check now still works.',
+        button: 'Open Integrations',
+      },
+    },
+    {
+      id: 'integrations-github',
+      section: 'integrations',
+      sectionLabel: 'Integrations',
+      title: 'GitHub calls',
+      snippet: 'Every job that calls the GitHub CLI, how often and its calls in the past hour',
+      pill: '',
+      pillTone: 'muted',
+      keywords: ['github', 'gh', 'cli', 'integrations', 'integration', 'pull requests', 'statuses', 'merged', 'deployments', 'calls', 'rate limit', 'background', 'automatic', 'poll'],
+      controlsText: 'Keep pull requests and statuses up to date How often Last ran Calls, past hour',
+      icon: SETTINGS_SEARCH_ICON_MAP.integrations,
+      href: '#settings/integrations/github',
+      anchor: 'github',
+      tab: 'integrations',
+      jumpNote: 'Jumps straight to Integrations and highlights the GitHub card.',
+      openLabel: 'Open in Integrations →',
+      preview: {
+        kind: 'tab-summary',
+        legend: 'GitHub calls',
+        hint: 'Keeps each run’s pull request, checks and merge state up to date. Off stops the background checks; Ship and clicks still work.',
+        button: 'Open Integrations',
+      },
+    },
+    {
+      id: 'integrations-notion',
+      section: 'integrations',
+      sectionLabel: 'Integrations',
+      title: 'Notion',
+      snippet: 'Which vault automations read Notion, when they run and when they last ran',
+      pill: '',
+      pillTone: 'muted',
+      keywords: ['notion', 'integrations', 'integration', 'vaults', 'vault', 'automations', 'docs', 'background', 'automatic'],
+      controlsText: 'Let vault automations read Notion When Last ran Runs, past day',
+      icon: SETTINGS_SEARCH_ICON_MAP.integrations,
+      href: '#settings/integrations/notion',
+      anchor: 'notion',
+      tab: 'integrations',
+      jumpNote: 'Jumps straight to Integrations and highlights the Notion card.',
+      openLabel: 'Open in Integrations →',
+      preview: {
+        kind: 'tab-summary',
+        legend: 'Notion',
+        hint: 'Vault automations read Notion through Claude Code. Off, they run without Notion’s tools.',
+        button: 'Open Integrations',
       },
     },
 
@@ -1160,7 +1265,7 @@ export function buildSettingsIndex(overrides = {}) {
       pill: toolPlugins.length ? `${toolPlugins.filter(p => p.installed && p.enabled).length} on` : '',
       pillTone: 'green',
       keywords: ['plugins', 'plugin hub', 'extensions', 'addons', 'packages', 'install', 'tools', 'enable', 'disable'],
-      controlsText: 'Search plugins Refresh plugins Install from zip drag a plugin zip',
+      controlsText: 'Search plugins Refresh plugins Install from zip Install from Git drag a plugin zip',
       icon: SETTINGS_SEARCH_ICON_MAP.plugins,
       href: '#settings/plugins/plugin-hub',
       anchor: 'plugin-hub',
@@ -1340,6 +1445,7 @@ export function buildSettingsIndex(overrides = {}) {
   for (const plugin of themePlugins) {
     const theme = plugin.contributes.theme;
     const name = theme.label || plugin.name;
+    const icon = plugin.icon || theme.icon;
     const inUse = theme.id === activeThemeId;
     const installed = Boolean(plugin.installed && plugin.enabled);
     const hasSound = Boolean(theme.sound || plugin.bundled);
@@ -1371,8 +1477,7 @@ export function buildSettingsIndex(overrides = {}) {
         description: plugin.description || 'Theme colours, scene and custom sound pack.',
         inUse,
         installed,
-        iconUrl: (theme.icon || plugin.icon) && plugin.base && (installed || plugin.bundled)
-          ? plugin.base + (theme.icon || plugin.icon) : '',
+        iconUrl: icon && plugin.base && (installed || plugin.bundled) ? plugin.base + icon : '',
       },
     });
   }
@@ -1550,6 +1655,10 @@ export function renderSettingPreviewHtml(item, query = '') {
         <span>Offer the other Ship actions</span>
         <span class="ss-switch-track"><span class="ss-switch-thumb"></span></span>
       </div>
+      <div class="ss-fake-switch${p.offerShipWhenDone ? ' on' : ''}">
+        <span>Offer Ship when done</span>
+        <span class="ss-switch-track"><span class="ss-switch-thumb"></span></span>
+      </div>
       <div class="ss-mini-field-label">Push to a PR</div>
       <div class="ss-fake-segmented">${PR_PUSH_ACTIONS.map(action =>
         `<span class="ss-fake-seg${action.value === p.prPush ? ' active' : ''}">${esc(action.label)}</span>`).join('')}
@@ -1703,7 +1812,7 @@ if (settingsSearchDialog?.shadowRoot) {
       -webkit-backdrop-filter: blur(4px);
     }
     dialog {
-      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px color-mix(in srgb, var(--green) 16%, transparent);
+      box-shadow: var(--float-shadow), 0 0 0 1px color-mix(in srgb, var(--green) 16%, transparent);
     }
   `;
   settingsSearchDialog.shadowRoot.append(style);

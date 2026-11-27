@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from datetime import datetime, timezone
 
+import integrations
+import run_lifecycle
 import review_context
 
 ROUTE = "local-review"
@@ -69,12 +71,17 @@ def read(run_dir, name):
         raise ReviewError("missing or malformed " + name) from exc
     if not isinstance(value, dict):
         raise ReviewError(name + " must be an object")
-    return value
+    return run_lifecycle.Snapshot(value) if name == "meta.json" else value
 
 
 def write(run_dir, name, value, immutable=False):
     path = path_at(run_dir, name)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if name == "meta.json":
+        try:
+            return run_lifecycle.write_meta(path, value, caller="local review")
+        except run_lifecycle.RefusedTransition as exc:
+            raise ReviewError(str(exc)) from exc
     payload = value if isinstance(value, bytes) else encoded(value)
     if immutable:
         try:
@@ -235,6 +242,7 @@ def active_meta(run_dir):
 def gh_json(repo, *args):
     env = {k: v for k, v in os.environ.items() if k not in review_context.HOOK_GIT_ENV}
     try:
+        integrations.note("actions")
         proc = subprocess.run(["gh", *args], cwd=repo, capture_output=True, env=env, timeout=20)
         return json.loads(proc.stdout) if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError):

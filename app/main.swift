@@ -265,7 +265,6 @@ func shouldOpenNewWindowURLExternally(_ url: URL, serverPort: Int) -> Bool {
     guard components.count >= 4, components[1] == "runs" else { return false }
 
     let runRelativePath = components.dropFirst(3).joined(separator: "/").lowercased()
-    guard runRelativePath.hasSuffix(".html") else { return false }
 
     let registeredPaths: Set<String> = [
         "grilling.html", "clarification/clarification.html", "plan.html",
@@ -429,6 +428,40 @@ func resolvedColor(_ color: NSColor, in view: NSView) -> CGColor {
     return resolved
 }
 
+/// A saved window frame stays put while enough of it shows on a connected
+/// display to grab its title bar. Otherwise, as after its monitor is
+/// unplugged, it moves to the middle of the first display, shrunk to fit.
+func windowFrameOnScreen(_ frame: CGRect, visibleFrames: [CGRect]) -> CGRect {
+    let reachable = visibleFrames.contains { screen in
+        let overlap = screen.intersection(frame)
+        return !overlap.isNull && overlap.width >= 100 && overlap.height >= 40
+    }
+    guard !reachable, let screen = visibleFrames.first else { return frame }
+    let size = CGSize(width: min(frame.width, screen.width), height: min(frame.height, screen.height))
+    return CGRect(
+        x: (screen.midX - size.width / 2).rounded(),
+        y: (screen.midY - size.height / 2).rounded(),
+        width: size.width,
+        height: size.height
+    )
+}
+
+/// Opens a window where it was last left, or centred when nothing is saved,
+/// and keeps it saving its frame under `autosaveName` from then on.
+/// `beforeSaving` places it first when it should not sit on the saved frame.
+func restoreWindowFrame(_ window: NSWindow, autosaveName: String, beforeSaving: (() -> Void)? = nil) {
+    window.center()
+    if window.setFrameUsingName(autosaveName) {
+        let screens = (NSScreen.main.map { [$0] } ?? []) + NSScreen.screens.filter { $0 != NSScreen.main }
+        let frame = windowFrameOnScreen(window.frame, visibleFrames: screens.map(\.visibleFrame))
+        if frame != window.frame { window.setFrame(frame, display: false) }
+    }
+    beforeSaving?()
+    // Only one window at a time can hold a name; later ones open at the
+    // saved frame without saving their own.
+    window.setFrameAutosaveName(autosaveName)
+}
+
 // MARK: - AppDelegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -437,6 +470,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let shortcutsMessageName = "orcShortcuts"
     // Main window -> app: how many assistant topics need you, for the Dock icon.
     private static let dockBadgeMessageName = "orcDockBadge"
+    // The main window's frame in UserDefaults, kept across launches.
+    static let mainWindowAutosaveName = "OrcMainWindow"
 
     private let existingInstance: NSRunningApplication?
     private var duplicateExitWorkItem: DispatchWorkItem?
@@ -716,7 +751,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "Orc"
         window.titlebarAppearsTransparent = true
         window.delegate = self
-        window.center()
+        // Opens where it was left, so a restart for an update keeps its place.
+        restoreWindowFrame(window, autosaveName: Self.mainWindowAutosaveName)
 
         let config = WKWebViewConfiguration()
         // index.html reads this UA marker to skip the browser→app link handoff
@@ -872,7 +908,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func findInArtifact(_ sender: Any?) {
-        webView.evaluateJavaScript("(window.orcToggleFastMode && window.orcToggleFastMode()) || (window.orcOpenSettingsSearch && window.orcOpenSettingsSearch()) || (window.orcOpenContentFind && window.orcOpenContentFind())", completionHandler: nil)
+        webView.evaluateJavaScript("window.orcOpenSettingsSearch?.() || window.orcOpenContentFind?.()", completionHandler: nil)
+    }
+
+    @objc func toggleFastMode(_ sender: Any?) {
+        webView.evaluateJavaScript("window.orcRunFastModeShortcut?.()", completionHandler: nil)
     }
 
     // ⌘J shows or hides the terminal. In a run it reopens docked or maximised as
@@ -901,6 +941,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showWindow()
         window.makeFirstResponder(webView)
         webView.evaluateJavaScript("window.orcToggleDictation && window.orcToggleDictation()", completionHandler: nil)
+    }
+
+    // ⌘. stops the turn of the run in Chat. The menu claims the key, so it
+    // reaches the page even where AppKit would read it as Cancel.
+    @objc func stopAgent(_ sender: Any?) {
+        showWindow()
+        window.makeFirstResponder(webView)
+        webView.evaluateJavaScript("window.orcStopChat && window.orcStopChat()", completionHandler: nil)
     }
 
     @objc func openCommandPalette(_ sender: Any?) {
@@ -950,6 +998,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeFirstResponder(webView)
         webView.evaluateJavaScript(
             "window.orcOpenSettings ? window.orcOpenSettings() : (location.hash = '#settings')",
+            completionHandler: nil
+        )
+    }
+
+    // ⇧⌘, — the Settings page of the project in view, through the page's own
+    // opener; a page from before it existed falls back to plain Settings.
+    @objc func openProjectSettings(_ sender: Any?) {
+        guard webView.url?.host == "127.0.0.1" else {
+            navigate(toFragment: "settings")
+            return
+        }
+        showWindow()
+        window.makeFirstResponder(webView)
+        webView.evaluateJavaScript(
+            "window.orcOpenProjectSettings ? window.orcOpenProjectSettings() : window.orcOpenSettings ? window.orcOpenSettings() : (location.hash = '#settings')",
             completionHandler: nil
         )
     }
@@ -1117,6 +1180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "About Orc", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.openSettings(_:)), keyEquivalent: ",")
+        let projectSettings = appMenu.addItem(withTitle: "Project Settings…", action: #selector(AppDelegate.openProjectSettings(_:)), keyEquivalent: ",")
+        projectSettings.keyEquivalentModifierMask = [.command, .shift]
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Hide Orc", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(NSMenuItem.separator())
@@ -1130,6 +1195,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(withTitle: "New Conversation", action: #selector(AppDelegate.openNewConversation(_:)), keyEquivalent: "n")
         fileMenu.addItem(withTitle: "Switch Project…", action: #selector(AppDelegate.switchProject(_:)), keyEquivalent: "p")
         fileMenu.addItem(withTitle: "Choose Model…", action: #selector(AppDelegate.openModelPicker(_:)), keyEquivalent: "m")
+        let fastMode = fileMenu.addItem(withTitle: "Toggle Fast Mode", action: #selector(AppDelegate.toggleFastMode(_:)), keyEquivalent: "f")
+        fastMode.keyEquivalentModifierMask = [.command, .shift]
 
 
         // Edit menu
@@ -1157,6 +1224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(withTitle: "Toggle Terminal", action: #selector(AppDelegate.toggleTerminal(_:)), keyEquivalent: "j")
         viewMenu.addItem(withTitle: "Toggle Side Panel", action: #selector(AppDelegate.toggleDiff(_:)), keyEquivalent: "b")
         viewMenu.addItem(withTitle: "Toggle Dictation", action: #selector(AppDelegate.toggleDictation(_:)), keyEquivalent: "d")
+        viewMenu.addItem(withTitle: "Stop the Agent", action: #selector(AppDelegate.stopAgent(_:)), keyEquivalent: ".")
 
         // Window menu
         let windowMenuItem = NSMenuItem()
@@ -1173,14 +1241,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         shortcutMenuItems = [
             "settings": appMenu.item(withTitle: "Settings…"),
+            "projectSettings": appMenu.item(withTitle: "Project Settings…"),
             "newConversation": fileMenu.item(withTitle: "New Conversation"),
             "switchProject": fileMenu.item(withTitle: "Switch Project…"),
             "modelPicker": fileMenu.item(withTitle: "Choose Model…"),
+            "fastMode": fastMode,
             "commandPalette": editMenu.item(withTitle: "Command Palette…"),
-            "find": editMenu.item(withTitle: "Find…"),
+            "contentFind": editMenu.item(withTitle: "Find…"),
             "terminal": viewMenu.item(withTitle: "Toggle Terminal"),
             "sidePanel": viewMenu.item(withTitle: "Toggle Side Panel"),
             "dictation": viewMenu.item(withTitle: "Toggle Dictation"),
+            "stopAgent": viewMenu.item(withTitle: "Stop the Agent"),
         ].compactMapValues { $0 }
         shortcutMenuDefaults = shortcutMenuItems.mapValues { ($0.keyEquivalent, $0.keyEquivalentModifierMask) }
     }
@@ -2170,14 +2241,11 @@ final class QAWindowController: NSObject, NSWindowDelegate, WKNavigationDelegate
             MainActor.assumeIsolated { self?.window.title = title.isEmpty ? "QA" : title }
         }
 
-        window.center()
-        window.setFrameUsingName(Self.autosaveName)
-        if let cascadeFrom {
-            window.setFrameTopLeftPoint(NSPoint(x: cascadeFrom.frame.minX + 24, y: cascadeFrom.frame.maxY - 24))
+        restoreWindowFrame(window, autosaveName: Self.autosaveName) {
+            if let cascadeFrom {
+                self.window.setFrameTopLeftPoint(NSPoint(x: cascadeFrom.frame.minX + 24, y: cascadeFrom.frame.maxY - 24))
+            }
         }
-        // Only one window at a time can hold the name; later ones open at the
-        // saved size without saving their own.
-        window.setFrameAutosaveName(Self.autosaveName)
         webView.load(URLRequest(url: pageURL))
     }
 

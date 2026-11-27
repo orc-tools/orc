@@ -39,9 +39,6 @@ class Service:
     def phone_url(self):
         return self.manager.phone_url()
 
-    def private_phone_url(self, value):
-        return access.private_phone_url(value)
-
     def close(self):
         self.manager.backends.close()
         return True

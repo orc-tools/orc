@@ -23,8 +23,18 @@
   // user's in the page; stop() ends a build; onState(fn) hears whether it is
   // building and the conversation so far, at once and after each change.
   // Only Orc, the window at the top, is heard.
+  //
+  // Orc's mode, light or dark, is data-orc-mode on <html>: the frame's
+  // address sets it before the page paints, and Orc sends each switch.
+  // orcVault.mode reads it and onMode(fn) hears it, at once and on a switch.
   var hear = [];
   var last = null;
+  var hearMode = [];
+  var root = document.documentElement;
+  var mode = function () {
+    var value = root.getAttribute('data-orc-mode');
+    return value === 'light' || value === 'dark' ? value : null;
+  };
   var say = function (message) { try { top.postMessage(message, '*'); } catch (x) {} };
   window.orcVault = {
     ask: function (text) { say({ orcVaultAsk: String(text == null ? '' : text) }); },
@@ -34,10 +44,23 @@
       hear.push(fn);
       if (last) try { fn(last); } catch (x) {}
     },
+    get mode() { return mode(); },
+    onMode: function (fn) {
+      if (typeof fn !== 'function') return;
+      hearMode.push(fn);
+      if (mode()) try { fn(mode()); } catch (x) {}
+    },
   };
   addEventListener('message', function (e) {
     var data = e.data;
-    if (e.source !== top || !data || typeof data !== 'object' || !data.orcVaultState) return;
+    if (e.source !== top || !data || typeof data !== 'object') return;
+    if (data.orcVaultMode === 'light' || data.orcVaultMode === 'dark') {
+      if (data.orcVaultMode === mode()) return;
+      root.setAttribute('data-orc-mode', data.orcVaultMode);
+      for (var j = 0; j < hearMode.length; j++) try { hearMode[j](data.orcVaultMode); } catch (x) {}
+      return;
+    }
+    if (!data.orcVaultState) return;
     last = data.orcVaultState;
     for (var i = 0; i < hear.length; i++) try { hear[i](last); } catch (x) {}
   });

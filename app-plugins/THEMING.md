@@ -109,13 +109,14 @@ Fonts, corners and the few effects Orc leaves to the theme.
 | `--stage-radius` | Corner radius of the run terminal stage |
 | `--head-glow` | A background-image behind the sidebar head (none by default) |
 | `--typing-glow` | A box-shadow on the composer while you type (none by default) |
+| `--float-shadow` | The one shadow under every floating layer: menus, popovers, tooltips, toasts, drawers and anything being dragged. One layer with no spread, as it is also used inside drop-shadow() |
 | `--nc-beam-underlay` | The colour of the composer's rim under its beam; the shell sets it on .newconv-prompt:has(textarea:focus), so set it there too |
 | `--factory-stage-bg` | The backdrop behind the Factory tab's canvas |
 | `--settled-shelf-bg` | Background of the Settled shelf at the foot of the run list |
 | `--settled-shelf-border-color` | Border colour of the Settled shelf |
 | `--settled-shelf-border-width` | Border widths of the Settled shelf (1px 1px 0 by default) |
 | `--settled-shelf-radius` | Corner radius of the Settled shelf |
-| `--settled-shelf-shadow` | Shadow above the Settled shelf |
+| `--settled-shelf-shadow` | Shadow above the Settled shelf (--float-shadow by default) |
 | `--settled-head-justify` | Where the Settled heading sits in its row (flex-start by default) |
 
 ### Component chrome
@@ -219,8 +220,8 @@ What a sticky note on project home is made of. Set these in a rule on `.nc-note`
 | `--note-edge-width` | Width of the note's outline (1px by default) |
 | `--note-trim` | Extra box-shadows on the note's face, such as a bevel or an inner glow |
 | `--note-radius` | The note's corner radius |
-| `--note-shadow` | A filter on the note at rest: its drop shadow or glow |
-| `--note-shadow-raised` | That filter while the note is hovered, edited or dragged |
+| `--note-shadow` | A filter on the note at rest: its drop shadow or glow (none by default) |
+| `--note-shadow-raised` | That filter while the note is hovered, edited or dragged (--float-shadow by default) |
 | `--note-font` | The note's typeface |
 | `--note-rule` | Colour of the ruled lines under the writing; transparent removes them |
 | `--note-lean` | How far a note leans, from 0 (square on the board) to 1 (the stock tilt) |
@@ -375,7 +376,7 @@ Shadow-DOM `part` names exposed on `<orc-*>` design-system and composer controls
 | `.newconv-prompt` | The composer box (new run and chat); carries [data-typing-hot] while you type |
 | `.newconv` | The new-run screen's column: the start bar and the cards under it |
 | `.nc-startbar` | The new-run screen's start bar: .nc-title, the composer and .nc-tray |
-| `.nc-scroll` | The new-run screen's scrolling column inside #new-view: .newconv, then .nc-notes |
+| `.nc-scroll` | The new-run screen's scrolling column inside #new-view: .newconv, the row holding .nc-handout, then .nc-notes |
 | `.nc-title` | The new-run screen's heading |
 | `.nc-tray` | The new-run screen's option tray |
 | `.nc-beam` | The beam of light that runs round a composer's rim, drawn from --green and --yellow |
@@ -426,6 +427,7 @@ Shadow-DOM `part` names exposed on `<orc-*>` design-system and composer controls
 | `.fork-child` | A run listed under the run it forked from |
 | `.fork-last` | The last fork under its parent |
 | `.state-tag` | A run's state label in the list |
+| `.state-want` | The action or detail following a run's state label |
 | `.unread-tag` | The label on a run that stopped and has not been opened since |
 | `.stale-tag` | The label on a run gone quiet |
 | `.focus-tag` | The label on the active run in Queue mode |
@@ -462,7 +464,7 @@ Shadow-DOM `part` names exposed on `<orc-*>` design-system and composer controls
 | `.factory-roster-toggle` | The Show/Hide agents button in the Factory floor corner |
 | `.factory-ticket` | The picked agent's job ticket laid over the Factory floor |
 | `.factory-ticket-name` | The heading inside the Factory job ticket |
-| `.factory-ticket-facts` | The details grid inside the Factory job ticket |
+| `.factory-ticket-facts` | The row of facts inside the Factory job ticket |
 | `.is-main` | The main agent's floating label on the Factory floor |
 | `.is-selected` | A selected station label or roster row in the Factory tab |
 

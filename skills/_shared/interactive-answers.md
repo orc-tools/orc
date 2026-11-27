@@ -79,7 +79,7 @@ Playwright fixture server publishes it through the real CLI as
 
 ```sh
 python3 -m unittest discover -s tests -p test_structured_answer.py
-pnpm exec playwright test tests/e2e/structured-answer.spec.js tests/e2e/answer-panel.spec.js
+bin/test tests/e2e/structured-answer.spec.js tests/e2e/answer-panel.spec.js
 ```
 
 Streaming, charts and approval forms remain outside this saved-spec format.

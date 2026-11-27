@@ -21,6 +21,10 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ui"))
+
+from run_lifecycle import Snapshot, write_meta
+
 
 class BringToMainError(Exception):
     pass
@@ -201,7 +205,7 @@ def validate_preconditions(meta):
 def bring_to_main(runs_dir, run_id):
     run_dir = runs_dir / run_id
     meta_path = run_dir / "meta.json"
-    meta = read_json(meta_path)
+    meta = Snapshot(read_json(meta_path))
     if meta.get("runId") not in (None, run_id):
         raise BringToMainError("run metadata identity does not match directory")
     if meta.get("broughtToMainAt") and meta.get("status") == "complete" \
@@ -230,10 +234,9 @@ def bring_to_main(runs_dir, run_id):
 
     run_git(target, "checkout", "--quiet", branch)
 
-    meta = read_json(meta_path)
     brought_at = now()
     meta.update({"status": "complete", "phase": "done", "broughtToMainAt": brought_at})
-    write_json(meta_path, meta)
+    write_meta(meta_path, meta, caller="orc-bring-to-main")
     write_json(transaction_path(run_dir), {
         "runId": run_id, "branch": branch, "targetPath": str(target),
         "broughtToMainAt": brought_at,
@@ -294,7 +297,7 @@ def main(argv=None):
         target_repo = target_repo_for(runs_dir, args.run_id)
         with bring_to_main_lock(runs_dir, target_repo):
             target, branch, already = bring_to_main(runs_dir, args.run_id)
-    except BringToMainError as exc:
+    except (BringToMainError, OSError, ValueError) as exc:
         print("orc-bring-to-main: %s" % exc, file=sys.stderr)
         return 1
     note = " (already on main)" if already else ""

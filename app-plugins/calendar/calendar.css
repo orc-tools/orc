@@ -75,7 +75,7 @@
 .cal-headrow, .cal-alldayrow, .cal-body { display: grid; grid-template-columns: var(--cols); }
 .cal-gutter-head {
   display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 8px 6px 0;
-  color: var(--muted-strong); font-size: 10px; letter-spacing: .02em;
+  color: var(--muted-strong); font-size: 11px; letter-spacing: .02em;
 }
 .cal-allday-label { align-items: center; padding: 4px 8px 4px 0; text-align: right; line-height: 1.2; }
 .cal-dayhead { min-width: 0; padding: 8px 4px 6px; border-left: 1px solid var(--cal-line); display: flex; justify-content: center; }
@@ -226,7 +226,7 @@ button.cal-dayhead-btn:hover .cal-dom { background: color-mix(in srgb, var(--hea
 .cal-mevent, .cal-more {
   width: 100%; display: flex; align-items: center; gap: 5px; min-width: 0; padding: 1px 6px; text-align: left;
   font: inherit; font-size: 12px; line-height: 16px; color: var(--text); background: none; border: 1px solid transparent;
-  border-radius: 5px; cursor: var(--orc-cursor-pointer, pointer);
+  border-radius: 6px; cursor: var(--orc-cursor-pointer, pointer);
 }
 .cal-mevent:hover, .cal-more:hover { background: color-mix(in srgb, var(--heading) 8%, transparent); }
 .cal-mevent.is-past { color: var(--muted-strong); }
@@ -253,7 +253,7 @@ button.cal-dayhead-btn:hover .cal-dom { background: color-mix(in srgb, var(--hea
 @container calendar (max-width: 759px) {
   .cal-panel {
     position: absolute; inset: 0 0 0 auto; z-index: 5; width: min(360px, 100%);
-    box-shadow: -16px 0 40px color-mix(in srgb, var(--heading) 14%, transparent);
+    box-shadow: var(--float-shadow);
   }
 }
 @media (max-width: 639px) {
@@ -481,7 +481,7 @@ button.cal-dayhead-btn:hover .cal-dom { background: color-mix(in srgb, var(--hea
   .cal-mday::after { content: ""; position: absolute; inset: 0; }
   .cal-mcount { display: flex; align-items: center; gap: 3px; }
   .cal-mcount i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-  .cal-mcount b { font-size: 10px; font-weight: 600; color: var(--muted-strong); }
+  .cal-mcount b { font-size: 11px; font-weight: 600; color: var(--muted-strong); }
   .cal-connect { padding: 16px; }
   .cal-connect-card { padding: 16px; }
   .cal-connect-row { flex-direction: column; }

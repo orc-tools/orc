@@ -884,7 +884,7 @@
   100% { translate: 0 -150%; opacity: 0; }
 }
 
-/* Typing heat (see index.html's --typing-heat): fast typing heats the
+/* Typing heat (see project-home.css's --typing-heat): fast typing heats the
    composer like re-entry, its edge running from rest through amber and
    orange to white-hot. It holds steady, with no beat. */
 :root[data-orbit] .newconv-prompt[data-typing-hot] { animation: none; }

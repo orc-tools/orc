@@ -107,10 +107,11 @@ export function createToolTabs({ pane, runId, data, onSelect, onClose, updateCut
   }
   addButton(qa);
   trigger.onclick = () => toggle(choices.hidden);
-  choices.onclick = event => {
-    const kind = event.target.closest('button')?.textContent;
-    if (!kind) return;
-    toggle(false);
+  // WebKit blurs the current choice on mousedown, before it clicks the new one.
+  choices.onmousedown = event => {
+    if (event.button === 0) event.preventDefault();
+  };
+  function open(kind) {
     const id = crypto.randomUUID();
     const count = (counts.get(kind) || 0) + 1;
     counts.set(kind, count);
@@ -123,6 +124,13 @@ export function createToolTabs({ pane, runId, data, onSelect, onClose, updateCut
     select(tab);
     tab.button.focus();
     tab.focus?.();
+    return tab;
+  }
+  choices.onclick = event => {
+    const kind = event.target.closest('button')?.textContent;
+    if (!kind) return;
+    toggle(false);
+    open(kind);
   };
   picker.onkeydown = event => {
     if (event.key === 'Escape') { toggle(false); trigger.focus(); }
@@ -138,5 +146,5 @@ export function createToolTabs({ pane, runId, data, onSelect, onClose, updateCut
   window.addEventListener('pagehide', event => {
     if (!event.persisted) for (const item of items.values()) item.dispose?.();
   });
-  return { place, get active() { return active; }, qa, selectQa: () => select(qa) };
+  return { place, open, get active() { return active; }, qa, selectQa: () => select(qa) };
 }

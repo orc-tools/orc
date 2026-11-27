@@ -1,6 +1,7 @@
 {
   "apiVersion": 2,
   "id": "orbit",
+  "icon": "icon.png",
   "name": "Orbit",
   "version": "1.0.0",
   "description": "Mission control: deep space by night, a 1960s flight manual by day.",
@@ -11,7 +12,7 @@
       "label": "Orbit",
       "description": "Go for launch~",
       "css": "theme.css",
-      "icon": "icon.png",
+      "icon": "dock-icon.png",
       "gary": "gary.png",
       "sheila": "sheila.png",
       "scene": "scene.bundle.js",

@@ -7,11 +7,12 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'ui'))
 import run_relationships
+
+from run_lifecycle import Snapshot, write_meta
 
 
 def read_meta(path):
@@ -31,7 +32,7 @@ def complete(run_dir, summary, *, confirmed_close=False):
     # Use the UI's repository lock so a gate answer or child launch cannot race completion.
     with (run_dir.parent / f'.merge-parent-{digest}.lock').open('a+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        meta = read_meta(path)
+        meta = Snapshot(read_meta(path))
         if meta.get('status') == 'complete' and meta.get('parentCompletion'):
             return meta
         if (meta.get('lifecycleVersion') != 4 or meta.get('route') != 'minimal-shell'
@@ -68,17 +69,7 @@ def complete(run_dir, summary, *, confirmed_close=False):
         meta.update(phase='done', status='complete', parentCompletion={
             'schemaVersion': 1, 'summary': summary, 'manuallyClosed': True,
             'children': sorted(set(children)), 'completedAt': run_relationships.utc_now()})
-        fd, temporary = tempfile.mkstemp(prefix='.meta.', dir=run_dir)
-        try:
-            with os.fdopen(fd, 'w') as handle:
-                json.dump(meta, handle, indent=2)
-                handle.write('\n')
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        write_meta(path, meta, caller="orc-complete-parent")
         return meta
 
 

@@ -4,31 +4,31 @@
 // nothing here is kept beyond what the reader expanded, is still typing, and
 // whether they asked to see every step.
 
+import { refresh, restoreFailedLaunchPrompt, bindChatNavigation, revealDiffPanel, reflectRunChange, reportSeen } from './panel-navigation.js';
 import './account-toggle.js';
 import './effort-slider.js';
 import './fast-toggle.js';
 import './model-picker.js';
 import { undoSettingChange } from './chat-settings.js';
 import { requestDevServerSetup } from './settings.js';
-import { $, CHAT_KEY, announce, calendarAvailable, esc, flashcardMeeting, FLASHCARD_ASK, isFlashcardRun, parseFlashcardPrompt, fileUrl, linkHtml, hasOwnedLivePane, isDone, isHeadlessRun, isQuestionRun, isReadOnlyRun, isShipReady, mergeWrappingUp, reviewsForRun, runState, runs, sessionStatus, showInCalendar, showToast, startWorkLabel } from './core.js';
+import { $, CHAT_KEY, announce, calendarAvailable, esc, flashcardMeeting, FLASHCARD_ASK, isFlashcardRun, parseFlashcardPrompt, fileUrl, linkHtml, hasOwnedLivePane, isDone, isHeadlessRun, isQuestionRun, isReadOnlyRun, isShipReady, mergeWrappingUp, reviewsForRun, runState, runs, sessionStatus, showInCalendar, showToast, startWorkLabel, stateText } from './core.js';
 import { autoGrow, bindPromptComposer, composerText, promptComposerHtml } from './prompt-composer.js';
-import { bindDictation, cancelDictation } from './dictation.js';
+import { bindDictation, cancelDictation, canFinishDictation, finishDictation } from './dictation.js';
+import { shortcutHint, shortcutMatches } from './shortcuts.js';
 import { bindChatSkills, bindSkillRefs, skillRefsHtml } from './chat-skills.js';
 import { knownRun, runRefHtml, runRefsHtml, runRefsKey } from './run-refs.js';
 import { selectReview } from './review-panel.js';
-import { revealDiffPanel } from './diff-panel.js';
-import { openQueueDialog, postOpenTerminal, reflectRunChange, resumeId } from './dialogs.js';
-import { openRunFile } from './files-panel.js';
+import { openQueueDialog, postOpenTerminal, resumeId } from './dialogs.js';
+import { openRunFile, fileReferencePath, fileReferenceLines } from './files-panel.js';
 import { bindChatLinkMenu } from './chat-link-menu.js';
 import { deployRowHtml, openDeployLog } from './deploy-card.js';
-import { refresh, restoreFailedLaunchPrompt } from './activity.js';
 import { ROWS_EARLIER, ROWS_SHOWN, attachmentUrl, catchUpState, chatRows, chatWorking, formatDuration, formatElapsed, isVideoAttachment, pairedChatRows, pausedLabel, runFolderClips, splitAttachments, summarizeWork, windowStart, workLabel } from './chat-timeline.js';
-import { ncAgents, runModelLabel, sessionModelBadge, sessionSpeedHtml, switchDividerLabel } from './launch-options.js';
+import { ncAgents, runModelLabel, sessionModelBadge, sessionModelBadgeHtml, switchDividerLabel } from './launch-options.js';
 import { knownHarness } from './harnesses.js';
 import { createLaunchSelection, launchModelFor, projectCloudAvailability } from './launch-selection.js';
 import { failedFirstLaunch, isSettledSession, rescueExpectedOwner, switchBlocker } from './run-rescue.js';
 import { launchAttempts } from './launch-attempts.js';
-import { chatChecksReady, conflictResolutionWaitingText, modelLabel, deployHoldsRun, isConflictResolutionPending, isDraftingPlan, isPlanReady, isPlanRevealPending, isPlanningComplete, isSidebarDone, manualStepsDue, openManualSteps, pairedPlanOf, prHasUnpushedCommits, prNeedsAttention, prPushButton, prPushPending, prRepliesPending, shipGateMissing, showsWaitingOnYou, tasksRunning, tasksWaitingText } from './run-presentation.js';
+import { chatChecksReady, conflictResolutionWaitingText, modelLabel, deployHoldsRun, isConflictResolutionPending, isDraftingPlan, isPlanReady, isPlanRevealPending, isPlanningComplete, isSidebarDone, manualStepsDue, openManualSteps, pairedPlanOf, hasOpenPullRequest, prBodyPending, prHasUnpushedCommits, prNeedsAttention, prPushButton, prPushPending, prPushRequest, prRepliesPending, shipGateMissing, showsWaitingOnYou, tasksRunning, tasksWaitingText } from './run-presentation.js';
 import { planUnseen, revealPlan, revealedMeta } from './plan-reveal.js';
 import { feedbackBatchModel, openNoteImages, planNotesCount, planNotesTurn, sentNotesHtml } from './plan-notes.js';
 import { clearRunWarning, isSettledByHand, settleWithScene, stepsWarningShown } from './filters.js';
@@ -39,11 +39,12 @@ import { trackUsage } from './usage-tracking.js';
 import { applyManualStepsCount, effectiveOpenSteps, manualStepsCard, releaseManualStepsHold, renderManualSteps } from './manual-steps.js';
 import { renderSecretRequests } from './secrets.js';
 import { renderChecksCard } from './run-checks.js';
-import { PLANNING_PAGE, markSentQuestions, releaseSentQuestions, settleSentQuestions } from './answer-mode.js';
-import { prRoundCardPending } from './pr-round-card.js';
+import { PLANNING_PAGE, pendingQuestionKey, markSentQuestions, releaseSentQuestions, settleSentQuestions } from './answer-mode.js';
+import { notePrRoundPush, prRoundCardPending, prRoundCardPushed } from './pr-round-card.js';
 import { clipError, clipPlayback, onClipChange, playClips, setClipsPaused, stopClips } from './clip-player.js';
 import { clipUrl, onRunDiffFiles, runDiffFiles } from './assets-panel.js';
 import { textDiagramSvg } from './text-diagram.js';
+import { iconButtonTooltip } from './control-tooltip.js';
 import { USER_MARKDOWN_TOKENIZER, replaceOutsideCode } from './user-markdown.js';
 
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
@@ -137,19 +138,6 @@ export function chatMounted(runId) {
   return !!mounted && mounted.runId === runId && mounted.root.isConnected;
 }
 
-// Which runs get a Chat tab: every run whose agent session Orc can name, and
-// every run the composer launched, which has one on the way.
-export function chatTabAvailable(run) {
-  const meta = (run && run.meta) || {};
-  if (run && run.pending) return true;
-  if (meta.launchedBy === 'orc-ui') return true;
-  const harness = meta.harness || (meta.sessionId ? 'claude' : null);
-  if (harness === 'claude') return !!meta.sessionId;
-  if (harness === 'codex') return !!meta.codexThreadId;
-  if (knownHarness(harness)) return meta.sessionBackend === 'headless' || Boolean(meta.sessionRescue);
-  return false;
-}
-
 export function chatAgentName(meta) {
   const harness = (meta || {}).harness;
   return AGENT_NAMES[harness] || knownHarness(harness)?.label || AGENT_NAMES[(meta || {}).sessionId ? 'claude' : ''] || 'The agent';
@@ -212,7 +200,7 @@ export function mountChat(run, container) {
         <div class="chat-flashcard" role="region" aria-label="Flashcard" hidden><orc-button variant="primary" size="compact" data-chat-action="show-calendar">Show in Calendar</orc-button></div>
       </div>
       <div class="chat-catch-up" hidden></div>
-      <div class="chat-done" role="region" aria-label="Run done" hidden><p class="chat-done-text"><span class="chat-done-say">This run is done.</span> <span class="chat-done-idle" hidden></span></p><span class="chat-done-actions"><orc-button class="chat-done-catch-up" variant="ghost" size="compact" data-chat-action="catch-up" hidden>Catch me up</orc-button><orc-button class="chat-done-main" variant="primary" size="compact" data-chat-action="settle">Settle</orc-button></span></div>
+      <div class="chat-done" role="region" aria-label="Run done" hidden><div class="chat-done-copy"><div class="chat-done-head"><p class="chat-done-text"><span class="chat-done-say">This run is done.</span> <span class="chat-done-idle" hidden></span></p><span class="chat-done-sep" aria-hidden="true">·</span><span class="chat-done-stages" aria-label="Finish stages"><span class="chat-stage-done">Built</span><span aria-hidden="true">→</span><span class="chat-stage-current" aria-current="step">Delivered</span><span aria-hidden="true">→</span><span>Settled</span></span></div><p class="chat-done-note">Moves this run to the Settled shelf and closes its session, terminals and worktree; keeps the branch, PR and history.</p></div><span class="chat-done-actions"><orc-button class="chat-done-catch-up" variant="ghost" size="compact" data-chat-action="catch-up" hidden>Catch me up</orc-button><orc-button class="chat-done-settle" variant="ghost" size="compact" data-chat-action="settle" hidden>Settle</orc-button><orc-button class="chat-done-main" variant="primary" size="compact" data-chat-action="settle">Settle</orc-button></span></div>
       <p class="chat-ship-hold" role="status" hidden></p>
       <p class="chat-ship-missing" role="status" hidden>${ICONS.error}<span>${esc(agent)} stopped before opening Ship, so there is no Yeet or Merge button yet. Ask it to finish Ship.</span></p>
       <p class="chat-tasks-waiting" role="status" hidden></p>
@@ -390,6 +378,7 @@ function applyPayload(session, data) {
     secretRequests: Array.isArray(data.secretRequests) ? data.secretRequests : [],
     manualSteps: Array.isArray(data.manualSteps) ? data.manualSteps : [],
     checks: Array.isArray(data.checks) ? data.checks : [],
+    mergeConfirmation: data.mergeConfirmation || null,
     prUpdates: Array.isArray(data.prUpdates) ? data.prUpdates : [],
     settingChanges: Array.isArray(data.settingChanges) ? data.settingChanges : [],
     autoMergeChanges: Array.isArray(data.autoMergeChanges) ? data.autoMergeChanges : [],
@@ -499,20 +488,8 @@ const FULL_TIME = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeSt
 const PART_DIVIDERS = { plan: 'is-plan', 'start-work': 'is-start-work' };
 const PR_UPDATE_MARKS = {
   approved: '✅', 'slack-approved': '✅', 'picked-up': '👀', 'slack-picked-up': '👀', comment: '💬', changes: '📝',
+  'body-updated': '📄',
 };
-
-// Reading Chat or the Plan page is what clears Needs attention and Unread, so
-// only a view the reader is actually looking at reports them seen.
-const reportingSeen = new Set();
-export function reportSeen(runId, action) {
-  const key = `${action}:${runId}`;
-  if (reportingSeen.has(key) || document.visibilityState !== 'visible' || !document.hasFocus()) return;
-  reportingSeen.add(key);
-  fetch(`/runs/${encodeURIComponent(runId)}/${action}`, { method: 'POST' })
-    .then(response => (response.ok ? refresh({ force: true }) : null))
-    .catch(() => null)
-    .finally(() => reportingSeen.delete(key));
-}
 
 // Redrawn only when what it says changes, so a poll never takes focus off its button.
 function renderCatchUp(host, done, session, state) {
@@ -591,21 +568,6 @@ function localHtmlPath(value) {
   return /^(?:\.\/)?[\w-][\w ./-]*\.html?$/i.test(value)
     && !value.split('/').some(part => part === '..' || part === '.git');
 }
-export function fileReferencePath(value) {
-  if (typeof value !== 'string' || /[\s<>"'`?]/.test(value) || /^(?:[a-z][a-z0-9+.-]*:(?!\d+(?::\d+)?$)|\/\/)/i.test(value)) return null;
-  const path = value.replace(/(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/, '');
-  if (path.split('/').some(part => part === '..' || part === '.git')) return null;
-  if (!/^[\w./~-]+$/.test(path)) return null;
-  return /\.(?:mdx?|markdown|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|rb|go|rs|swift|css|scss|sh|sql|vue|svelte)$/i.test(path) ? path : null;
-}
-// The lines a reference names: `path:12`, `path:12:3`, `path#L12`, `path#L12-L20`.
-export function fileReferenceLines(value) {
-  const match = /(?::(\d+)(?::\d+)?|#L(\d+)(?:-L?(\d+))?)$/.exec(typeof value === 'string' ? value : '');
-  if (!match) return null;
-  const start = Number(match[1] || match[2]);
-  const end = Math.max(start, Number(match[3] || start));
-  return start > 0 ? { start, end } : null;
-}
 function chatFileLink(path, text, lines) {
   const range = lines ? ` data-chat-file-lines="${lines.start}-${lines.end}"` : '';
   return `<a href="#${encodeURIComponent(mounted.runId)}/__chat__" data-chat-file="${esc(path)}"${range} title="Open in Files">${text}</a>`;
@@ -660,13 +622,28 @@ function revealInFinder(path) {
     announce('Opened in Finder');
   }).catch(error => showToast(error.message));
 }
-// A one-line block holding a `!` command or an aws command gets a Terminal
-// button, which types the shell command into a new terminal tab.
-function runnableBlock(text) {
+// A one-line shell command block gets a Terminal button, which types it into a
+// new terminal tab. Shell means a `!` command, an aws command, a block fenced
+// as a shell language, or an untagged block starting with a common command.
+// Untagged blocks need that first word, so plain output or a path gets none,
+// and a multi-line block never does, so Terminal never pastes several lines.
+const SHELL_FENCES = new Set(['bash', 'sh', 'zsh', 'shell', 'console']);
+const SHELL_WORDS = new Set([
+  'sudo', 'bash', 'sh', 'zsh', 'brew', 'git', 'gh', 'npm', 'npx', 'pnpm', 'yarn',
+  'node', 'python', 'python3', 'pip', 'pip3', 'open', 'cd', 'ls', 'launchctl',
+  'defaults', 'curl', 'docker', 'make', 'mkdir', 'chmod', 'kill', 'killall', 'ssh',
+]);
+function runnableBlock(text, lang = '') {
   const line = String(text || '').trim();
   if (!line || line.includes('\n')) return null;
   if (/^!(?!!)\s*\S/.test(line)) return line;
-  return /^aws\s+\S/.test(line) ? line : null;
+  // A `$ ` prompt is how a reply shows a command, not part of it.
+  const command = line.replace(/^\$\s+/, '');
+  if (!command) return null;
+  if (/^aws\s+\S/.test(command)) return command;
+  const fence = String(lang || '').trim().split(/\s/)[0].toLowerCase();
+  if (SHELL_FENCES.has(fence)) return command;
+  return !fence && SHELL_WORDS.has(command.split(/\s/)[0]) ? command : null;
 }
 // The shell line a `!` command stands for: a shell would read the `!` as
 // history expansion.
@@ -756,7 +733,7 @@ function markdownParser(breaks, followups = false, user = false) {
         if (token.lang === 'diagram') {
           return `<div class="chat-code chat-diagram"><div class="chat-diagram-frame" tabindex="0">${textDiagramSvg(token.text)}</div><pre hidden><code>${esc(token.text)}</code></pre>${copy}</div>`;
         }
-        const command = mounted && runnableBlock(token.text);
+        const command = mounted && runnableBlock(token.text, token.lang);
         return `<div class="chat-code">${block}${copy}${command ? runButtonHtml(command) : ''}</div>`;
       },
       // A table spans the column like every other block. Its wrapper scrolls
@@ -1122,6 +1099,7 @@ function userRowHtml(row, context) {
   const label = item.source
     ? `<span class="chat-bubble-label">Sent by ${esc(item.source === 'plugin' ? 'a plugin' : item.source)}</span>`
     : /^About question \d+(?: \([^)]*\))?: /.test(text) ? '<span class="chat-bubble-label">Asked from Answer mode</span>'
+    : /^About the plan: /.test(text) ? '<span class="chat-bubble-label">Asked from the PR comments plan</span>'
     : item.steer ? `<span class="chat-bubble-label">Sent while ${esc(context.agent)} worked</span>`
     : shell ? '<span class="chat-bubble-label">Shell command</span>' : '';
   const commandName = (item.command || '').replace(/^\$/, '/');
@@ -1414,6 +1392,13 @@ function rowHtml(row, context) {
         ? `${workToggleHtml(key, open, body)}${switchAction}${timeHtml(row.item.at)}${open ? `<div class="chat-work-detail"><pre class="chat-pre chat-output">${esc(row.item.detail)}</pre></div>` : ''}`
         : `<div class="chat-work-line">${body}</div>${switchAction}${timeHtml(row.item.at)}`}</div>`;
     }
+    case 'merge-confirmation': {
+      const { branch, target, commit, parked, at } = row.item;
+      const notes = (parked || []).map(note => `<p>${esc(note)}</p>`).join('');
+      return `<div class="chat-row chat-row-assistant chat-merge-confirmation">
+        <div class="chat-md"><p>Orc merged <code>${esc(branch)}</code> into <code>${esc(target)}</code> at <code>${esc(commit)}</code>.</p>${notes}</div>
+        <div class="chat-gutter-time">${timeHtml(at)}</div></div>`;
+    }
     case 'pr-update': {
       const item = row.item;
       const where = [item.number ? `PR #${item.number}` : 'Pull request', item.source === 'slack' ? 'Slack' : 'GitHub'].join(' · ');
@@ -1427,7 +1412,7 @@ function rowHtml(row, context) {
     case 'auto-merge': {
       const { enabled, at } = row.item;
       const state = enabled ? 'on' : 'off';
-      return `<div class="chat-row chat-row-badge">${recordBadgeHtml(ICONS.ship, `Auto merge ${state}`, { tone: state, at })}</div>`;
+      return `<div class="chat-row chat-row-badge">${recordBadgeHtml(ICONS.ship, `Ship when done ${state}`, { tone: state, at })}</div>`;
     }
     case 'resumed': return row.joined
       ? `<div class="chat-row chat-row-badge is-joined">${resumedBadgeHtml(row.item, row.item.at)}</div>`
@@ -1766,15 +1751,57 @@ function chatPlanTarget(run) {
 
 const pushLabel = meta => prPushButton(meta).label;
 
-// One click pushes the commits and, unless Settings say commits only, posts
-// the review round's replies too, so no Push comments button follows it.
-function pushRequest(runId, meta) {
-  const { postReplies } = prPushButton(meta);
-  if (prPushPending(meta)) {
-    return `PR action (${runId}): push feedback fixes${postReplies ? ' and post replies' : ''}`;
+// Sends a v4 review round's approved push or replies straight to orc-pr. The
+// request holds until GitHub has both, so the round's card shows it under way
+// and then pushed; a click the server finds already delivered reads the same.
+async function sendRoundAction(run, session, body, failure) {
+  notePrRoundPush(run, 'sending');
+  let result = 'failed';
+  let already = false;
+  try {
+    const response = await fetch(`/runs/${encodeURIComponent(run.id)}/send-answers`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const reply = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(reply.error || failure);
+    already = reply.alreadyPushed === true;
+    result = 'done';
+    await refresh({ force: true });
+  } catch (error) {
+    setStatus(session, error.message, 'error');
+  } finally {
+    notePrRoundPush(run, result, { already });
+    session.sending = false;
+    if (mounted?.session === session) renderChat();
   }
-  const pr = meta.prUrl || meta.prUrls?.[0];
-  return `Push ${meta.branch || 'this run\'s branch'} to its PR${pr ? ` (${pr})` : ''}${postReplies ? ', then post the review round\'s replies' : ''}.`;
+}
+
+// Update PR body: Orc puts pr-body.md and its screenshots on the open PR
+// itself, with no agent turn, bound to the digest the bar showed. Chat's
+// PR body updated card confirms it.
+async function updatePrBody(run, session) {
+  const digest = run.meta?.prBody?.digest;
+  if (!digest) return false;
+  session.prBodyUpdating = true;
+  if (mounted?.session === session) renderChat();
+  let ok = false;
+  try {
+    const response = await fetch(`/runs/${encodeURIComponent(run.id)}/pr-body-update`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ digest }),
+    });
+    const reply = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(reply.error || 'Could not update the PR body');
+    ok = true;
+    announce('PR body updated');
+    await refresh({ force: true });
+    if (chatMounted(run.id)) schedulePoll(0);
+  } catch (error) {
+    setStatus(session, error.message || 'Could not update the PR body', 'error');
+  } finally {
+    session.prBodyUpdating = false;
+    if (mounted?.session === session) renderChat();
+  }
+  return ok;
 }
 
 function conflictWaitingHtml(meta) {
@@ -2092,24 +2119,41 @@ function renderChat() {
   syncFloatingRow();
   // Settling would strand commits the PR is still missing, so push them first.
   const push = prHasUnpushedCommits(meta);
-  // The commits read as unpushed until the agent lands the push, so the bar
-  // waits out a sent message and the turn it starts rather than offer it twice.
-  const pushUnderway = push && (session.sending || session.outbox.length > 0 || working || starting);
+  // A turn that rewrote pr-body.md or retook its screenshots: one click puts
+  // them on the PR, and Push to PR does it too when commits are waiting.
+  const body = prBodyPending(meta);
+  // More work on a finished run is not done: the bar goes while a message is
+  // on its way or the agent works, and the commits and body it reads wait for
+  // the recheck the turn's end starts.
+  const busy = session.sending || session.outbox.length > 0 || working || starting
+    || (hasOpenPullRequest(meta) && meta.deliveryStatus?.checking === true);
   // Settling closes the session, so wait for the post-merge push and pane close.
   const done = root.querySelector('.chat-done');
   // A review round's own card in the conversation carries its push.
   done.hidden = ready || !isDone(meta, run.files || []) || mergeWrappingUp(meta)
-    || isSettledByHand(runId) || pushUnderway || prRoundCardPending(run)
+    || isSettledByHand(runId) || busy || (prRoundCardPending(run) && !prRoundCardPushed(run))
     // A deploy still going or failed is not done: its card carries Retry deploy.
     || deployHoldsRun(meta.deploy);
   const stepsLeft = session.loaded ? effectiveOpenSteps(runId, session.data.manualSteps) : openManualSteps(meta);
   const doneButton = done.querySelector('.chat-done-main');
-  done.setAttribute('aria-label', push ? 'Unpushed commits' : 'Run done');
+  const settleButton = done.querySelector('.chat-done-settle');
+  const updating = session.prBodyUpdating === true;
+  const showStages = !push && !isQuestionRun(run) && !meta.noDiffCompletion;
+  done.setAttribute('aria-label', push ? 'Unpushed commits' : body ? 'PR body not updated' : 'Run done');
   done.querySelector('.chat-done-say').textContent = push ? 'Commits not on the PR yet.'
-    : stepsLeft ? 'This run is done. Tick off your steps above to settle it.' : 'This run is done.';
-  doneButton.dataset.chatAction = push ? 'push' : 'settle';
-  doneButton.textContent = push ? pushLabel(meta) : 'Settle';
-  doneButton.toggleAttribute('disabled', push ? pushUnderway : stepsLeft > 0);
+    : body ? 'PR body changes not on the PR yet.'
+      : stepsLeft ? 'This run is done. Tick off your steps above to settle it.' : 'This run is done.';
+  done.querySelector('.chat-done-sep').hidden = !showStages;
+  done.querySelector('.chat-done-stages').hidden = !showStages;
+  done.querySelector('.chat-done-note').hidden = push;
+  doneButton.dataset.chatAction = push ? 'push' : body ? 'pr-body-update' : 'settle';
+  const mainLabel = push ? pushLabel(meta) : body ? (updating ? 'Updating PR body…' : 'Update PR body') : 'Settle';
+  if (doneButton.textContent !== mainLabel) doneButton.textContent = mainLabel;
+  doneButton.toggleAttribute('disabled', push || body ? updating : stepsLeft > 0);
+  // Settle stays beside Update PR body as the quieter choice; unpushed
+  // commits keep it hidden, as settling would strand them.
+  settleButton.hidden = push || !body;
+  settleButton.toggleAttribute('disabled', updating || stepsLeft > 0);
   renderCatchUp(catchUpHost, done, session,
     session.loaded ? catchUpState(items, session.data.catchUp, { working: working || starting }) : null);
   const agent = chatAgentName(meta);
@@ -2139,6 +2183,7 @@ function renderChat() {
     permissionFallback: session.data.permissionFallback || null,
     answer: session.answer || null,
     detailed: true,
+    mergeConfirmation: session.data.mergeConfirmation,
     prUpdates: session.data.prUpdates || [],
     settingChanges: session.data.settingChanges || [],
     autoMergeChanges: [...session.data.autoMergeChanges || [], ...session.pressedAutoMerge?.values() || []],
@@ -2229,7 +2274,7 @@ function renderChat() {
   if (latestReview) {
     const reviewState = runState(latestReview.meta, latestReview.files);
     reviewControl.querySelector('.chat-reviews-summary').textContent =
-      `${reviews.length === 1 ? 'Review' : `${reviews.length} reviews`} · ${reviewState.label}`;
+      `${reviews.length === 1 ? 'Review' : `${reviews.length} reviews`} · ${stateText(reviewState)}`;
   }
   if (follow) scroller.scrollTop = scroller.scrollHeight;
   revealLinkedMessage(session, root);
@@ -2645,6 +2690,27 @@ document.addEventListener('keydown', event => {
   closeChatSwitcher({ restoreFocus: true });
 });
 
+// The "Stop the agent" shortcut presses Stop for the run in view. It acts only
+// while Stop shows and is not already stopping, and the draft stays put.
+// Returns whether it stopped anything, for Orc.app's menu item.
+function stopFromShortcut() {
+  const stop = $('chat-stop');
+  if (!chatOnScreen() || !stop || stop.hidden || stop.disabled) return false;
+  stopChat(null, stop);
+  return true;
+}
+
+window.orcStopChat = stopFromShortcut;
+
+document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || event.isComposing || !shortcutMatches('stop-agent', event)) return;
+  if (event.repeat) {
+    if (chatOnScreen()) event.preventDefault();
+    return;
+  }
+  if (stopFromShortcut()) event.preventDefault();
+});
+
 function syncComposer() {
   if (!mounted) return;
   const { root, run, session } = mounted;
@@ -2653,7 +2719,7 @@ function syncComposer() {
   if (!prompt || !send || !status) return;
   const effortBadge = $('chat-effort');
   const badge = sessionModelBadge(run.meta, session.data);
-  const badgeHtml = esc(badge.text) + sessionSpeedHtml(badge.speedName);
+  const badgeHtml = sessionModelBadgeHtml(badge);
   if (effortBadge.dataset.html !== badgeHtml) {
     effortBadge.innerHTML = badgeHtml;
     effortBadge.dataset.html = badgeHtml;
@@ -2678,15 +2744,22 @@ function syncComposer() {
   const ready = chatDeliveryReady(run.meta);
   const hasAction = !!delivery.firstChild?.contentDocument?.querySelector('#orc-next button, #orc-next orc-split-button');
   const showDelivery = ready && hasAction;
-  const showStop = mode === 'busy' || (mode === 'working' && !typed);
+  // Stop stays for the whole turn, beside Send, so a draft never hides it. A
+  // run that takes no messages mid-turn (busy) shows Stop alone.
+  const showStop = mode === 'busy' || mode === 'working';
   const shown = !delivery.hidden;
   delivery.hidden = !showDelivery;
   // Hidden, the buttons had no width to measure.
   if (showDelivery && !shown) syncDeliveryWidth(delivery);
-  send.hidden = mode === 'readonly' || showStop;
-  send.disabled = session.sending || window.orcTextareaUploading?.(prompt) || !typed
+  send.hidden = mode === 'readonly' || mode === 'busy';
+  send.disabled = session.sending || mounted.finishingDictation || window.orcTextareaUploading?.(prompt)
+    || !(typed || canFinishDictation(prompt))
     || !['idle', 'working', 'answered', 'question'].includes(mode);
-  if (stop) stop.hidden = !showStop;
+  if (stop) {
+    stop.hidden = !showStop;
+    const key = shortcutHint('stop-agent');
+    stop.title = key ? `Stop the agent (${key})` : 'Stop the agent';
+  }
   const message = {
     failed: `${agent} didn't start. Your prompt is saved.`,
     readonly: 'This run takes no messages.',
@@ -2808,15 +2881,29 @@ export function extendChatBanners(render) {
 }
 
 async function sendChat() {
-  if (!mounted || mounted.session.sending) return;
-  if (mounted.view.mode === 'question') return sendAnswer();
-  const { runId, session, skillInvocation } = mounted;
+  const composer = mounted;
+  if (!composer || $('chat-send').disabled) return;
+  const { runId, session, skillInvocation } = composer;
   const prompt = $('chat-prompt');
+  const answering = composer.view.mode === 'question';
+  if (canFinishDictation(prompt)) {
+    const question = pendingQuestionKey(composer.run);
+    composer.finishingDictation = true;
+    syncComposer();
+    let completed;
+    try { completed = await finishDictation(prompt); }
+    finally {
+      composer.finishingDictation = false;
+      if (mounted === composer) syncComposer();
+    }
+    if (!completed || mounted !== composer || $('chat-send').disabled
+        || answering !== (composer.view.mode === 'question') || question !== pendingQuestionKey(composer.run)) return;
+  }
   const typed = composerText(prompt.value).trim();
   const attachments = window.orcTextareaAttachments?.(prompt) || [];
   const draft = (window.orcAppendAttachmentReferences?.(typed, prompt) ?? typed).trim();
-  if (!draft || $('chat-send').disabled) return;
-  trackUsage('chat.send', 'Chat › Send message', { attachments: attachments.length });
+  if (!draft) return;
+  if (!answering) trackUsage('chat.send', 'Chat › Send message', { attachments: attachments.length });
   cancelDictation(prompt);
   session.sending = true;
   prompt.value = '';
@@ -2825,14 +2912,11 @@ async function sendChat() {
   saveDraft(runId, '');
   const sentQuestions = markSentQuestions(runId);
   syncComposer();
+  const failed = () => restoreFailedDraft(runId, typed, attachments);
+  if (answering) return postAnswer(runId, session, draft, sentQuestions, failed);
   const displayText = displayCommand(skillInvocation.mentions(draft));
   const text = await skillInvocation(draft);
-  await postChat(runId, session, text, displayText, {
-    sentQuestions,
-    // The typed text comes back unless something new was typed meanwhile,
-    // and it survives in the draft even if the reader has moved on.
-    failed() { restoreFailedDraft(runId, typed, attachments); },
-  });
+  await postChat(runId, session, text, displayText, { sentQuestions, failed });
 }
 
 // A reply's Terminal button types its command into a new terminal tab of the
@@ -2895,21 +2979,7 @@ async function postChat(runId, session, text, displayText, { failed, sentQuestio
 
 // The answer goes through the same route as the question card's picks, which
 // pastes it into the pane's open question instead of a new prompt.
-async function sendAnswer() {
-  const { runId, session } = mounted;
-  const prompt = $('chat-prompt');
-  const typed = composerText(prompt.value).trim();
-  const attachments = window.orcTextareaAttachments?.(prompt) || [];
-  const text = (window.orcAppendAttachmentReferences?.(typed, prompt) ?? typed).trim();
-  if (!text || $('chat-send').disabled) return;
-  cancelDictation(prompt);
-  session.sending = true;
-  prompt.value = '';
-  window.orcClearAttachments?.(prompt);
-  autoGrow(prompt);
-  saveDraft(runId, '');
-  const sentQuestions = markSentQuestions(runId);
-  syncComposer();
+async function postAnswer(runId, session, text, sentQuestions, failed) {
   let response = null, body = {};
   try {
     response = await fetch(`/runs/${encodeURIComponent(runId)}/answer-question`, {
@@ -2921,7 +2991,7 @@ async function sendAnswer() {
   const here = chatMounted(runId);
   if (!response || !response.ok) {
     releaseSentQuestions(runId, sentQuestions);
-    restoreFailedDraft(runId, typed, attachments);
+    failed();
     setStatus(session, body.error || 'Answer not sent. Try again.', 'error');
     if (here) {
       announce(`Answer not sent: ${body.error || 'try again'}`);
@@ -3186,31 +3256,29 @@ async function chatAction(action, button) {
     catchUp(runId, { dismiss: true });
     return;
   }
+  if (action === 'pr-body-update') {
+    if (session.sending || session.prBodyUpdating) return;
+    trackUsage('chat.pr-body-update', 'Chat › Update PR body');
+    await updatePrBody(run, session);
+    return;
+  }
   if (action === 'push') {
-    if (session.sending) return;
+    if (session.sending || session.prBodyUpdating) return;
     const meta = run.meta || {};
     const { label, postReplies } = prPushButton(meta);
-    trackUsage('chat.push', `Chat › ${label}`, { postReplies });
+    trackUsage('chat.push', `Chat › ${label}`, { postReplies, body: prBodyPending(meta) });
+    // One click for both: the body goes first, so a push the agent makes
+    // later never leaves it behind.
+    if (prBodyPending(meta) && !await updatePrBody(run, session)) return;
     session.sending = true;
     syncComposer();
     const feedback = meta.prFeedback;
     if (meta.lifecycleVersion === 4 && prPushPending(meta) && feedback.commit
         && !meta.delivery && !(meta.repositories?.length > 1 || meta.prUrls?.length > 1)) {
-      try {
-        const response = await fetch(`/runs/${encodeURIComponent(runId)}/send-answers`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'pr-push', feedbackCommit: feedback.commit, postReplies }),
-        });
-        if (!response.ok) throw new Error((await response.json()).error || 'Could not push feedback');
-        await refresh({ force: true });
-      } catch (error) {
-        setStatus(session, error.message, 'error');
-      } finally {
-        session.sending = false;
-        if (mounted?.session === session) renderChat();
-      }
+      await sendRoundAction(run, session, { action: 'pr-push', feedbackCommit: feedback.commit, postReplies },
+        'Could not push the review fixes');
     } else {
-      await postChat(runId, session, pushRequest(runId, meta), label);
+      await postChat(runId, session, prPushRequest(runId, meta), label);
     }
     return;
   }
@@ -3224,19 +3292,8 @@ async function chatAction(action, button) {
     syncComposer();
     if (meta.lifecycleVersion === 4 && prRepliesPending(meta) && feedback.commit
         && !meta.delivery && !(meta.repositories?.length > 1 || meta.prUrls?.length > 1)) {
-      try {
-        const response = await fetch(`/runs/${encodeURIComponent(runId)}/send-answers`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'pr-replies', feedbackCommit: feedback.commit, postReplies: true }),
-        });
-        if (!response.ok) throw new Error((await response.json()).error || 'Could not post the replies');
-        await refresh({ force: true });
-      } catch (error) {
-        setStatus(session, error.message, 'error');
-      } finally {
-        session.sending = false;
-        if (mounted?.session === session) renderChat();
-      }
+      await sendRoundAction(run, session, { action: 'pr-replies', feedbackCommit: feedback.commit, postReplies: true },
+        'Could not post the replies');
     } else {
       await postChat(runId, session, `PR action (${runId}): post replies`, 'Push comments');
     }
@@ -3304,7 +3361,7 @@ function wireChat(root, session) {
   const run = mounted.run;
   const disposeLinkMenu = bindChatLinkMenu(root, () => chatMounted(runId) ? mounted.run : run, revealInFinder);
   bindPromptComposer(prompt);
-  const disposeDictation = bindDictation(prompt, { owner: () => runId });
+  const disposeDictation = bindDictation(prompt, { owner: () => runId, changed: syncComposer });
   // bindDictation prepends the mic; plugin buttons go in front of it.
   const pluginActions = root.querySelector('.chat-plugin-actions');
   pluginActions.parentElement.prepend(pluginActions);
@@ -3322,6 +3379,7 @@ function wireChat(root, session) {
   $('chat-send').addEventListener('click', sendChat);
   const attachInput = $('chat-attach-input');
   $('chat-attach').addEventListener('click', () => attachInput.click());
+  iconButtonTooltip($('chat-attach'));
   attachInput.addEventListener('change', () => {
     const files = Array.from(attachInput.files || []);
     attachInput.value = '';
@@ -3519,3 +3577,5 @@ function wireChat(root, session) {
 
 // The Chat tab's own key, re-exported for the modules that only import here.
 export { CHAT_KEY };
+
+bindChatNavigation({ chatComposerReady, focusChatComposer, updateChatRun, showSendingAnswers, chatWorkingOn });

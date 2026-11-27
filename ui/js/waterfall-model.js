@@ -2,6 +2,7 @@
 // GET /api/runs/<id>/waterfall. No DOM, so tests load it as it is.
 
 import { formatDuration } from './chat-timeline.js';
+import { formatCostNow } from './currency.js';
 
 // In the order the legend lists them.
 export const ACTIVITIES = [
@@ -25,7 +26,6 @@ const TICK_ROOM = 0.07;
 // A wait shorter than this between turns is not worth a line of its own.
 export const IDLE_NOTE_SECONDS = 60;
 
-// TESTABLE: run cost formatting
 function costTokens(n) {
   n = Number(n) || 0;
   if (n >= 999500) return `${(n / 1e6).toFixed(1)}M`;
@@ -33,15 +33,10 @@ function costTokens(n) {
   return String(Math.round(n));
 }
 
-// A run that spent a fraction of a cent still spent something — "$0.00" reads
-// as free, so anything under a cent says so instead. No cost from tokens of a
-// model without a price is unknown, never a guess at a near model's rate.
-function costUsd(cost, unpriced) {
-  if (cost === null || cost === undefined) return unpriced ? 'Unknown' : '—';
-  if (cost > 0 && cost < 0.005) return '<$0.01';
-  return `$${Number(cost).toFixed(2)}`;
-}
-// END TESTABLE: run cost formatting
+// A cost in dollars, shown in the currency Settings picks (currency.js):
+// "<$0.01" for a fraction of a cent, "Unknown" for tokens of a model without
+// a price, never a guess at a near model's rate. The name is older than pounds.
+const costUsd = (cost, unpriced) => formatCostNow(cost, unpriced);
 export { costTokens, costUsd };
 
 // Whole seconds at the least: a waterfall has no use for milliseconds.

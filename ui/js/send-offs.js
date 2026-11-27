@@ -157,7 +157,7 @@ function send(name, { theme, word, title: customTitle, force = false } = {}) {
     document.body.append(layer);
     show();
     restoreScroll(layer);
-    const title = customTitle ?? (document.getElementById('title')?.firstChild?.textContent
+    const title = customTitle ?? (document.querySelector('#title .run-title-text')?.textContent
       || document.querySelector('h1')?.textContent || 'This run');
     try {
       stage = module.createScene(spec.name, selected, layer, title);

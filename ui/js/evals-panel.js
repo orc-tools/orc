@@ -1,4 +1,4 @@
-import { $, LABELS, esc, externalizeLinks, highlightSeverity, resolveRelativeUrls, runState, runs, styleTldrs, versionedFileUrl } from './core.js';
+import { $, LABELS, esc, externalizeLinks, highlightSeverity, resolveRelativeUrls, runState, runs, stateText, styleTldrs, versionedFileUrl } from './core.js';
 import { artifactHtml } from './diff.js';
 
 // An evals parent's side panel view: each candidate's child run and where it
@@ -23,7 +23,7 @@ export function evalsCandidatesHtml(meta, runList) {
     // The shared prompt heads the table; a candidate given another shows its own.
     const ownPrompt = candidate.prompt ? `<span class="evals-detail evals-own-prompt" title="${esc(candidate.prompt)}">${esc(candidate.prompt)}</span>` : '';
     return `<tr><th scope="row">${esc(candidate.label || child.label || '')}${ownPrompt}</th><td>${name}</td>`
-      + `<td>${phase}</td><td><span class="state-tag state-${state.key}">${esc(state.label)}</span>`
+      + `<td>${phase}</td><td><span class="state-tag state-${state.key}">${esc(stateText(state))}</span>`
       + `${state.detail ? ` <span class="evals-detail">${esc(state.detail)}</span>` : ''}</td></tr>`;
   }).join('');
   return `<section class="evals-panel" aria-labelledby="evals-panel-title">

@@ -1,7 +1,7 @@
 # Vaults
 
-A vault is a small page you build by describing it: a goals page laid out your
-way, a wins board drawn as a scene, a prep card for your next meeting. You say
+A vault is a small page you build by describing it: the good things you did
+this year, a goals page laid out your way, a prep card for your next meeting. You say
 what you want in the chat over the page, a model writes the page while you
 watch, and you keep adjusting it the same way. A page can also rebuild itself
 on a schedule or before each meeting.
@@ -13,22 +13,36 @@ palette (`⌘K`).
 
 **New vault** offers three finished, fullscreen pages with chat built in. Pick
 one, give it a name and choose **Create vault** to open it immediately. **First
-change** is optional and starts a build if you fill it in.
+change** is optional and starts a build if you fill it in; the button then reads
+**Create and build**. The dialog also holds the model, effort and (with more
+than one Claude login) the login, so the first build runs with what you chose.
+Each new vault starts on the defaults.
 
 | Template | What you can do | Notes |
 |---|---|---|
-| Cut & Keep | Filter a studio pinboard by material and pin your own images, type, colours, notes and links. | `clippings.md` |
-| Goal Atlas | Add a goal and its next step. Use **Find evidence** beside GitHub or Notion to collect dated links under the goal they support. | `goals.md`, `evidence.md` |
-| Listening Room | Queue one of the starter records or an album of your own, then log what you heard. | `queue.md`, `listens.md` |
+| Self-celebrations | Press **Collect** beside GitHub, Notion or Slack to keep the work you finished, the pages you wrote and the thanks you got, each with its date and link. The page, headed "Good things, lately", shows them by month under a year of dots, one for each. Type one yourself in **Tell it one yourself**. | `good-things.md` |
+| Next up | Read your one next action first, then today's meetings and what waits on you on GitHub, Notion and Slack. It rebuilds each weekday at 07:30. Tell it what matters now with **Add a priority**. | `priorities.md` |
+| Meeting prep | Read a card for your next meeting: who is in it, why, what to read first and three talking points. It rebuilds 15 minutes before each meeting. | |
 
-Goal Atlas searches through the vault builder on this Mac. GitHub uses the
-authenticated `gh` CLI. Notion uses the MCP connection of the Claude login
-chosen in the vault’s Settings. Each source has setup instructions and can
-be used independently. Both start as **Unchecked**.
+Collect searches through the vault builder on this Mac, from the date that
+source was last checked (30 days the first time), and never keeps the same
+link twice. GitHub uses the authenticated `gh` CLI. Notion and Slack use the
+MCP connections of the Claude login chosen in the vault’s Settings; Slack’s
+may need your workspace admin’s approval first. Each source has its own setup
+steps, starts as **Unchecked** and says when it was last checked. Nothing is
+collected on a schedule: an automation's build may change the page but not
+its notes, so only your Collect keeps a good thing.
 
-You can also start with a prompt. **Goals** starts with `goals.md`, **Wins board** with `wins.md`, `feedback.md`, `one-to-ones.md` and `reflections.md`,
-and **Project notes & ideas** with `preferences.md`, `decisions.md` and
-`ideas.md`. **Meeting prep** and **Blank** start without notes.
+Next up and Meeting prep come with their automation switched on and read
+your calendar, so they need Orc's [Calendar](../calendar/README.md) plugin.
+Switch the automation off, or change its time, in Settings like any other.
+Until it first runs, the page offers to build at once.
+
+You can also start with a prompt. **Goals** starts with `goals.md` and
+**Project notes & ideas** with `preferences.md`, `decisions.md` and
+`ideas.md`. **Blank** starts without notes. Vaults made from the templates
+Orc offered before, such as Cut & Keep, Goal Atlas, Listening Room and the
+Wins board, keep their pages and notes.
 
 A vault's page fills the screen beside the sidebar. The menu and Orc's
 floating chat remember where you left them on this Mac.
@@ -44,6 +58,20 @@ floating chat remember where you left them on this Mac.
   **Build**. **Show conversation** lists the last 6 things you asked and what
   each build answered. Drag it by its handle (or focus the handle and press
   the arrow keys) to put it anywhere, or shrink it to a **Chat** button.
+
+### Light and dark
+
+A page follows Orc's mode. Orc puts `data-orc-mode="light"` or
+`data-orc-mode="dark"` on the page's `<html>` before it paints, and changes
+it when you switch, whether you chose the mode or Orc follows your Mac's. The
+still on the Vaults list and the vault on its own follow it too. Each build is
+told to style the page for both, background included, in the page's own
+colours, and the three finished templates come with both.
+
+A page made before this keeps the one look it was built with. To give it the
+other, ask its chat once, such as "make this work in dark mode too". A page
+with its own light/dark switch starts at Orc's mode and its switch still
+overrides it.
 
 The page reloads each time the model saves it, so you see it take shape.
 **Stop** ends a build, and **Undo** in Settings puts the page back as it was
@@ -70,7 +98,8 @@ A few things stay with Orc, beside the menu button:
   ever stop working. Settings shows Orc's box too.
 
 The page asks Orc through `window.orcVault`, which Orc gives every page:
-`ask(text)`, `stop()` and `onState(fn)`. A page says it holds its own box
+`ask(text)`, `stop()` and `onState(fn)`, with `mode` and `onMode(fn)` for
+Orc's light or dark mode. A page says it holds its own box
 with `<meta name="orc-vault-box" content="page">` in its head. Its script
 could try to ask on its own, so Orc builds what a page sends only straight
 after a click or key of yours in it: never in the 5 seconds after you
@@ -83,7 +112,8 @@ Enter rather than a form.
 **Settings**, in the menu and beside the model under the chat, holds the page's settings:
 
 - **Model.** Each vault builds with its own model and effort. A new vault uses
-  Claude Opus 5.5 at medium effort. With more than one Claude login on this
+  what the New vault dialog chose, Claude Opus 5.5 at medium effort unless
+  changed there. With more than one Claude login on this
   Mac, you also pick which one the page builds under, since connections such
   as Notion belong to a login.
 - **Automations.** What the page does on its own, each with a switch,

@@ -31,7 +31,7 @@ style.textContent = `
   .orc-mermaid-tools[hidden] { display: none; }
   .orc-mermaid-tools button {
     display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
-    padding: 0; border: 0; border-radius: 5px; background: none; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
+    padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted-strong); cursor: var(--orc-cursor-pointer, pointer);
   }
   .orc-mermaid-tools button:hover:not(:disabled) { color: var(--text); background: var(--chip); }
   .orc-mermaid-tools button:disabled { opacity: 0.4; cursor: default; }

@@ -21,6 +21,7 @@ import contextlib
 import fcntl
 import json
 import os
+import sys
 import tempfile
 
 import run_relationships
@@ -29,6 +30,7 @@ NON_BUILD_ROUTES = run_relationships.NON_BUILD_ROUTES
 MODES = ("standard", "low")
 QUEUE_SCOPES = ("all", "new-only")
 ENV_KEY = "ORC_LOW_POWER"
+RUN_ENV_KEY = "ORC_POWER_RUN"
 FOCUS_FILE = "focus.json"
 PRIORITY_FILE = "priority.json"
 # Why a run keeps working in the queue, saved in the run itself so that losing
@@ -221,13 +223,37 @@ def write_priority(runs, config_dir=None):
     return clean
 
 
+def works_beside_queue(run_id, config_dir=None):
+    """Whether the run works alongside Queue mode's own run: one the user
+    started or resumed by hand, or one kept going when Queue mode came on.
+    The scheduler's state says so, and so does the run's own saved place,
+    which outlasts a lost or rewritten focus.json."""
+    if not isinstance(run_id, str) or not run_id:
+        return False
+    state = read_focus(config_dir)
+    if run_id in state.get("beside", ()) or run_id in state.get("exempt", ()):
+        return True
+    # The id becomes a folder name here, so it must not climb out of runs/.
+    if run_id in (".", "..") or "/" in run_id or "\0" in run_id:
+        return False
+    return read_place(os.path.join(_orc_dir(config_dir), "runs", run_id)) in ("hand", "kept")
+
+
 def low_for(run_id=None, config_dir=None):
-    del run_id
-    return configured(config_dir) == "low"
+    """Whether the run's turns get Low power's small worker pools. A run working
+    beside the queue already adds to the load, so capping its tests to two
+    workers only makes it slower (26 Nov: many such runs, each at 2 workers)."""
+    return configured(config_dir) == "low" and not works_beside_queue(run_id, config_dir)
 
 
 def turn_env(run_id=None, config_dir=None):
-    return {ENV_KEY: "1"} if low_for(run_id, config_dir) else {}
+    """Low power's environment for a turn. It names the run too, because a
+    Start now on the plan page moves the run beside the queue only after its
+    first turn has started: bin/test asks again (`python3 power_mode.py
+    low-for <run>`) before it caps its pool."""
+    if not low_for(run_id, config_dir):
+        return {}
+    return {ENV_KEY: "1", **({RUN_ENV_KEY: run_id} if run_id else {})}
 
 
 def hook_context(run_id=None, meta=None, config_dir=None):
@@ -348,3 +374,16 @@ def plan(members, previous=None, priority=None, prioritise=None, start=None,
     if exempt_ids:
         result["exempt"] = exempt_ids
     return result
+
+
+def main(argv):
+    """`low-for <run id>` prints `low` or `standard` for that run now."""
+    if len(argv) != 2 or argv[0] != "low-for":
+        print("usage: power_mode.py low-for <run id>", file=sys.stderr)
+        return 2
+    print("low" if low_for(argv[1]) else "standard")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

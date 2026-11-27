@@ -33,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 import peer_link
+import runs_delta
 
 CACHE_LIMIT = 2 * 1024 * 1024
 # Saved with a run-list part and sent again offline, so an asleep laptop
@@ -68,6 +69,11 @@ VIEW_HEADER = "X-Orc-Link-View"
 # answers a run file itself rather than redirect to its files origin, a
 # loopback port this laptop cannot reach.
 LINKED_HEADER = "X-Orc-Via-Link"
+# Set on a phone's request relayed through a view. The Orc that answers it
+# then grants only what a phone may do, so a phone signed in to one laptop
+# reaches a linked one without that laptop's terminals or settings. It can
+# only take rights away, so it needs no proof.
+PHONE_HEADER = "X-Orc-Via-Phone"
 
 
 def _mark_view(page):
@@ -528,6 +534,107 @@ class Views:
         return dropped
 
 
+def _copy_body(handler, response):
+    """Finish the headers and pass the body on as it arrives, so an event
+    stream reaches the page as it is sent."""
+    if response.length is not None:
+        handler.send_header("Content-Length", str(response.length))
+        handler.end_headers()
+        while True:
+            chunk = response.read(65536)
+            if not chunk:
+                return
+            handler.wfile.write(chunk)
+    handler.send_header("Transfer-Encoding", "chunked")
+    handler.end_headers()
+    while True:
+        chunk = response.read1(65536)
+        if not chunk:
+            break
+        handler.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
+        handler.wfile.flush()
+    handler.wfile.write(b"0\r\n\r\n")
+
+
+def _without_cookies(header, names):
+    kept = [part.strip() for part in header.split(";")
+            if part.strip() and part.strip().partition("=")[0] not in names]
+    return "; ".join(kept)
+
+
+def relay_from_phone(handler, view, public_origin, keep_out=(), private_cookies=()):
+    """Answer a phone's request with a linked laptop's, through that laptop's
+    view, so the phone gets the forwarding, saved copy and send queue a
+    desktop window gets. `public_origin` is the phone's address, mapped to the
+    view's own origin on the way in and back on the way out. Headers named in
+    `keep_out` and the cookies in `private_cookies` stay on this laptop."""
+    own = view.base_url().rstrip("/")
+    try:
+        length = int(handler.headers.get("Content-Length") or 0)
+    except ValueError:
+        length = 0
+    if length > BODY_LIMIT:
+        handler.close_connection = True
+        return _send_json(handler, 413, {"error": "Request too large."})
+    body = handler.rfile.read(length) if length > 0 else b""
+    if handler.headers.get("Upgrade"):
+        return _send_json(handler, 403, {"error": "Open a linked laptop's terminals on that laptop."})
+    dropped = {name.lower() for name in keep_out} | {"host", PHONE_HEADER.lower(), "x-forwarded-for"}
+    headers = []
+    for name, value in handler.headers.items():
+        lower = name.lower()
+        if lower in HOP_HEADERS or lower in dropped or lower.startswith("tailscale-"):
+            continue
+        if lower == "cookie":
+            value = _without_cookies(value, set(private_cookies))
+            if not value:
+                continue
+        if lower in ("origin", "referer") and value.startswith(public_origin):
+            value = own + value[len(public_origin):]
+        headers.append((name, value))
+    headers += [("Host", "127.0.0.1:%d" % view.view_port), (PHONE_HEADER, "1"),
+                ("Content-Length", str(len(body)))]
+    conn = http.client.HTTPConnection("127.0.0.1", view.view_port, timeout=300)
+    try:
+        conn.putrequest(handler.command, handler.path, skip_host=True, skip_accept_encoding=True)
+        for name, value in headers:
+            conn.putheader(name, value)
+        conn.endheaders(body or None)
+        response = conn.getresponse()
+    except (OSError, http.client.HTTPException) as exc:
+        conn.close()
+        return _send_json(handler, 502, {"error": "Couldn't reach the linked laptop: %s" % exc})
+    try:
+        handler.send_response(response.status, response.reason)
+        for name, value in response.getheaders():
+            lower = name.lower()
+            if lower in HOP_HEADERS:
+                continue
+            if lower == "location" and value.startswith(own):
+                value = public_origin + value[len(own):]
+            handler.send_header(name, value)
+        if handler.command == "HEAD" or response.status in (204, 304) or 100 <= response.status < 200:
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+        else:
+            _copy_body(handler, response)
+    except OSError:
+        handler.close_connection = True
+    finally:
+        conn.close()
+
+
+def _send_json(handler, status, data):
+    body = json.dumps(data).encode()
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    if handler.command != "HEAD":
+        handler.wfile.write(body)
+
+
 class _ViewHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -552,17 +659,8 @@ class _ViewHandler(BaseHTTPRequestHandler):
             raise peer_link.LinkError(413, "Request too large.")
         return self.rfile.read(length) if length > 0 else b""
 
-    def _json(self, status, data, extra=None):
-        body = json.dumps(data).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        for name, value in (extra or {}).items():
-            self.send_header(name, value)
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(body)
+    def _json(self, status, data):
+        _send_json(self, status, data)
 
     def _handle(self):
         path = urlsplit(self.path).path
@@ -584,6 +682,9 @@ class _ViewHandler(BaseHTTPRequestHandler):
         # loads dozens of files, so wait for the heartbeat to see it back.
         if not self.view.link.online:
             return self._offline(path, body)
+        if self.headers.get(PHONE_HEADER) and not (self.view.link.peer_hello or {}).get(peer_link.PHONE_CAPABILITY):
+            name = (self.view.link.peer() or {}).get("name") or "The other laptop"
+            return self._json(409, {"error": "Update Orc on %s so your phone can open it." % name})
         preview = re.fullmatch(r"/runs/([^/]+)/preview", path)
         if preview and self.command == "GET":
             return self._preview(preview[1])
@@ -713,28 +814,21 @@ class _ViewHandler(BaseHTTPRequestHandler):
             elif data:
                 saved = {name: response.getheader(name) for name in REPLAYED_HEADERS
                          if response.getheader(name) is not None}
-                self.view.cache.put(self._cache_key(), content_type, data, saved)
+                if response.getheader(runs_delta.DELTA_RESPONSE_HEADER) == "1":
+                    existing = self.view.cache.get(self._cache_key())
+                    if existing:
+                        _, cached_data, _, cached_headers = existing
+                        merged = runs_delta.apply_delta_bytes(
+                            cached_data, data, cached_headers.get("ETag"))
+                        if merged is not None:
+                            self.view.cache.put(self._cache_key(), content_type, merged, saved)
+                else:
+                    self.view.cache.put(self._cache_key(), content_type, data, saved)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
             return
-        if response.length is not None:
-            self.send_header("Content-Length", str(response.length))
-            self.end_headers()
-            while True:
-                chunk = response.read(65536)
-                if not chunk:
-                    return
-                self.wfile.write(chunk)
-        self.send_header("Transfer-Encoding", "chunked")
-        self.end_headers()
-        while True:
-            chunk = response.read1(65536)
-            if not chunk:
-                break
-            self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
-            self.wfile.flush()
-        self.wfile.write(b"0\r\n\r\n")
+        _copy_body(self, response)
 
     def _relay_local(self, body, view=False, transform=None):
         sock = socket.create_connection(("127.0.0.1", self.view.local_port), timeout=10)
